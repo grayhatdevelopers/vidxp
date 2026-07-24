@@ -4,18 +4,34 @@ import typer
 import torch
 import chromadb
 import whisperx
+import warnings
 import numpy as np
 from PIL import Image
 from rich import print
+
+warnings.filterwarnings(
+    "ignore",
+    message="pkg_resources is deprecated as an API.*",
+    category=UserWarning,
+    module="face_recognition_models",
+)
+
 import face_recognition
-from moviepy.editor import VideoFileClip
+from moviepy.video.io.VideoFileClip import VideoFileClip
 from sentence_transformers import SentenceTransformer
 
 app = typer.Typer()
 
 device = "cpu"
-embedder  = SentenceTransformer(r"./models--sentence-transformers--all-MiniLM-L6-v2/snapshots/c9745ed1d9f207416be6d2e6f8de32d1f16199bf")
-clip_model, preprocess = clip.load("ViT-B/32", device=device)
+embedder = SentenceTransformer(
+    "sentence-transformers/all-MiniLM-L6-v2",
+    cache_folder="./models/sentence-transformers",
+)
+clip_model, preprocess = clip.load(
+    "ViT-B/32",
+    device=device,
+    download_root="./models/clip",
+)
 chroma_client = chromadb.PersistentClient(path="./chroma_data")
 voice_collection = chroma_client.get_or_create_collection(name="voiceEmbeddings")
 scene_collection = chroma_client.get_or_create_collection(name="sceneEmbeddings")
@@ -33,10 +49,15 @@ def videoindex(path: str):
 
     print("[green]Audio Indexing...[/green]")
 
-    batch_size = 16
-    compute_type = "float32"
+    batch_size = 4
+    compute_type = "int8"
 
-    whisper_model = whisperx.load_model(r"./models/models--Systran--faster-whisper-large-v2/snapshots/f0fe81560cb8b68660e564f55dd99207059c092e", device, compute_type=compute_type)
+    whisper_model = whisperx.load_model(
+        "large-v2",
+        device,
+        compute_type=compute_type,
+        download_root="./models",
+    )
 
     audio = whisperx.load_audio(audio)
 

@@ -1,7 +1,12 @@
-whisperx
+whisperx==3.3.1
+setuptools>=65,<81
+torch==2.5.1
+torchaudio==2.5.1
+torchvision==0.20.1
 sentence-transformers
 chromadb
 typer
+rich
 hf_xet
 accelerate
 opencv-python
