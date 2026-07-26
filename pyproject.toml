@@ -43,10 +43,10 @@ dependencies = [
   "rich",
   "sentence-transformers>=3.4,<4",
   "setuptools>=68,<81",
+  "openai-clip>=1.0.1",
   "torch",
   "typer",
   "whisperx>=3.8.6,<3.9",
-  "clip @ git+https://github.com/openai/CLIP.git",
 ]
 
 [project.optional-dependencies]
@@ -56,7 +56,7 @@ frontend = [
 
 [project.scripts]
 vidxp = "vidxp.main:main"
-vidxp-ui = "vidxp.frontend:main"
+vidxp-ui = "vidxp.frontend:run"
 
 [project.urls]
 Repository = "https://github.com/grayhatdevelopers/vidxp"
