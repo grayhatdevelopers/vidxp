@@ -19,6 +19,7 @@ from vidxp.core.artifacts import (
     ArtifactState,
 )
 from vidxp.core.media import InvalidMediaError, utc_now
+from vidxp.execution import ExecutionContext, execution_context
 from vidxp.media_service import MediaService
 from vidxp.ports import (
     ActorRendererPort,
@@ -100,7 +101,11 @@ class ArtifactService:
         cluster_id: str,
         detections: list[dict],
         profile: ActorOverlayProfile,
+        job_id: str | None = None,
+        execution: ExecutionContext | None = None,
     ) -> Artifact:
+        active_execution = execution_context(execution)
+        active_execution.checkpoint()
         source = self.media.content(media_id)
         request_key = _request_key(
             {
@@ -120,15 +125,27 @@ class ArtifactService:
             request_key=request_key,
             suffix=".mp4",
             expected_mime_type="video/mp4",
+            job_id=job_id,
+            execution=active_execution,
             render=lambda destination: self.actor_renderer.render(
                 source.path,
                 destination,
                 cluster_id,
                 detections,
+                cancellation=active_execution.cancellation,
+                progress=active_execution.progress,
             ),
         )
 
-    def create_snippet(self, command: CreateSnippetCommand) -> Artifact:
+    def create_snippet(
+        self,
+        command: CreateSnippetCommand,
+        *,
+        job_id: str | None = None,
+        execution: ExecutionContext | None = None,
+    ) -> Artifact:
+        active_execution = execution_context(execution)
+        active_execution.checkpoint()
         media_record = self.media.require_record(command.media_id)
         duration = command.end_seconds - command.start_seconds
         if command.end_seconds > media_record.duration_seconds:
@@ -161,12 +178,16 @@ class ArtifactService:
             expected_mime_type=(
                 "video/mp4" if compatible else "video/x-matroska"
             ),
+            job_id=job_id,
+            execution=active_execution,
             render=lambda destination: self.snippet_renderer.render(
                 source.path,
                 destination,
                 start_seconds=command.start_seconds,
                 end_seconds=command.end_seconds,
                 compatible_mp4=compatible,
+                cancellation=active_execution.cancellation,
+                progress=active_execution.progress,
             ),
         )
 
@@ -180,8 +201,11 @@ class ArtifactService:
         request_key: str,
         suffix: str,
         expected_mime_type: str,
+        job_id: str | None,
+        execution: ExecutionContext,
         render: Callable[[Path], None],
     ) -> Artifact:
+        execution.checkpoint()
         cached = self.catalog.get_artifact_by_request(request_key)
         if cached is not None:
             try:
@@ -193,15 +217,46 @@ class ArtifactService:
                     cached.artifact_id,
                 )
             else:
+                execution.report(
+                    {
+                        "stage": "complete",
+                        "message": "Reused the existing ready artifact.",
+                        "current": 1,
+                        "total": 1,
+                    }
+                )
                 return artifact_result(cached)
 
-        artifact_id = uuid4().hex
+        artifact_id = execution.operation_id or uuid4().hex
         staged = self.store.stage(artifact_id, suffix=suffix)
-        stored = None
+        stored = self.store.recover(artifact_id, suffix=suffix)
         try:
-            render(staged.path)
+            if stored is None:
+                execution.report(
+                    {
+                        "stage": "rendering",
+                        "message": "Rendering the requested video artifact.",
+                    }
+                )
+                render(staged.path)
+                execution.checkpoint()
+                artifact_path = staged.path
+            else:
+                execution.report(
+                    {
+                        "stage": "recovering",
+                        "message": "Recovering the published video artifact.",
+                    }
+                )
+                artifact_path = stored.local_path
+            execution.report(
+                {
+                    "stage": "validating",
+                    "message": "Validating the rendered video artifact.",
+                }
+            )
             try:
-                probed = self.probe.probe(staged.path)
+                probed = self.probe.probe(artifact_path)
             except InvalidMediaError as exc:
                 raise InvalidArtifactError(
                     "The rendered artifact is not valid video."
@@ -210,7 +265,16 @@ class ArtifactService:
                 raise InvalidArtifactError(
                     "The rendered artifact does not match its output profile."
                 )
-            stored = self.store.publish(staged)
+            execution.checkpoint()
+            if stored is None:
+                execution.report(
+                    {
+                        "stage": "publishing",
+                        "message": "Publishing the validated video artifact.",
+                    }
+                )
+                stored = self.store.publish(staged)
+            execution.checkpoint()
             record = ArtifactRecord(
                 artifact_id=artifact_id,
                 media_id=media_id,
@@ -222,19 +286,29 @@ class ArtifactService:
                 byte_size=stored.byte_size,
                 sha256=stored.sha256,
                 storage_key=stored.storage_key,
+                job_id=job_id,
                 state=ArtifactState.ready,
                 created_at=utc_now(),
             )
             authoritative = self.catalog.put_artifact(record)
             if authoritative.artifact_id != artifact_id:
                 self._delete_quietly(stored.storage_key)
-            return artifact_result(authoritative)
+            stored = None
         except BaseException:
             if stored is not None:
                 self._delete_quietly(stored.storage_key)
             raise
         finally:
             self.store.discard(staged)
+        execution.report(
+            {
+                "stage": "complete",
+                "message": "The video artifact is ready.",
+                "current": 1,
+                "total": 1,
+            }
+        )
+        return artifact_result(authoritative)
 
     def _delete_quietly(self, storage_key: str) -> None:
         try:

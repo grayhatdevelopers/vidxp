@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Generic, Literal, Mapping, TypeVar
+from typing import Annotated, Any, Generic, Literal, Mapping, TypeVar
 
 from pydantic import (
     AwareDatetime,
@@ -12,6 +12,7 @@ from pydantic import (
     JsonValue,
     NonNegativeInt,
     field_validator,
+    model_validator,
 )
 
 from vidxp.core.identifiers import (
@@ -74,6 +75,27 @@ class ErrorCategory(StrEnum):
     resource_limit = "resource_limit"
     cancelled = "cancelled"
     internal = "internal"
+
+
+class JobKind(StrEnum):
+    index = "index"
+    snippet = "snippet"
+    actor_overlay = "actor_overlay"
+    prepare_models = "prepare_models"
+
+
+class JobState(StrEnum):
+    queued = "queued"
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+    cancelled = "cancelled"
+    recovery_exhausted = "recovery_exhausted"
+
+
+class JobQueue(StrEnum):
+    cpu = "cpu"
+    gpu = "gpu"
 
 
 class ErrorDetail(ApplicationModel):
@@ -335,3 +357,118 @@ class PrepareModelsResult(ApplicationModel):
     prepared: tuple[str, ...]
     modalities: tuple[str, ...]
     runtime: RuntimeProfile
+
+
+JOB_SCHEMA_VERSION = 1
+
+
+class IndexJobRequest(ApplicationModel):
+    kind: Literal[JobKind.index] = JobKind.index
+    command: CreateIndexCommand
+
+
+class SnippetJobRequest(ApplicationModel):
+    kind: Literal[JobKind.snippet] = JobKind.snippet
+    command: CreateSnippetCommand
+
+
+class ActorOverlayJobRequest(ApplicationModel):
+    kind: Literal[JobKind.actor_overlay] = JobKind.actor_overlay
+    command: CreateActorOverlayCommand
+
+
+class PrepareModelsJobRequest(ApplicationModel):
+    kind: Literal[JobKind.prepare_models] = JobKind.prepare_models
+    command: PrepareModelsCommand
+
+
+JobRequest = Annotated[
+    IndexJobRequest
+    | SnippetJobRequest
+    | ActorOverlayJobRequest
+    | PrepareModelsJobRequest,
+    Field(discriminator="kind"),
+]
+
+
+class IndexJobResult(ApplicationModel):
+    kind: Literal[JobKind.index] = JobKind.index
+    result: IndexResult
+
+
+class ArtifactJobResult(ApplicationModel):
+    kind: Literal[JobKind.snippet, JobKind.actor_overlay]
+    result: Artifact
+
+
+class PrepareModelsJobResult(ApplicationModel):
+    kind: Literal[JobKind.prepare_models] = JobKind.prepare_models
+    result: PrepareModelsResult
+
+
+JobResult = Annotated[
+    IndexJobResult | ArtifactJobResult | PrepareModelsJobResult,
+    Field(discriminator="kind"),
+]
+
+
+class JobProgress(ApplicationModel):
+    schema_version: Literal[JOB_SCHEMA_VERSION] = JOB_SCHEMA_VERSION
+    stage: str = Field(min_length=1, max_length=128)
+    message: str = Field(min_length=1, max_length=512)
+    current: int | None = Field(default=None, ge=0)
+    total: int | None = Field(default=None, gt=0)
+    updated_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _validate_position(self) -> "JobProgress":
+        if (
+            self.current is not None
+            and self.total is not None
+            and self.current > self.total
+        ):
+            raise ValueError("current must not exceed total")
+        return self
+
+
+class Job(ApplicationModel):
+    schema_version: Literal[JOB_SCHEMA_VERSION] = JOB_SCHEMA_VERSION
+    job_id: JobId
+    kind: JobKind
+    state: JobState
+    queue: JobQueue
+    progress: JobProgress | None = None
+    result: JobResult | None = None
+    error: ErrorDetail | None = None
+    recovery_attempts: int = Field(default=0, ge=0)
+    created_at: AwareDatetime | None = None
+    updated_at: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def _validate_terminal_payload(self) -> "Job":
+        if self.state == JobState.succeeded:
+            if self.result is None or self.error is not None:
+                raise ValueError(
+                    "succeeded jobs require a result and no error"
+                )
+            if self.result.kind != self.kind:
+                raise ValueError("job result kind must match job kind")
+        elif self.result is not None:
+            raise ValueError("only succeeded jobs may contain a result")
+        if self.state in {JobState.queued, JobState.running}:
+            if self.error is not None:
+                raise ValueError("active jobs may not contain an error")
+        elif self.state in {JobState.failed, JobState.recovery_exhausted}:
+            if self.error is None:
+                raise ValueError("failed jobs require a typed error")
+        return self
+
+
+class ListJobsCommand(ApplicationModel):
+    page_size: int = Field(default=50, gt=0, le=100)
+    cursor: str | None = Field(default=None, min_length=1, max_length=512)
+
+
+class JobPage(ApplicationModel):
+    items: tuple[Job, ...] = ()
+    next_cursor: str | None = None

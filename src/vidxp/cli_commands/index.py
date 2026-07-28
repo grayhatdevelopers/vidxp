@@ -28,26 +28,41 @@ def create_index(
     modalities: Iterable[str],
     frame_stride: int,
     capability_options: dict[str, dict],
+    detach: bool = False,
 ) -> dict:
     show_progress = (
         not state.quiet and state.output_format == OutputFormat.rich
     )
     with IndexProgress(show_progress) as progress:
-        result = state.service.create_index(
+        job = state.jobs.submit_index(
             CreateIndexCommand(
                 media_id=media_id,
                 modalities=tuple(modalities),
                 frame_stride=frame_stride,
                 capability_options=capability_options,
             ),
-            progress_callback=progress.update,
         )
-        summary = result.model_dump(mode="json")
+        if not detach:
+            job = state.jobs.wait(
+                job.job_id,
+                progress=lambda current: (
+                    progress.update(
+                        current.progress.model_dump(mode="python")
+                    )
+                    if current.progress is not None
+                    else None
+                ),
+            )
+        summary = job.model_dump(mode="json")
     if state.output_format == OutputFormat.json:
         emit_json(summary)
     else:
         typer.secho(
-            "Video indexing completed successfully.",
+            (
+                f"Indexing job queued: {job.job_id}"
+                if detach
+                else f"Video indexing completed: {job.job_id}"
+            ),
             fg=typer.colors.GREEN,
             bold=True,
         )
@@ -87,6 +102,13 @@ def index_create(
             ),
         ),
     ] = None,
+    detach: Annotated[
+        bool,
+        typer.Option(
+            "--detach",
+            help="Return after the durable job is queued.",
+        ),
+    ] = False,
 ) -> None:
     """Add media or replace its immutable generation in the active index."""
 
@@ -100,6 +122,7 @@ def index_create(
         ),
         frame_stride=frame_stride,
         capability_options=parse_capability_options(capability_options),
+        detach=detach,
     )
 
 

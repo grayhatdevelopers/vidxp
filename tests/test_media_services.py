@@ -18,6 +18,7 @@ from vidxp.artifact_service import (
     InvalidArtifactError,
 )
 from vidxp.core.artifacts import ArtifactState
+from vidxp.core.contracts import CancellationToken, IndexCancelledError
 from vidxp.core.media import (
     MediaProbe,
     MediaRecord,
@@ -26,7 +27,11 @@ from vidxp.core.media import (
     StagedMedia,
     StoredMedia,
 )
-from vidxp.infrastructure.local_artifacts import LocalArtifactStore
+from vidxp.execution import ExecutionContext
+from vidxp.infrastructure.local_artifacts import (
+    FFmpegSnippetRenderer,
+    LocalArtifactStore,
+)
 from vidxp.infrastructure.local_media import InvalidMediaError
 from vidxp.media_service import MediaService
 from vidxp.ports import LocalFileResource
@@ -34,6 +39,7 @@ from vidxp.settings import VidXPSettings
 
 
 MEDIA_ID = "123456781234423481234567890abcde"
+JOB_ID = "223456781234423481234567890abcde"
 ARTIFACT_ID = "323456781234423481234567890abcde"
 
 
@@ -269,7 +275,7 @@ class ArtifactServiceTests(unittest.TestCase):
             catalog.put_artifact.side_effect = lambda item: item
             renderer = Mock()
             renderer.render.side_effect = (
-                lambda _source, destination, _cluster, _detections:
+                lambda _source, destination, _cluster, _detections, **_kwargs:
                 destination.write_bytes(b"rendered")
             )
             probe = Mock()
@@ -313,6 +319,161 @@ class ArtifactServiceTests(unittest.TestCase):
         renderer.render.assert_called_once()
         self.assertNotIn("path", result.model_dump(mode="json"))
         catalog.put_artifact.assert_called_once()
+
+    def test_progress_failure_after_catalog_commit_keeps_artifact_content(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mp4"
+            source.write_bytes(b"source")
+            media = Mock()
+            media.content.return_value = LocalFileResource(
+                path=source,
+                filename="source.mp4",
+                mime_type="video/mp4",
+                byte_size=6,
+                etag="1" * 64,
+            )
+            catalog = Mock()
+            catalog.get_artifact_by_request.return_value = None
+            catalog.put_artifact.side_effect = lambda item: item
+            renderer = Mock()
+            renderer.render.side_effect = (
+                lambda _source, destination, _cluster, _detections, **_kwargs:
+                destination.write_bytes(b"rendered")
+            )
+            probe = Mock()
+            probe.probe.return_value = MediaProbe(
+                detected_mime_type="video/mp4",
+                container="mp4",
+                duration_seconds=1,
+                streams=(
+                    MediaStream(
+                        index=0,
+                        kind="video",
+                        codec="h264",
+                        width=1,
+                        height=1,
+                    ),
+                ),
+            )
+            store = LocalArtifactStore(root / "artifacts")
+            service = ArtifactService(
+                catalog=catalog,
+                store=store,
+                media=media,
+                probe=probe,
+                actor_renderer=renderer,
+                snippet_renderer=Mock(),
+                max_snippet_duration_seconds=300,
+            )
+
+            def fail_final_progress(event):
+                if event["stage"] == "complete":
+                    raise RuntimeError("progress unavailable")
+
+            with (
+                patch("vidxp.artifact_service.uuid4") as identifier,
+                self.assertRaisesRegex(RuntimeError, "progress unavailable"),
+            ):
+                identifier.return_value.hex = ARTIFACT_ID
+                service.create_actor_overlay(
+                    media_id=MEDIA_ID,
+                    generation_id="223456781234423481234567890abcde",
+                    cluster_id="cluster",
+                    detections=[],
+                    profile=ActorOverlayProfile.default,
+                    execution=ExecutionContext(progress=fail_final_progress),
+                )
+
+            committed = catalog.put_artifact.call_args.args[0]
+            self.assertTrue(store.resolve(committed.storage_key).is_file())
+
+    def test_durable_replay_recovers_object_published_before_catalog_commit(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mp4"
+            source.write_bytes(b"source")
+            media = Mock()
+            media.content.return_value = LocalFileResource(
+                path=source,
+                filename="source.mp4",
+                mime_type="video/mp4",
+                byte_size=6,
+                etag="1" * 64,
+            )
+            catalog = Mock()
+            catalog.get_artifact_by_request.return_value = None
+            catalog.put_artifact.side_effect = lambda item: item
+            renderer = Mock()
+            probe = Mock()
+            probe.probe.return_value = MediaProbe(
+                detected_mime_type="video/mp4",
+                container="mp4",
+                duration_seconds=1,
+                streams=(
+                    MediaStream(
+                        index=0,
+                        kind="video",
+                        codec="h264",
+                        width=1,
+                        height=1,
+                    ),
+                ),
+            )
+            store = LocalArtifactStore(root / "artifacts")
+            orphan = store.stage(JOB_ID, suffix=".mp4")
+            orphan.path.write_bytes(b"rendered-before-crash")
+            store.publish(orphan)
+            service = ArtifactService(
+                catalog=catalog,
+                store=store,
+                media=media,
+                probe=probe,
+                actor_renderer=renderer,
+                snippet_renderer=Mock(),
+                max_snippet_duration_seconds=300,
+            )
+
+            result = service.create_actor_overlay(
+                media_id=MEDIA_ID,
+                generation_id="423456781234423481234567890abcde",
+                cluster_id="cluster",
+                detections=[],
+                profile=ActorOverlayProfile.default,
+                job_id=JOB_ID,
+                execution=ExecutionContext(job_id=JOB_ID),
+            )
+
+            self.assertEqual(result.artifact_id, JOB_ID)
+            renderer.render.assert_not_called()
+            catalog.put_artifact.assert_called_once()
+
+    def test_ffmpeg_snippet_renderer_terminates_on_cancellation(self):
+        cancellation = CancellationToken()
+        cancellation.cancel()
+        process = Mock()
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        renderer = FFmpegSnippetRenderer()
+
+        with (
+            patch(
+                "vidxp.infrastructure.local_artifacts.subprocess.Popen",
+                return_value=process,
+            ),
+            self.assertRaises(IndexCancelledError),
+        ):
+            renderer.render(
+                Path("source.mp4"),
+                Path("snippet.mp4"),
+                start_seconds=0,
+                end_seconds=1,
+                compatible_mp4=True,
+                cancellation=cancellation,
+                progress=None,
+            )
+
+        process.terminate.assert_called_once()
 
     def test_actor_renderer_failure_leaves_no_staged_or_ready_artifact(self):
         with TemporaryDirectory() as directory:
@@ -374,7 +535,7 @@ class ArtifactServiceTests(unittest.TestCase):
             catalog.get_artifact_by_request.return_value = None
             renderer = Mock()
             renderer.render.side_effect = (
-                lambda _source, destination, _cluster, _detections:
+                lambda _source, destination, _cluster, _detections, **_kwargs:
                 destination.write_bytes(b"not-video")
             )
             probe = Mock()

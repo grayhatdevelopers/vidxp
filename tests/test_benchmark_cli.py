@@ -36,6 +36,7 @@ class BenchmarkCliTests(unittest.TestCase):
                     "create_local_application",
                     return_value=LocalApplicationContext(
                         application=service,
+                        jobs=Mock(),
                         repositories=RepositoryRegistry(config),
                         repository=RepositoryConfig(
                             "default",

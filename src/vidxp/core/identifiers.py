@@ -20,10 +20,31 @@ def _require_uuid4_hex(value: str) -> str:
     return value
 
 
+def _require_workflow_uuid(value: str) -> str:
+    identifier = UUID(value)
+    if (
+        identifier.version not in {4, 7}
+        or value not in {identifier.hex, str(identifier)}
+    ):
+        raise ValueError("identifier must be a lowercase UUID4 or UUID7 string")
+    return value
+
+
 Uuid4Hex: TypeAlias = Annotated[
     str,
     StringConstraints(pattern=r"^[0-9a-f]{32}$"),
     AfterValidator(_require_uuid4_hex),
+]
+WorkflowUuid: TypeAlias = Annotated[
+    str,
+    StringConstraints(
+        pattern=(
+            r"^(?:[0-9a-f]{12}[47][0-9a-f]{19}|"
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+        )
+    ),
+    AfterValidator(_require_workflow_uuid),
 ]
 Sha256: TypeAlias = Annotated[
     str,
@@ -44,5 +65,5 @@ MediaId: TypeAlias = Uuid4Hex
 VideoId: TypeAlias = MediaId
 IndexGenerationId: TypeAlias = Uuid4Hex
 IndexSnapshotId: TypeAlias = Uuid4Hex
-JobId: TypeAlias = Identifier
+JobId: TypeAlias = WorkflowUuid
 ArtifactId: TypeAlias = Uuid4Hex

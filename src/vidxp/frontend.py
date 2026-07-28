@@ -13,17 +13,15 @@ from vidxp.application import VidXPApplication
 from vidxp.application_models import (
     ApplicationError,
     CreateActorOverlayCommand,
+    CreateIndexCommand,
     DependencyCheckCommand,
     ImportMediaCommand,
+    JobState,
     SearchCommand,
 )
-from vidxp.composition import create_application
+from vidxp.composition import create_application, create_job_service
 from vidxp.index_state import IndexNotReadyError
-from vidxp.index_worker import (
-    cancel_indexing,
-    indexing_in_progress,
-    start_indexing,
-)
+from vidxp.job_service import JobService
 from vidxp.settings import VidXPSettings
 
 
@@ -35,6 +33,11 @@ def _configured_service(
     settings: VidXPSettings | None = None,
 ) -> VidXPApplication:
     return create_application(settings or _settings_from_arguments())
+
+
+@lru_cache(maxsize=1)
+def _configured_jobs(settings: VidXPSettings | None = None) -> JobService:
+    return create_job_service(settings or _settings_from_arguments())
 
 
 def _settings_from_arguments(
@@ -52,6 +55,7 @@ def _settings_from_arguments(
 
 INDEX_REQUESTED_KEY = "_vidxp_index_requested"
 INDEX_ERROR_KEY = "_vidxp_index_error"
+INDEX_JOB_ID_KEY = "_vidxp_index_job_id"
 SEARCH_RESULT_KEY = "_vidxp_search_result"
 CANCEL_REQUESTED_KEY = "_vidxp_cancel_requested"
 MEDIA_ID_KEY = "_vidxp_media_id"
@@ -100,6 +104,16 @@ def _render_progress(event):
         )
 
 
+def _get_job(jobs: JobService, job_id: str | None):
+    if job_id is None:
+        return None
+    try:
+        return jobs.get(job_id)
+    except ApplicationError:
+        LOGGER.warning("Ignoring unavailable background job %s.", job_id)
+        return None
+
+
 def _render_index_status(status, active, media_id, request_error=None):
     if request_error:
         st.error(request_error)
@@ -142,7 +156,9 @@ def _request_indexing():
 
 
 def _request_cancellation():
-    if cancel_indexing():
+    job_id = st.session_state.get(INDEX_JOB_ID_KEY)
+    if job_id is not None:
+        _configured_jobs().cancel(job_id)
         st.session_state[CANCEL_REQUESTED_KEY] = True
         st.session_state.pop(INDEX_ERROR_KEY, None)
     else:
@@ -193,11 +209,13 @@ def _run_indexing(uploaded_video, status, modalities):
                 media_id = media_ids[0] if len(media_ids) == 1 else None
             if media_id is None:
                 raise ValueError("Select or import media before indexing.")
-        start_indexing(
-            media_id,
-            service,
-            modalities=modalities,
+        job = _configured_jobs().submit_index(
+            CreateIndexCommand(
+                media_id=media_id,
+                modalities=modalities,
+            )
         )
+        st.session_state[INDEX_JOB_ID_KEY] = job.job_id
     except ApplicationError as exc:
         st.session_state[INDEX_ERROR_KEY] = str(exc)
     except Exception:
@@ -232,13 +250,17 @@ def _run_search(search_type, query):
             )
             if cluster is None:
                 return {"error": "No matching actor cluster was found."}
-            artifact = service.render_actor(
+            job = _configured_jobs().submit_actor_overlay(
                 CreateActorOverlayCommand(
                     cluster_id=query,
                     media_id=cluster.media_id,
                     generation_id=cluster.generation_id,
                 )
             )
+            artifact = _configured_jobs().wait(job.job_id).result
+            if artifact is None:
+                return {"error": "The actor artifact result is unavailable."}
+            artifact = artifact.result
             return {
                 "type": search_type,
                 "query": query,
@@ -381,7 +403,16 @@ def run():
     st.caption("Index and search video by dialogue, scene, and actor.")
     st.caption(f"Index repository: {service.layout.root}")
 
-    active = indexing_in_progress(service)
+    jobs = _configured_jobs()
+    job_id = st.session_state.get(INDEX_JOB_ID_KEY)
+    current_job = _get_job(jobs, job_id)
+    if job_id is not None and current_job is None:
+        st.session_state.pop(INDEX_JOB_ID_KEY, None)
+        job_id = None
+    active = (
+        current_job is not None
+        and current_job.state in {JobState.queued, JobState.running}
+    )
     if not active:
         st.session_state.pop(CANCEL_REQUESTED_KEY, None)
     requested = st.session_state.get(INDEX_REQUESTED_KEY, False)
@@ -457,15 +488,49 @@ def run():
 
             @st.fragment(run_every="1s")
             def poll_index_status():
-                latest_active = indexing_in_progress(service)
+                latest_job = _get_job(jobs, job_id)
+                if latest_job is None:
+                    st.session_state.pop(INDEX_JOB_ID_KEY, None)
+                    st.error("The background indexing job is unavailable.")
+                    st.rerun()
+                    return
+                latest_active = latest_job.state in {
+                    JobState.queued,
+                    JobState.running,
+                }
+                if not latest_active:
+                    if latest_job.state == JobState.succeeded:
+                        st.session_state.pop(INDEX_ERROR_KEY, None)
+                    elif latest_job.error is not None:
+                        st.session_state[INDEX_ERROR_KEY] = (
+                            latest_job.error.message
+                        )
+                    elif latest_job.state == JobState.cancelled:
+                        st.session_state[INDEX_ERROR_KEY] = (
+                            "Indexing was cancelled."
+                        )
+                    else:
+                        st.session_state[INDEX_ERROR_KEY] = (
+                            "Indexing did not complete successfully."
+                        )
+                    st.session_state.pop(INDEX_JOB_ID_KEY, None)
+                    st.rerun()
+                    return
+                latest_status = (
+                    latest_job.progress.model_dump(mode="json")
+                    if latest_job.progress is not None
+                    else {
+                        "state": "indexing",
+                        "stage": "queued",
+                        "message": "Indexing is queued.",
+                    }
+                )
                 _render_index_status(
-                    service.index_status().model_dump(mode="json"),
-                    latest_active,
+                    latest_status,
+                    True,
                     selected_media_id,
                     st.session_state.get(INDEX_ERROR_KEY),
                 )
-                if not latest_active:
-                    st.rerun()
 
             poll_index_status()
         else:

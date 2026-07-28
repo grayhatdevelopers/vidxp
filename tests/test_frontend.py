@@ -27,6 +27,7 @@ class UploadedVideo:
 class FrontendTests(unittest.TestCase):
     def tearDown(self):
         frontend._configured_service.cache_clear()
+        frontend._configured_jobs.cache_clear()
 
     def service(self, root: Path) -> Mock:
         service = Mock()

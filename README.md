@@ -151,6 +151,17 @@ vidxp index create <media-id> --modality scene --frame-stride 5
 ```
 
 Repeat `--modality` to combine `dialogue`, `scene`, and `actor`.
+Indexing, artifact rendering, and model preparation run as durable background
+jobs. Commands wait by default; add `--detach` to return after queueing, then
+inspect or control the job separately:
+
+```bash
+vidxp jobs list
+vidxp jobs show <job-id>
+vidxp jobs cancel <job-id>
+vidxp jobs retry <job-id>
+```
+
 Run `vidxp --help` or any command followed by `--help` for the complete command
 reference.
 

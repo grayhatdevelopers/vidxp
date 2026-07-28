@@ -19,6 +19,7 @@ from rich.table import Table
 from vidxp.application import VidXPApplication
 from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.capabilities.schemas import SearchResult
+from vidxp.job_service import JobService
 from vidxp.repositories import RepositoryConfig, RepositoryRegistry
 
 
@@ -30,6 +31,7 @@ class OutputFormat(str, Enum):
 @dataclass
 class CLIState:
     service: VidXPApplication
+    jobs: JobService
     registry: RepositoryRegistry
     repository: RepositoryConfig
     output_format: OutputFormat = OutputFormat.rich

@@ -20,10 +20,7 @@ from vidxp.core.manifest import (
     source_checksum,
     source_checksums,
 )
-from vidxp.index_state import (
-    IndexingInProgressError,
-    write_index_status,
-)
+from vidxp.index_state import IndexingInProgressError
 from vidxp.ports import IndexStore, ModelRuntimePort
 
 
@@ -446,16 +443,6 @@ def run_index(
         )
 
 
-def _video_status(path: Path, source_name: str, checksum: str) -> dict[str, Any]:
-    stat = path.stat()
-    return {
-        "path": str(path.resolve()),
-        "source_name": source_name,
-        "size": stat.st_size,
-        "sha256": checksum,
-    }
-
-
 def index_video(
     path: str,
     progress_callback: ProgressCallback | None = None,
@@ -486,11 +473,6 @@ def index_video(
     )
     active_config = config
     video_id = active_config.video_id or checksum
-    video = _video_status(
-        input_path,
-        source.source_name or input_path.name,
-        checksum,
-    )
     latest_event: dict[str, Any] = {
         "state": "indexing",
         "stage": "initializing",
@@ -498,17 +480,6 @@ def index_video(
 
     def report(event: dict[str, Any]) -> None:
         latest_event.update(event)
-        write_index_status(
-            state=event["state"],
-            stage=event["stage"],
-            message=event["message"],
-            video=video,
-            current=event.get("current"),
-            total=event.get("total"),
-            summary=event.get("summary"),
-            error=event.get("error"),
-            index_directory=active_config.run_directory,
-        )
         if progress_callback is not None:
             progress_callback(event)
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Iterator
 
 from vidxp.core.contracts import CancellationToken
+from vidxp.core.indexing_common import ProgressCallback
 
 
 @dataclass(frozen=True)
@@ -110,9 +111,13 @@ def render_actor_video(
     output_path: str | Path,
     cluster_id: str,
     detections: list[dict],
+    *,
+    cancellation: CancellationToken | None = None,
+    progress: ProgressCallback | None = None,
 ) -> None:
     import cv2
 
+    active_cancellation = cancellation or CancellationToken()
     source_path = Path(input_path)
     destination = Path(output_path)
     if not source_path.is_file():
@@ -129,6 +134,7 @@ def render_actor_video(
     fps = float(source.get(cv2.CAP_PROP_FPS))
     width = int(source.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(source.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    frame_count = int(source.get(cv2.CAP_PROP_FRAME_COUNT))
     if fps <= 0 or width <= 0 or height <= 0:
         source.release()
         raise RuntimeError(
@@ -160,6 +166,7 @@ def render_actor_video(
     try:
         frame_index = 0
         while True:
+            active_cancellation.raise_if_cancelled()
             retrieved, frame = source.read()
             if not retrieved:
                 break
@@ -187,9 +194,31 @@ def render_actor_video(
             writer.write(frame)
             frame_index += 1
             frames_written += 1
+            if progress is not None and frames_written % 30 == 0:
+                progress(
+                    {
+                        "state": "rendering",
+                        "stage": "rendering",
+                        "message": "Rendering the actor overlay.",
+                        "current": frames_written,
+                        "total": frame_count if frame_count > 0 else None,
+                    }
+                )
     finally:
         source.release()
         writer.release()
+
+    active_cancellation.raise_if_cancelled()
+    if progress is not None and frames_written:
+        progress(
+            {
+                "state": "rendering",
+                "stage": "rendering",
+                "message": "Rendered the actor overlay.",
+                "current": frames_written,
+                "total": frame_count if frame_count > 0 else frames_written,
+            }
+        )
 
     if (
         frames_written == 0

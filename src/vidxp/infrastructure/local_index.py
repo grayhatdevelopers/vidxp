@@ -103,13 +103,14 @@ class LocalIndexBackend:
         cancellation: CancellationToken | None,
         source_name: str | None,
         source_checksum: str,
+        operation_id: str | None = None,
     ) -> dict[str, Any]:
         self._require_index_directory(config.index_directory)
         repository = self.repository
         media_id = config.video_id
         if media_id is None:
             raise ValueError("A catalog media_id is required for indexing.")
-        generation_id = repository.new_generation_id()
+        generation_id = operation_id or repository.new_generation_id()
         generation_directory = repository.generation_directory(generation_id)
         build_config = replace(
             config,
@@ -138,6 +139,88 @@ class LocalIndexBackend:
                         active,
                         active_config,
                     )
+            if operation_id is not None and active is not None:
+                committed = active.generations.get(media_id)
+                if (
+                    committed is not None
+                    and committed.generation_id == operation_id
+                ):
+                    if (
+                        committed.input_sha256 != source_checksum
+                        or committed.config_fingerprint
+                        != build_config.fingerprint()
+                    ):
+                        raise IndexSchemaError(
+                            "The indexing operation ID is already bound to "
+                            "different input or configuration."
+                        )
+                    return {
+                        "media_id": media_id,
+                        "generation_id": committed.generation_id,
+                        "snapshot_id": active.snapshot_id,
+                        "active_media_count": len(active.generations),
+                        "record_counts": dict(committed.record_counts),
+                    }
+            completed_manifest = generation_directory / MANIFEST_FILE
+            if operation_id is not None and completed_manifest.is_file():
+                completed = None
+                try:
+                    completed = repository.generation_reference(
+                        generation_id=operation_id,
+                        media_id=media_id,
+                    )
+                except IndexSchemaError:
+                    try:
+                        raw_manifest = json.loads(
+                            completed_manifest.read_text(encoding="utf-8")
+                        )
+                    except (OSError, json.JSONDecodeError):
+                        pass
+                    else:
+                        if raw_manifest.get("state") == "complete":
+                            manifest_store = ManifestStore(
+                                build_config,
+                                registry=self.registry,
+                                runtime=self.runtime,
+                            )
+                            with IndexStorage(
+                                build_config,
+                                create=False,
+                            ) as storage:
+                                recovered_counts = (
+                                    self._validate_generation_records(
+                                        storage,
+                                        build_config,
+                                    )
+                                )
+                            manifest_store.record_storage_counts(
+                                recovered_counts
+                            )
+                            completed = repository.generation_reference(
+                                generation_id=operation_id,
+                                media_id=media_id,
+                            )
+                if completed is not None:
+                    if (
+                        completed.input_sha256 != source_checksum
+                        or completed.config_fingerprint
+                        != build_config.fingerprint()
+                    ):
+                        raise IndexSchemaError(
+                            "The indexing operation ID is already bound to "
+                            "different input or configuration."
+                        )
+                    snapshot = repository.publish_generation(
+                        completed,
+                        build_config,
+                    )
+                    return {
+                        "media_id": media_id,
+                        "generation_id": completed.generation_id,
+                        "snapshot_id": snapshot.snapshot_id,
+                        "active_media_count": len(snapshot.generations),
+                        "record_counts": dict(completed.record_counts),
+                    }
             self._cleanup_abandoned_generations(
                 repository,
                 build_config,

@@ -11,7 +11,14 @@ from typing import (
     runtime_checkable,
 )
 
-from vidxp.application_models import RuntimeProfile
+from vidxp.application_models import (
+    Job,
+    JobPage,
+    JobQueue,
+    JobRequest,
+    ListJobsCommand,
+    RuntimeProfile,
+)
 from vidxp.core.artifacts import (
     ArtifactRecord,
     StagedArtifact,
@@ -34,6 +41,10 @@ from vidxp.model_contracts import ArtifactSpec, ModelKey, ModelSpec
 
 class ResourceLimitError(RuntimeError):
     """Raised when configured host capacity cannot admit model work."""
+
+
+class InvalidJobBackendRequestError(ValueError):
+    """Raised when a durable job identifier or cursor is malformed."""
 
 
 class LocalFileResource:
@@ -125,6 +136,13 @@ class ArtifactCatalogPort(Protocol):
 class ArtifactStorePort(Protocol):
     def stage(self, artifact_id: str, *, suffix: str) -> StagedArtifact: ...
 
+    def recover(
+        self,
+        artifact_id: str,
+        *,
+        suffix: str,
+    ) -> StoredArtifact | None: ...
+
     def publish(self, staged: StagedArtifact) -> StoredArtifact: ...
 
     def discard(self, staged: StagedArtifact) -> None: ...
@@ -150,6 +168,9 @@ class ActorRendererPort(Protocol):
         destination: Path,
         cluster_id: str,
         detections: list[dict[str, Any]],
+        *,
+        cancellation: CancellationToken,
+        progress: ProgressCallback | None,
     ) -> None: ...
 
 
@@ -163,6 +184,8 @@ class SnippetRendererPort(Protocol):
         start_seconds: float,
         end_seconds: float,
         compatible_mp4: bool,
+        cancellation: CancellationToken,
+        progress: ProgressCallback | None,
     ) -> None: ...
 
 
@@ -292,6 +315,7 @@ class IndexBackend(Protocol):
         cancellation: CancellationToken | None,
         source_name: str | None,
         source_checksum: str,
+        operation_id: str | None = None,
     ) -> dict[str, Any]: ...
 
     def indexing_in_progress(self, config: IndexConfig) -> bool: ...
@@ -301,3 +325,25 @@ class IndexBackend(Protocol):
     def remove(self, config: IndexConfig, media_id: str) -> bool: ...
 
     def clear(self, config: IndexConfig) -> bool: ...
+
+
+class JobBackend(Protocol):
+    """Durable lifecycle operations owned by the workflow engine."""
+
+    def submit(
+        self,
+        request: JobRequest,
+        *,
+        queue: JobQueue,
+        job_id: str | None = None,
+    ) -> Job: ...
+
+    def get(self, job_id: str) -> Job | None: ...
+
+    def list(self, command: ListJobsCommand) -> JobPage: ...
+
+    def cancel(self, job_id: str) -> Job | None: ...
+
+    def retry(self, job_id: str) -> Job | None: ...
+
+    def close(self) -> None: ...

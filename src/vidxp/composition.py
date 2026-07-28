@@ -19,7 +19,10 @@ from vidxp.infrastructure.local_artifacts import (
 )
 from vidxp.infrastructure.local_catalog import LocalCatalog
 from vidxp.infrastructure.local_media import FFprobeMediaProbe, LocalMediaStore
+from vidxp.infrastructure.dbos_jobs import DBOSJobBackend
+from vidxp.infrastructure.local_worker import LocalWorkerSupervisor
 from vidxp.artifact_service import ArtifactService
+from vidxp.job_service import JobService
 from vidxp.media_service import MediaService
 from vidxp.runtime import ModelRuntime, RuntimeBackendUnavailableError
 from vidxp.repositories import (
@@ -28,12 +31,17 @@ from vidxp.repositories import (
     RepositoryRegistry,
     resolve_repository,
 )
-from vidxp.settings import VidXPSettings
+from vidxp.settings import ApplicationMode, VidXPSettings
+from vidxp.workflow_runtime import (
+    workflow_application_version,
+    workflow_database_url,
+)
 
 
 @dataclass(frozen=True)
 class LocalApplicationContext:
     application: VidXPApplication
+    jobs: JobService
     repositories: RepositoryRegistry
     repository: RepositoryConfig
 
@@ -101,6 +109,21 @@ def create_application(
     )
 
 
+def create_job_service(settings: VidXPSettings) -> JobService:
+    settings.layout.ensure_local_directories()
+    before_access = None
+    if settings.mode != ApplicationMode.server:
+        before_access = LocalWorkerSupervisor(settings).ensure_running
+    return JobService(
+        settings=settings,
+        backend=DBOSJobBackend(
+            system_database_url=workflow_database_url(settings),
+            application_version=workflow_application_version(),
+            before_access=before_access,
+        ),
+    )
+
+
 def create_local_application(
     *,
     registry_path: str | Path | None = None,
@@ -124,6 +147,7 @@ def create_local_application(
         ) from exc
     return LocalApplicationContext(
         application=create_application(settings),
+        jobs=create_job_service(settings),
         repositories=repositories,
         repository=repository,
     )

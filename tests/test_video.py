@@ -105,6 +105,7 @@ class VideoFrameStreamTests(unittest.TestCase):
                 CAP_PROP_FPS=1,
                 CAP_PROP_FRAME_WIDTH=2,
                 CAP_PROP_FRAME_HEIGHT=3,
+                CAP_PROP_FRAME_COUNT=5,
                 FONT_HERSHEY_SIMPLEX=4,
                 VideoCapture=lambda _: capture,
                 VideoWriter=writer,

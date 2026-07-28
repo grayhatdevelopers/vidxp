@@ -13,10 +13,16 @@ from vidxp.composition import LocalApplicationContext, settings_for_repository
 from vidxp.application_models import (
     CreateIndexCommand,
     DependencyCheckResult,
+    IndexJobResult,
     IndexResult,
     IndexStatus,
+    Job,
+    JobKind,
+    JobQueue,
+    JobState,
     MediaAsset,
     PrepareModelsResult,
+    PrepareModelsJobResult,
     RemoveIndexCommand,
     SearchCommand,
 )
@@ -29,6 +35,7 @@ from vidxp.repositories import RepositoryConfig, RepositoryRegistry
 MEDIA_ID = "123456781234423481234567890abcde"
 GENERATION_ID = "223456781234423481234567890abcde"
 SNAPSHOT_ID = "323456781234423481234567890abcde"
+JOB_ID = "423456781234423481234567890abcde"
 
 
 class CliTests(unittest.TestCase):
@@ -39,6 +46,7 @@ class CliTests(unittest.TestCase):
         self.service.index_directory = Path("repo/indexes")
         self.service.layout.root = Path("repo")
         self.service.runtime.backends.requested = "cpu"
+        self.jobs = Mock()
         self.registry = Mock(spec=RepositoryRegistry)
         self.registry.path = Path("repositories.json")
         self.repository = RepositoryConfig(
@@ -54,6 +62,7 @@ class CliTests(unittest.TestCase):
             "create_local_application",
             return_value=LocalApplicationContext(
                 application=self.service,
+                jobs=self.jobs,
                 repositories=self.registry,
                 repository=self.repository,
             ),
@@ -66,6 +75,7 @@ class CliTests(unittest.TestCase):
         for command in (
             "media",
             "index",
+            "jobs",
             "search",
             "actors",
             "artifacts",
@@ -96,12 +106,25 @@ class CliTests(unittest.TestCase):
         self.assertEqual(json.loads(result.output)["query"], "yellow taxi")
 
     def test_index_constructs_shared_command(self):
-        self.service.create_index.return_value = IndexResult(
+        result_value = IndexResult(
             media_id=MEDIA_ID,
             generation_id=GENERATION_ID,
             snapshot_id=SNAPSHOT_ID,
             active_media_count=1,
             record_counts={"scene": 1},
+        )
+        self.jobs.submit_index.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.index,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        self.jobs.wait.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.index,
+            state=JobState.succeeded,
+            queue=JobQueue.cpu,
+            result=IndexJobResult(result=result_value),
         )
 
         result = self.invoke(
@@ -119,7 +142,7 @@ class CliTests(unittest.TestCase):
         )
 
         self.assertEqual(result.exit_code, 0, result.output)
-        command = self.service.create_index.call_args.args[0]
+        command = self.jobs.submit_index.call_args.args[0]
         self.assertIsInstance(command, CreateIndexCommand)
         self.assertEqual(command.modalities, ("scene",))
         self.assertEqual(command.frame_stride, 5)
@@ -187,7 +210,7 @@ class CliTests(unittest.TestCase):
             modalities=("scene",),
             checks=(),
         )
-        self.service.prepare_models.return_value = PrepareModelsResult(
+        prepared_value = PrepareModelsResult(
             prepared=("scene-model",),
             modalities=("scene",),
             runtime={
@@ -195,6 +218,19 @@ class CliTests(unittest.TestCase):
                 "torch_device": "cpu",
                 "transcription_device": "cpu",
             },
+        )
+        self.jobs.submit_prepare_models.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.prepare_models,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        self.jobs.wait.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.prepare_models,
+            state=JobState.succeeded,
+            queue=JobQueue.cpu,
+            result=PrepareModelsJobResult(result=prepared_value),
         )
 
         checked = self.invoke(
@@ -211,7 +247,7 @@ class CliTests(unittest.TestCase):
             ("scene",),
         )
         self.assertEqual(
-            self.service.prepare_models.call_args.args[0].modalities,
+            self.jobs.submit_prepare_models.call_args.args[0].modalities,
             ("scene",),
         )
 

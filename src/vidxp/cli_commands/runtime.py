@@ -100,6 +100,13 @@ def prepare(
         bool,
         typer.Option("--json", help="Emit machine-readable JSON."),
     ] = False,
+    detach: Annotated[
+        bool,
+        typer.Option(
+            "--detach",
+            help="Return after the durable job is queued.",
+        ),
+    ] = False,
 ) -> None:
     """Download and cache selected runtime models before indexing."""
 
@@ -109,24 +116,35 @@ def prepare(
         if modalities is None
         else parse_modalities(modalities, state.service.registry)
     )
-    result = state.service.prepare_models(
+    job = state.jobs.submit_prepare_models(
         PrepareModelsCommand(
             modalities=selected,
             capability_options=parse_capability_options(capability_options),
-        ),
-        progress_callback=(
-            None
-            if state.quiet
-            or effective_output_format(state, json_output)
-            == OutputFormat.json
-            else lambda event: typer.echo(event["message"])
-        ),
+        )
     )
+    if not detach:
+        show_progress = (
+            not state.quiet
+            and effective_output_format(state, json_output)
+            != OutputFormat.json
+        )
+        job = state.jobs.wait(
+            job.job_id,
+            progress=lambda current: (
+                typer.echo(current.progress.message)
+                if show_progress and current.progress is not None
+                else None
+            ),
+        )
     if effective_output_format(state, json_output) == OutputFormat.json:
-        emit_json(result.model_dump(mode="json"))
+        emit_json(job.model_dump(mode="json"))
     else:
         typer.secho(
-            "Selected VidXP runtime models are prepared.",
+            (
+                f"Model preparation job queued: {job.job_id}"
+                if detach
+                else f"Selected runtime models are prepared: {job.job_id}"
+            ),
             fg=typer.colors.GREEN,
             bold=True,
         )

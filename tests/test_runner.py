@@ -610,22 +610,12 @@ class RunnerTests(unittest.TestCase):
                     "vidxp.core.runner.run_index",
                     return_value=manifest,
                 ) as run,
-                patch(
-                    "vidxp.core.runner.write_index_status",
-                ) as write_status,
             ):
                 index_video(str(path), config=config)
 
             hash_source.assert_called_once()
             indexed_source = run.call_args.args[0][0]
             self.assertEqual(indexed_source.checksum, checksum)
-            self.assertTrue(
-                all(
-                    call.kwargs["index_directory"]
-                    == config.index_directory
-                    for call in write_status.call_args_list
-                )
-            )
 
     def test_manifest_and_timing_files_are_valid_json(self):
         with TemporaryDirectory() as directory:

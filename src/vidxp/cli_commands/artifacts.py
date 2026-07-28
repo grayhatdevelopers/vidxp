@@ -39,11 +39,18 @@ def create_snippet(
         bool,
         typer.Option("--json", help="Emit machine-readable JSON."),
     ] = False,
+    detach: Annotated[
+        bool,
+        typer.Option(
+            "--detach",
+            help="Return after the durable job is queued.",
+        ),
+    ] = False,
 ) -> None:
     """Create a managed video snippet artifact."""
 
     state = state_from_context(ctx)
-    artifact = state.service.create_snippet(
+    job = state.jobs.submit_snippet(
         CreateSnippetCommand(
             media_id=media_id,
             start_seconds=start_seconds,
@@ -51,12 +58,18 @@ def create_snippet(
             profile=profile,
         )
     )
-    payload = artifact.model_dump(mode="json")
+    if not detach:
+        job = state.jobs.wait(job.job_id)
+    payload = job.model_dump(mode="json")
     if effective_output_format(state, json_output) == OutputFormat.json:
         emit_json(payload)
     else:
         typer.secho(
-            f"Snippet artifact created: {artifact.artifact_id}",
+            (
+                f"Snippet job queued: {job.job_id}"
+                if detach
+                else f"Snippet artifact job completed: {job.job_id}"
+            ),
             fg=typer.colors.GREEN,
         )
 

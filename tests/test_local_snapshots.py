@@ -197,6 +197,138 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
             self.repository.generation_directory(a2.generation_id).is_dir()
         )
 
+    def test_completed_job_replay_returns_committed_generation(self):
+        config, reference = self.generation("a", input_sha="a" * 64)
+        committed = self.repository.publish_generation(reference, config)
+        backend = LocalIndexBackend(
+            Mock(),
+            Mock(),
+            self.repository.layout,
+        )
+        storage = MagicMock()
+        storage.__enter__.return_value = storage
+        build = IndexConfig.local(
+            video_id="a",
+            enabled_modalities=("scene",),
+            collection_names={"scene": "scene"},
+            storage_directory=self.repository.indexes,
+        )
+
+        with (
+            patch.object(
+                backend,
+                "_open_committed_storage",
+                return_value=storage,
+            ),
+            patch.object(backend, "_validate_snapshot_storage"),
+            patch(
+                "vidxp.infrastructure.local_index.index_video"
+            ) as index_video,
+        ):
+            result = backend.create(
+                Path("video.mp4"),
+                config=build,
+                progress=None,
+                cancellation=None,
+                source_name="video.mp4",
+                source_checksum="a" * 64,
+                operation_id=reference.generation_id,
+            )
+
+        self.assertEqual(result["generation_id"], reference.generation_id)
+        self.assertEqual(result["snapshot_id"], committed.snapshot_id)
+        index_video.assert_not_called()
+
+    def test_completed_generation_replay_publishes_without_rebuilding(self):
+        config, reference = self.generation("a", input_sha="a" * 64)
+        backend = LocalIndexBackend(
+            Mock(),
+            Mock(),
+            self.repository.layout,
+        )
+        build = IndexConfig.local(
+            video_id="a",
+            enabled_modalities=("scene",),
+            collection_names={"scene": "scene"},
+            storage_directory=self.repository.indexes,
+        )
+
+        with patch(
+            "vidxp.infrastructure.local_index.index_video"
+        ) as index_video:
+            result = backend.create(
+                Path("video.mp4"),
+                config=build,
+                progress=None,
+                cancellation=None,
+                source_name="video.mp4",
+                source_checksum="a" * 64,
+                operation_id=reference.generation_id,
+            )
+
+        self.assertEqual(result["generation_id"], reference.generation_id)
+        self.assertEqual(
+            self.repository.read_active(required=True)
+            .generations["a"]
+            .generation_id,
+            reference.generation_id,
+        )
+        index_video.assert_not_called()
+
+    def test_replay_repairs_counts_after_crash_before_generation_validation(self):
+        config, reference = self.generation("a", input_sha="a" * 64)
+        manifest_path = (
+            self.repository.generation_directory(reference.generation_id)
+            / MANIFEST_FILE
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest.pop("record_counts")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        backend = LocalIndexBackend(
+            Mock(),
+            Mock(),
+            self.repository.layout,
+        )
+        build = IndexConfig.local(
+            video_id="a",
+            enabled_modalities=("scene",),
+            collection_names={"scene": "scene"},
+            storage_directory=self.repository.indexes,
+        )
+        storage = MagicMock()
+        storage.__enter__.return_value = storage
+        storage.records.return_value = [
+            {
+                "generation_id": reference.generation_id,
+                "video_id": "a",
+                "modality": "scene",
+            }
+        ]
+
+        with (
+            patch(
+                "vidxp.infrastructure.local_index.IndexStorage",
+                return_value=storage,
+            ),
+            patch(
+                "vidxp.infrastructure.local_index.index_video"
+            ) as index_video,
+        ):
+            result = backend.create(
+                Path("video.mp4"),
+                config=build,
+                progress=None,
+                cancellation=None,
+                source_name="video.mp4",
+                source_checksum="a" * 64,
+                operation_id=reference.generation_id,
+            )
+
+        self.assertEqual(result["record_counts"], {"scene": 1})
+        repaired = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(repaired["record_counts"], {"scene": 1})
+        index_video.assert_not_called()
+
     def test_corrupt_or_missing_generation_fails_closed(self):
         config, reference = self.generation("a", input_sha="a" * 64)
         self.repository.publish_generation(reference, config)

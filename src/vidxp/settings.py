@@ -36,6 +36,12 @@ class VidXPSettings(BaseSettings):
     max_loaded_models: int = Field(default=3, gt=0, le=16)
     max_concurrent_indexing: int = Field(default=1, gt=0, le=16)
     max_concurrent_inference: int = Field(default=2, gt=0, le=64)
+    workflow_database_url: str | None = Field(default=None, min_length=1)
+    workflow_poll_interval_seconds: float = Field(
+        default=0.25,
+        gt=0,
+        le=10,
+    )
     cpu_thread_budget: int = Field(
         default_factory=lambda: min(256, max(1, os.cpu_count() or 1)),
         gt=0,

@@ -66,6 +66,10 @@ class RepositoryLayout(BaseModel):
     def local_workflows(self) -> Path:
         return self.root / "local-workflows"
 
+    @property
+    def workflow_database(self) -> Path:
+        return self.local_workflows / "jobs.sqlite3"
+
     def ensure_local_directories(self) -> None:
         for path in (
             self.root,

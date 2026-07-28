@@ -44,7 +44,6 @@ from vidxp.capabilities.contracts import (
 from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.capabilities.schemas import SearchResult
 from vidxp.core.contracts import (
-    CancellationToken,
     IndexCancelledError,
     IndexConfig,
     IndexSchemaError,
@@ -54,7 +53,7 @@ from vidxp.core.artifacts import (
     ArtifactRenderError,
     ArtifactRendererUnavailableError,
 )
-from vidxp.core.indexing_common import ProgressCallback
+from vidxp.execution import ExecutionContext, execution_context
 from vidxp.index_state import (
     INDEX_STATUS_SCHEMA,
     IndexingInProgressError,
@@ -335,9 +334,9 @@ class VidXPApplication:
         self,
         command: CreateIndexCommand,
         *,
-        progress_callback: ProgressCallback | None = None,
-        cancellation: CancellationToken | None = None,
+        execution: ExecutionContext | None = None,
     ) -> IndexResult:
+        active_execution = execution_context(execution)
         selected = self.registry.validate_names(command.modalities)
         non_indexable = [
             name
@@ -368,8 +367,9 @@ class VidXPApplication:
                 result = self.index_backend.create(
                     content.path,
                     config=config,
-                    progress=progress_callback,
-                    cancellation=cancellation,
+                    progress=active_execution.report,
+                    cancellation=active_execution.cancellation,
+                    operation_id=active_execution.operation_id,
                     source_name=media.original_filename,
                     source_checksum=media.sha256,
                 )
@@ -399,8 +399,9 @@ class VidXPApplication:
         self,
         command: PrepareModelsCommand,
         *,
-        progress_callback: ProgressCallback | None = None,
+        execution: ExecutionContext | None = None,
     ) -> PrepareModelsResult:
+        active_execution = execution_context(execution)
         selected = self.registry.validate_names(command.modalities)
         options = self.registry.validate_options(
             selected,
@@ -418,6 +419,7 @@ class VidXPApplication:
         with self.runtime.scheduler.inference():
             with self._capability_dependencies(selected):
                 for name in selected:
+                    active_execution.checkpoint()
                     executor = self.registry.executor(name)
                     if executor.prepare is not None:
                         prepared.extend(
@@ -427,9 +429,10 @@ class VidXPApplication:
                                     settings=self.registry.get(name)
                                     .config_model.model_validate(options[name]),
                                 ),
-                                progress_callback,
+                                active_execution.report,
                             )
                         )
+                    active_execution.checkpoint()
         return PrepareModelsResult(
             prepared=tuple(prepared),
             modalities=selected,
@@ -537,10 +540,20 @@ class VidXPApplication:
     def render_actor(
         self,
         command: CreateActorOverlayCommand,
+        *,
+        execution: ExecutionContext | None = None,
     ) -> Artifact:
+        active_execution = execution_context(execution)
+        active_execution.report(
+            {
+                "stage": "resolving_detections",
+                "message": "Resolving actor detections.",
+            }
+        )
         detections = []
         cursor = None
         while True:
+            active_execution.checkpoint()
             page = self.actor_detections(
                 command.cluster_id,
                 page_size=100,
@@ -569,11 +582,23 @@ class VidXPApplication:
                 for detection in detections
             ],
             profile=command.profile,
+            job_id=active_execution.job_id,
+            execution=active_execution,
         )
 
     @application_boundary
-    def create_snippet(self, command: CreateSnippetCommand) -> Artifact:
-        return self.artifact_service.create_snippet(command)
+    def create_snippet(
+        self,
+        command: CreateSnippetCommand,
+        *,
+        execution: ExecutionContext | None = None,
+    ) -> Artifact:
+        active_execution = execution_context(execution)
+        return self.artifact_service.create_snippet(
+            command,
+            job_id=active_execution.job_id,
+            execution=active_execution,
+        )
 
     @application_boundary
     def clear_index(self) -> bool:

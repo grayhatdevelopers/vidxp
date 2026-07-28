@@ -1,0 +1,208 @@
+from __future__ import annotations
+
+from functools import wraps
+from time import sleep
+from typing import Any, Callable
+
+from vidxp.application_models import (
+    ActorOverlayJobRequest,
+    ApplicationError,
+    CreateActorOverlayCommand,
+    CreateIndexCommand,
+    CreateSnippetCommand,
+    ErrorCategory,
+    IndexJobRequest,
+    Job,
+    JobPage,
+    JobQueue,
+    JobResult,
+    JobState,
+    InvalidRequestError,
+    ListJobsCommand,
+    PrepareModelsCommand,
+    PrepareModelsJobRequest,
+    ResourceNotFoundError,
+    SnippetJobRequest,
+)
+from vidxp.ports import InvalidJobBackendRequestError, JobBackend
+from vidxp.settings import VidXPSettings
+
+
+def job_boundary(handler: Callable) -> Callable:
+    """Translate job-backend failures once for every adapter."""
+
+    @wraps(handler)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return handler(*args, **kwargs)
+        except ApplicationError:
+            raise
+        except InvalidJobBackendRequestError as exc:
+            raise InvalidRequestError() from exc
+        except Exception as exc:
+            raise ApplicationError(
+                "job_backend_unavailable",
+                ErrorCategory.unavailable,
+                "The durable job backend is unavailable.",
+                retryable=True,
+            ) from exc
+
+    return wrapped
+
+
+class JobService:
+    """Transport-neutral durable job commands backed by one workflow engine."""
+
+    def __init__(
+        self,
+        *,
+        settings: VidXPSettings,
+        backend: JobBackend,
+    ) -> None:
+        self.settings = settings
+        self.backend = backend
+
+    @job_boundary
+    def submit_index(
+        self,
+        command: CreateIndexCommand,
+    ) -> Job:
+        return self.backend.submit(
+            IndexJobRequest(command=command),
+            queue=self._model_queue(),
+        )
+
+    @job_boundary
+    def submit_snippet(
+        self,
+        command: CreateSnippetCommand,
+    ) -> Job:
+        return self.backend.submit(
+            SnippetJobRequest(command=command),
+            queue=JobQueue.cpu,
+        )
+
+    @job_boundary
+    def submit_actor_overlay(
+        self,
+        command: CreateActorOverlayCommand,
+    ) -> Job:
+        return self.backend.submit(
+            ActorOverlayJobRequest(command=command),
+            queue=JobQueue.cpu,
+        )
+
+    @job_boundary
+    def submit_prepare_models(
+        self,
+        command: PrepareModelsCommand,
+    ) -> Job:
+        return self.backend.submit(
+            PrepareModelsJobRequest(command=command),
+            queue=self._model_queue(),
+        )
+
+    @job_boundary
+    def get(self, job_id: str) -> Job:
+        job = self.backend.get(job_id)
+        if job is None:
+            raise ResourceNotFoundError("job")
+        return job
+
+    @job_boundary
+    def list(self, command: ListJobsCommand) -> JobPage:
+        return self.backend.list(command)
+
+    @job_boundary
+    def cancel(self, job_id: str) -> Job:
+        current = self.get(job_id)
+        if current.state in {
+            JobState.succeeded,
+            JobState.failed,
+            JobState.cancelled,
+            JobState.recovery_exhausted,
+        }:
+            return current
+        cancelled = self.backend.cancel(job_id)
+        if cancelled is None:
+            raise ResourceNotFoundError("job")
+        return cancelled
+
+    @job_boundary
+    def retry(self, job_id: str) -> Job:
+        current = self.get(job_id)
+        if current.state not in {
+            JobState.failed,
+            JobState.cancelled,
+            JobState.recovery_exhausted,
+        }:
+            raise ApplicationError(
+                "job_not_retryable",
+                ErrorCategory.conflict,
+                "Only failed or cancelled jobs can be retried.",
+            )
+        retried = self.backend.retry(job_id)
+        if retried is None:
+            raise ResourceNotFoundError("job")
+        return retried
+
+    @job_boundary
+    def result(self, job_id: str) -> JobResult:
+        job = self.get(job_id)
+        if job.state == JobState.cancelled:
+            raise ApplicationError(
+                "job_cancelled",
+                ErrorCategory.cancelled,
+                "The job was cancelled.",
+            )
+        if job.state != JobState.succeeded:
+            if job.error is not None:
+                raise ApplicationError(
+                    job.error.code,
+                    job.error.category,
+                    job.error.message,
+                    details=job.error.details,
+                    retryable=job.error.retryable,
+                )
+            raise ApplicationError(
+                "job_not_complete",
+                ErrorCategory.conflict,
+                "The job has not completed successfully.",
+                retryable=job.state in {JobState.queued, JobState.running},
+            )
+        if job.result is None:
+            raise ApplicationError(
+                "job_result_unavailable",
+                ErrorCategory.internal,
+                "The completed job result is unavailable.",
+            )
+        return job.result
+
+    @job_boundary
+    def wait(
+        self,
+        job_id: str,
+        *,
+        progress: Callable[[Job], None] | None = None,
+    ) -> Job:
+        last_progress = None
+        while True:
+            job = self.get(job_id)
+            if progress is not None and job.progress != last_progress:
+                progress(job)
+                last_progress = job.progress
+            if job.state not in {JobState.queued, JobState.running}:
+                if job.state != JobState.succeeded:
+                    self.result(job.job_id)
+                return job
+            sleep(self.settings.workflow_poll_interval_seconds)
+
+    def _model_queue(self) -> JobQueue:
+        return (
+            JobQueue.gpu
+            if self.settings.runtime_backend.startswith("cuda")
+            else JobQueue.cpu
+        )
+
+    def close(self) -> None:
+        self.backend.close()

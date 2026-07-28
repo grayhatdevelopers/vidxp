@@ -167,6 +167,13 @@ def actors_render(
         bool,
         typer.Option("--json", help="Emit machine-readable JSON."),
     ] = False,
+    detach: Annotated[
+        bool,
+        typer.Option(
+            "--detach",
+            help="Return after the durable job is queued.",
+        ),
+    ] = False,
 ) -> None:
     """Render one actor cluster as a result video."""
 
@@ -191,18 +198,24 @@ def actors_render(
         cursor = page.next_cursor
     if selected is None:
         raise typer.BadParameter("Actor cluster was not found.")
-    result = state.service.render_actor(
+    job = state.jobs.submit_actor_overlay(
         CreateActorOverlayCommand(
             cluster_id=cluster_id,
             media_id=selected.media_id,
             generation_id=selected.generation_id,
         )
     )
-    payload = result.model_dump(mode="json")
+    if not detach:
+        job = state.jobs.wait(job.job_id)
+    payload = job.model_dump(mode="json")
     if effective_output_format(state, json_output) == OutputFormat.json:
         emit_json(payload)
     else:
         typer.secho(
-            f"Actor overlay artifact created: {result.artifact_id}",
+            (
+                f"Actor overlay job queued: {job.job_id}"
+                if detach
+                else f"Actor overlay job completed: {job.job_id}"
+            ),
             fg=typer.colors.GREEN,
         )

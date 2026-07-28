@@ -12,6 +12,7 @@ from vidxp import __version__
 from vidxp.application_models import ApplicationError
 from vidxp.cli_commands.actors import app as actor_app
 from vidxp.cli_commands.index import app as index_app
+from vidxp.cli_commands.jobs import app as jobs_app
 from vidxp.cli_commands.media import app as media_app
 from vidxp.cli_commands.artifacts import app as artifacts_app
 from vidxp.cli_commands.repositories import app as repositories_app
@@ -27,6 +28,7 @@ app = typer.Typer(
     help="Index and search video with installable capabilities.",
 )
 app.add_typer(index_app, name="index")
+app.add_typer(jobs_app, name="jobs")
 app.add_typer(media_app, name="media")
 app.add_typer(artifacts_app, name="artifacts")
 app.command("search")(search)
@@ -120,6 +122,7 @@ def app_options(
     )
     ctx.obj = CLIState(
         service=local.application,
+        jobs=local.jobs,
         registry=local.repositories,
         repository=local.repository,
         output_format=output_format,
