@@ -17,7 +17,7 @@ from packaging.requirements import Requirement
 from vidxp.core.contracts import IndexConfig, VideoSource
 from vidxp.core.indexing_common import ProgressCallback
 from vidxp.model_contracts import ArtifactSpec, ModelSpec
-from vidxp.ports import IndexStore, ModelRuntimePort
+from vidxp.ports import IndexReader, ModelRuntimePort
 from vidxp.application_models import CapabilityProvenance
 
 
@@ -92,14 +92,14 @@ class CapabilityContext(_ContractModel):
 
     config: IndexConfig | None
     runtime: ModelRuntimePort
-    storage: IndexStore | None = None
+    storage: IndexReader | None = None
 
     def require_config(self) -> IndexConfig:
         if self.config is None:
             raise RuntimeError("This operation requires an active index.")
         return self.config
 
-    def require_storage(self) -> IndexStore:
+    def require_storage(self) -> IndexReader:
         if self.storage is None:
             raise RuntimeError("This operation requires an active index store.")
         return self.storage

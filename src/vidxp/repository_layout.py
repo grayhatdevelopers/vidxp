@@ -24,13 +24,15 @@ class RepositoryLayout(BaseModel):
 
     @property
     def local_index(self) -> Path:
-        """Single-index location until generation snapshots land in phase 3."""
-
-        return self.indexes / "current"
+        return self.indexes
 
     @property
     def generations(self) -> Path:
         return self.indexes / "generations"
+
+    @property
+    def index_store(self) -> Path:
+        return self.indexes / "store"
 
     @property
     def snapshots(self) -> Path:
@@ -39,6 +41,10 @@ class RepositoryLayout(BaseModel):
     @property
     def active_snapshot(self) -> Path:
         return self.indexes / "active-snapshot.json"
+
+    @property
+    def index_lease(self) -> Path:
+        return self.indexes / ".repository.lock"
 
     @property
     def artifacts(self) -> Path:
@@ -53,6 +59,9 @@ class RepositoryLayout(BaseModel):
             self.root,
             self.media,
             self.indexes,
+            self.index_store,
+            self.generations,
+            self.snapshots,
             self.artifacts,
             self.local_workflows,
         ):

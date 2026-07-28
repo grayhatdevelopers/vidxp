@@ -2,33 +2,26 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any, Generic, Mapping, TypeAlias, TypeVar
+from typing import Any, Generic, Mapping, TypeVar
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     JsonValue,
-    StringConstraints,
 )
 
+from vidxp.core.identifiers import (
+    ArtifactId as ArtifactId,
+    Identifier as Identifier,
+    IndexGenerationId as IndexGenerationId,
+    IndexSnapshotId as IndexSnapshotId,
+    JobId as JobId,
+    MediaId as MediaId,
+    RepositoryId as RepositoryId,
+    VideoId as VideoId,
+)
 
-Identifier: TypeAlias = Annotated[
-    str,
-    StringConstraints(
-        strip_whitespace=True,
-        min_length=1,
-        max_length=255,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
-    ),
-]
-RepositoryId: TypeAlias = Identifier
-MediaId: TypeAlias = Identifier
-VideoId: TypeAlias = Identifier
-IndexGenerationId: TypeAlias = Identifier
-IndexSnapshotId: TypeAlias = Identifier
-JobId: TypeAlias = Identifier
-ArtifactId: TypeAlias = Identifier
 T = TypeVar("T")
 
 
@@ -176,6 +169,7 @@ class CapabilityDependencyCheck(ApplicationModel):
 
 class CreateIndexCommand(ApplicationModel):
     path: Path
+    media_id: MediaId | None = None
     modalities: tuple[str, ...]
     frame_stride: int = Field(default=1, gt=0)
     capability_options: Mapping[str, Mapping[str, Any]] = Field(
@@ -186,6 +180,10 @@ class CreateIndexCommand(ApplicationModel):
 
 class IndexResult(ApplicationModel):
     summary: Mapping[str, Any]
+
+
+class RemoveIndexCommand(ApplicationModel):
+    media_id: MediaId
 
 
 class IndexStatus(ApplicationModel):

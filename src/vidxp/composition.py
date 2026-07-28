@@ -56,7 +56,7 @@ def create_application(
             ErrorCategory.unavailable,
             "The requested runtime backend is unavailable.",
         ) from exc
-    backend = LocalIndexBackend(registry, runtime)
+    backend = LocalIndexBackend(registry, runtime, active_settings.layout)
     return VidXPApplication(
         settings=active_settings,
         layout=active_settings.layout,

@@ -65,31 +65,10 @@ class ModelRuntimePort(Protocol):
 
 
 @runtime_checkable
-class IndexStore(Protocol):
-    """Vector records used by capability handlers."""
-
-    def clear(self, modalities: Iterable[str] | None = None) -> None: ...
-
-    def delete_video(self, modality: str, video_id: str) -> None: ...
-
-    def delete_records(
-        self,
-        modality: str,
-        *,
-        video_id: str,
-        filters: Mapping[str, Any] | None = None,
-    ) -> None: ...
+class IndexReader(Protocol):
+    """Read-only vector records available to application queries."""
 
     def size_bytes(self) -> int: ...
-
-    def upsert(
-        self,
-        modality: str,
-        records: list[StorageRecord],
-        *,
-        batch_size: int,
-        cancellation: CancellationToken,
-    ) -> int: ...
 
     def query(
         self,
@@ -100,6 +79,38 @@ class IndexStore(Protocol):
         video_id: str | None = None,
         filters: Mapping[str, Any] | None = None,
     ) -> list[dict[str, Any]]: ...
+
+
+@runtime_checkable
+class IndexStore(IndexReader, Protocol):
+    """Mutable vector records available only to indexing infrastructure."""
+
+    def clear(self, modalities: Iterable[str] | None = None) -> None: ...
+
+    def delete_video(self, modality: str, video_id: str) -> None: ...
+
+    def delete_generation(
+        self,
+        generation_id: str,
+        modalities: Iterable[str] | None = None,
+    ) -> None: ...
+
+    def delete_records(
+        self,
+        modality: str,
+        *,
+        video_id: str,
+        filters: Mapping[str, Any] | None = None,
+    ) -> None: ...
+
+    def upsert(
+        self,
+        modality: str,
+        records: list[StorageRecord],
+        *,
+        batch_size: int,
+        cancellation: CancellationToken,
+    ) -> int: ...
 
     def records(
         self,
@@ -134,6 +145,8 @@ class IndexBackend(Protocol):
 
     def indexing_in_progress(self, config: IndexConfig) -> bool: ...
 
-    def open_store(self, config: IndexConfig) -> ContextManager[IndexStore]: ...
+    def open_store(self, config: IndexConfig) -> ContextManager[IndexReader]: ...
 
-    def clear(self, config: IndexConfig) -> None: ...
+    def remove(self, config: IndexConfig, media_id: str) -> bool: ...
+
+    def clear(self, config: IndexConfig) -> bool: ...

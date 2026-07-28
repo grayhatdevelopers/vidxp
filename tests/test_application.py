@@ -16,9 +16,10 @@ from vidxp.application_models import (
     DependencyUnavailableError,
     IndexResult,
     PrepareModelsCommand,
+    RemoveIndexCommand,
     SearchCommand,
 )
-from vidxp.core.contracts import IndexConfig
+from vidxp.core.contracts import IndexConfig, IndexSchemaError
 from vidxp.infrastructure.local_index import LocalIndexBackend
 from vidxp.capabilities.contracts import (
     CapabilityDefinition,
@@ -144,7 +145,7 @@ class ApplicationTests(unittest.TestCase):
 
         self.assertEqual(status.state, "missing")
         self.assertEqual(status.schema_version, 1)
-        self.assertEqual(status.index_directory, Path("missing/indexes/current"))
+        self.assertEqual(status.index_directory, Path("missing/indexes"))
 
     def test_create_index_builds_one_central_config(self):
         with TemporaryDirectory() as directory:
@@ -577,72 +578,130 @@ class ApplicationTests(unittest.TestCase):
             self.assertTrue((index / "manifest.json").exists())
             self.assertTrue(unrelated.exists())
 
-    def test_local_backend_owns_vector_and_metadata_cleanup(self):
+    def test_remove_delegates_to_index_backend(self):
+        application, backend = self.application("repository")
+        backend.remove.return_value = True
+
+        self.assertTrue(
+            application.remove_from_index(
+                RemoveIndexCommand(media_id="episode-1")
+            )
+        )
+
+        config, media_id = backend.remove.call_args.args
+        self.assertEqual(
+            Path(config.storage_directory),
+            Path("repository") / "indexes",
+        )
+        self.assertEqual(media_id, "episode-1")
+
+    def test_generation_storage_validation_checks_identity_and_count(self):
+        config = IndexConfig.local(
+            video_id="episode-1",
+            generation_id="generation-1",
+            enabled_modalities=("scene",),
+            collection_names={"scene": "scene"},
+        )
+        storage = Mock()
+        storage.records.return_value = [
+            {
+                "generation_id": "generation-1",
+                "video_id": "episode-1",
+                "modality": "scene",
+            }
+        ]
+        LocalIndexBackend._validate_generation_records(
+            storage,
+            config,
+            {"scene": 1},
+        )
+
+        with self.assertRaisesRegex(
+            IndexSchemaError,
+            "record count",
+        ):
+            LocalIndexBackend._validate_generation_records(
+                storage,
+                config,
+                {"scene": 2},
+            )
+
+    def test_local_backend_injects_storage_for_generation_build(self):
         with TemporaryDirectory() as directory:
-            index = Path(directory) / "index"
-            index.mkdir()
-            (index / "manifest.json").write_text("{}", encoding="utf-8")
-            unrelated = index / "keep.txt"
-            unrelated.write_text("keep", encoding="utf-8")
             settings = VidXPSettings(
                 repository_root=directory,
                 runtime_backend="cpu",
             )
             registry = create_capability_registry()
-            backend = LocalIndexBackend(registry, ModelRuntime(settings))
+            backend = LocalIndexBackend(
+                registry,
+                ModelRuntime(settings),
+                settings.layout,
+            )
             storage = MagicMock()
             storage.__enter__.return_value = storage
-            config = IndexConfig.local(storage_directory=index)
-
-            with patch(
-                "vidxp.infrastructure.local_index.IndexStorage",
-                return_value=storage,
-            ):
-                backend.clear(config)
-
-            storage.clear.assert_called_once_with()
-            self.assertFalse((index / "manifest.json").exists())
-            self.assertTrue(unrelated.exists())
-
-    def test_local_backend_injects_and_closes_storage_for_indexing(self):
-        settings = VidXPSettings(
-            repository_root="unused",
-            runtime_backend="cpu",
-        )
-        registry = create_capability_registry()
-        backend = LocalIndexBackend(registry, ModelRuntime(settings))
-        storage = MagicMock()
-        storage.__enter__.return_value = storage
-        config = IndexConfig.local(
-            enabled_modalities=("scene",),
-            collection_names={"scene": "scene"},
-        )
-
-        with (
-            patch(
-                "vidxp.infrastructure.local_index.IndexStorage",
-                return_value=storage,
-            ),
-            patch(
-                "vidxp.infrastructure.local_index.index_video",
-                return_value={"scene_frames": 1},
-            ) as index_video,
-        ):
-            result = backend.create(
-                Path("video.mp4"),
-                config=config,
-                progress=None,
-                cancellation=None,
-                source_name=None,
+            config = IndexConfig.local(
+                enabled_modalities=("scene",),
+                collection_names={"scene": "scene"},
+                storage_directory=settings.layout.indexes,
             )
+            snapshot = Mock(
+                snapshot_id="a" * 32,
+                generations={"media": Mock()},
+            )
+            with (
+                patch(
+                    "vidxp.infrastructure.local_index.IndexStorage",
+                    return_value=storage,
+                ),
+                patch(
+                    "vidxp.infrastructure.local_index.index_video",
+                    return_value={"scene_frames": 1},
+                ) as index_video,
+                patch(
+                    "vidxp.infrastructure.local_index.source_checksum",
+                    return_value="1" * 64,
+                ),
+                patch(
+                    "vidxp.infrastructure.local_index.LocalSnapshotRepository."
+                    "generation_reference",
+                    return_value=Mock(),
+                ),
+                patch(
+                    "vidxp.infrastructure.local_index.LocalSnapshotRepository."
+                    "publish_generation",
+                    return_value=snapshot,
+                ),
+                patch.object(
+                    LocalIndexBackend,
+                    "_validate_generation_records",
+                    return_value={"scene": 1},
+                ),
+                patch(
+                    "vidxp.infrastructure.local_index.ManifestStore."
+                    "record_storage_counts",
+                ),
+            ):
+                result = backend.create(
+                    Path("video.mp4"),
+                    config=config,
+                    progress=None,
+                    cancellation=None,
+                    source_name=None,
+                )
 
-        self.assertEqual(result, {"scene_frames": 1})
-        self.assertIs(index_video.call_args.kwargs["storage"], storage)
-        self.assertIs(
-            index_video.call_args.kwargs["manifest_store"].runtime,
-            backend.runtime,
-        )
-        storage.__exit__.assert_called_once()
+            self.assertEqual(result["scene_frames"], 1)
+            self.assertEqual(result["media_id"], "1" * 64)
+            self.assertEqual(result["snapshot_id"], "a" * 32)
+            self.assertIs(index_video.call_args.kwargs["storage"], storage)
+            self.assertIs(
+                index_video.call_args.kwargs["manifest_store"].runtime,
+                backend.runtime,
+            )
+            self.assertIsNotNone(
+                index_video.call_args.kwargs["config"].generation_id
+            )
+            storage.__exit__.assert_called_once()
 
 
 if __name__ == "__main__":

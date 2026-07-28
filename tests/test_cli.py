@@ -15,6 +15,7 @@ from vidxp.application_models import (
     IndexResult,
     IndexStatus,
     PrepareModelsResult,
+    RemoveIndexCommand,
     SearchCommand,
 )
 from vidxp.capabilities.registry import create_capability_registry
@@ -27,7 +28,7 @@ class CliTests(unittest.TestCase):
         self.runner = CliRunner()
         self.service = Mock()
         self.service.registry = create_capability_registry()
-        self.service.index_directory = Path("repo/indexes/current")
+        self.service.index_directory = Path("repo/indexes")
         self.service.layout.root = Path("repo")
         self.service.runtime.backends.requested = "cpu"
         self.registry = Mock(spec=RepositoryRegistry)
@@ -105,6 +106,36 @@ class CliTests(unittest.TestCase):
         self.assertIsInstance(command, CreateIndexCommand)
         self.assertEqual(command.modalities, ("scene",))
         self.assertEqual(command.frame_stride, 5)
+        self.assertIsNone(command.media_id)
+
+    def test_media_id_and_remove_use_shared_commands(self):
+        with TemporaryDirectory() as directory:
+            video = Path(directory) / "video.mp4"
+            video.write_bytes(b"video")
+            self.service.create_index.return_value = IndexResult(summary={})
+            created = self.invoke(
+                [
+                    "--format",
+                    "json",
+                    "index",
+                    "create",
+                    str(video),
+                    "--media-id",
+                    "episode-1",
+                ]
+            )
+
+        self.assertEqual(created.exit_code, 0, created.output)
+        self.assertEqual(
+            self.service.create_index.call_args.args[0].media_id,
+            "episode-1",
+        )
+        self.service.remove_from_index.return_value = True
+        removed = self.invoke(["index", "remove", "episode-1", "--json"])
+        self.assertEqual(removed.exit_code, 0, removed.output)
+        self.service.remove_from_index.assert_called_once_with(
+            RemoveIndexCommand(media_id="episode-1")
+        )
 
     def test_status_serializes_shared_model(self):
         self.service.index_status.return_value = IndexStatus(
@@ -113,7 +144,7 @@ class CliTests(unittest.TestCase):
             stage="status",
             message="No index.",
             repository_root=Path("repo"),
-            index_directory=Path("repo/indexes/current"),
+            index_directory=Path("repo/indexes"),
         )
 
         result = self.invoke(["index", "status", "--json"])

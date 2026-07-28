@@ -229,7 +229,7 @@ VidXP is an evolving beta. We'd love to hear your feedback and where you'd like 
 |---|---|---|
 | Search results | Top result in the CLI; structured top-k Python results | Rich ranked results, metadata, previews, and filtering across interfaces |
 | Temporal search | Frame and transcript-phrase timestamps | Better time ranges, scene boundaries, aggregation, and ranking |
-| Video collections | One local CLI/UI index; isolated multi-video Python runs | User-facing persistent multi-video libraries and index management |
+| Video collections | Persistent local multi-video snapshots with incremental re-index/remove | Media catalog, remote ingestion, and richer library management |
 | Actor workflows | Face clustering and highlighted video export | Cluster browsing, labeling, actor search, and stronger tracking |
 | Speaker context | Timestamped dialogue search | Active-speaker detection and links between speech and visible people |
 | Product experience | CLI and browser indexing/search | Clearer progress, result navigation, recovery, and long-running job controls |
@@ -245,11 +245,14 @@ VidXP is an evolving beta. We'd love to hear your feedback and where you'd like 
 | Actor detection | OpenCV Zoo YuNet |
 | Actor recognition | OpenCV Zoo SFace |
 
-VidXP maintains the standard local CLI/UI index in `chroma_data/`. Starting a
-new local indexing run replaces the previous or incomplete local index. Model
-caches normally live outside this directory and outside the virtual environment.
-Provider revisions and weight checksums are pinned in capability specs and
-recorded in the index manifest.
+VidXP maintains the standard local CLI/UI repository in `chroma_data/`. Each
+successful indexing run creates an immutable generation and atomically publishes
+a multi-media snapshot. Re-indexing replaces only that media item's active
+generation; removing or clearing media publishes a new snapshot without deleting
+the retained generations first. Failed and cancelled runs do not replace the
+active snapshot. Model caches normally live outside this directory and outside
+the virtual environment. Provider revisions and weight checksums are pinned in
+capability specs and recorded in each generation manifest.
 
 ## Documentation and project links
 

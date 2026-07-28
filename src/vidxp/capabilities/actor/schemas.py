@@ -40,6 +40,7 @@ class ActorDetection(CapabilityOutput):
     split: str
     run_id: str
     video_id: str
+    generation_id: str | None = None
     modality: str
     source_id: str
 

@@ -4,7 +4,10 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from vidxp.capabilities.actor.indexing import _actor_records
+from vidxp.capabilities.actor.indexing import (
+    _actor_cluster_id,
+    _actor_records,
+)
 from vidxp.capabilities.contracts import (
     CapabilityDefinition,
     CapabilityExecutor,
@@ -287,13 +290,15 @@ class IndexingTests(unittest.TestCase):
             split="test",
             run_id="actors",
             video_id="video-1",
+            generation_id="generation-1",
             enabled_modalities=("actor",),
         )
+        cluster_id = _actor_cluster_id(config, 1)
         records = _actor_records(
             [
                 {
                     "detection_id": "d000000000000-0000",
-                    "cluster_id": "1",
+                    "cluster_id": cluster_id,
                     "frame_index": 0,
                     "timestamp": 0.0,
                     "bbox": (1, 2, 3, 0),
@@ -302,8 +307,29 @@ class IndexingTests(unittest.TestCase):
             config,
         )
 
-        self.assertEqual(records[0].metadata["cluster_id"], "1")
+        self.assertEqual(records[0].metadata["cluster_id"], cluster_id)
+        self.assertEqual(
+            cluster_id,
+            "generation-1:actors:video-1:actor-cluster:1",
+        )
         self.assertEqual(records[0].metadata["bbox_top"], 1)
+
+    def test_actor_cluster_identity_is_unique_by_media_and_generation(self):
+        def config(video_id, generation_id):
+            return IndexConfig(
+                run_id="actors",
+                video_id=video_id,
+                generation_id=generation_id,
+                enabled_modalities=("actor",),
+            )
+
+        identities = {
+            _actor_cluster_id(config("video-1", "generation-1"), 1),
+            _actor_cluster_id(config("video-2", "generation-1"), 1),
+            _actor_cluster_id(config("video-1", "generation-2"), 1),
+        }
+
+        self.assertEqual(len(identities), 3)
 
 
 if __name__ == "__main__":

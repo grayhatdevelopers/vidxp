@@ -91,17 +91,3 @@ def write_index_status(
     )
     temporary_path.replace(status_path)
     return payload
-
-
-def require_ready_index(
-    index_directory: str | Path = INDEX_DIRECTORY,
-) -> dict[str, Any]:
-    status = read_index_status(index_directory)
-    if status is None:
-        raise IndexNotReadyError(
-            "No completed video index was found. Index a video before searching."
-        )
-    if status.get("state") != "ready":
-        message = status.get("message", "The video index is not ready.")
-        raise IndexNotReadyError(message)
-    return status

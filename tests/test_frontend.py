@@ -114,7 +114,7 @@ class FrontendTests(unittest.TestCase):
                 stage="complete",
                 message="ready",
                 repository_root=root,
-                index_directory=root / "indexes/current",
+                index_directory=root / "indexes",
             )
             service.search.return_value = SearchResult(
                 query_id="scene:1",

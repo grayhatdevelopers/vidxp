@@ -36,6 +36,23 @@ def _best_face_match(known_encodings, encoding, threshold):
     return match if similarities[match] >= threshold else None
 
 
+def _actor_cluster_id(
+    config: IndexConfig,
+    local_cluster_id: str | int,
+) -> str:
+    if config.video_id is None:
+        raise ValueError(
+            "IndexConfig.video_id is required for actor cluster identity."
+        )
+    return stable_source_id(
+        config.run_id,
+        config.video_id,
+        "actor-cluster",
+        local_cluster_id,
+        generation_id=config.generation_id,
+    )
+
+
 def _actor_records(
     detections,
     config: IndexConfig,
@@ -47,6 +64,7 @@ def _actor_records(
             str(config.video_id),
             "actor",
             detection["detection_id"],
+            generation_id=config.generation_id,
         )
         top, right, bottom, left = detection["bbox"]
         records.append(
@@ -110,7 +128,10 @@ def process_actor_samples(
                     settings.match_threshold,
                 )
                 if match is None:
-                    cluster_id = str(len(state.known_ids) + 1)
+                    cluster_id = _actor_cluster_id(
+                        config,
+                        len(state.known_ids) + 1,
+                    )
                     state.known_ids.append(cluster_id)
                     state.known_encodings.append(encoding)
                     state.histories[cluster_id] = [encoding]

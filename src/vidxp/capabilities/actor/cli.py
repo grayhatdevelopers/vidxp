@@ -62,12 +62,14 @@ def actors_list(
         return
     table = Table(title="Actor clusters")
     table.add_column("Cluster")
+    table.add_column("Media")
     table.add_column("Detections", justify="right")
     table.add_column("First", justify="right")
     table.add_column("Last", justify="right")
     for cluster in clusters:
         table.add_row(
             cluster.cluster_id,
+            cluster.video_id,
             str(cluster.detection_count),
             f"{cluster.first_timestamp:.3f}s",
             f"{cluster.last_timestamp:.3f}s",

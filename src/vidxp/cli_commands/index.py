@@ -5,7 +5,7 @@ from typing import Annotated, Iterable
 
 import typer
 
-from vidxp.application_models import CreateIndexCommand
+from vidxp.application_models import CreateIndexCommand, RemoveIndexCommand
 from vidxp.cli_support import (
     CLIState,
     IndexProgress,
@@ -26,6 +26,7 @@ def create_index(
     state: CLIState,
     path: Path,
     *,
+    media_id: str | None,
     modalities: Iterable[str],
     frame_stride: int,
     capability_options: dict[str, dict],
@@ -37,6 +38,7 @@ def create_index(
         result = state.service.create_index(
             CreateIndexCommand(
                 path=path,
+                media_id=media_id,
                 modalities=tuple(modalities),
                 frame_stride=frame_stride,
                 capability_options=capability_options,
@@ -76,6 +78,15 @@ def index_create(
             help="Modality to index; repeat to select more than one.",
         ),
     ] = None,
+    media_id: Annotated[
+        str | None,
+        typer.Option(
+            "--media-id",
+            help=(
+                "Stable media identifier. Defaults to the input content hash."
+            ),
+        ),
+    ] = None,
     frame_stride: Annotated[
         int,
         typer.Option(
@@ -95,12 +106,13 @@ def index_create(
         ),
     ] = None,
 ) -> None:
-    """Create or replace a local index for one video."""
+    """Add media or replace its immutable generation in the active index."""
 
     state = state_from_context(ctx)
     create_index(
         state,
         path,
+        media_id=media_id,
         modalities=selected_modalities(
             modalities,
             state.service.registry,
@@ -108,6 +120,35 @@ def index_create(
         frame_stride=frame_stride,
         capability_options=parse_capability_options(capability_options),
     )
+
+
+@app.command("remove")
+def index_remove(
+    ctx: typer.Context,
+    media_id: Annotated[
+        str,
+        typer.Argument(help="Media identifier to remove from the active index."),
+    ],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Remove one media item from the active snapshot."""
+
+    state = state_from_context(ctx)
+    removed = state.service.remove_from_index(
+        RemoveIndexCommand(media_id=media_id)
+    )
+    payload = {"removed": removed, "media_id": media_id}
+    if effective_output_format(state, json_output) == OutputFormat.json:
+        emit_json(payload)
+    else:
+        typer.echo(
+            "Media removed."
+            if removed
+            else "The media identifier was not in the active index."
+        )
 
 
 @app.command("status")
@@ -139,12 +180,12 @@ def index_clear(
         typer.Option("--json", help="Emit machine-readable JSON."),
     ] = False,
 ) -> None:
-    """Clear indexed records and VidXP run state."""
+    """Publish an empty active snapshot without deleting retained generations."""
 
     state = state_from_context(ctx)
     if not yes:
         typer.confirm(
-            f"Clear the local index at {state.service.index_directory}?",
+            f"Clear the active index at {state.service.index_directory}?",
             abort=True,
         )
     cleared = state.service.clear_index()

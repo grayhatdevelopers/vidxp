@@ -57,6 +57,7 @@ def scene_records(
             str(config.video_id),
             "scene",
             f"f{sample.frame_index:012d}",
+            generation_id=config.generation_id,
         )
         records.append(
             StorageRecord(

@@ -19,6 +19,7 @@ from vidxp.application_models import (
     IndexStatus,
     PrepareModelsCommand,
     PrepareModelsResult,
+    RemoveIndexCommand,
     ResourceNotFoundError,
     SearchCommand,
 )
@@ -231,6 +232,7 @@ class VidXPApplication:
             raise ResourceNotFoundError("media")
         self.layout.ensure_local_directories()
         config = IndexConfig.local(
+            video_id=command.media_id,
             enabled_modalities=selected,
             frame_stride=command.frame_stride,
             storage_directory=self.index_directory,
@@ -410,33 +412,21 @@ class VidXPApplication:
 
     @application_boundary
     def clear_index(self) -> bool:
-        if not self.index_directory.exists():
-            return False
         base_config = self._base_config()
-        if self.index_backend.indexing_in_progress(base_config):
-            raise IndexingInProgressError(
-                f"Indexing is active for {self.index_directory}."
-            )
-        status = self.index_backend.status(self.index_directory)
-        if status is not None and status.get("state") == "ready":
-            try:
-                config, _ = self.index_backend.active_config(
-                    self.index_directory,
-                    device=self.device,
-                )
-            except (IndexSchemaError, KeyError, TypeError, ValueError):
-                config = base_config
-        else:
-            config = base_config
         try:
-            self.index_backend.clear(config)
+            return self.index_backend.clear(base_config)
         except ModuleNotFoundError as exc:
             raise DependencyUnavailableError(
                 self.registry.index_names(),
                 self.registry.install_hint(self.registry.index_names()),
             ) from exc
 
-        return True
+    @application_boundary
+    def remove_from_index(self, command: RemoveIndexCommand) -> bool:
+        return self.index_backend.remove(
+            self._base_config(),
+            command.media_id,
+        )
 
     def _base_config(self) -> IndexConfig:
         return IndexConfig.local(

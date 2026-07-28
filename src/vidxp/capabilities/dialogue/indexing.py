@@ -178,6 +178,7 @@ def _dialogue_records(
             str(config.video_id),
             "dialogue",
             f"p{phrase.phrase_id:08d}",
+            generation_id=config.generation_id,
         )
         records.append(
             StorageRecord(

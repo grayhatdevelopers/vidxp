@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from vidxp.core.contracts import IndexConfig, VideoSource
 from vidxp.core.manifest import (
     ManifestStore,
+    _sync_parent_directory,
     source_checksums,
     write_json_atomic,
 )
@@ -16,6 +17,35 @@ from vidxp.settings import VidXPSettings
 
 
 class ManifestIdentityTests(unittest.TestCase):
+    def test_unsupported_directory_fsync_does_not_false_fail_commit(self):
+        with (
+            patch("vidxp.core.manifest.os.name", "posix"),
+            patch("vidxp.core.manifest.os.open", return_value=17),
+            patch(
+                "vidxp.core.manifest.os.fsync",
+                side_effect=OSError("unsupported"),
+            ),
+            patch("vidxp.core.manifest.os.close") as close,
+        ):
+            _sync_parent_directory(Path("repository"))
+
+        close.assert_called_once_with(17)
+
+    def test_atomic_write_leaves_no_temporary_file(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+
+            write_json_atomic(path, {"state": "ready"})
+
+            self.assertEqual(
+                path.read_text(encoding="utf-8"),
+                '{\n  "state": "ready"\n}\n',
+            )
+            self.assertEqual(
+                list(path.parent.glob(f".{path.name}.*.tmp")),
+                [],
+            )
+
     def test_atomic_write_retries_transient_windows_reader_lock(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "manifest.json"
@@ -35,6 +65,32 @@ class ManifestIdentityTests(unittest.TestCase):
 
             self.assertEqual(replace.call_count, 3)
             self.assertEqual(sleep.call_count, 2)
+
+    def test_atomic_write_failure_preserves_target_and_cleans_temporary_file(
+        self,
+    ):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            original = '{\n  "state": "ready"\n}\n'
+            path.write_text(original, encoding="utf-8")
+
+            with (
+                patch.object(
+                    Path,
+                    "replace",
+                    side_effect=OSError("replace failed"),
+                ) as replace,
+                patch("vidxp.core.manifest.time.sleep"),
+                self.assertRaisesRegex(OSError, "replace failed"),
+            ):
+                write_json_atomic(path, {"state": "running"})
+
+            self.assertEqual(replace.call_count, 5)
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+            self.assertEqual(
+                list(path.parent.glob(f".{path.name}.*.tmp")),
+                [],
+            )
 
     def test_declared_video_checksum_does_not_suppress_transcript_hash(self):
         transcript = ({"text": "hello", "start": 0.0, "end": 1.0},)

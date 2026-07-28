@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
@@ -36,25 +38,58 @@ def utc_now() -> str:
 
 def write_json_atomic(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(
-            payload,
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    for attempt in range(5):
-        try:
-            temporary.replace(path)
-            return
-        except PermissionError:
-            if attempt == 4:
-                raise
-            time.sleep(0.05 * (attempt + 1))
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as destination:
+            temporary = Path(destination.name)
+            destination.write(
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            destination.flush()
+            os.fsync(destination.fileno())
+
+        for attempt in range(5):
+            try:
+                temporary.replace(path)
+                break
+            except OSError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+
+        _sync_parent_directory(path.parent)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _sync_parent_directory(path: Path) -> None:
+    if os.name == "nt":
+        return
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+        os.fsync(descriptor)
+    except OSError:
+        # The replacement is already visible. Some supported filesystems
+        # reject directory fsync, which cannot roll that replacement back.
+        pass
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
@@ -272,6 +307,7 @@ class ManifestStore:
                 "dataset": self.config.dataset,
                 "split": self.config.split,
                 "run_id": self.config.run_id,
+                "generation_id": self.config.generation_id,
                 "state": "running",
                 "created_at": utc_now(),
                 "updated_at": utc_now(),
@@ -287,7 +323,8 @@ class ManifestStore:
                 "failed_videos": [],
                 "interrupted_videos": [],
                 "processed_frames": 0,
-                "index_size_bytes": 0,
+                "record_counts": {},
+                "store_size_bytes_at_commit": 0,
             }
             if reset:
                 for path in (
@@ -489,14 +526,20 @@ class ManifestStore:
         manifest["updated_at"] = utc_now()
         self.write(manifest)
 
-    def complete_run(self, *, index_size_bytes: int) -> dict[str, Any]:
+    def complete_run(
+        self,
+        *,
+        store_size_bytes_at_commit: int,
+    ) -> dict[str, Any]:
         manifest = self.read()
         self._refresh_runtime(manifest)
         expected = set(manifest["inputs"])
         completed = set(manifest["completed_videos"])
         if expected != completed or manifest["failed_videos"]:
             manifest["state"] = "completed_with_failures"
-            manifest["index_size_bytes"] = index_size_bytes
+            manifest["store_size_bytes_at_commit"] = (
+                store_size_bytes_at_commit
+            )
             manifest["updated_at"] = utc_now()
             self.write(manifest)
             return manifest
@@ -508,7 +551,7 @@ class ManifestStore:
         manifest["state"] = "complete"
         manifest["completed_at"] = utc_now()
         manifest["processed_frames"] = processed_frames
-        manifest["index_size_bytes"] = index_size_bytes
+        manifest["store_size_bytes_at_commit"] = store_size_bytes_at_commit
         manifest["updated_at"] = utc_now()
         self.write(manifest)
         completion = {
@@ -519,7 +562,31 @@ class ManifestStore:
             "config_fingerprint": self.config.fingerprint(),
             "completed_at": manifest["completed_at"],
             "completed_videos": manifest["completed_videos"],
-            "index_size_bytes": index_size_bytes,
+            "store_size_bytes_at_commit": store_size_bytes_at_commit,
         }
         write_json_atomic(self.completion_path, completion)
+        return manifest
+
+    def record_storage_counts(
+        self,
+        record_counts: Mapping[str, int],
+    ) -> dict[str, Any]:
+        manifest = self.read()
+        if manifest.get("state") != "complete":
+            raise RuntimeError(
+                "Storage counts can only finalize a completed generation."
+            )
+        counts = {
+            str(modality): int(count)
+            for modality, count in record_counts.items()
+        }
+        if set(counts) != set(self.config.enabled_modalities):
+            raise ValueError(
+                "Storage counts must cover every enabled modality exactly."
+            )
+        if any(count < 0 for count in counts.values()):
+            raise ValueError("Storage record counts must be nonnegative.")
+        manifest["record_counts"] = counts
+        manifest["updated_at"] = utc_now()
+        self.write(manifest)
         return manifest

@@ -15,7 +15,7 @@ Thanks for contributing to VidXP (Video eXPlain).
 | `src/vidxp/benchmarks/` | Benchmark-specific loaders, prediction adapters, and evaluator calls |
 | `pyproject.toml` | Package metadata and Python dependencies |
 | `docs/` | Installation-linked guidance, benchmark research, and contribution notes |
-| `chroma_data/` | Local ChromaDB index and `index_status.json` readiness record (generated; do not commit) |
+| `chroma_data/` | Local repository with immutable index generations and snapshots (generated; do not commit) |
 | `benchmark_runs/` | Isolated programmatic and benchmark runs (generated; do not commit) |
 | Model caches | Managed by the shared model runtime outside the repository |
 
@@ -71,8 +71,8 @@ are stored, state whether an existing `chroma_data` index must be rebuilt.
    search.
 3. If you changed the Streamlit app, smoke-test upload, indexing, cancellation,
    reload, and search.
-4. Confirm that an incomplete local index is replaced rather than treated as
-   ready.
+4. Confirm that a failed or incomplete generation leaves the previous active
+   snapshot searchable.
 5. Do not commit model weights, generated indexes, benchmark runs, or local
    sample media.
 

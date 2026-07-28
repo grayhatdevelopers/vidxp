@@ -240,6 +240,7 @@ repository/
   repository.json
   media/
   indexes/
+    store/
     generations/
       <generation-id>/
     snapshots/
@@ -375,6 +376,11 @@ by that immutable snapshot. Indexing and search therefore coexist safely.
 The Chroma adapter stores generation identity with every record and implements
 snapshot-scoped search and garbage collection. Chroma remains replaceable behind the
 `IndexRepository` port; snapshot semantics do not depend on Chroma collection layout.
+For the embedded adapter, `indexes/store/` is the shared physical Chroma database;
+generation directories own manifests and checkpoints, while exact generation record
+counts in those manifests are revalidated before committed reads. A missing database,
+collection, manifest, or referenced record therefore fails closed instead of creating
+an empty replacement during a read.
 
 The manifest is authoritative for completed generation state. Progress files and
 workflow events are not used to decide whether a generation or snapshot is valid.

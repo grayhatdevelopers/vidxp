@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from threading import Lock
 from time import perf_counter
 from typing import Any, Callable, Sequence
 
@@ -13,7 +12,6 @@ from vidxp.core.contracts import (
     CancellationToken,
     IndexCancelledError,
     IndexConfig,
-    IndexSchemaError,
     VideoSource,
 )
 from vidxp.core.manifest import (
@@ -30,7 +28,6 @@ from vidxp.ports import IndexStore, ModelRuntimePort
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
-_INDEXING_LOCK = Lock()
 
 
 def require_dependencies(
@@ -77,45 +74,7 @@ def _run_lock_held(run_directory: Path) -> bool:
 
 
 def indexing_in_progress(config: IndexConfig) -> bool:
-    if _INDEXING_LOCK.locked():
-        return True
     return _run_lock_held(config.run_directory)
-
-
-def local_config_from_status(
-    status: dict[str, Any],
-    *,
-    storage_directory: str | Path | None = None,
-) -> IndexConfig:
-    summary = status.get("summary") or {}
-    if summary.get("index_schema_version") != INDEX_SCHEMA_VERSION:
-        raise IndexSchemaError(
-            "The saved index predates the benchmark-ready schema. "
-            "Re-index the video before searching."
-        )
-    stored = dict(summary.get("configuration") or {})
-    stored = {
-        key: value
-        for key, value in stored.items()
-        if key in IndexConfig.__dataclass_fields__
-    }
-    stored.update(
-        {
-            "dataset": str(summary["dataset"]),
-            "split": str(summary["split"]),
-            "run_id": str(summary["run_id"]),
-            "video_id": str(summary["video_id"]),
-        }
-    )
-    if storage_directory is not None:
-        stored["storage_directory"] = str(storage_directory)
-    else:
-        stored.setdefault("storage_directory", "chroma_data")
-    if "enabled_modalities" in stored:
-        stored["enabled_modalities"] = tuple(stored["enabled_modalities"])
-    if "collection_names" in stored:
-        stored["collection_names"] = dict(stored["collection_names"])
-    return IndexConfig(**stored)
 
 
 def _resolve_sources(
@@ -345,8 +304,11 @@ def _process_video(
             registry=registry,
         )
         stage = "preparing_storage"
-        for modality in config.enabled_modalities:
-            storage.delete_video(modality, video_id)
+        if config.generation_id is not None:
+            storage.delete_generation(config.generation_id)
+        else:
+            for modality in config.enabled_modalities:
+                storage.delete_video(modality, video_id)
 
         summary.update(
             _run_enabled_modalities(
@@ -449,7 +411,9 @@ def _run_index_unlocked(
             runtime=runtime,
         )
 
-    return manifest_store.complete_run(index_size_bytes=storage.size_bytes())
+    return manifest_store.complete_run(
+        store_size_bytes_at_commit=storage.size_bytes()
+    )
 
 
 def run_index(
@@ -496,6 +460,7 @@ def index_video(
     path: str,
     progress_callback: ProgressCallback | None = None,
     source_name: str | None = None,
+    checksum: str | None = None,
     *,
     config: IndexConfig,
     cancellation: CancellationToken | None = None,
@@ -507,12 +472,11 @@ def index_video(
     input_path = Path(path)
     if not input_path.is_file():
         raise FileNotFoundError(f"Video not found: {input_path}")
-    if not _INDEXING_LOCK.acquire(blocking=False):
-        raise IndexingInProgressError("Another video is already being indexed.")
 
     source = VideoSource(
         path=input_path,
         source_name=source_name or input_path.name,
+        checksum=checksum,
     )
     checksum = source_checksum(source)
     source = VideoSource(
@@ -543,7 +507,7 @@ def index_video(
             total=event.get("total"),
             summary=event.get("summary"),
             error=event.get("error"),
-            index_directory=active_config.index_directory,
+            index_directory=active_config.run_directory,
         )
         if progress_callback is not None:
             progress_callback(event)
@@ -569,7 +533,7 @@ def index_video(
             registry=registry,
             runtime=runtime,
             resume=False,
-            reset=True,
+            reset=False,
             fail_fast=True,
         )
         summary = dict(manifest["videos"][video_id]["summary"])
@@ -613,5 +577,3 @@ def index_video(
                 }
             )
         raise
-    finally:
-        _INDEXING_LOCK.release()

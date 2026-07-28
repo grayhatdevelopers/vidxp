@@ -5,10 +5,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 from vidxp.core.contracts import (
-    INDEX_SCHEMA_VERSION,
     IndexCancelledError,
     IndexConfig,
-    IndexSchemaError,
     VideoSource,
 )
 from vidxp.core.manifest import COMPLETION_FILE, ManifestStore
@@ -18,7 +16,6 @@ from vidxp.core.runner import (
     _RunLock,
     index_video as _index_video,
     indexing_in_progress,
-    local_config_from_status,
     run_index as _run_index,
 )
 from vidxp.capabilities.registry import create_capability_registry
@@ -124,16 +121,6 @@ class RunnerTests(unittest.TestCase):
             output_root=root,
         )
 
-    def test_local_config_rejects_an_older_index_schema(self):
-        status = {
-            "summary": {
-                "index_schema_version": INDEX_SCHEMA_VERSION - 1,
-            }
-        }
-
-        with self.assertRaisesRegex(IndexSchemaError, "Re-index"):
-            local_config_from_status(status)
-
     def test_two_videos_complete_one_isolated_resumable_run(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -181,7 +168,10 @@ class RunnerTests(unittest.TestCase):
             )
             self.assertEqual(resumed["state"], "complete")
             self.assertEqual(manifest["git"]["commit"], "abc123")
-            self.assertEqual(manifest["index_size_bytes"], 321)
+            self.assertEqual(
+                manifest["store_size_bytes_at_commit"],
+                321,
+            )
             self.assertEqual(manifest["processed_frames"], 4)
             self.assertTrue((config.run_directory / COMPLETION_FILE).is_file())
             self.assertEqual(

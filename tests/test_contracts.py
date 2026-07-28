@@ -23,6 +23,15 @@ class ContractTests(unittest.TestCase):
             stable_source_id("r", "فيديو:1", "scene", "0"),
         )
         self.assertEqual(first.count(":"), 3)
+        scoped = stable_source_id(
+            "run:a",
+            "video",
+            "scene",
+            "1",
+            generation_id="generation-1",
+        )
+        self.assertNotEqual(first, scoped)
+        self.assertEqual(scoped.count(":"), 4)
 
     def test_config_is_validated_and_run_paths_are_isolated(self):
         with TemporaryDirectory() as directory:
@@ -59,6 +68,17 @@ class ContractTests(unittest.TestCase):
                 enabled_modalities=("scene",),
             )
             self.assertEqual(first.fingerprint(), relocated.fingerprint())
+            generation_directory = Path(directory) / "generation"
+            generated = IndexConfig.local(
+                storage_directory=Path(directory) / "store",
+                generation_directory=generation_directory,
+                generation_id="generation-1",
+            )
+            self.assertEqual(generated.run_directory, generation_directory)
+            self.assertEqual(
+                generated.index_directory,
+                Path(directory) / "store",
+            )
 
     def test_path_objects_are_normalized_for_manifest_serialization(self):
         config = IndexConfig.local(

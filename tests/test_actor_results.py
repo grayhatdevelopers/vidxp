@@ -46,7 +46,6 @@ class ActorResultTests(unittest.TestCase):
         self.assertEqual(detections[0].bbox, (1, 4, 5, 0))
         storage.records.assert_called_once_with(
             "actor",
-            video_id="video-1",
             filters={"cluster_id": "3"},
         )
         storage.close.assert_not_called()
@@ -54,20 +53,52 @@ class ActorResultTests(unittest.TestCase):
     def test_actor_clusters_summarize_detection_ranges(self):
         storage = Mock()
         storage.records.return_value = [
-            {"cluster_id": "1", "timestamp": 4.5},
-            {"cluster_id": "1", "timestamp": 1.5},
-            {"cluster_id": "2", "timestamp": 9.0},
+            {
+                "cluster_id": "video-1:1",
+                "video_id": "video-1",
+                "timestamp": 4.5,
+            },
+            {
+                "cluster_id": "video-1:1",
+                "video_id": "video-1",
+                "timestamp": 1.5,
+            },
+            {
+                "cluster_id": "video-2:1",
+                "video_id": "video-2",
+                "timestamp": 9.0,
+            },
         ]
 
         clusters = actor_clusters(self.config, storage=storage)
 
         self.assertEqual(
             [cluster.cluster_id for cluster in clusters],
-            ["1", "2"],
+            ["video-1:1", "video-2:1"],
         )
         self.assertEqual(clusters[0].detection_count, 2)
         self.assertEqual(clusters[0].first_timestamp, 1.5)
         self.assertEqual(clusters[0].last_timestamp, 4.5)
+        self.assertEqual(clusters[1].video_id, "video-2")
+        storage.records.assert_called_once_with("actor")
+
+    def test_actor_clusters_reject_cross_media_identity_collision(self):
+        storage = Mock()
+        storage.records.return_value = [
+            {
+                "cluster_id": "legacy-cluster",
+                "video_id": "video-1",
+                "timestamp": 1.0,
+            },
+            {
+                "cluster_id": "legacy-cluster",
+                "video_id": "video-2",
+                "timestamp": 2.0,
+            },
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "multiple index identities"):
+            actor_clusters(self.config, storage=storage)
 
     def test_render_actor_result_rejects_an_empty_cluster(self):
         storage = Mock()
@@ -109,6 +140,7 @@ class ActorResultTests(unittest.TestCase):
                 "split": "local",
                 "run_id": "default",
                 "video_id": "video-1",
+                "generation_id": "generation-1",
                 "modality": "actor",
                 "source_id": "actor:d2",
             }
@@ -129,6 +161,10 @@ class ActorResultTests(unittest.TestCase):
         renderer.assert_called_once()
         self.assertEqual(result.output_path, output)
         self.assertEqual(result.detection_count, 1)
+        self.assertEqual(
+            renderer.call_args.args[3][0].generation_id,
+            "generation-1",
+        )
 
 
 if __name__ == "__main__":

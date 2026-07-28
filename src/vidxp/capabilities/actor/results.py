@@ -21,30 +21,40 @@ def actor_clusters(
     *,
     storage: IndexStore,
 ) -> tuple[ActorClusterSummary, ...]:
-    if config.video_id is None:
-        raise ValueError("IndexConfig.video_id is required for actor results.")
-    records = storage.records(
-        "actor",
-        video_id=config.video_id,
-    )
+    records = storage.records("actor")
 
     grouped: dict[str, list[dict]] = {}
     for record in records:
         grouped.setdefault(str(record["cluster_id"]), []).append(record)
-    return tuple(
-        ActorClusterSummary(
-            cluster_id=cluster_id,
-            video_id=config.video_id,
-            detection_count=len(cluster_records),
-            first_timestamp=min(
-                float(record["timestamp"]) for record in cluster_records
-            ),
-            last_timestamp=max(
-                float(record["timestamp"]) for record in cluster_records
-            ),
+    summaries = []
+    for cluster_id, cluster_records in sorted(grouped.items()):
+        video_ids = {
+            str(record["video_id"])
+            for record in cluster_records
+        }
+        generation_ids = {
+            str(record["generation_id"])
+            for record in cluster_records
+            if record.get("generation_id") is not None
+        }
+        if len(video_ids) != 1 or len(generation_ids) > 1:
+            raise RuntimeError(
+                f"Actor cluster {cluster_id!r} spans multiple index identities."
+            )
+        summaries.append(
+            ActorClusterSummary(
+                cluster_id=cluster_id,
+                video_id=next(iter(video_ids)),
+                detection_count=len(cluster_records),
+                first_timestamp=min(
+                    float(record["timestamp"]) for record in cluster_records
+                ),
+                last_timestamp=max(
+                    float(record["timestamp"]) for record in cluster_records
+                ),
+            )
         )
-        for cluster_id, cluster_records in sorted(grouped.items())
-    )
+    return tuple(summaries)
 
 
 def actor_detections(
@@ -53,11 +63,8 @@ def actor_detections(
     *,
     storage: IndexStore,
 ) -> list[ActorDetection]:
-    if config.video_id is None:
-        raise ValueError("IndexConfig.video_id is required for actor results.")
     records = storage.records(
         "actor",
-        video_id=config.video_id,
         filters={"cluster_id": cluster_id},
     )
 

@@ -4,24 +4,14 @@ import unittest
 from pathlib import Path
 
 from vidxp.index_state import (
-    IndexNotReadyError,
     fingerprint_file,
     read_index_status,
-    require_ready_index,
     write_index_status,
 )
 
 
 class IndexStateTests(unittest.TestCase):
-    def test_missing_status_is_not_ready(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(
-                IndexNotReadyError,
-                "Index a video before searching",
-            ):
-                require_ready_index(directory)
-
-    def test_status_round_trip_and_readiness_guard(self):
+    def test_progress_status_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             write_index_status(
                 state="indexing",
@@ -35,8 +25,6 @@ class IndexStateTests(unittest.TestCase):
             status = read_index_status(directory)
             self.assertEqual(status["state"], "indexing")
             self.assertEqual(status["current"], 5)
-            with self.assertRaises(IndexNotReadyError):
-                require_ready_index(directory)
 
             write_index_status(
                 state="ready",
@@ -45,7 +33,7 @@ class IndexStateTests(unittest.TestCase):
                 summary={"scene_frames": 10},
                 index_directory=directory,
             )
-            self.assertEqual(require_ready_index(directory)["state"], "ready")
+            self.assertEqual(read_index_status(directory)["state"], "ready")
 
     def test_unreadable_status_is_failed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -54,8 +42,6 @@ class IndexStateTests(unittest.TestCase):
 
             status = read_index_status(directory)
             self.assertEqual(status["state"], "failed")
-            with self.assertRaises(IndexNotReadyError):
-                require_ready_index(directory)
 
     def test_file_fingerprint_is_stable(self):
         with tempfile.TemporaryDirectory() as directory:
