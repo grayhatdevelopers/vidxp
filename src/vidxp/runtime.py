@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 import platform
+import hashlib
 from collections import OrderedDict
-from dataclasses import dataclass
-from threading import RLock
-from typing import Any, Callable
+from contextlib import contextmanager
+from threading import BoundedSemaphore, Lock, RLock
+from typing import Any, Callable, Iterator
+from pathlib import Path
 
 from vidxp.application_models import RuntimeProfile
+from vidxp.model_contracts import (
+    ArtifactSpec,
+    ModelArtifactUnavailableError,
+    ModelKey,
+    ModelSpec,
+)
+from vidxp.ports import ResourceLimitError
 from vidxp.settings import VidXPSettings
+
+
+class RuntimeBackendUnavailableError(RuntimeError):
+    """Raised when an explicitly requested compute backend cannot be used."""
 
 
 def _torch_accelerators() -> tuple[bool, bool]:
@@ -26,29 +39,34 @@ def resolve_backends(requested: str) -> RuntimeProfile:
     mps_available, cuda_available = _torch_accelerators()
     normalized = requested.lower()
     if normalized == "auto":
-        if platform.system() == "Darwin" and mps_available:
-            torch_device = "mps"
-        else:
-            torch_device = "cpu"
+        torch_device = "cpu"
     elif normalized == "mps":
         if not mps_available:
-            raise RuntimeError("MPS was requested but is unavailable.")
+            raise RuntimeBackendUnavailableError(
+                "MPS was requested but is unavailable."
+            )
         torch_device = "mps"
     elif normalized.startswith("cuda"):
         if not cuda_available:
-            raise RuntimeError("CUDA was requested but is unavailable.")
+            raise RuntimeBackendUnavailableError(
+                "CUDA was requested but is unavailable."
+            )
         if ":" in normalized:
             import torch
 
             index = int(normalized.split(":", 1)[1])
             if index >= torch.cuda.device_count():
-                raise RuntimeError(
+                raise RuntimeBackendUnavailableError(
                     f"CUDA device {index} was requested but only "
                     f"{torch.cuda.device_count()} device(s) are available."
                 )
         torch_device = normalized
-    else:
+    elif normalized == "cpu":
         torch_device = "cpu"
+    else:
+        raise RuntimeBackendUnavailableError(
+            f"Unsupported runtime backend: {requested!r}."
+        )
     return RuntimeProfile(
         requested=normalized,
         torch_device=torch_device,
@@ -60,23 +78,98 @@ def resolve_backends(requested: str) -> RuntimeProfile:
     )
 
 
-@dataclass(frozen=True)
-class ModelKey:
-    capability: str
-    provider: str
-    model_id: str
-    revision: str
-    device: str
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+class ResourceScheduler:
+    """Bound concurrent model work without owning workflow state."""
+
+    def __init__(
+        self,
+        *,
+        indexing_slots: int,
+        inference_slots: int,
+        minimum_available_memory_mb: int,
+    ) -> None:
+        self._indexing = BoundedSemaphore(indexing_slots)
+        self._inference = BoundedSemaphore(inference_slots)
+        self._minimum_available_memory_mb = minimum_available_memory_mb
+
+    def _check_memory(self) -> None:
+        try:
+            import psutil
+        except ModuleNotFoundError:
+            return
+        available = int(psutil.virtual_memory().available / (1024 * 1024))
+        if available < self._minimum_available_memory_mb:
+            raise ResourceLimitError(
+                "The configured host-memory admission floor is not available."
+            )
+
+    @contextmanager
+    def indexing(self) -> Iterator[None]:
+        with self._indexing:
+            self._check_memory()
+            yield
+
+    @contextmanager
+    def inference(self) -> Iterator[None]:
+        with self._inference:
+            self._check_memory()
+            yield
 
 
 class ModelRuntime:
     """One injected model cache and backend resolver for all capabilities."""
 
-    def __init__(self, settings: VidXPSettings) -> None:
+    def __init__(
+        self,
+        settings: VidXPSettings,
+        *,
+        allowed_specs: tuple[ModelSpec | ArtifactSpec, ...] = (),
+    ) -> None:
         self.settings = settings
+        self._allowed_specs = frozenset(allowed_specs)
         self.backends = resolve_backends(settings.runtime_backend)
+        self.scheduler = ResourceScheduler(
+            indexing_slots=settings.max_concurrent_indexing,
+            inference_slots=settings.max_concurrent_inference,
+            minimum_available_memory_mb=(
+                settings.minimum_available_memory_mb
+            ),
+        )
         self._resources: OrderedDict[ModelKey, Any] = OrderedDict()
+        self._resolved_models: dict[str, dict[str, Any]] = {}
+        self._compute_precision: dict[str, str] = {}
+        self._load_locks: dict[ModelKey, Lock] = {}
         self._lock = RLock()
+
+    @property
+    def model_cache(self) -> Path:
+        return self.settings.model_cache
+
+    @property
+    def cpu_thread_budget(self) -> int:
+        return self.settings.cpu_thread_budget
+
+    def _configure_cpu_threads(self) -> None:
+        try:
+            import torch
+        except ModuleNotFoundError:
+            pass
+        else:
+            torch.set_num_threads(self.cpu_thread_budget)
+        try:
+            import cv2
+        except ModuleNotFoundError:
+            pass
+        else:
+            cv2.setNumThreads(self.cpu_thread_budget)
 
     def device_for(self, capability: str) -> str:
         if capability == "dialogue.transcription":
@@ -84,6 +177,77 @@ class ModelRuntime:
         if capability == "actor":
             return self.backends.actor_device
         return self.backends.torch_device
+
+    def resolve_model(self, spec: ModelSpec) -> Path:
+        if spec not in self._allowed_specs:
+            raise ModelArtifactUnavailableError(spec.capability)
+        from huggingface_hub import snapshot_download
+
+        try:
+            snapshot = Path(
+                snapshot_download(
+                    repo_id=spec.model_id,
+                    revision=spec.revision,
+                    cache_dir=str(self.settings.model_cache),
+                    local_files_only=not self.settings.allow_model_downloads,
+                )
+            )
+            weights = snapshot / spec.weights_file
+            if not weights.is_file() or _sha256(weights) != spec.weights_sha256:
+                raise ModelArtifactUnavailableError(spec.capability)
+        except ModelArtifactUnavailableError:
+            raise
+        except Exception as exc:
+            raise ModelArtifactUnavailableError(spec.capability) from exc
+        with self._lock:
+            self._resolved_models[spec.capability] = spec.identity(cached=True)
+        return snapshot
+
+    def resolve_artifact(self, spec: ArtifactSpec) -> Path:
+        if spec not in self._allowed_specs:
+            raise ModelArtifactUnavailableError(spec.capability)
+        try:
+            destination = self.settings.model_cache / spec.provider
+            path = destination / spec.filename
+            if not self.settings.allow_model_downloads:
+                if (
+                    not path.is_file()
+                    or _sha256(path) != spec.sha256
+                ):
+                    raise ModelArtifactUnavailableError(spec.capability)
+                resolved = path
+            else:
+                import pooch
+
+                resolved = Path(
+                    pooch.retrieve(
+                        url=spec.url,
+                        known_hash=f"sha256:{spec.sha256}",
+                        fname=spec.filename,
+                        path=destination,
+                        progressbar=False,
+                    )
+                )
+                if (
+                    not resolved.is_file()
+                    or _sha256(resolved) != spec.sha256
+                ):
+                    raise ModelArtifactUnavailableError(spec.capability)
+        except ModelArtifactUnavailableError:
+            raise
+        except Exception as exc:
+            raise ModelArtifactUnavailableError(spec.capability) from exc
+        with self._lock:
+            self._resolved_models[spec.capability] = spec.identity(cached=True)
+        return resolved
+
+    def record_compute_precision(
+        self,
+        capability: str,
+        precision: str,
+    ) -> None:
+        with self._lock:
+            self._compute_precision[capability] = precision
 
     def get_or_load(
         self,
@@ -95,15 +259,30 @@ class ModelRuntime:
                 resource = self._resources.pop(key)
                 self._resources[key] = resource
                 return resource
+            key_lock = self._load_locks.setdefault(key, Lock())
+
+        with key_lock:
+            with self._lock:
+                if key in self._resources:
+                    resource = self._resources.pop(key)
+                    self._resources[key] = resource
+                    return resource
+            self._configure_cpu_threads()
             resource = loader()
-            self._resources[key] = resource
-            while len(self._resources) > self.settings.max_loaded_models:
-                self._resources.popitem(last=False)
-            return resource
+            with self._lock:
+                existing = self._resources.pop(key, None)
+                if existing is not None:
+                    return existing
+                self._resources[key] = resource
+                while len(self._resources) > self.settings.max_loaded_models:
+                    self._resources.popitem(last=False)
+                self._load_locks.pop(key, None)
+                return resource
 
     def clear(self) -> None:
         with self._lock:
             self._resources.clear()
+            self._load_locks.clear()
         try:
             import torch
         except ModuleNotFoundError:
@@ -123,14 +302,19 @@ class ModelRuntime:
             **self.backends.model_dump(mode="json"),
             "model_cache": str(self.settings.model_cache),
             "allow_model_downloads": self.settings.allow_model_downloads,
-            "compute": {
-                "scene": "float32",
-                "dialogue_embedding": "float32",
-                "dialogue_transcription": (
-                    "float16"
-                    if self.backends.transcription_device.startswith("cuda")
-                    else "int8"
+            "limits": {
+                "max_loaded_models": self.settings.max_loaded_models,
+                "max_concurrent_indexing": (
+                    self.settings.max_concurrent_indexing
                 ),
-                "actor": "float32",
+                "max_concurrent_inference": (
+                    self.settings.max_concurrent_inference
+                ),
+                "cpu_thread_budget": self.settings.cpu_thread_budget,
+                "minimum_available_memory_mb": (
+                    self.settings.minimum_available_memory_mb
+                ),
             },
+            "resolved_models": dict(self._resolved_models),
+            "compute_precision": dict(self._compute_precision),
         }

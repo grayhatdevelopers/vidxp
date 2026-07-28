@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from enum import StrEnum
 from pathlib import Path
@@ -33,6 +34,14 @@ class VidXPSettings(BaseSettings):
     )
     allow_model_downloads: bool = True
     max_loaded_models: int = Field(default=3, gt=0, le=16)
+    max_concurrent_indexing: int = Field(default=1, gt=0, le=16)
+    max_concurrent_inference: int = Field(default=2, gt=0, le=64)
+    cpu_thread_budget: int = Field(
+        default_factory=lambda: min(256, max(1, os.cpu_count() or 1)),
+        gt=0,
+        le=256,
+    )
+    minimum_available_memory_mb: int = Field(default=1024, ge=0)
     external_capabilities: bool = False
     capability_allowlist: tuple[str, ...] = ()
 
@@ -50,11 +59,28 @@ class VidXPSettings(BaseSettings):
     @field_validator("capability_allowlist")
     @classmethod
     def _clean_allowlist(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(value.strip() for value in values if value.strip()))
+        cleaned = tuple(
+            dict.fromkeys(value.strip() for value in values if value.strip())
+        )
+        invalid = [
+            value
+            for value in cleaned
+            if value.count(":") != 1
+            or not all(part.strip() for part in value.split(":", 1))
+        ]
+        if invalid:
+            raise ValueError(
+                "capability_allowlist entries must use "
+                "DISTRIBUTION:ENTRY_POINT."
+            )
+        return cleaned
 
     @model_validator(mode="after")
     def _require_explicit_server_backend(self) -> "VidXPSettings":
-        if self.mode == ApplicationMode.server and self.runtime_backend == "auto":
+        if (
+            self.mode == ApplicationMode.server
+            and not re.fullmatch(r"(cpu|cuda(?::[0-9]+)?)", self.runtime_backend)
+        ):
             raise ValueError(
                 "Server mode requires an explicit cpu or cuda runtime backend."
             )

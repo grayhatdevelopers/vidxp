@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 from vidxp import index_worker
 from vidxp.index_state import IndexingInProgressError
+from vidxp.settings import VidXPSettings
 
 
 class FakeProcess:
@@ -47,8 +48,19 @@ class IndexWorkerTests(unittest.TestCase):
         index_worker._process = None
         index_worker._cancel_event = None
         self.service = Mock()
-        self.service.layout.root = Path("selected-repository")
-        self.service.runtime.backends.requested = "cuda"
+        self.service.settings = VidXPSettings(
+            repository_root=Path("selected-repository"),
+            runtime_backend="cpu",
+            model_cache=Path("selected-model-cache"),
+            allow_model_downloads=False,
+            max_loaded_models=5,
+            max_concurrent_indexing=2,
+            max_concurrent_inference=4,
+            cpu_thread_budget=6,
+            minimum_available_memory_mb=2048,
+            external_capabilities=True,
+            capability_allowlist=("acme:ocr",),
+        )
         self.service.indexing_in_progress.return_value = False
 
     def tearDown(self):
@@ -75,8 +87,7 @@ class IndexWorkerTests(unittest.TestCase):
                 "video.mp4",
                 "source.mp4",
                 context.event,
-                "selected-repository",
-                "cuda",
+                self.service.settings.model_dump(mode="python"),
                 ("scene",),
             ),
         )
@@ -93,17 +104,12 @@ class IndexWorkerTests(unittest.TestCase):
                 "video.mp4",
                 "source.mp4",
                 FakeEvent(),
-                "selected-repository",
-                "cuda",
+                self.service.settings.model_dump(mode="python"),
                 ("scene",),
             )
 
         settings = create.call_args.args[0]
-        self.assertEqual(
-            settings.repository_root,
-            Path("selected-repository"),
-        )
-        self.assertEqual(settings.runtime_backend, "cuda")
+        self.assertEqual(settings, self.service.settings)
         service.create_index.assert_called_once()
         self.assertEqual(
             service.create_index.call_args.args[0].source_name,

@@ -13,8 +13,7 @@ from vidxp.core.contracts import (
     stable_source_id,
 )
 from vidxp.core.indexing_common import ProgressCallback
-from vidxp.core.storage import IndexStorage
-from vidxp.runtime import ModelRuntime
+from vidxp.ports import IndexStore, ModelRuntimePort
 
 
 @dataclass
@@ -75,7 +74,7 @@ def process_actor_samples(
     *,
     state: ActorIndexState,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
 ) -> None:
     import cv2
@@ -157,7 +156,7 @@ def finalize_actor_index(
     state: ActorIndexState,
     *,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
 ) -> tuple[int, int]:
     settings = actor_config(config)
     rejected = [
@@ -186,7 +185,7 @@ class ActorVisualProcessor:
     def prepare(
         self,
         config: IndexConfig,
-        runtime: ModelRuntime,
+        runtime: ModelRuntimePort,
         progress: ProgressCallback | None,
     ) -> ActorIndexState:
         return ActorIndexState(models=get_actor_models(runtime))
@@ -198,7 +197,7 @@ class ActorVisualProcessor:
         state: ActorIndexState,
         info,
         config: IndexConfig,
-        storage: IndexStorage,
+        storage: IndexStore,
         cancellation: CancellationToken,
     ) -> None:
         process_actor_samples(
@@ -214,7 +213,7 @@ class ActorVisualProcessor:
         state: ActorIndexState,
         *,
         config: IndexConfig,
-        storage: IndexStorage,
+        storage: IndexStore,
     ) -> tuple[dict[str, Any], int]:
         detections, clusters = finalize_actor_index(
             state,

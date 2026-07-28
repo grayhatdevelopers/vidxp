@@ -10,7 +10,7 @@ from vidxp.core.contracts import INDEX_SCHEMA_VERSION
 
 class SearchInput(CapabilityInput):
     query: str = Field(min_length=1)
-    top_k: int = Field(default=10, gt=0)
+    top_k: int = Field(default=10, gt=0, le=100)
 
 
 class SearchHit(CapabilityOutput):
@@ -29,16 +29,14 @@ class SearchHit(CapabilityOutput):
 
 
 class SearchResult(CapabilityOutput):
+    schema_version: int = INDEX_SCHEMA_VERSION
     query_id: str = Field(min_length=1)
     query: str = Field(min_length=1)
     modality: str = Field(min_length=1)
     hits: tuple[SearchHit, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "schema_version": INDEX_SCHEMA_VERSION,
-            **self.model_dump(mode="json"),
-        }
+        return self.model_dump(mode="json")
 
     def to_prediction(self) -> dict[str, list[dict[str, Any]]]:
         return {

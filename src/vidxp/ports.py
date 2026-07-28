@@ -1,10 +1,113 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Protocol
+from typing import (
+    Any,
+    Callable,
+    ContextManager,
+    Iterable,
+    Mapping,
+    Protocol,
+    runtime_checkable,
+)
 
-from vidxp.core.contracts import CancellationToken, IndexConfig
+from vidxp.application_models import RuntimeProfile
+from vidxp.core.contracts import (
+    CancellationToken,
+    IndexConfig,
+    StorageRecord,
+)
 from vidxp.core.indexing_common import ProgressCallback
+from vidxp.model_contracts import ArtifactSpec, ModelKey, ModelSpec
+
+
+class ResourceLimitError(RuntimeError):
+    """Raised when configured host capacity cannot admit model work."""
+
+
+@runtime_checkable
+class ResourceSchedulerPort(Protocol):
+    def indexing(self): ...
+
+    def inference(self): ...
+
+
+@runtime_checkable
+class ModelRuntimePort(Protocol):
+    backends: RuntimeProfile
+    scheduler: ResourceSchedulerPort
+
+    @property
+    def model_cache(self) -> Path: ...
+
+    @property
+    def cpu_thread_budget(self) -> int: ...
+
+    def device_for(self, capability: str) -> str: ...
+
+    def get_or_load(
+        self,
+        key: ModelKey,
+        loader: Callable[[], Any],
+    ) -> Any: ...
+
+    def resolve_model(self, spec: ModelSpec) -> Path: ...
+
+    def resolve_artifact(self, spec: ArtifactSpec) -> Path: ...
+
+    def record_compute_precision(
+        self,
+        capability: str,
+        precision: str,
+    ) -> None: ...
+
+    def describe(self) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class IndexStore(Protocol):
+    """Vector records used by capability handlers."""
+
+    def clear(self, modalities: Iterable[str] | None = None) -> None: ...
+
+    def delete_video(self, modality: str, video_id: str) -> None: ...
+
+    def delete_records(
+        self,
+        modality: str,
+        *,
+        video_id: str,
+        filters: Mapping[str, Any] | None = None,
+    ) -> None: ...
+
+    def size_bytes(self) -> int: ...
+
+    def upsert(
+        self,
+        modality: str,
+        records: list[StorageRecord],
+        *,
+        batch_size: int,
+        cancellation: CancellationToken,
+    ) -> int: ...
+
+    def query(
+        self,
+        modality: str,
+        embedding: list[float],
+        *,
+        top_k: int,
+        video_id: str | None = None,
+        filters: Mapping[str, Any] | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def records(
+        self,
+        modality: str,
+        *,
+        video_id: str | None = None,
+        filters: Mapping[str, Any] | None = None,
+    ) -> list[dict[str, Any]]: ...
 
 
 class IndexBackend(Protocol):
@@ -30,5 +133,7 @@ class IndexBackend(Protocol):
     ) -> dict[str, Any]: ...
 
     def indexing_in_progress(self, config: IndexConfig) -> bool: ...
+
+    def open_store(self, config: IndexConfig) -> ContextManager[IndexStore]: ...
 
     def clear(self, config: IndexConfig) -> None: ...

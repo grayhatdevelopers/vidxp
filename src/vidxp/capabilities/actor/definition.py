@@ -5,11 +5,6 @@ from typing import Any, Mapping
 from vidxp.capabilities.actor.config import ActorConfig, actor_config
 from vidxp.capabilities.actor.indexing import VISUAL_PROCESSOR
 from vidxp.capabilities.actor.models import (
-    OPENCV_ZOO_REVISION,
-    SFACE_FILE,
-    SFACE_SHA256,
-    YUNET_FILE,
-    YUNET_SHA256,
     get_actor_models,
 )
 from vidxp.capabilities.actor.operations import (
@@ -17,12 +12,14 @@ from vidxp.capabilities.actor.operations import (
     detections_operation,
     render_operation,
 )
+from vidxp.capabilities.actor.specs import SFACE_MODEL, YUNET_MODEL
 from vidxp.capabilities.contracts import (
     CapabilityDefinition,
     CapabilityExecutor,
     CapabilityPlugin,
     OperationDefinition,
     PreparationContext,
+    module_import_check,
 )
 from vidxp.capabilities.actor.schemas import (
     ActorClustersInput,
@@ -50,7 +47,8 @@ def prepare_models(
             }
         )
     get_actor_models(context.runtime)
-    return (YUNET_FILE, SFACE_FILE)
+    return (YUNET_MODEL.filename, SFACE_MODEL.filename)
+
 
 def model_manifest(
     config: IndexConfig,
@@ -59,10 +57,10 @@ def model_manifest(
     settings = actor_config(config)
     return {
         "actor": {
-            "provider": "opencv-zoo",
-            "revision": OPENCV_ZOO_REVISION,
-            "detector": {"file": YUNET_FILE, "sha256": YUNET_SHA256},
-            "recognizer": {"file": SFACE_FILE, "sha256": SFACE_SHA256},
+            "models": {
+                "detector": YUNET_MODEL.identity(),
+                "recognizer": SFACE_MODEL.identity(),
+            },
             "match_threshold": settings.match_threshold,
             "detection_threshold": settings.detection_threshold,
             "minimum_detections": settings.minimum_detections,
@@ -79,6 +77,7 @@ DEFINITION = CapabilityDefinition(
     index_stage="visual_indexing",
     execution_group="visual",
     prepares_models=True,
+    model_specs=(YUNET_MODEL, SFACE_MODEL),
     operations={
         "clusters": OperationDefinition(
             input_model=ActorClustersInput,
@@ -107,6 +106,15 @@ def create_executor() -> CapabilityExecutor:
         },
         model_manifest=model_manifest,
         prepare=prepare_models,
+        runtime_checks=(
+            module_import_check(
+                "OpenCV import",
+                "cv2",
+                "FaceDetectorYN",
+                "FaceRecognizerSF",
+            ),
+            module_import_check("Pooch import", "pooch", "retrieve"),
+        ),
     )
 
 

@@ -2,7 +2,7 @@ import hashlib
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from vidxp.core.contracts import IndexConfig, VideoSource
 from vidxp.core.manifest import (
@@ -10,6 +10,9 @@ from vidxp.core.manifest import (
     source_checksums,
     write_json_atomic,
 )
+from vidxp.capabilities.registry import create_capability_registry
+from vidxp.runtime import ModelRuntime
+from vidxp.settings import VidXPSettings
 
 
 class ManifestIdentityTests(unittest.TestCase):
@@ -55,7 +58,16 @@ class ManifestIdentityTests(unittest.TestCase):
                 output_root=directory,
                 enabled_modalities=("scene",),
             )
-            store = ManifestStore(config)
+            store = ManifestStore(
+                config,
+                registry=create_capability_registry(),
+                runtime=ModelRuntime(
+                    VidXPSettings(
+                        repository_root=config.run_directory,
+                        runtime_backend="cpu",
+                    )
+                ),
+            )
             video_id = "folder/name:video"
             expected = hashlib.sha256(video_id.encode("utf-8")).hexdigest()
 
@@ -67,6 +79,75 @@ class ManifestIdentityTests(unittest.TestCase):
                 / "checkpoints"
                 / f"{expected}.json",
             )
+
+    def test_terminal_manifests_refresh_resolved_runtime_identity(self):
+        for terminal in ("fail_video", "interrupt_video"):
+            with self.subTest(terminal=terminal):
+                with TemporaryDirectory() as directory:
+                    config = IndexConfig(
+                        dataset="sample",
+                        split="test",
+                        run_id="run-1",
+                        output_root=directory,
+                        enabled_modalities=("scene",),
+                    )
+                    runtime = Mock()
+                    runtime.describe.return_value = {
+                        "resolved_models": {},
+                    }
+                    store = ManifestStore(
+                        config,
+                        registry=create_capability_registry(),
+                        runtime=runtime,
+                    )
+                    source = VideoSource(
+                        video_id="video-1",
+                        transcript=(
+                            {"text": "hello", "start": 0.0, "end": 1.0},
+                        ),
+                    )
+                    with patch(
+                        "vidxp.core.manifest.execution_state",
+                        return_value={
+                            "git": {"commit": None, "dirty": None},
+                            "implementation_sha256": "test",
+                            "package_version": "test",
+                            "python": "test",
+                            "platform": "test",
+                            "dependencies": {},
+                        },
+                    ):
+                        store.initialize(
+                            [
+                                (
+                                    "video-1",
+                                    source,
+                                    "a" * 64,
+                                    {"declared": "a" * 64},
+                                )
+                            ]
+                        )
+                    store.start_video("video-1")
+                    runtime.describe.return_value = {
+                        "resolved_models": {"scene": {"cached": True}},
+                        "compute_precision": {"scene": "float32"},
+                    }
+
+                    if terminal == "fail_video":
+                        store.fail_video("video-1", "scene", "failed")
+                    else:
+                        store.interrupt_video("video-1", "scene")
+
+                    self.assertEqual(
+                        store.read()["models"]["runtime"]["resolved_models"],
+                        {"scene": {"cached": True}},
+                    )
+                    self.assertEqual(
+                        store.read()["models"]["runtime"][
+                            "compute_precision"
+                        ],
+                        {"scene": "float32"},
+                    )
 
 
 if __name__ == "__main__":

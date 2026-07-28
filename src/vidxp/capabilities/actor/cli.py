@@ -98,8 +98,6 @@ def actors_inspect(
 
     state = state_from_context(ctx)
     detections = state.service.actor_detections(cluster_id)
-    if not detections:
-        raise typer.BadParameter(f"Actor cluster {cluster_id} was not found.")
     payload = {
         "cluster_id": cluster_id,
         "detection_count": len(detections),

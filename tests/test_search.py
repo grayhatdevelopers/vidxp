@@ -3,8 +3,11 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+from unittest.mock import Mock
 
+import numpy as np
 from vidxp.capabilities.dialogue.operations import search_dialogue
+from vidxp.capabilities.dialogue.operations import dialogue_embedding
 from vidxp.capabilities.schemas import SearchResult
 from vidxp.capabilities.search import (
     distance_to_score,
@@ -99,6 +102,22 @@ class SearchTests(unittest.TestCase):
     def test_score_is_strictly_monotonic_and_not_a_probability(self):
         self.assertGreater(distance_to_score(0.1), distance_to_score(0.2))
         self.assertEqual(distance_to_score(2.5), -2.5)
+
+    def test_dialogue_query_uses_model_owned_query_prompt(self):
+        encoder = Mock()
+        encoder.encode_query.return_value = np.asarray([[0.5, 0.25]])
+        with patch(
+            "vidxp.capabilities.dialogue.operations.get_embedder",
+            return_value=encoder,
+        ):
+            vector = dialogue_embedding("fresh bread", self.config, self.runtime)
+
+        self.assertEqual(vector, [0.5, 0.25])
+        encoder.encode_query.assert_called_once_with(
+            ["fresh bread"],
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+        )
 
     def test_generated_query_ids_are_scoped_to_the_benchmark_run(self):
         first = stable_query_id("fresh bread", "dialogue", self.config)

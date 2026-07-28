@@ -3,13 +3,11 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from vidxp.capabilities.contracts import CapabilityContext
-from vidxp.capabilities.scene.config import scene_config
 from vidxp.capabilities.scene.models import get_scene_model
 from vidxp.capabilities.schemas import SearchInput, SearchResult
 from vidxp.capabilities.search import search_embeddings
 from vidxp.core.contracts import IndexConfig
-from vidxp.core.storage import IndexStorage
-from vidxp.runtime import ModelRuntime
+from vidxp.ports import IndexStore, ModelRuntimePort
 
 
 REQUIRED_METADATA = frozenset(
@@ -32,13 +30,11 @@ REQUIRED_METADATA = frozenset(
 
 def scene_embedding(
     query: str,
-    config: IndexConfig,
-    runtime: ModelRuntime,
+    runtime: ModelRuntimePort,
 ) -> list[float]:
     import torch
 
-    settings = scene_config(config)
-    provider = get_scene_model(runtime, settings.model, settings.revision)
+    provider = get_scene_model(runtime)
     inputs = provider.processor(
         text=[query],
         padding="max_length",
@@ -46,7 +42,7 @@ def scene_embedding(
     )
     inputs = {name: value.to(provider.device) for name, value in inputs.items()}
     with torch.inference_mode():
-        features = provider.model.get_text_features(**inputs)
+        features = provider.model.get_text_features(**inputs).pooler_output
         features = torch.nn.functional.normalize(features, dim=-1)
     return features.cpu().numpy().tolist()[0]
 
@@ -55,12 +51,12 @@ def search_scene(
     query: str,
     *,
     config: IndexConfig,
-    runtime: ModelRuntime,
+    runtime: ModelRuntimePort,
     top_k: int = 10,
     video_id: str | None = None,
     query_id: str | None = None,
     filters: Mapping[str, Any] | None = None,
-    storage: IndexStorage | None = None,
+    storage: IndexStore,
 ) -> SearchResult:
     cleaned = query.strip()
     if not cleaned:
@@ -70,7 +66,7 @@ def search_scene(
     return search_embeddings(
         cleaned,
         "scene",
-        scene_embedding(cleaned, config, runtime),
+        scene_embedding(cleaned, runtime),
         config=config,
         required_metadata=REQUIRED_METADATA,
         top_k=top_k,
@@ -92,4 +88,5 @@ def search_operation(
         top_k=request.top_k,
         video_id=config.video_id,
         runtime=context.runtime,
+        storage=context.require_storage(),
     )

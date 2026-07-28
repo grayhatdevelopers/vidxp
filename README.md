@@ -22,10 +22,8 @@
   <ul style="display:inline-block; text-align:left;">
     <li>From the command line</li>
     <li>Through its browser interface</li>
-    <li>As a desktop app</li>
-    <li>As an API</li>
-    <li>As an MCP, with your agents (coming soon ⚡️)
     <li>As an indexing and retrieval layer inside another application</li>
+    <li>Through API, MCP, and desktop interfaces as those roadmap phases land</li>
   </ul>
 
 <p align="center">
@@ -81,36 +79,44 @@ Some ideas on how to use VidXP:
 
 ## Quick start
 
-VidXP supports Python 3.10 through 3.13 and requires FFmpeg. See the
-[installation guide](INSTALLATION_GUIDE.md) for the `dlib` compiler
-requirements, source installation, model preparation, and troubleshooting.
+VidXP supports Python 3.11 through 3.14 and requires FFmpeg for media
+processing. See the [installation guide](INSTALLATION_GUIDE.md) for
+platform-specific local-worker installation, model preparation, and
+troubleshooting.
 
-Install the command line and browser interface with
+Install the lightweight command line in an isolated environment with
 [pipx](https://packaging.python.org/en/latest/guides/installing-stand-alone-command-line-tools/).
-The command is available on your `PATH` while VidXP and its dependencies remain
-isolated:
 
 ```bash
-pipx install "vidxp[all,frontend]"
+pipx install vidxp
 ```
 
-Install only the capabilities you need with a smaller selection such as
-`pipx install "vidxp[scene,frontend]"` or
-`pipx install "vidxp[dialogue,scene]"`. To import VidXP from another Python
-project, install it into that project's environment instead; the
-[installation guide](INSTALLATION_GUIDE.md) covers that path.
+For a local CPU worker and browser UI, a source checkout is the strictest
+cross-platform path because the lock routes only Torch through its official CPU
+index on Linux and Windows:
 
-Confirm the installed package and its runtime dependencies:
+```bash
+uv sync --frozen --extra local-worker --extra frontend
+uv run vidxp doctor
+```
+
+On Apple Silicon macOS 14+, the published package can be installed directly
+because PyPI provides the native CPU/MPS Torch wheel:
+
+```bash
+pipx install "vidxp[local-worker,frontend]"
+```
+
+Linux and Windows published installs require a staged CPU Torch install; plain
+`pipx install "vidxp[local-worker]"` can otherwise resolve PyPI's CUDA-enabled
+Linux Torch build. The exact commands are in the
+[installation guide](INSTALLATION_GUIDE.md#install-a-published-local-worker).
+
+Confirm the package and prepare the pinned models:
 
 ```bash
 vidxp --version
 vidxp doctor
-```
-
-The first use of each capability downloads its model weights. Download the fixed
-dialogue, transcription, and scene models in advance with:
-
-```bash
 vidxp prepare
 ```
 
@@ -233,14 +239,17 @@ VidXP is an evolving beta. We'd love to hear your feedback and where you'd like 
 
 | Capability | Model |
 |---|---|
-| Dialogue embeddings | `sentence-transformers/all-MiniLM-L6-v2` |
-| Transcription | WhisperX `large-v2` |
-| Scene search | CLIP `ViT-B/32` |
-| Word alignment | WhisperX model selected for the detected language |
+| Dialogue embeddings | `Qwen/Qwen3-Embedding-0.6B` |
+| Transcription | `mobiuslabsgmbh/faster-whisper-large-v3-turbo` |
+| Scene search | `google/siglip2-base-patch16-224` |
+| Actor detection | OpenCV Zoo YuNet |
+| Actor recognition | OpenCV Zoo SFace |
 
 VidXP maintains the standard local CLI/UI index in `chroma_data/`. Starting a
 new local indexing run replaces the previous or incomplete local index. Model
 caches normally live outside this directory and outside the virtual environment.
+Provider revisions and weight checksums are pinned in capability specs and
+recorded in the index manifest.
 
 ## Documentation and project links
 

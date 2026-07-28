@@ -21,7 +21,10 @@ def clusters_operation(
     _request: ActorClustersInput,
 ) -> ActorClustersOutput:
     return ActorClustersOutput(
-        clusters=actor_clusters(context.require_config())
+        clusters=actor_clusters(
+            context.require_config(),
+            storage=context.require_storage(),
+        )
     )
 
 
@@ -35,6 +38,7 @@ def detections_operation(
         detections=actor_detections(
             config,
             request.cluster_id,
+            storage=context.require_storage(),
         ),
     )
 
@@ -49,4 +53,5 @@ def render_operation(
         request.cluster_id,
         request.input_path,
         request.output_path,
+        storage=context.require_storage(),
     )

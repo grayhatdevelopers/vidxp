@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import os
 from typing import Annotated
 
 import typer
 
 from vidxp.application_models import (
+    ApplicationError,
     DependencyCheckCommand,
+    ErrorCategory,
     PrepareModelsCommand,
 )
-from vidxp.capabilities.registry import create_capability_registry
 from vidxp.cli_support import (
     OutputFormat,
     effective_output_format,
@@ -19,23 +19,16 @@ from vidxp.cli_support import (
     state_from_context,
 )
 
-_COMMAND_REGISTRY = create_capability_registry()
-ALL_CAPABILITIES = ",".join(_COMMAND_REGISTRY.names())
-PREPARABLE_CAPABILITIES = ",".join(
-    _COMMAND_REGISTRY.preparable_names()
-)
-
-
 def doctor(
     ctx: typer.Context,
     modalities: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--modalities",
             "-m",
             help="Only validate dependencies for these modalities.",
         ),
-    ] = ALL_CAPABILITIES,
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit machine-readable JSON."),
@@ -44,7 +37,11 @@ def doctor(
     """Validate selected indexing dependencies without downloading models."""
 
     state = state_from_context(ctx)
-    selected = parse_modalities(modalities, state.service.registry)
+    selected = (
+        state.service.registry.names()
+        if modalities is None
+        else parse_modalities(modalities, state.service.registry)
+    )
     result = state.service.check_dependencies(
         DependencyCheckCommand(modalities=selected)
     )
@@ -53,15 +50,20 @@ def doctor(
         emit_json(payload)
     else:
         for check in payload["checks"]:
+            owner = check["capability"]
+            if check["provenance"] is not None:
+                owner = (
+                    f"{check['provenance']['distribution']}:"
+                    f"{check['provenance']['entry_point']}"
+                )
             if check["ok"]:
-                detail = f": {check['path']}" if check.get("path") else ""
                 typer.secho(
-                    f"OK {check['name']}{detail}",
+                    f"OK [{owner}] {check['name']}",
                     fg=typer.colors.GREEN,
                 )
             else:
                 typer.secho(
-                    f"FAILED {check['name']}: {check['error']}",
+                    f"FAILED [{owner}] {check['name']}: {check['error']}",
                     fg=typer.colors.RED,
                 )
     if not result.ok:
@@ -77,13 +79,13 @@ def doctor(
 def prepare(
     ctx: typer.Context,
     modalities: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--modalities",
             "-m",
             help="Only prepare models for these modalities.",
         ),
-    ] = PREPARABLE_CAPABILITIES,
+    ] = None,
     capability_options: Annotated[
         list[str] | None,
         typer.Option(
@@ -102,7 +104,11 @@ def prepare(
     """Download and cache selected runtime models before indexing."""
 
     state = state_from_context(ctx)
-    selected = parse_modalities(modalities, state.service.registry)
+    selected = (
+        state.service.registry.preparable_names()
+        if modalities is None
+        else parse_modalities(modalities, state.service.registry)
+    )
     result = state.service.prepare_models(
         PrepareModelsCommand(
             modalities=selected,
@@ -145,21 +151,15 @@ def ui(
     """Launch Streamlit with the selected repository configuration."""
 
     state = state_from_context(ctx)
-    os.environ["VIDXP_CONFIG_FILE"] = str(state.registry.path)
-    os.environ["VIDXP_REPOSITORY"] = state.repository.name
-    os.environ["VIDXP_INDEX_DIR"] = str(state.service.layout.root)
-    if state.service.device is None:
-        os.environ.pop("VIDXP_DEVICE", None)
-    else:
-        os.environ["VIDXP_DEVICE"] = state.service.device
-
     try:
         from vidxp import frontend
     except ModuleNotFoundError as exc:
         if exc.name == "streamlit":
-            raise RuntimeError(
-                "The browser interface requires the frontend extra. "
-                "Install vidxp[frontend]."
+            raise ApplicationError(
+                "frontend_unavailable",
+                ErrorCategory.unavailable,
+                "The browser interface is unavailable. "
+                'Install the "frontend" extra.',
             ) from exc
         raise
 
@@ -168,4 +168,7 @@ def ui(
         streamlit_arguments.append(f"--server.address={host}")
     if port is not None:
         streamlit_arguments.append(f"--server.port={port}")
-    frontend.main(streamlit_arguments)
+    frontend.main(
+        streamlit_arguments,
+        settings=state.service.settings,
+    )

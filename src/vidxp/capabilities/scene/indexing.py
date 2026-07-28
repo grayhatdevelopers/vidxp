@@ -5,6 +5,7 @@ from typing import Any
 
 from vidxp.capabilities.scene.config import scene_config
 from vidxp.capabilities.scene.models import SceneModel, get_scene_model
+from vidxp.capabilities.scene.specs import SIGLIP2_MODEL
 from vidxp.core.contracts import (
     CancellationToken,
     IndexConfig,
@@ -13,8 +14,7 @@ from vidxp.core.contracts import (
     stable_source_id,
 )
 from vidxp.core.indexing_common import ProgressCallback, report_progress
-from vidxp.core.storage import IndexStorage
-from vidxp.runtime import ModelRuntime
+from vidxp.ports import IndexStore, ModelRuntimePort
 
 
 @dataclass
@@ -33,7 +33,7 @@ def encode_scene_batch(samples, provider: SceneModel):
     )
     inputs = {name: value.to(provider.device) for name, value in inputs.items()}
     with torch.inference_mode():
-        features = provider.model.get_image_features(**inputs)
+        features = provider.model.get_image_features(**inputs).pooler_output
         features = torch.nn.functional.normalize(features, dim=-1)
     return features.cpu().numpy().tolist()
 
@@ -82,7 +82,7 @@ def process_scene_samples(
     state: SceneIndexState,
     info,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
 ) -> None:
     settings = scene_config(config)
@@ -107,20 +107,15 @@ class SceneVisualProcessor:
     def prepare(
         self,
         config: IndexConfig,
-        runtime: ModelRuntime,
+        runtime: ModelRuntimePort,
         progress: ProgressCallback | None,
     ) -> SceneIndexState:
-        settings = scene_config(config)
         report_progress(
             progress,
             "preparing_scene_model",
-            f"Preparing scene model: SigLIP2 {settings.model}.",
+            f"Preparing scene model: SigLIP2 {SIGLIP2_MODEL.model_id}.",
         )
-        provider = get_scene_model(
-            runtime,
-            settings.model,
-            settings.revision,
-        )
+        provider = get_scene_model(runtime)
         return SceneIndexState(provider)
 
     def process(
@@ -130,7 +125,7 @@ class SceneVisualProcessor:
         state: SceneIndexState,
         info,
         config: IndexConfig,
-        storage: IndexStorage,
+        storage: IndexStore,
         cancellation: CancellationToken,
     ) -> None:
         process_scene_samples(
@@ -147,7 +142,7 @@ class SceneVisualProcessor:
         state: SceneIndexState,
         *,
         config: IndexConfig,
-        storage: IndexStorage,
+        storage: IndexStore,
     ) -> tuple[dict[str, Any], int]:
         return {"scene_frames": state.stored_frames}, state.stored_frames
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from importlib.metadata import EntryPoint, entry_points
 from threading import RLock
 from types import MappingProxyType
@@ -11,10 +12,18 @@ from packaging.utils import canonicalize_name
 from vidxp.capabilities.contracts import (
     CAPABILITY_CONTRACT_VERSION,
     CapabilityDefinition,
+    CapabilityDependencyError,
     CapabilityExecutor,
     CapabilityPlugin,
+    CapabilityProvenance,
+    CapabilityRequestError,
     RuntimeCheck,
+    RuntimeCheckBinding,
     capability_install_hint,
+)
+from vidxp.application_models import (
+    CapabilityDependencyCheck,
+    DependencyKind,
 )
 from vidxp.core.contracts import VideoSource
 from vidxp.dependencies import (
@@ -23,30 +32,59 @@ from vidxp.dependencies import (
     installed_base_requirements,
     packaged_requirements,
 )
+from vidxp.model_contracts import ArtifactSpec, ModelSpec
 
 
 ENTRY_POINT_GROUP = "vidxp.capabilities"
 
 
+@dataclass(frozen=True)
+class _RequirementBinding:
+    capability: str
+    provenance: CapabilityProvenance | None
+    requirement: Requirement
+
+
 class CapabilityRegistry:
     """Validated capability metadata with lazily constructed executors."""
 
-    def __init__(self, plugins: Iterable[CapabilityPlugin]) -> None:
+    def __init__(
+        self,
+        plugins: Iterable[CapabilityPlugin],
+        *,
+        platform_runtime_checks: Iterable[RuntimeCheckBinding] = (),
+    ) -> None:
         indexed: dict[str, CapabilityPlugin] = {}
         for plugin in plugins:
             if plugin.contract_version != CAPABILITY_CONTRACT_VERSION:
                 raise RuntimeError(
-                    f"Capability {plugin.definition.name!r} targets contract "
+                    f"Capability {plugin.definition.name!r} from "
+                    f"{self._label(plugin)} targets contract "
                     f"{plugin.contract_version}; VidXP requires "
                     f"{CAPABILITY_CONTRACT_VERSION}."
                 )
             name = plugin.definition.name
             if name in indexed:
-                raise RuntimeError(f"Duplicate capability name: {name!r}.")
+                existing = self._label(indexed[name])
+                incoming = self._label(plugin)
+                raise RuntimeError(
+                    f"Duplicate capability name {name!r}: "
+                    f"{existing} conflicts with {incoming}."
+                )
             indexed[name] = plugin
         self._plugins = MappingProxyType(indexed)
+        self._platform_runtime_checks = tuple(platform_runtime_checks)
         self._executors: dict[str, CapabilityExecutor] = {}
         self._executor_lock = RLock()
+
+    @staticmethod
+    def _label(plugin: CapabilityPlugin) -> str:
+        if plugin.provenance is None:
+            return "built-in VidXP capability"
+        return (
+            f"{plugin.provenance.distribution}:"
+            f"{plugin.provenance.entry_point}"
+        )
 
     @property
     def definitions(self) -> Mapping[str, CapabilityDefinition]:
@@ -56,6 +94,10 @@ class CapabilityRegistry:
 
     def names(self) -> tuple[str, ...]:
         return tuple(self._plugins)
+
+    def provenance(self, name: str) -> CapabilityProvenance | None:
+        self.get(name)
+        return self._plugins[name].provenance
 
     def index_names(self) -> tuple[str, ...]:
         return tuple(
@@ -71,12 +113,25 @@ class CapabilityRegistry:
             if definition.prepares_models
         )
 
+    def model_specs(
+        self,
+        names: Iterable[str] | None = None,
+    ) -> tuple[ModelSpec | ArtifactSpec, ...]:
+        selected = self.names() if names is None else self.validate_names(names)
+        return tuple(
+            dict.fromkeys(
+                spec
+                for name in selected
+                for spec in self.get(name).model_specs
+            )
+        )
+
     def get(self, name: str) -> CapabilityDefinition:
         try:
             return self._plugins[name].definition
         except KeyError as exc:
             available = ", ".join(self.names())
-            raise ValueError(
+            raise CapabilityRequestError(
                 f"Unknown capability {name!r}. "
                 f"Available capabilities: {available}."
             ) from exc
@@ -89,20 +144,23 @@ class CapabilityRegistry:
                 operation_names = set(definition.operations)
                 if set(executor.operations) != operation_names:
                     raise RuntimeError(
-                        f"Capability {name!r} operation handlers do not match "
-                        "its declared operations."
+                        f"Capability {name!r} from "
+                        f"{self._label(self._plugins[name])} has operation "
+                        "handlers that do not match its declaration."
                     )
                 if (executor.indexer is not None) != (
                     definition.collection_name is not None
                 ):
                     raise RuntimeError(
-                        f"Capability {name!r} indexing metadata and executor "
-                        "do not match."
+                        f"Capability {name!r} from "
+                        f"{self._label(self._plugins[name])} has indexing "
+                        "metadata that does not match its executor."
                     )
                 if (executor.prepare is not None) != definition.prepares_models:
                     raise RuntimeError(
-                        f"Capability {name!r} preparation metadata and executor "
-                        "do not match."
+                        f"Capability {name!r} from "
+                        f"{self._label(self._plugins[name])} has preparation "
+                        "metadata that does not match its executor."
                     )
                 self._executors[name] = executor
         return self._executors[name]
@@ -110,7 +168,7 @@ class CapabilityRegistry:
     def validate_names(self, names: Iterable[str]) -> tuple[str, ...]:
         selected = tuple(dict.fromkeys(str(name).strip() for name in names))
         if not selected:
-            raise ValueError("At least one capability is required.")
+            raise CapabilityRequestError("At least one capability is required.")
         for name in selected:
             self.get(name)
         return selected
@@ -135,7 +193,7 @@ class CapabilityRegistry:
         supplied = dict(options or {})
         unknown = sorted(set(supplied) - set(selected))
         if unknown:
-            raise ValueError(
+            raise CapabilityRequestError(
                 "Options were supplied for disabled capabilities: "
                 + ", ".join(unknown)
             )
@@ -152,29 +210,81 @@ class CapabilityRegistry:
         *,
         source: VideoSource | None = None,
     ) -> tuple[Requirement, ...]:
+        bindings = self._requirement_bindings(names, source=source)
+        unique = {
+            str(binding.requirement): binding.requirement for binding in bindings
+        }
+        return tuple(unique.values())
+
+    def _requirement_bindings(
+        self,
+        names: Iterable[str],
+        *,
+        source: VideoSource | None = None,
+    ) -> tuple[_RequirementBinding, ...]:
         selected = self.validate_names(names)
-        requirements = list(
-            active_requirements(
-                packaged_requirements("vidxp", "requirements/storage.txt")
+        bindings = [
+            _RequirementBinding("storage", None, requirement)
+            for requirement in (
+                active_requirements(
+                    packaged_requirements(
+                        "vidxp",
+                        "requirements/storage.txt",
+                    )
+                )
+                if any(self.get(name).collection_name for name in selected)
+                else ()
             )
-            if any(self.get(name).collection_name for name in selected)
-            else ()
-        )
+        ]
         for name in selected:
+            plugin = self._plugins[name]
             capability_requirements = active_requirements(
-                packaged_requirements(f"vidxp.capabilities.{name}")
+                tuple(Requirement(value) for value in plugin.requirements)
+                if plugin.provenance is not None
+                else packaged_requirements(f"vidxp.capabilities.{name}")
             )
             executor = self.executor(name)
-            requirements.extend(
+            selected_requirements = (
                 capability_requirements
                 if source is None
-                else executor.source_requirements(
-                    source,
-                    capability_requirements,
-                )
+                else executor.source_requirements(source, capability_requirements)
             )
-        unique = {str(requirement): requirement for requirement in requirements}
+            bindings.extend(
+                _RequirementBinding(name, plugin.provenance, requirement)
+                for requirement in selected_requirements
+            )
+        unique = {
+            (
+                binding.capability,
+                str(binding.requirement),
+            ): binding
+            for binding in bindings
+        }
         return tuple(unique.values())
+
+    def install_hint(self, names: Iterable[str]) -> str:
+        selected = self.validate_names(names)
+        external = [
+            plugin.provenance.distribution
+            for name in selected
+            if (plugin := self._plugins[name]).provenance is not None
+        ]
+        builtins = [
+            self.get(name).extra
+            for name in selected
+            if self._plugins[name].provenance is None
+        ]
+        commands = []
+        if builtins:
+            commands.append(
+                capability_install_hint(",".join(dict.fromkeys(builtins)))
+            )
+        if external:
+            commands.append(
+                "Install external capability distributions with: pip install "
+                + " ".join(dict.fromkeys(external))
+            )
+        return " ".join(commands)
 
     def runtime_checks_for(
         self,
@@ -182,25 +292,87 @@ class CapabilityRegistry:
         *,
         source: VideoSource | None = None,
     ) -> tuple[RuntimeCheck, ...]:
-        checks = (
-            check
-            for name in self.validate_names(names)
-            for check in self.executor(name).runtime_checks
-            if check.applies(source)
+        return tuple(
+            binding.check
+            for binding in self._runtime_check_bindings(
+                names,
+                source=source,
+            )
         )
-        return tuple({check.label: check for check in checks}.values())
+
+    def _runtime_check_bindings(
+        self,
+        names: Iterable[str],
+        *,
+        source: VideoSource | None = None,
+    ) -> tuple[RuntimeCheckBinding, ...]:
+        selected = self.validate_names(names)
+        bindings = [
+            binding
+            for binding in self._platform_runtime_checks
+            if any(self.get(name).collection_name for name in selected)
+            and binding.check.applies(source)
+        ]
+        for name in selected:
+            plugin = self._plugins[name]
+            bindings.extend(
+                RuntimeCheckBinding(
+                    capability=name,
+                    provenance=plugin.provenance,
+                    check=check,
+                )
+                for check in self.executor(name).runtime_checks
+                if check.applies(source)
+            )
+        unique = {
+            (
+                binding.capability,
+                binding.check.label,
+                (
+                    binding.provenance.distribution,
+                    binding.provenance.entry_point,
+                )
+                if binding.provenance is not None
+                else None,
+            ): binding
+            for binding in bindings
+        }
+        return tuple(unique.values())
 
     def dependency_checks(
         self,
         names: Iterable[str],
-    ) -> tuple[dict[str, Any], ...]:
-        return tuple(
-            inspect_requirement(requirement)
-            for requirement in self.requirements_for(names)
-        ) + tuple(
-            check.inspect()
-            for check in self.runtime_checks_for(names)
-        )
+        *,
+        source: VideoSource | None = None,
+    ) -> tuple[CapabilityDependencyCheck, ...]:
+        selected = self.validate_names(names)
+        checks = []
+        for binding in self._requirement_bindings(selected, source=source):
+            result = inspect_requirement(binding.requirement)
+            checks.append(
+                CapabilityDependencyCheck(
+                    capability=binding.capability,
+                    provenance=binding.provenance,
+                    kind=DependencyKind.distribution,
+                    **result,
+                )
+            )
+        for binding in self._runtime_check_bindings(
+            selected,
+            source=source,
+        ):
+            result = binding.check.inspect()
+            checks.append(
+                CapabilityDependencyCheck(
+                    capability=binding.capability,
+                    provenance=binding.provenance,
+                    kind=DependencyKind.runtime,
+                    name=result["name"],
+                    ok=result["ok"],
+                    error=result["error"],
+                )
+            )
+        return tuple(checks)
 
     def require_dependencies(
         self,
@@ -209,25 +381,18 @@ class CapabilityRegistry:
         source: VideoSource,
     ) -> None:
         selected = self.validate_names(names)
-        failures = [
-            result
-            for requirement in self.requirements_for(selected, source=source)
-            if not (result := inspect_requirement(requirement))["ok"]
-        ]
-        failures.extend(
-            result
-            for check in self.runtime_checks_for(selected, source=source)
-            if not (result := check.inspect())["ok"]
+        failures = tuple(
+            check
+            for check in self.dependency_checks(selected, source=source)
+            if not check.ok
         )
         if failures:
-            details = "; ".join(
-                f"{failure['name']}: {failure['error']}"
-                for failure in failures
-            )
-            extras = ",".join(self.get(name).extra for name in selected)
-            raise RuntimeError(
-                f"Capability dependencies are unavailable: {details}. "
-                + capability_install_hint(extras)
+            raise CapabilityDependencyError(
+                selected,
+                tuple(
+                    check.model_dump(mode="json")
+                    for check in failures
+                ),
             )
 
     def runtime_distributions(self) -> tuple[str, ...]:
@@ -251,18 +416,22 @@ def _builtin_plugins() -> tuple[CapabilityPlugin, ...]:
 
 
 def _external_entry_points(allowlist: tuple[str, ...]) -> tuple[EntryPoint, ...]:
-    allowed = {canonicalize_name(value) for value in allowlist}
+    allowed = {
+        tuple(canonicalize_name(part) for part in value.split(":", 1))
+        for value in allowlist
+    }
     candidates = entry_points(group=ENTRY_POINT_GROUP)
     return tuple(
         sorted(
             (
                 entry_point
                 for entry_point in candidates
-                if canonicalize_name(entry_point.name) in allowed
-                or (
-                    entry_point.dist is not None
-                    and canonicalize_name(entry_point.dist.name) in allowed
+                if entry_point.dist is not None
+                and (
+                    canonicalize_name(entry_point.dist.name),
+                    canonicalize_name(entry_point.name),
                 )
+                in allowed
             ),
             key=lambda item: (
                 canonicalize_name(
@@ -278,10 +447,17 @@ def create_capability_registry(
     *,
     external: bool = False,
     allowlist: tuple[str, ...] = (),
+    platform_runtime_checks: tuple[RuntimeCheckBinding, ...] = (),
 ) -> CapabilityRegistry:
     plugins = list(_builtin_plugins())
     if external:
         for entry_point in _external_entry_points(allowlist):
+            distribution = entry_point.dist
+            identity = (
+                f"{distribution.name}:{entry_point.name}"
+                if distribution is not None
+                else entry_point.name
+            )
             try:
                 loaded = entry_point.load()
                 plugin = (
@@ -293,12 +469,32 @@ def create_capability_registry(
             except Exception as exc:
                 raise RuntimeError(
                     f"Could not load capability entry point "
-                    f"{entry_point.name!r}."
+                    f"{identity!r}."
                 ) from exc
             if not isinstance(plugin, CapabilityPlugin):
                 raise RuntimeError(
-                    f"Capability entry point {entry_point.name!r} did not "
+                    f"Capability entry point {identity!r} did not "
                     "return a CapabilityPlugin."
                 )
+            plugin = plugin.model_copy(
+                update={
+                    "provenance": CapabilityProvenance(
+                        distribution=(
+                            distribution.name
+                            if distribution is not None
+                            else "unknown"
+                        ),
+                        entry_point=entry_point.name,
+                        version=(
+                            distribution.version
+                            if distribution is not None
+                            else None
+                        ),
+                    )
+                }
+            )
             plugins.append(plugin)
-    return CapabilityRegistry(plugins)
+    return CapabilityRegistry(
+        plugins,
+        platform_runtime_checks=platform_runtime_checks,
+    )

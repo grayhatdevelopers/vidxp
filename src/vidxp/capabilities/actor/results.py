@@ -8,7 +8,7 @@ from vidxp.capabilities.actor.schemas import (
     ActorRenderResult,
 )
 from vidxp.core.contracts import IndexConfig
-from vidxp.core.storage import IndexStorage
+from vidxp.ports import IndexStore
 from vidxp.core.video import render_actor_video
 
 
@@ -19,20 +19,14 @@ class ActorClusterNotFoundError(LookupError):
 def actor_clusters(
     config: IndexConfig,
     *,
-    storage: IndexStorage | None = None,
+    storage: IndexStore,
 ) -> tuple[ActorClusterSummary, ...]:
     if config.video_id is None:
         raise ValueError("IndexConfig.video_id is required for actor results.")
-    owns_storage = storage is None
-    active_storage = storage or IndexStorage(config)
-    try:
-        records = active_storage.records(
-            "actor",
-            video_id=config.video_id,
-        )
-    finally:
-        if owns_storage:
-            active_storage.close()
+    records = storage.records(
+        "actor",
+        video_id=config.video_id,
+    )
 
     grouped: dict[str, list[dict]] = {}
     for record in records:
@@ -57,21 +51,15 @@ def actor_detections(
     config: IndexConfig,
     cluster_id: str,
     *,
-    storage: IndexStorage | None = None,
+    storage: IndexStore,
 ) -> list[ActorDetection]:
     if config.video_id is None:
         raise ValueError("IndexConfig.video_id is required for actor results.")
-    owns_storage = storage is None
-    active_storage = storage or IndexStorage(config)
-    try:
-        records = active_storage.records(
-            "actor",
-            video_id=config.video_id,
-            filters={"cluster_id": cluster_id},
-        )
-    finally:
-        if owns_storage:
-            active_storage.close()
+    records = storage.records(
+        "actor",
+        video_id=config.video_id,
+        filters={"cluster_id": cluster_id},
+    )
 
     detections = [
         ActorDetection(
@@ -89,6 +77,10 @@ def actor_detections(
         )
         for record in records
     ]
+    if not detections:
+        raise ActorClusterNotFoundError(
+            f"Actor cluster {cluster_id} was not found in the completed index."
+        )
     return sorted(
         detections,
         key=lambda item: (item.frame_index, item.detection_id),
@@ -101,13 +93,9 @@ def render_actor_result(
     input_path: str | Path,
     output_path: str | Path,
     *,
-    storage: IndexStorage | None = None,
+    storage: IndexStore,
 ) -> ActorRenderResult:
     detections = actor_detections(config, cluster_id, storage=storage)
-    if not detections:
-        raise ActorClusterNotFoundError(
-            f"Actor cluster {cluster_id} was not found in the completed index."
-        )
     destination = Path(output_path)
     render_actor_video(input_path, destination, cluster_id, detections)
     return ActorRenderResult(

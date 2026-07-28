@@ -82,6 +82,17 @@ class ActorResultTests(unittest.TestCase):
                 storage=storage,
             )
 
+    def test_actor_detections_rejects_an_empty_cluster(self):
+        storage = Mock()
+        storage.records.return_value = []
+
+        with self.assertRaises(ActorClusterNotFoundError):
+            actor_detections(
+                self.config,
+                "missing",
+                storage=storage,
+            )
+
     def test_render_actor_result_returns_output_details(self):
         storage = Mock()
         storage.records.return_value = [

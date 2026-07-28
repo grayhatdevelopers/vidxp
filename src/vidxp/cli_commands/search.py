@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Annotated, Callable
+from typing import Annotated
 
 import typer
 
 from vidxp.application_models import SearchCommand
-from vidxp.capabilities.registry import create_capability_registry
 from vidxp.capabilities.schemas import SearchResult
 from vidxp.cli_support import (
     CLIState,
@@ -13,9 +12,6 @@ from vidxp.cli_support import (
     emit_search,
     state_from_context,
 )
-
-
-app = typer.Typer(no_args_is_help=True, help="Search the active index.")
 
 
 def run_search(
@@ -40,40 +36,36 @@ def run_search(
     return result
 
 
-def _search_command(capability: str) -> Callable:
-    def command(
-        ctx: typer.Context,
-        query: Annotated[
-            str,
-            typer.Argument(help="Text query to find."),
-        ],
-        top_k: Annotated[
-            int,
-            typer.Option(
-                "--top-k",
-                "-k",
-                min=1,
-                help="Maximum ranked hits.",
-            ),
-        ] = 10,
-        json_output: Annotated[
-            bool,
-            typer.Option("--json", help="Emit machine-readable JSON."),
-        ] = False,
-    ) -> None:
-        run_search(
-            state_from_context(ctx),
-            capability,
-            query,
-            top_k=top_k,
-            json_output=json_output,
-        )
-
-    command.__name__ = f"search_{capability}"
-    command.__doc__ = create_capability_registry().get(capability).description
-    return command
-
-
-for _name, _capability in create_capability_registry().definitions.items():
-    if "search" in _capability.operations:
-        app.command(_name)(_search_command(_name))
+def search(
+    ctx: typer.Context,
+    capability: Annotated[
+        str,
+        typer.Argument(help="Registered capability to query."),
+    ],
+    query: Annotated[
+        str,
+        typer.Argument(help="Text query to find."),
+    ],
+    top_k: Annotated[
+        int,
+        typer.Option(
+            "--top-k",
+            "-k",
+            min=1,
+            max=100,
+            help="Maximum ranked hits.",
+        ),
+    ] = 10,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    state = state_from_context(ctx)
+    run_search(
+        state,
+        capability,
+        query,
+        top_k=top_k,
+        json_output=json_output,
+    )

@@ -4,7 +4,13 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Generic, Mapping, TypeAlias, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StringConstraints,
+)
 
 
 Identifier: TypeAlias = Annotated[
@@ -58,10 +64,10 @@ class ErrorCategory(StrEnum):
 
 
 class ErrorDetail(ApplicationModel):
-    code: str = Field(min_length=1)
+    code: str = Field(min_length=1, pattern=r"^[a-z][a-z0-9_]*$")
     category: ErrorCategory
     message: str = Field(min_length=1)
-    details: Mapping[str, Any] = Field(default_factory=dict)
+    details: dict[str, JsonValue] = Field(default_factory=dict)
     retryable: bool = False
     correlation_id: str | None = None
 
@@ -104,13 +110,68 @@ class ApplicationError(RuntimeError):
 
 
 class DependencyUnavailableError(ApplicationError):
-    def __init__(self, dependency: str, install_hint: str) -> None:
+    def __init__(
+        self,
+        capabilities: tuple[str, ...],
+        install_hint: str,
+    ) -> None:
+        label = capabilities[0] if len(capabilities) == 1 else "selected"
         super().__init__(
             "dependency_unavailable",
             ErrorCategory.unavailable,
-            f"{dependency} is unavailable. {install_hint}",
-            details={"dependency": dependency},
+            f"Dependencies for the {label} capability are unavailable. "
+            f"{install_hint}",
+            details={
+                "capabilities": list(capabilities),
+                "install_hint": install_hint,
+            },
         )
+
+
+class InvalidRequestError(ApplicationError):
+    def __init__(
+        self,
+        *,
+        errors: list[dict[str, JsonValue]] | None = None,
+    ) -> None:
+        super().__init__(
+            "invalid_request",
+            ErrorCategory.validation,
+            "The request is invalid.",
+            details={"errors": errors or []},
+        )
+
+
+class ResourceNotFoundError(ApplicationError):
+    def __init__(self, resource: str) -> None:
+        super().__init__(
+            "resource_not_found",
+            ErrorCategory.not_found,
+            f"The requested {resource} was not found.",
+            details={"resource": resource},
+        )
+
+
+class CapabilityProvenance(ApplicationModel):
+    distribution: str = Field(min_length=1)
+    entry_point: str = Field(min_length=1)
+    version: str | None = None
+
+
+class DependencyKind(StrEnum):
+    distribution = "distribution"
+    runtime = "runtime"
+
+
+class CapabilityDependencyCheck(ApplicationModel):
+    capability: str = Field(min_length=1)
+    provenance: CapabilityProvenance | None = None
+    kind: DependencyKind
+    name: str = Field(min_length=1)
+    requirement: str | None = None
+    installed_version: str | None = None
+    ok: bool
+    error: str | None = None
 
 
 class CreateIndexCommand(ApplicationModel):
@@ -162,7 +223,7 @@ class DependencyCheckCommand(ApplicationModel):
 class DependencyCheckResult(ApplicationModel):
     ok: bool
     modalities: tuple[str, ...]
-    checks: tuple[Mapping[str, Any], ...]
+    checks: tuple[CapabilityDependencyCheck, ...]
 
 
 class PrepareModelsResult(ApplicationModel):

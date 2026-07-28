@@ -18,8 +18,7 @@ from vidxp.core.contracts import (
     VideoSource,
 )
 from vidxp.core.indexing_common import ProgressCallback
-from vidxp.core.storage import IndexStorage
-from vidxp.runtime import ModelRuntime
+from vidxp.ports import IndexStore, ModelRuntimePort
 
 
 REQUIRED_METADATA = frozenset(
@@ -42,10 +41,10 @@ def index_capability(
     source: VideoSource,
     *,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
     registry: CapabilityRegistry,
-    runtime: ModelRuntime,
+    runtime: ModelRuntimePort,
     progress: ProgressCallback | None = None,
     modalities: tuple[str, ...] = ("dialogue",),
 ) -> CapabilityIndexResult:
@@ -66,20 +65,12 @@ def index_capability(
 def dialogue_embedding(
     query: str,
     config: IndexConfig,
-    runtime: ModelRuntime,
+    runtime: ModelRuntimePort,
 ) -> list[float]:
     settings = dialogue_config(config)
-    encoder = get_embedder(
-        runtime,
-        settings.sentence_model,
-        settings.sentence_revision,
-    )
-    encoded = encoder.encode(
+    encoder = get_embedder(runtime)
+    encoded = encoder.encode_query(
         [query],
-        prompt=(
-            "Instruct: Retrieve spoken video passages relevant to the query\n"
-            "Query: "
-        ),
         convert_to_numpy=True,
         normalize_embeddings=settings.normalize_embeddings,
     )
@@ -90,12 +81,12 @@ def search_dialogue(
     query: str,
     *,
     config: IndexConfig,
-    runtime: ModelRuntime,
+    runtime: ModelRuntimePort,
     top_k: int = 10,
     video_id: str | None = None,
     query_id: str | None = None,
     filters: Mapping[str, Any] | None = None,
-    storage: IndexStorage | None = None,
+    storage: IndexStore,
 ) -> SearchResult:
     cleaned = query.strip()
     if not cleaned:
@@ -127,4 +118,5 @@ def search_operation(
         top_k=request.top_k,
         video_id=config.video_id,
         runtime=context.runtime,
+        storage=context.require_storage(),
     )

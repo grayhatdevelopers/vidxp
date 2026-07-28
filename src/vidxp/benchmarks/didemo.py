@@ -18,9 +18,14 @@ from vidxp.benchmarks.common import (
 )
 from vidxp.capabilities.scene.operations import search_scene
 from vidxp.capabilities.schemas import SearchHit
+from vidxp.capabilities.registry import create_capability_registry
 from vidxp.core.contracts import IndexConfig, VideoSource
-from vidxp.core.manifest import write_json_atomic
+from vidxp.core.manifest import ManifestStore, write_json_atomic
 from vidxp.core.runner import run_index
+from vidxp.core.storage import IndexStorage
+from vidxp.infrastructure.local_index import LOCAL_INDEX_RUNTIME_CHECKS
+from vidxp.runtime import ModelRuntime
+from vidxp.settings import VidXPSettings
 
 
 DIDEMO_REVISION = "b6a555c8134581305d0ed4716fbc192860e0b88c"
@@ -271,6 +276,8 @@ def _generate_predictions(
     config: IndexConfig,
     manifest: Mapping[str, Any],
     chunk_pooling: Literal["max", "mean"],
+    runtime: ModelRuntime,
+    storage: IndexStorage,
 ) -> list[list[list[int]]]:
     scene_counts = {
         video_id: int(video["summary"]["scene_frames"])
@@ -285,6 +292,8 @@ def _generate_predictions(
             top_k=scene_counts[video_id],
             video_id=video_id,
             query_id=str(annotation["annotation_id"]),
+            runtime=runtime,
+            storage=storage,
         )
         predictions.append(
             [
@@ -383,6 +392,16 @@ def run_didemo(
         output_root=output_root,
     )
     run_directory = config.run_directory
+    registry = create_capability_registry(
+        platform_runtime_checks=LOCAL_INDEX_RUNTIME_CHECKS
+    )
+    runtime = ModelRuntime(
+        VidXPSettings(
+            repository_root=run_directory,
+            runtime_backend=device,
+        ),
+        allowed_specs=registry.model_specs(),
+    )
     ensure_adapter_outputs(run_directory)
     subset = {
         "label": (
@@ -397,29 +416,40 @@ def run_didemo(
         "video_count": len({item["video"] for item in annotations}),
     }
     try:
-        manifest = run_index(
-            _video_sources(
+        with IndexStorage(config) as storage:
+            manifest = run_index(
+                _video_sources(
+                    annotations,
+                    media_directory=media_directory,
+                    media_overrides=media_overrides,
+                ),
+                config,
+                reset=reset,
+                storage=storage,
+                manifest_store=ManifestStore(
+                    config,
+                    registry=registry,
+                    runtime=runtime,
+                ),
+                registry=registry,
+                runtime=runtime,
+            )
+            ensure_adapter_outputs(run_directory)
+            record_adapter_manifest(
+                run_directory,
+                benchmark="didemo",
+                subset=subset,
+                artifacts=artifacts,
+                state="predicting",
+            )
+            predictions = _generate_predictions(
                 annotations,
-                media_directory=media_directory,
-                media_overrides=media_overrides,
-            ),
-            config,
-            reset=reset,
-        )
-        ensure_adapter_outputs(run_directory)
-        record_adapter_manifest(
-            run_directory,
-            benchmark="didemo",
-            subset=subset,
-            artifacts=artifacts,
-            state="predicting",
-        )
-        predictions = _generate_predictions(
-            annotations,
-            config=config,
-            manifest=manifest,
-            chunk_pooling=chunk_pooling,
-        )
+                config=config,
+                manifest=manifest,
+                chunk_pooling=chunk_pooling,
+                runtime=runtime,
+                storage=storage,
+            )
         validate_predictions(predictions, annotations)
         predictions_path = run_directory / "predictions.json"
         ground_truth_path = run_directory / "ground_truth.subset.json"

@@ -11,7 +11,7 @@ from vidxp.core.contracts import (
     IndexConfig,
     IndexSchemaError,
 )
-from vidxp.core.storage import IndexStorage
+from vidxp.ports import IndexStore
 
 
 def distance_to_score(raw_distance: float) -> float:
@@ -98,7 +98,7 @@ def search_embeddings(
     video_id: str | None = None,
     query_id: str | None = None,
     filters: Mapping[str, Any] | None = None,
-    storage: IndexStorage | None = None,
+    storage: IndexStore,
 ) -> SearchResult:
     query = query.strip()
     if not query:
@@ -109,19 +109,13 @@ def search_embeddings(
         raise ValueError(
             f"The {modality} modality is not present in this index run."
         )
-    owns_storage = storage is None
-    store = storage or IndexStorage(config)
-    try:
-        rows = store.query(
-            modality,
-            embedding,
-            top_k=top_k,
-            video_id=video_id,
-            filters=filters,
-        )
-    finally:
-        if owns_storage:
-            store.close()
+    rows = storage.query(
+        modality,
+        embedding,
+        top_k=top_k,
+        video_id=video_id,
+        filters=filters,
+    )
     return SearchResult(
         query_id=query_id or stable_query_id(query, modality, config),
         query=query,

@@ -12,8 +12,7 @@ from vidxp.core.contracts import (
     VideoSource,
 )
 from vidxp.core.indexing_common import ProgressCallback, report_progress
-from vidxp.core.storage import IndexStorage
-from vidxp.runtime import ModelRuntime
+from vidxp.ports import IndexStore, ModelRuntimePort
 from vidxp.core.video import (
     FrameSample,
     FrameStreamStats,
@@ -28,7 +27,7 @@ class VisualProcessor(Protocol):
     def prepare(
         self,
         config: IndexConfig,
-        runtime: ModelRuntime,
+        runtime: ModelRuntimePort,
         progress: ProgressCallback | None,
     ) -> Any: ...
 
@@ -39,7 +38,7 @@ class VisualProcessor(Protocol):
         state: Any,
         info: Any,
         config: IndexConfig,
-        storage: IndexStorage,
+        storage: IndexStore,
         cancellation: CancellationToken,
     ) -> None: ...
 
@@ -48,7 +47,7 @@ class VisualProcessor(Protocol):
         state: Any,
         *,
         config: IndexConfig,
-        storage: IndexStorage,
+        storage: IndexStore,
     ) -> tuple[dict[str, Any], int]: ...
 
 
@@ -77,7 +76,7 @@ def _participants(
     *,
     config: IndexConfig,
     registry: CapabilityRegistry,
-    runtime: ModelRuntime,
+    runtime: ModelRuntimePort,
     progress: ProgressCallback | None,
     timings: dict[str, float],
 ) -> list[_Participant]:
@@ -102,7 +101,7 @@ def _consume_visual_stream(
     expected: int,
     info: Any,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
     progress: ProgressCallback | None,
     timings: dict[str, float],
@@ -158,7 +157,7 @@ def _finalize(
     participants: Sequence[_Participant],
     *,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     timings: dict[str, float],
 ) -> tuple[dict[str, Any], int]:
     summary: dict[str, Any] = {}
@@ -186,10 +185,10 @@ def index_visuals(
     source: VideoSource,
     *,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
     registry: CapabilityRegistry,
-    runtime: ModelRuntime,
+    runtime: ModelRuntimePort,
     progress: ProgressCallback | None = None,
     modalities: Sequence[str] | None = None,
 ) -> CapabilityIndexResult:
@@ -266,10 +265,10 @@ def index_capabilities(
     source: VideoSource,
     *,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
     registry: CapabilityRegistry,
-    runtime: ModelRuntime,
+    runtime: ModelRuntimePort,
     progress: ProgressCallback | None = None,
     modalities: Sequence[str] | None = None,
 ) -> CapabilityIndexResult:

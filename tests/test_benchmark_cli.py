@@ -7,6 +7,8 @@ from unittest.mock import Mock, patch
 from typer.testing import CliRunner
 
 from vidxp import cli
+from vidxp.composition import LocalApplicationContext
+from vidxp.repositories import RepositoryConfig, RepositoryRegistry
 
 
 class BenchmarkCliTests(unittest.TestCase):
@@ -31,8 +33,17 @@ class BenchmarkCliTests(unittest.TestCase):
             with (
                 patch.object(
                     cli,
-                    "create_application",
-                    return_value=service,
+                    "create_local_application",
+                    return_value=LocalApplicationContext(
+                        application=service,
+                        repositories=RepositoryRegistry(config),
+                        repository=RepositoryConfig(
+                            "default",
+                            Path("chroma_data"),
+                            device="cuda",
+                            configured=False,
+                        ),
+                    ),
                 ),
                 patch(
                     "vidxp.benchmarks.cli.run_didemo",

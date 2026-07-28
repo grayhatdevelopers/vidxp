@@ -11,9 +11,14 @@ from vidxp.capabilities.contracts import (
     CapabilityPlugin,
     OperationDefinition,
     PreparationContext,
+    module_import_check,
 )
-from vidxp.capabilities.dialogue.config import DialogueConfig, dialogue_config
+from vidxp.capabilities.dialogue.config import DialogueConfig
 from vidxp.capabilities.dialogue.models import get_embedder, get_whisper_model
+from vidxp.capabilities.dialogue.specs import (
+    FASTER_WHISPER_MODEL,
+    QWEN3_EMBEDDING_MODEL,
+)
 from vidxp.capabilities.dialogue.operations import (
     index_capability,
     search_operation,
@@ -39,7 +44,7 @@ def prepare_models(
     context: PreparationContext,
     progress: ProgressCallback | None,
 ) -> tuple[str, ...]:
-    settings = DialogueConfig.model_validate(context.settings)
+    DialogueConfig.model_validate(context.settings)
     prepared = []
 
     def report(stage: str, message: str) -> None:
@@ -54,45 +59,31 @@ def prepare_models(
 
     report(
         "dialogue_model",
-        f"Preparing dialogue model: {settings.sentence_model}",
+        f"Preparing dialogue model: {QWEN3_EMBEDDING_MODEL.model_id}",
     )
-    get_embedder(
-        context.runtime,
-        settings.sentence_model,
-        settings.sentence_revision,
-    )
-    prepared.append(settings.sentence_model)
+    get_embedder(context.runtime)
+    prepared.append(QWEN3_EMBEDDING_MODEL.model_id)
     report(
         "transcription_model",
-        f"Preparing transcription model: faster-whisper {settings.whisper_model}",
+        "Preparing transcription model: faster-whisper "
+        f"{FASTER_WHISPER_MODEL.model_id}",
     )
-    get_whisper_model(
-        context.runtime,
-        settings.whisper_model,
-        settings.whisper_revision,
-    )
-    prepared.append(settings.whisper_model)
+    get_whisper_model(context.runtime)
+    prepared.append(FASTER_WHISPER_MODEL.model_id)
     return tuple(prepared)
 
 
 def model_manifest(
-    config: IndexConfig,
+    _config: IndexConfig,
     sources: tuple[VideoSource, ...],
 ) -> Mapping[str, Any]:
-    settings = dialogue_config(config)
     result: dict[str, Any] = {
         "dialogue": {
-            "provider": "sentence-transformers",
-            "model": settings.sentence_model,
-            "revision": settings.sentence_revision,
+            **QWEN3_EMBEDDING_MODEL.identity(),
         }
     }
     if any(source.transcript is None for source in sources):
-        result["transcription"] = {
-            "provider": "faster-whisper",
-            "model": settings.whisper_model,
-            "revision": settings.whisper_revision,
-        }
+        result["transcription"] = FASTER_WHISPER_MODEL.identity()
     return result
 
 
@@ -105,6 +96,7 @@ DEFINITION = CapabilityDefinition(
     index_stage="dialogue_indexing",
     execution_group="dialogue",
     prepares_models=True,
+    model_specs=(QWEN3_EMBEDDING_MODEL, FASTER_WHISPER_MODEL),
     operations={
         "search": OperationDefinition(
             input_model=SearchInput,
@@ -121,6 +113,24 @@ def create_executor() -> CapabilityExecutor:
         requirement_filter=filter_requirements_for_source,
         prepare=prepare_models,
         model_manifest=model_manifest,
+        runtime_checks=(
+            module_import_check(
+                "faster-whisper import",
+                "faster_whisper",
+                "WhisperModel",
+                "BatchedInferencePipeline",
+            ),
+            module_import_check(
+                "Sentence Transformers import",
+                "sentence_transformers",
+                "SentenceTransformer",
+            ),
+            module_import_check(
+                "Hugging Face Hub import",
+                "huggingface_hub",
+                "snapshot_download",
+            ),
+        ),
     )
 
 

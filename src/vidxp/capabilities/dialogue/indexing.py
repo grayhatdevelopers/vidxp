@@ -6,6 +6,10 @@ from typing import Any, Mapping, Sequence
 
 from vidxp.capabilities.dialogue.config import dialogue_config
 from vidxp.capabilities.dialogue.models import get_embedder, get_whisper_model
+from vidxp.capabilities.dialogue.specs import (
+    FASTER_WHISPER_MODEL,
+    QWEN3_EMBEDDING_MODEL,
+)
 from vidxp.core.contracts import (
     CancellationToken,
     IndexConfig,
@@ -14,8 +18,7 @@ from vidxp.core.contracts import (
     stable_source_id,
 )
 from vidxp.core.indexing_common import ProgressCallback, report_progress
-from vidxp.core.storage import IndexStorage
-from vidxp.runtime import ModelRuntime
+from vidxp.ports import IndexStore, ModelRuntimePort
 
 
 @dataclass(frozen=True)
@@ -114,7 +117,7 @@ def transcribe_video(
     *,
     config: IndexConfig,
     cancellation: CancellationToken,
-    runtime: ModelRuntime,
+    runtime: ModelRuntimePort,
     progress: ProgressCallback | None,
 ) -> tuple[list[Mapping[str, Any]], str]:
     from faster_whisper import BatchedInferencePipeline
@@ -124,13 +127,10 @@ def transcribe_video(
     report_progress(
         progress,
         "preparing_transcription_model",
-        f"Preparing transcription model: faster-whisper {settings.whisper_model}.",
+        "Preparing transcription model: faster-whisper "
+        f"{FASTER_WHISPER_MODEL.model_id}.",
     )
-    whisper_model = get_whisper_model(
-        runtime,
-        settings.whisper_model,
-        settings.whisper_revision,
-    )
+    whisper_model = get_whisper_model(runtime)
     report_progress(
         progress,
         "transcribing_audio",
@@ -200,9 +200,9 @@ def index_dialogue(
     source: VideoSource,
     *,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
-    runtime: ModelRuntime,
+    runtime: ModelRuntimePort,
     progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     if config.video_id is None:
@@ -235,15 +235,11 @@ def index_dialogue(
     report_progress(
         progress,
         "preparing_dialogue_model",
-        f"Preparing dialogue model: {settings.sentence_model}.",
+        f"Preparing dialogue model: {QWEN3_EMBEDDING_MODEL.model_id}.",
         0,
         len(phrases),
     )
-    encoder = get_embedder(
-        runtime,
-        settings.sentence_model,
-        settings.sentence_revision,
-    )
+    encoder = get_embedder(runtime)
     report_progress(
         progress,
         "dialogue_indexing",
@@ -255,7 +251,7 @@ def index_dialogue(
     for offset in range(0, len(phrases), settings.embedding_batch_size):
         cancellation.raise_if_cancelled()
         group = phrases[offset:offset + settings.embedding_batch_size]
-        vectors = encoder.encode(
+        vectors = encoder.encode_document(
             [phrase.text for phrase in group],
             batch_size=len(group),
             convert_to_numpy=True,

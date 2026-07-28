@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,6 +8,7 @@ from unittest.mock import Mock, patch
 from typer.testing import CliRunner
 
 from vidxp import cli
+from vidxp.composition import LocalApplicationContext, settings_for_repository
 from vidxp.application_models import (
     CreateIndexCommand,
     DependencyCheckResult,
@@ -38,16 +40,13 @@ class CliTests(unittest.TestCase):
         )
 
     def invoke(self, arguments):
-        with (
-            patch.object(
-                cli,
-                "resolve_repository",
-                return_value=(self.registry, self.repository),
-            ),
-            patch.object(
-                cli,
-                "create_application",
-                return_value=self.service,
+        with patch.object(
+            cli,
+            "create_local_application",
+            return_value=LocalApplicationContext(
+                application=self.service,
+                repositories=self.registry,
+                repository=self.repository,
             ),
         ):
             return self.runner.invoke(cli.app, arguments)
@@ -158,6 +157,21 @@ class CliTests(unittest.TestCase):
         )
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("Unknown capability", result.output)
+
+    def test_repository_without_device_preserves_runtime_environment(self):
+        repository = RepositoryConfig(
+            "default",
+            Path("repo"),
+            device=None,
+            configured=False,
+        )
+        with patch.dict(
+            os.environ,
+            {"VIDXP_RUNTIME_BACKEND": "cpu"},
+        ):
+            settings = settings_for_repository(repository)
+
+        self.assertEqual(settings.runtime_backend, "cpu")
 
 
 if __name__ == "__main__":

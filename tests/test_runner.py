@@ -11,17 +11,20 @@ from vidxp.core.contracts import (
     IndexSchemaError,
     VideoSource,
 )
-from vidxp.core.manifest import COMPLETION_FILE
+from vidxp.core.manifest import COMPLETION_FILE, ManifestStore
 from vidxp.capabilities.contracts import CapabilityIndexResult
-from vidxp.capabilities.dialogue.config import dialogue_config
+from vidxp.capabilities.dialogue.specs import FASTER_WHISPER_MODEL
 from vidxp.core.runner import (
     _RunLock,
-    index_video,
+    index_video as _index_video,
     indexing_in_progress,
     local_config_from_status,
-    run_index,
+    run_index as _run_index,
 )
+from vidxp.capabilities.registry import create_capability_registry
 from vidxp.index_state import IndexingInProgressError
+from vidxp.runtime import ModelRuntime
+from vidxp.settings import VidXPSettings
 
 
 EXECUTION_STATE = {
@@ -32,6 +35,50 @@ EXECUTION_STATE = {
     "platform": "test",
     "dependencies": {"chromadb": "1.0"},
 }
+
+
+def _dependencies(config):
+    return {
+        "registry": create_capability_registry(),
+        "runtime": ModelRuntime(
+            VidXPSettings(
+                repository_root=config.run_directory,
+                runtime_backend=config.device,
+            )
+        ),
+    }
+
+
+def run_index(sources, config, **options):
+    dependencies = _dependencies(config)
+    options.setdefault("registry", dependencies["registry"])
+    options.setdefault("runtime", dependencies["runtime"])
+    options.setdefault("storage", FakeStorage())
+    options.setdefault(
+        "manifest_store",
+        ManifestStore(
+            config,
+            registry=options["registry"],
+            runtime=options["runtime"],
+        ),
+    )
+    return _run_index(sources, config, **options)
+
+
+def index_video(path, *args, config, **options):
+    dependencies = _dependencies(config)
+    options.setdefault("registry", dependencies["registry"])
+    options.setdefault("runtime", dependencies["runtime"])
+    options.setdefault("storage", FakeStorage())
+    options.setdefault(
+        "manifest_store",
+        ManifestStore(
+            config,
+            registry=options["registry"],
+            runtime=options["runtime"],
+        ),
+    )
+    return _index_video(path, *args, config=config, **options)
 
 
 def visual_result(summary, timings=None):
@@ -325,7 +372,7 @@ class RunnerTests(unittest.TestCase):
             self.assertNotIn("transcription", first["models"])
         self.assertEqual(
             second["models"]["transcription"]["model"],
-            dialogue_config(config).whisper_model,
+            FASTER_WHISPER_MODEL.model_id,
         )
 
     def test_changed_input_is_not_silently_accepted_by_checkpoint(self):

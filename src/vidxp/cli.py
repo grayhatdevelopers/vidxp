@@ -10,22 +10,14 @@ import typer
 
 from vidxp import __version__
 from vidxp.application_models import ApplicationError
-from vidxp.capabilities.actor.results import ActorClusterNotFoundError
 from vidxp.capabilities.actor.cli import app as actor_app
 from vidxp.cli_commands.index import app as index_app
 from vidxp.cli_commands.repositories import app as repositories_app
 from vidxp.cli_commands.runtime import doctor, prepare, ui
-from vidxp.cli_commands.search import app as search_app
+from vidxp.cli_commands.search import search
 from vidxp.cli_support import CLIState, OutputFormat
-from vidxp.composition import create_application
-from vidxp.core.contracts import IndexSchemaError
+from vidxp.composition import create_local_application
 from vidxp.dependencies import requirements_available
-from vidxp.index_state import (
-    IndexingInProgressError,
-    IndexNotReadyError,
-)
-from vidxp.repositories import resolve_repository
-from vidxp.settings import VidXPSettings
 
 
 app = typer.Typer(
@@ -33,7 +25,7 @@ app = typer.Typer(
     help="Index and search video with installable capabilities.",
 )
 app.add_typer(index_app, name="index")
-app.add_typer(search_app, name="search")
+app.command("search")(search)
 app.add_typer(repositories_app, name="repositories")
 app.add_typer(actor_app, name="actors")
 
@@ -116,21 +108,16 @@ def app_options(
         typer.Option("--quiet", "-q", help="Suppress progress output."),
     ] = False,
 ) -> None:
-    registry, repository = resolve_repository(
+    local = create_local_application(
         registry_path=config_file,
-        name=repository_name,
+        repository_name=repository_name,
         index_directory=index_directory,
         device=device,
     )
     ctx.obj = CLIState(
-        service=create_application(
-            VidXPSettings(
-                repository_root=repository.index_directory,
-                runtime_backend=repository.device or "auto",
-            )
-        ),
-        registry=registry,
-        repository=repository,
+        service=local.application,
+        registry=local.repositories,
+        repository=local.repository,
         output_format=output_format,
         quiet=quiet,
     )
@@ -203,19 +190,7 @@ def main() -> None:
             exc,
             "format_message",
         )
-        is_expected_runtime_error = isinstance(
-            exc,
-            (
-                ActorClusterNotFoundError,
-                FileNotFoundError,
-                IndexNotReadyError,
-                IndexingInProgressError,
-                IndexSchemaError,
-                RuntimeError,
-                ValueError,
-            ),
-        )
-        if not is_command_error and not is_expected_runtime_error:
+        if not is_command_error:
             raise
         _emit_error(exc, json_output=_wants_json())
         raise SystemExit(_exit_code(exc)) from exc

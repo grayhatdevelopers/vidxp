@@ -4,6 +4,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from vidxp.capabilities.contracts import (
+    RuntimeCheckBinding,
+    module_import_check,
+)
 from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.core.contracts import CancellationToken, IndexConfig
 from vidxp.core.indexing_common import ProgressCallback
@@ -12,9 +16,41 @@ from vidxp.core.runner import (
     indexing_in_progress,
     local_config_from_status,
 )
+from vidxp.core.manifest import (
+    CHECKPOINT_DIRECTORY,
+    COMPLETION_FILE,
+    FAILURES_FILE,
+    MANIFEST_FILE,
+    TIMINGS_FILE,
+    ManifestStore,
+)
 from vidxp.core.storage import IndexStorage
-from vidxp.index_state import read_index_status, require_ready_index
+from vidxp.index_state import (
+    INDEX_STATUS_FILE,
+    read_index_status,
+    require_ready_index,
+)
 from vidxp.runtime import ModelRuntime
+
+
+LOCAL_INDEX_RUNTIME_CHECKS = (
+    RuntimeCheckBinding(
+        capability="storage",
+        check=module_import_check(
+            "Chroma storage import",
+            "chromadb",
+            "PersistentClient",
+        ),
+    ),
+    RuntimeCheckBinding(
+        capability="storage",
+        check=module_import_check(
+            "Host resource monitor import",
+            "psutil",
+            "virtual_memory",
+        ),
+    ),
+)
 
 
 class LocalIndexBackend:
@@ -51,19 +87,45 @@ class LocalIndexBackend:
         cancellation: CancellationToken | None,
         source_name: str | None,
     ) -> dict[str, Any]:
-        return index_video(
-            str(path),
-            progress_callback=progress,
-            source_name=source_name,
-            config=config,
-            cancellation=cancellation,
-            registry=self.registry,
-            runtime=self.runtime,
-        )
+        with IndexStorage(config) as storage:
+            return index_video(
+                str(path),
+                progress_callback=progress,
+                source_name=source_name,
+                config=config,
+                cancellation=cancellation,
+                storage=storage,
+                manifest_store=ManifestStore(
+                    config,
+                    registry=self.registry,
+                    runtime=self.runtime,
+                ),
+                registry=self.registry,
+                runtime=self.runtime,
+            )
 
     def indexing_in_progress(self, config: IndexConfig) -> bool:
         return indexing_in_progress(config)
 
+    def open_store(self, config: IndexConfig) -> IndexStorage:
+        return IndexStorage(config)
+
     def clear(self, config: IndexConfig) -> None:
         with IndexStorage(config) as storage:
             storage.clear()
+        for name in (
+            INDEX_STATUS_FILE,
+            MANIFEST_FILE,
+            TIMINGS_FILE,
+            FAILURES_FILE,
+            COMPLETION_FILE,
+        ):
+            (config.run_directory / name).unlink(missing_ok=True)
+        checkpoint_directory = config.run_directory / CHECKPOINT_DIRECTORY
+        if checkpoint_directory.is_dir():
+            for checkpoint in checkpoint_directory.glob("*.json"):
+                checkpoint.unlink()
+            try:
+                checkpoint_directory.rmdir()
+            except OSError:
+                pass

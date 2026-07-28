@@ -1,13 +1,13 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from vidxp import frontend
 from vidxp.application_models import DependencyCheckResult, IndexStatus
 from vidxp.capabilities.registry import create_capability_registry
 from vidxp.capabilities.schemas import SearchHit, SearchResult
+from vidxp.settings import VidXPSettings
 
 
 class UploadedVideo:
@@ -33,29 +33,35 @@ class FrontendTests(unittest.TestCase):
         return service
 
     def test_service_is_composed_lazily_and_cached(self):
-        repository = SimpleNamespace(
-            index_directory=Path("repository"),
-            device="cpu",
-        )
         application = Mock()
-        with (
-            patch.object(
-                frontend,
-                "resolve_repository",
-                return_value=(Mock(), repository),
-            ),
-            patch.object(
-                frontend,
-                "create_application",
-                return_value=application,
-            ) as create,
-        ):
-            first = frontend._configured_service()
-            second = frontend._configured_service()
+        with patch.object(
+            frontend,
+            "create_application",
+            return_value=application,
+        ) as create:
+            expected = VidXPSettings(
+                repository_root=Path("repository"),
+                runtime_backend="cpu",
+                model_cache=Path("model-cache"),
+                allow_model_downloads=False,
+                max_loaded_models=5,
+                max_concurrent_indexing=2,
+                max_concurrent_inference=3,
+                cpu_thread_budget=6,
+                minimum_available_memory_mb=2048,
+                external_capabilities=True,
+                capability_allowlist=("acme:ocr",),
+            )
+            settings = frontend._settings_from_arguments(
+                ("--vidxp-settings-json", expected.model_dump_json())
+            )
+            first = frontend._configured_service(settings)
+            second = frontend._configured_service(settings)
 
         self.assertIs(first, application)
         self.assertIs(second, application)
         create.assert_called_once()
+        self.assertEqual(settings, expected)
 
     def test_uploaded_video_identity_controls_search_readiness(self):
         with TemporaryDirectory() as directory:

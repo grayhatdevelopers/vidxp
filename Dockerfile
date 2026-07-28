@@ -4,39 +4,23 @@ FROM python:3.14-slim-trixie AS builder
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+RUN python -m pip install --no-cache-dir "uv==0.12.0"
 
-RUN python -m venv /opt/vidxp
+ENV UV_PROJECT_ENVIRONMENT="/opt/vidxp" \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1
 
-ENV PATH="/opt/vidxp/bin:${PATH}" \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
-
-COPY pyproject.toml README.md LICENSE MANIFEST.in ./
-COPY src/vidxp/requirements ./src/vidxp/requirements
-COPY src/vidxp/capabilities/dialogue/requirements.txt ./src/vidxp/capabilities/dialogue/requirements.txt
-COPY src/vidxp/capabilities/scene/requirements.txt ./src/vidxp/capabilities/scene/requirements.txt
-COPY src/vidxp/capabilities/actor/requirements.txt ./src/vidxp/capabilities/actor/requirements.txt
-
-ARG PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
-
-RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install --upgrade pip setuptools wheel \
-    && python -m pip install \
-        --extra-index-url "${PYTORCH_INDEX_URL}" \
-        -r src/vidxp/requirements/storage.txt \
-        -r src/vidxp/requirements/frontend.txt \
-        -r src/vidxp/capabilities/dialogue/requirements.txt \
-        -r src/vidxp/capabilities/scene/requirements.txt \
-        -r src/vidxp/capabilities/actor/requirements.txt
-
+COPY pyproject.toml uv.lock README.md LICENSE MANIFEST.in ./
 COPY src ./src
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install . \
-    && python -m pip check
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync \
+        --frozen \
+        --extra local-worker \
+        --extra frontend \
+        --no-dev \
+        --no-editable \
+    && uv pip check --python /opt/vidxp/bin/python
 
 FROM python:3.14-slim-trixie AS runtime
 

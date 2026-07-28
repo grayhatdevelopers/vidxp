@@ -13,7 +13,6 @@ from typing import Any, Mapping
 
 from vidxp.capabilities.registry import (
     CapabilityRegistry,
-    create_capability_registry,
 )
 from vidxp.core.contracts import (
     INDEX_SCHEMA_VERSION,
@@ -21,7 +20,7 @@ from vidxp.core.contracts import (
     IndexConfig,
     VideoSource,
 )
-from vidxp.runtime import ModelRuntime
+from vidxp.ports import ModelRuntimePort
 
 
 MANIFEST_FILE = "manifest.json"
@@ -155,11 +154,10 @@ def implementation_digest() -> str:
 
 
 def dependency_versions(
-    registry: CapabilityRegistry | None = None,
+    registry: CapabilityRegistry,
 ) -> dict[str, str | None]:
-    active_registry = registry or create_capability_registry()
     versions: dict[str, str | None] = {}
-    for package in active_registry.runtime_distributions():
+    for package in registry.runtime_distributions():
         try:
             versions[package] = version(package)
         except PackageNotFoundError:
@@ -168,7 +166,7 @@ def dependency_versions(
 
 
 def execution_state(
-    registry: CapabilityRegistry | None = None,
+    registry: CapabilityRegistry,
 ) -> dict[str, Any]:
     try:
         package_version = version("vidxp")
@@ -203,11 +201,11 @@ class ManifestStore:
         self,
         config: IndexConfig,
         *,
-        registry: CapabilityRegistry | None = None,
-        runtime: ModelRuntime | None = None,
+        registry: CapabilityRegistry,
+        runtime: ModelRuntimePort,
     ):
         self.config = config
-        self.registry = registry or create_capability_registry()
+        self.registry = registry
         self.runtime = runtime
         self.run_directory = config.run_directory
         self.manifest_path = self.run_directory / MANIFEST_FILE
@@ -230,11 +228,7 @@ class ManifestStore:
     ) -> dict[str, Any]:
         models: dict[str, Any] = {
             "device": self.config.device,
-            "runtime": (
-                self.runtime.describe()
-                if self.runtime is not None
-                else {"torch_device": self.config.device}
-            ),
+            "runtime": self.runtime.describe(),
         }
         source_values = tuple(source for _, source, _, _ in sources)
         for name in self.config.enabled_modalities:
@@ -339,6 +333,9 @@ class ManifestStore:
 
     def write(self, manifest: Mapping[str, Any]) -> None:
         write_json_atomic(self.manifest_path, manifest)
+
+    def _refresh_runtime(self, manifest: dict[str, Any]) -> None:
+        manifest["models"]["runtime"] = self.runtime.describe()
 
     def checkpoint(self, video_id: str) -> dict[str, Any] | None:
         path = self._checkpoint_path(video_id)
@@ -451,6 +448,7 @@ class ManifestStore:
         if video_id not in manifest["completed_videos"]:
             manifest["completed_videos"].append(video_id)
         manifest["completed_videos"].sort()
+        self._refresh_runtime(manifest)
         manifest["updated_at"] = utc_now()
         self.write(manifest)
 
@@ -470,6 +468,7 @@ class ManifestStore:
             manifest["failed_videos"].append(video_id)
         manifest["failed_videos"].sort()
         manifest["state"] = "failed"
+        self._refresh_runtime(manifest)
         manifest["updated_at"] = utc_now()
         self.write(manifest)
 
@@ -486,11 +485,13 @@ class ManifestStore:
             manifest["interrupted_videos"].append(video_id)
         manifest["interrupted_videos"].sort()
         manifest["state"] = "interrupted"
+        self._refresh_runtime(manifest)
         manifest["updated_at"] = utc_now()
         self.write(manifest)
 
     def complete_run(self, *, index_size_bytes: int) -> dict[str, Any]:
         manifest = self.read()
+        self._refresh_runtime(manifest)
         expected = set(manifest["inputs"])
         completed = set(manifest["completed_videos"])
         if expected != completed or manifest["failed_videos"]:

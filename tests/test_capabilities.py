@@ -1,4 +1,7 @@
 import unittest
+from importlib.metadata import PackageNotFoundError
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from pydantic import BaseModel, ValidationError
 
@@ -10,7 +13,9 @@ from vidxp.capabilities.contracts import (
     CapabilityInput,
     CapabilityOutput,
     CapabilityPlugin,
+    CapabilityProvenance,
     OperationDefinition,
+    RuntimeCheck,
 )
 from vidxp.capabilities.dialogue.config import DialogueConfig
 from vidxp.capabilities.registry import (
@@ -91,10 +96,15 @@ class CapabilityTests(unittest.TestCase):
 
         options = self.registry.validate_options(
             ("scene",),
-            {"scene": {"batch_size": 4, "model": "test-model"}},
+            {"scene": {"batch_size": 4}},
         )
         self.assertEqual(options["scene"]["batch_size"], 4)
-        self.assertEqual(options["scene"]["model"], "test-model")
+        self.assertNotIn("model", options["scene"])
+        with self.assertRaises(ValidationError):
+            self.registry.validate_options(
+                ("scene",),
+                {"scene": {"model": "unapproved/model"}},
+            )
         with self.assertRaises(ValidationError):
             self.registry.validate_options(
                 ("actor",),
@@ -169,6 +179,231 @@ class CapabilityTests(unittest.TestCase):
             "face_match_threshold",
         ):
             self.assertNotIn(name, fields)
+
+    def test_external_plugins_require_exact_distribution_entry_point_pair(self):
+        plugin = CapabilityPlugin(
+            definition=CapabilityDefinition(
+                name="ocr",
+                description="OCR.",
+                extra="ocr",
+                operations={
+                    "run": OperationDefinition(
+                        input_model=ExampleInput,
+                        output_model=ExampleOutput,
+                        requires_index=False,
+                    )
+                },
+            ),
+            executor_factory=lambda: CapabilityExecutor(
+                operations={
+                    "run": lambda _context, request: {
+                        "doubled": request.value * 2
+                    }
+                }
+            ),
+            requirements=("example-runtime>=1,<2",),
+        )
+        distribution = SimpleNamespace(
+            name="acme-capabilities",
+            version="1.2.3",
+        )
+        entry_point = SimpleNamespace(
+            name="ocr",
+            dist=distribution,
+            load=Mock(return_value=plugin),
+        )
+        with patch(
+            "vidxp.capabilities.registry.entry_points",
+            return_value=(entry_point,),
+        ):
+            rejected = create_capability_registry(
+                external=True,
+                allowlist=("acme-capabilities:other",),
+            )
+            accepted = create_capability_registry(
+                external=True,
+                allowlist=("acme-capabilities:ocr",),
+            )
+
+        self.assertNotIn("ocr", rejected.names())
+        self.assertIn("ocr", accepted.names())
+        self.assertEqual(
+            accepted.provenance("ocr"),
+            CapabilityProvenance(
+                distribution="acme-capabilities",
+                entry_point="ocr",
+                version="1.2.3",
+            ),
+        )
+        self.assertEqual(
+            [item.name for item in accepted.requirements_for(("ocr",))],
+            ["example-runtime"],
+        )
+        with patch(
+            "vidxp.dependencies.version",
+            side_effect=PackageNotFoundError("example-runtime"),
+        ):
+            check = accepted.dependency_checks(("ocr",))[0]
+        self.assertFalse(check.ok)
+        self.assertEqual(check.capability, "ocr")
+        self.assertEqual(check.provenance.distribution, "acme-capabilities")
+        self.assertEqual(entry_point.load.call_count, 1)
+
+    def test_plugin_contract_and_collision_errors_include_provenance(self):
+        provenance = CapabilityProvenance(
+            distribution="acme-capabilities",
+            entry_point="ocr",
+            version="1.2.3",
+        )
+        invalid = CapabilityPlugin(
+            definition=CapabilityDefinition(
+                name="ocr",
+                description="OCR.",
+                extra="ocr",
+                operations={
+                    "run": OperationDefinition(
+                        input_model=ExampleInput,
+                        output_model=ExampleOutput,
+                        requires_index=False,
+                    )
+                },
+            ),
+            executor_factory=lambda: CapabilityExecutor(
+                operations={"run": lambda _context, _request: {"doubled": 2}}
+            ),
+            contract_version=999,
+            provenance=provenance,
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "acme-capabilities:ocr",
+        ):
+            CapabilityRegistry((invalid,))
+
+        collision = invalid.model_copy(
+            update={
+                "definition": self.registry.get("scene"),
+                "contract_version": 1,
+            }
+        )
+        built_in = CapabilityPlugin(
+            definition=self.registry.get("scene"),
+            executor_factory=lambda: CapabilityExecutor(),
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "built-in VidXP capability.*acme-capabilities:ocr",
+        ):
+            CapabilityRegistry((built_in, collision))
+
+    def test_external_plugin_loading_is_deterministic_and_errors_are_chained(self):
+        def plugin(name):
+            return CapabilityPlugin(
+                definition=CapabilityDefinition(
+                    name=name,
+                    description=f"{name} capability.",
+                    extra=name,
+                    operations={
+                        "run": OperationDefinition(
+                            input_model=ExampleInput,
+                            output_model=ExampleOutput,
+                            requires_index=False,
+                        )
+                    },
+                ),
+                executor_factory=lambda: CapabilityExecutor(
+                    operations={
+                        "run": lambda _context, request: {
+                            "doubled": request.value * 2
+                        }
+                    }
+                ),
+            )
+
+        distribution = SimpleNamespace(name="acme", version="1")
+        zeta = SimpleNamespace(
+            name="zeta",
+            dist=distribution,
+            load=Mock(return_value=plugin("zeta")),
+        )
+        alpha = SimpleNamespace(
+            name="alpha",
+            dist=distribution,
+            load=Mock(return_value=plugin("alpha")),
+        )
+        with patch(
+            "vidxp.capabilities.registry.entry_points",
+            return_value=(zeta, alpha),
+        ):
+            registry = create_capability_registry(
+                external=True,
+                allowlist=("acme:zeta", "acme:alpha"),
+            )
+        self.assertEqual(registry.names()[-2:], ("alpha", "zeta"))
+
+        failure = RuntimeError("factory failure")
+        broken = SimpleNamespace(
+            name="broken",
+            dist=distribution,
+            load=Mock(side_effect=failure),
+        )
+        with (
+            patch(
+                "vidxp.capabilities.registry.entry_points",
+                return_value=(broken,),
+            ),
+            self.assertRaisesRegex(RuntimeError, "acme:broken") as raised,
+        ):
+            create_capability_registry(
+                external=True,
+                allowlist=("acme:broken",),
+            )
+        self.assertIs(raised.exception.__cause__, failure)
+
+    def test_external_runtime_check_errors_are_sanitized_with_provenance(self):
+        provenance = CapabilityProvenance(
+            distribution="acme-capabilities",
+            entry_point="ocr",
+            version="1.2.3",
+        )
+        plugin = CapabilityPlugin(
+            definition=CapabilityDefinition(
+                name="ocr",
+                description="OCR.",
+                extra="ocr",
+                operations={
+                    "run": OperationDefinition(
+                        input_model=ExampleInput,
+                        output_model=ExampleOutput,
+                        requires_index=False,
+                    )
+                },
+            ),
+            executor_factory=lambda: CapabilityExecutor(
+                operations={
+                    "run": lambda _context, request: {
+                        "doubled": request.value * 2
+                    }
+                },
+                runtime_checks=(
+                    RuntimeCheck(
+                        label="ocr runtime",
+                        check=Mock(
+                            side_effect=RuntimeError(
+                                "token=do-not-leak"
+                            )
+                        ),
+                    ),
+                ),
+            ),
+            provenance=provenance,
+        )
+
+        check = CapabilityRegistry((plugin,)).dependency_checks(("ocr",))[0]
+
+        self.assertEqual(check.error, "runtime check failed")
+        self.assertNotIn("do-not-leak", check.model_dump_json())
+        self.assertEqual(check.provenance, provenance)
 
 
 if __name__ == "__main__":

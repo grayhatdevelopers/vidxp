@@ -21,9 +21,14 @@ from vidxp.benchmarks.common import (
 from vidxp.capabilities.dialogue.config import dialogue_config
 from vidxp.capabilities.dialogue.operations import search_dialogue
 from vidxp.capabilities.schemas import SearchHit
+from vidxp.capabilities.registry import create_capability_registry
 from vidxp.core.contracts import IndexConfig, VideoSource
-from vidxp.core.manifest import sha256_file, write_json_atomic
+from vidxp.core.manifest import ManifestStore, sha256_file, write_json_atomic
 from vidxp.core.runner import run_index
+from vidxp.core.storage import IndexStorage
+from vidxp.infrastructure.local_index import LOCAL_INDEX_RUNTIME_CHECKS
+from vidxp.runtime import ModelRuntime
+from vidxp.settings import VidXPSettings
 
 
 HIREST_REVISION = "deffc169b4e8d51c1589d5512ad05da61e81bcee"
@@ -312,6 +317,8 @@ def _generate_predictions(
     config: IndexConfig,
     manifest: Mapping[str, Any],
     temporal_window_fraction: float,
+    runtime: ModelRuntime,
+    storage: IndexStorage,
 ) -> dict[str, dict[str, dict[str, list[float]]]]:
     dialogue_counts = {
         video_id: int(video["summary"]["dialogue_phrases"])
@@ -325,6 +332,8 @@ def _generate_predictions(
             top_k=dialogue_counts[video],
             video_id=video,
             query_id=f"{prompt}\0{video}",
+            runtime=runtime,
+            storage=storage,
         ).hits
         if not hits:
             raise RuntimeError(
@@ -432,6 +441,16 @@ def run_hirest(
         output_root=output_root,
     )
     run_directory = config.run_directory
+    registry = create_capability_registry(
+        platform_runtime_checks=LOCAL_INDEX_RUNTIME_CHECKS
+    )
+    runtime = ModelRuntime(
+        VidXPSettings(
+            repository_root=run_directory,
+            runtime_backend=device,
+        ),
+        allowed_specs=registry.model_specs(),
+    )
     ensure_adapter_outputs(run_directory)
     subset = {
         "label": (
@@ -444,29 +463,40 @@ def run_hirest(
         "video_count": len({video for _, video in ordered_pairs}),
     }
     try:
-        manifest = run_index(
-            _transcript_sources(
+        with IndexStorage(config) as storage:
+            manifest = run_index(
+                _transcript_sources(
+                    ordered_pairs,
+                    asr_directory=asr_directory,
+                ),
+                config,
+                reset=reset,
+                storage=storage,
+                manifest_store=ManifestStore(
+                    config,
+                    registry=registry,
+                    runtime=runtime,
+                ),
+                registry=registry,
+                runtime=runtime,
+            )
+            ensure_adapter_outputs(run_directory)
+            record_adapter_manifest(
+                run_directory,
+                benchmark="hirest",
+                subset=subset,
+                artifacts=artifacts,
+                state="predicting",
+            )
+            predictions = _generate_predictions(
                 ordered_pairs,
-                asr_directory=asr_directory,
-            ),
-            config,
-            reset=reset,
-        )
-        ensure_adapter_outputs(run_directory)
-        record_adapter_manifest(
-            run_directory,
-            benchmark="hirest",
-            subset=subset,
-            artifacts=artifacts,
-            state="predicting",
-        )
-        predictions = _generate_predictions(
-            ordered_pairs,
-            ground_truth=ground_truth,
-            config=config,
-            manifest=manifest,
-            temporal_window_fraction=temporal_window_fraction,
-        )
+                ground_truth=ground_truth,
+                config=config,
+                manifest=manifest,
+                temporal_window_fraction=temporal_window_fraction,
+                runtime=runtime,
+                storage=storage,
+            )
         validate_predictions(predictions, ground_truth)
         predictions_path = run_directory / "predictions.json"
         ground_truth_subset_path = (

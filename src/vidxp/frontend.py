@@ -1,4 +1,6 @@
+import argparse
 import hashlib
+import logging
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -7,7 +9,11 @@ from typing import Sequence
 import streamlit as st
 
 from vidxp.application import VidXPApplication
-from vidxp.application_models import DependencyCheckCommand, SearchCommand
+from vidxp.application_models import (
+    ApplicationError,
+    DependencyCheckCommand,
+    SearchCommand,
+)
 from vidxp.composition import create_application
 from vidxp.index_state import IndexNotReadyError
 from vidxp.index_worker import (
@@ -15,19 +21,30 @@ from vidxp.index_worker import (
     indexing_in_progress,
     start_indexing,
 )
-from vidxp.repositories import resolve_repository
 from vidxp.settings import VidXPSettings
 
 
+LOGGER = logging.getLogger(__name__)
+
+
 @lru_cache(maxsize=1)
-def _configured_service() -> VidXPApplication:
-    _, repository = resolve_repository()
-    return create_application(
-        VidXPSettings(
-            repository_root=repository.index_directory,
-            runtime_backend=repository.device or "auto",
-        )
+def _configured_service(
+    settings: VidXPSettings | None = None,
+) -> VidXPApplication:
+    return create_application(settings or _settings_from_arguments())
+
+
+def _settings_from_arguments(
+    arguments: Sequence[str] | None = None,
+) -> VidXPSettings:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--vidxp-settings-json")
+    parsed, _ = parser.parse_known_args(
+        list(sys.argv[1:] if arguments is None else arguments)
     )
+    if parsed.vidxp_settings_json is None:
+        return VidXPSettings()
+    return VidXPSettings.model_validate_json(parsed.vidxp_settings_json)
 
 
 INDEX_REQUESTED_KEY = "_vidxp_index_requested"
@@ -158,8 +175,13 @@ def _run_indexing(uploaded_video, status, modalities):
             service,
             modalities=modalities,
         )
-    except Exception as exc:
-        st.session_state[INDEX_ERROR_KEY] = f"{type(exc).__name__}: {exc}"
+    except ApplicationError as exc:
+        st.session_state[INDEX_ERROR_KEY] = str(exc)
+    except Exception:
+        LOGGER.exception("Unexpected indexing request failure")
+        st.session_state[INDEX_ERROR_KEY] = (
+            "Indexing could not be started. Check the application logs."
+        )
     else:
         st.session_state.pop(INDEX_ERROR_KEY, None)
     finally:
@@ -212,8 +234,11 @@ def _run_search(search_type, query):
         }
     except IndexNotReadyError as exc:
         return {"error": str(exc)}
-    except Exception as exc:
-        return {"error": f"{type(exc).__name__}: {exc}"}
+    except ApplicationError as exc:
+        return {"error": str(exc)}
+    except Exception:
+        LOGGER.exception("Unexpected search failure")
+        return {"error": "Search failed. Check the application logs."}
 
 
 def _render_search_result(result):
@@ -421,14 +446,25 @@ def run():
         _run_indexing(uploaded_video, status, selected_modalities)
 
 
-def main(arguments: Sequence[str] = ()):
+def main(
+    arguments: Sequence[str] = (),
+    settings: VidXPSettings | None = None,
+):
     from streamlit.web import cli as streamlit_cli
 
+    application_arguments = []
+    if settings is not None:
+        application_arguments = [
+            "--",
+            "--vidxp-settings-json",
+            settings.model_dump_json(),
+        ]
     sys.argv = [
         "streamlit",
         "run",
         str(Path(__file__).resolve()),
         *arguments,
+        *application_arguments,
     ]
     raise SystemExit(streamlit_cli.main())
 

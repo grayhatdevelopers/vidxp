@@ -2,51 +2,56 @@ from __future__ import annotations
 
 from typing import Any
 
-from vidxp.runtime import ModelKey, ModelRuntime
+from vidxp.ports import ModelRuntimePort
+from vidxp.model_contracts import loaded_compute_precision
+from vidxp.capabilities.dialogue.specs import (
+    FASTER_WHISPER_MODEL,
+    QWEN3_EMBEDDING_MODEL,
+    whisper_compute_type,
+)
 
 
 def get_embedder(
-    runtime: ModelRuntime,
-    model_id: str,
-    revision: str,
+    runtime: ModelRuntimePort,
 ) -> Any:
     device = runtime.device_for("dialogue.embedding")
-    key = ModelKey("dialogue", "sentence-transformers", model_id, revision, device)
+    key = QWEN3_EMBEDDING_MODEL.key(device)
 
     def load() -> Any:
         from sentence_transformers import SentenceTransformer
 
-        return SentenceTransformer(
-            model_id,
+        snapshot = runtime.resolve_model(QWEN3_EMBEDDING_MODEL)
+        model = SentenceTransformer(
+            str(snapshot),
             device=device,
-            cache_folder=str(runtime.settings.model_cache),
-            revision=revision,
-            local_files_only=not runtime.settings.allow_model_downloads,
+            cache_folder=str(runtime.model_cache),
+            local_files_only=True,
         )
+        runtime.record_compute_precision(
+            QWEN3_EMBEDDING_MODEL.capability,
+            loaded_compute_precision(
+                model,
+                fallback=QWEN3_EMBEDDING_MODEL.weights_precision,
+            ),
+        )
+        return model
 
     return runtime.get_or_load(key, load)
 
 
 def get_whisper_model(
-    runtime: ModelRuntime,
-    model_id: str,
-    revision: str,
+    runtime: ModelRuntimePort,
 ) -> Any:
     device = runtime.device_for("dialogue.transcription")
-    compute_type = "float16" if device.startswith("cuda") else "int8"
-    key = ModelKey(
-        "dialogue",
-        "faster-whisper",
-        model_id,
-        revision,
-        f"{device}:{compute_type}",
-    )
+    compute_type = whisper_compute_type(device)
+    key = FASTER_WHISPER_MODEL.key(f"{device}:{compute_type}")
 
     def load() -> Any:
         from faster_whisper import WhisperModel
 
-        return WhisperModel(
-            model_id,
+        snapshot = runtime.resolve_model(FASTER_WHISPER_MODEL)
+        model = WhisperModel(
+            str(snapshot),
             device=device.split(":", 1)[0],
             device_index=(
                 int(device.split(":", 1)[1])
@@ -54,9 +59,14 @@ def get_whisper_model(
                 else 0
             ),
             compute_type=compute_type,
-            download_root=str(runtime.settings.model_cache),
-            local_files_only=not runtime.settings.allow_model_downloads,
-            revision=revision,
+            cpu_threads=runtime.cpu_thread_budget,
+            download_root=str(runtime.model_cache),
+            local_files_only=True,
         )
+        runtime.record_compute_precision(
+            FASTER_WHISPER_MODEL.capability,
+            compute_type,
+        )
+        return model
 
     return runtime.get_or_load(key, load)

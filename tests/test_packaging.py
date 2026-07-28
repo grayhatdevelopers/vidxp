@@ -1,5 +1,8 @@
 import unittest
 from pathlib import Path
+import tomllib
+
+from packaging.requirements import Requirement
 
 from vidxp.capabilities.registry import create_capability_registry
 
@@ -8,6 +11,30 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PackagingTests(unittest.TestCase):
+    def test_cpu_lock_uses_explicit_pytorch_index_without_cuda_packages(self):
+        lock = (ROOT / "uv.lock").read_text(encoding="utf-8")
+        project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+        self.assertIn("https://download.pytorch.org/whl/cpu", lock)
+        self.assertNotIn('name = "nvidia-', lock)
+        self.assertIn('explicit = true', project)
+        self.assertIn("sys_platform == 'linux'", project)
+        self.assertIn("sys_platform == 'win32'", project)
+
+    def test_publishable_metadata_contains_no_direct_url_requirements(self):
+        project = tomllib.loads(
+            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )["project"]
+        requirements = list(project["dependencies"])
+        requirements.extend(
+            line.strip()
+            for path in (ROOT / "src" / "vidxp").rglob("requirements.txt")
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+        for value in requirements:
+            self.assertIsNone(Requirement(value).url, value)
+
     def test_capability_extras_read_capability_owned_requirements(self):
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         storage = "src/vidxp/requirements/storage.txt"
@@ -36,13 +63,20 @@ class PackagingTests(unittest.TestCase):
             self.assertIn(f'"{relative}"', all_block)
 
         self.assertIn(f'storage = {{ file = ["{storage}"] }}', pyproject)
-        self.assertEqual(
-            sum(
+        chroma_contracts = {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "src" / "vidxp").rglob("*.txt")
+            if any(
                 line.strip().startswith("chromadb")
-                for path in (ROOT / "src" / "vidxp").rglob("*.txt")
                 for line in path.read_text(encoding="utf-8").splitlines()
-            ),
-            1,
+            )
+        }
+        self.assertEqual(
+            chroma_contracts,
+            {
+                "src/vidxp/requirements/server.txt",
+                "src/vidxp/requirements/storage.txt",
+            },
         )
         self.assertNotIn("benchmarks/requirements.txt", all_block)
         self.assertNotIn("requirements/frontend.txt", all_block)
@@ -67,6 +101,26 @@ class PackagingTests(unittest.TestCase):
             "srt",
         ):
             self.assertNotIn(distribution, base_dependencies)
+
+    def test_install_profiles_keep_server_free_of_ml_dependencies(self):
+        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn("local-worker = { file = [", pyproject)
+        self.assertIn(
+            'server = { file = ["src/vidxp/requirements/server.txt"] }',
+            pyproject,
+        )
+        server = (
+            ROOT / "src" / "vidxp" / "requirements" / "server.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("chromadb", server)
+        for distribution in (
+            "faster-whisper",
+            "opencv-python-headless",
+            "sentence-transformers",
+            "torch",
+            "transformers",
+        ):
+            self.assertNotIn(distribution, server)
 
 
 if __name__ == "__main__":

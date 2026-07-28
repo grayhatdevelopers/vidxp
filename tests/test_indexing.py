@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -13,6 +14,8 @@ from vidxp.capabilities.dialogue.indexing import (
     build_dialogue_phrases,
     index_dialogue,
 )
+from vidxp.capabilities.scene.indexing import encode_scene_batch
+from vidxp.capabilities.scene.models import SceneModel
 from vidxp.capabilities.registry import (
     CapabilityRegistry,
     create_capability_registry,
@@ -42,7 +45,7 @@ class FakeEncoder:
     def __init__(self):
         self.batches = []
 
-    def encode(self, texts, **_):
+    def encode_document(self, texts, **_):
         self.batches.append(list(texts))
         return np.asarray(
             [[float(index), 1.0] for index, _ in enumerate(texts)]
@@ -79,6 +82,27 @@ class IndexingTests(unittest.TestCase):
             [(item.text, item.start, item.end) for item in phrases],
             [("one two", 0.1, 1.0), ("three", 1.2, 1.8)],
         )
+
+    def test_siglip2_uses_transformers_five_pooled_image_output(self):
+        import torch
+
+        processor = Mock(
+            return_value={"pixel_values": torch.ones((1, 3, 2, 2))}
+        )
+        model = Mock()
+        model.get_image_features.return_value = SimpleNamespace(
+            pooler_output=torch.tensor([[3.0, 4.0]])
+        )
+        provider = SceneModel(model=model, processor=processor, device="cpu")
+        sample = FrameSample(
+            frame_index=0,
+            timestamp=0.0,
+            frame=np.zeros((2, 2, 3), dtype=np.uint8),
+        )
+
+        vectors = encode_scene_batch([sample], provider)
+
+        self.assertEqual(vectors, [[0.6000000238418579, 0.800000011920929]])
 
     def test_segment_text_uses_interpolated_timestamps_as_fallback(self):
         phrases = build_dialogue_phrases(

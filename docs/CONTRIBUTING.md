@@ -17,7 +17,7 @@ Thanks for contributing to VidXP (Video eXPlain).
 | `docs/` | Installation-linked guidance, benchmark research, and contribution notes |
 | `chroma_data/` | Local ChromaDB index and `index_status.json` readiness record (generated; do not commit) |
 | `benchmark_runs/` | Isolated programmatic and benchmark runs (generated; do not commit) |
-| Model caches | Managed by WhisperX, SentenceTransformer, and CLIP outside the repository |
+| Model caches | Managed by the shared model runtime outside the repository |
 
 The full local CLI/UI index uses up to three collections:
 `dialogue`, `scene`, and `actor`. Runs containing
@@ -29,10 +29,7 @@ Follow the [installation guide](../INSTALLATION_GUIDE.md) or install from the
 package metadata directly.
 
 ```bash
-python -m venv venv
-# Windows: venv\Scripts\activate
-# macOS/Linux: source venv/bin/activate
-python -m pip install -e ".[all,frontend,benchmarks]"
+uv sync --frozen --extra local-worker --extra frontend --extra benchmarks
 ```
 
 Verify the environment:
@@ -82,7 +79,7 @@ are stored, state whether an existing `chroma_data` index must be rebuilt.
 Run the complete automated suite with:
 
 ```bash
-python -m unittest discover -s tests
+uv run --frozen pytest
 ```
 
 ## Pull requests
