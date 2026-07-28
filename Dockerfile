@@ -1,18 +1,12 @@
 # syntax=docker/dockerfile:1
 
-FROM python:3.11-slim-bookworm AS builder
+FROM python:3.14-slim-trixie AS builder
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    cmake \
     git \
-    pkg-config \
-    libopenblas-dev \
-    liblapack-dev \
-    libjpeg62-turbo-dev \
-    libpng-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python -m venv /opt/vidxp
@@ -44,7 +38,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install . \
     && python -m pip check
 
-FROM python:3.11-slim-bookworm AS runtime
+FROM python:3.14-slim-trixie AS runtime
 
 LABEL org.opencontainers.image.title="VidXP" \
     org.opencontainers.image.description="Local-first video indexing and search" \
@@ -54,15 +48,7 @@ LABEL org.opencontainers.image.title="VidXP" \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libglib2.0-0 \
-    libgl1 \
     libgomp1 \
-    libjpeg62-turbo \
-    liblapack3 \
-    libopenblas0 \
-    libpng16-16 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system vidxp \
     && useradd --system --gid vidxp --home-dir /var/lib/vidxp vidxp \

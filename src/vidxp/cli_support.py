@@ -16,11 +16,8 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from vidxp.application import VidXPService
-from vidxp.capabilities.registry import (
-    index_capability_names,
-    validate_capability_names,
-)
+from vidxp.application import VidXPApplication
+from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.capabilities.schemas import SearchResult
 from vidxp.repositories import RepositoryConfig, RepositoryRegistry
 
@@ -32,7 +29,7 @@ class OutputFormat(str, Enum):
 
 @dataclass
 class CLIState:
-    service: VidXPService
+    service: VidXPApplication
     registry: RepositoryRegistry
     repository: RepositoryConfig
     output_format: OutputFormat = OutputFormat.rich
@@ -166,23 +163,27 @@ class IndexProgress:
 
 def selected_modalities(
     values: Iterable[str] | None,
+    registry: CapabilityRegistry,
 ) -> tuple[str, ...]:
     if values is None:
-        return index_capability_names()
+        return registry.index_names()
     try:
-        return validate_capability_names(values)
+        return registry.validate_names(values)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
 
-def parse_modalities(value: str) -> tuple[str, ...]:
+def parse_modalities(
+    value: str,
+    registry: CapabilityRegistry,
+) -> tuple[str, ...]:
     selected = tuple(
         item.strip().lower()
         for item in value.split(",")
         if item.strip()
     )
     try:
-        return validate_capability_names(selected)
+        return registry.validate_names(selected)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
 

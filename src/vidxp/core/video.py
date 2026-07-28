@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from shutil import which
 from typing import Iterator
 
 from vidxp.core.contracts import CancellationToken
@@ -28,21 +27,6 @@ class FrameSample:
     frame_index: int
     timestamp: float
     frame: object
-
-
-def ffmpeg_binary() -> str:
-    from moviepy.config import get_setting
-
-    configured = get_setting("FFMPEG_BINARY")
-    configured_path = Path(str(configured))
-    resolved = (
-        str(configured_path.resolve())
-        if configured_path.is_file()
-        else which(str(configured))
-    )
-    if not resolved:
-        raise RuntimeError(f"FFmpeg executable was not found: {configured}")
-    return resolved
 
 
 def probe_video(path: str | Path) -> VideoInfo:
@@ -119,18 +103,6 @@ def iter_frame_batches(
             yield batch
     finally:
         video.release()
-
-
-def extract_audio(input_path: str | Path, output_path: str | Path) -> Path:
-    from moviepy.editor import VideoFileClip
-
-    destination = Path(output_path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with VideoFileClip(str(input_path)) as source_video:
-        if source_video.audio is None:
-            raise ValueError("The selected video does not contain an audio track.")
-        source_video.audio.write_audiofile(str(destination), logger=None)
-    return destination
 
 
 def render_actor_video(

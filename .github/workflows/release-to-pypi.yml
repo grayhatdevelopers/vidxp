@@ -30,7 +30,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: |
@@ -144,7 +144,7 @@ jobs:
 
           docker exec vidxp-release vidxp --version
           docker exec vidxp-release python -c \
-            'import clip, face_recognition, whisperx'
+            'import cv2, faster_whisper, sentence_transformers, transformers'
           docker exec vidxp-release sh -c \
             'test ! -d "$HOME/.cache/huggingface" && test ! -d "$HOME/.cache/clip"'
 

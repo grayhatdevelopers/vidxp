@@ -5,6 +5,7 @@ from typing import Annotated, Iterable
 
 import typer
 
+from vidxp.application_models import CreateIndexCommand
 from vidxp.cli_support import (
     CLIState,
     IndexProgress,
@@ -33,13 +34,16 @@ def create_index(
         not state.quiet and state.output_format == OutputFormat.rich
     )
     with IndexProgress(show_progress) as progress:
-        summary = state.service.create_index(
-            path,
-            modalities=modalities,
-            frame_stride=frame_stride,
-            capability_options=capability_options,
+        result = state.service.create_index(
+            CreateIndexCommand(
+                path=path,
+                modalities=tuple(modalities),
+                frame_stride=frame_stride,
+                capability_options=capability_options,
+            ),
             progress_callback=progress.update,
         )
+        summary = dict(result.summary)
     if state.output_format == OutputFormat.json:
         emit_json(summary)
     else:
@@ -97,7 +101,10 @@ def index_create(
     create_index(
         state,
         path,
-        modalities=selected_modalities(modalities),
+        modalities=selected_modalities(
+            modalities,
+            state.service.registry,
+        ),
         frame_stride=frame_stride,
         capability_options=parse_capability_options(capability_options),
     )
@@ -115,7 +122,7 @@ def index_status(
 
     state = state_from_context(ctx)
     emit_status(
-        state.service.index_status(),
+        state.service.index_status().model_dump(mode="json"),
         output_format=effective_output_format(state, json_output),
     )
 

@@ -15,6 +15,10 @@ from packaging.requirements import Requirement
 
 from vidxp.core.contracts import IndexConfig, VideoSource
 from vidxp.core.indexing_common import ProgressCallback
+from vidxp.runtime import ModelRuntime
+
+
+CAPABILITY_CONTRACT_VERSION = 1
 
 
 class _ContractModel(BaseModel):
@@ -76,6 +80,7 @@ class CapabilityContext(_ContractModel):
     """Runtime context shared by transport-neutral capability operations."""
 
     config: IndexConfig | None
+    runtime: ModelRuntime
 
     def require_config(self) -> IndexConfig:
         if self.config is None:
@@ -86,7 +91,7 @@ class CapabilityContext(_ContractModel):
 class PreparationContext(_ContractModel):
     """Runtime values supplied to one capability's preparation hook."""
 
-    device: str = Field(min_length=1)
+    runtime: ModelRuntime
     settings: CapabilityConfig
 
 
@@ -94,11 +99,10 @@ OperationHandler = Callable[[CapabilityContext, BaseModel], BaseModel | Mapping]
 
 
 class OperationDefinition(_ContractModel):
-    """Validated input, output, and implementation for one operation."""
+    """Transport-neutral input and output metadata for one operation."""
 
     input_model: type[BaseModel]
     output_model: type[BaseModel]
-    handler: OperationHandler
     requires_index: bool = True
 
     @field_validator("input_model", "output_model")
@@ -110,16 +114,6 @@ class OperationDefinition(_ContractModel):
         if not isinstance(value, type) or not issubclass(value, BaseModel):
             raise ValueError("Operation schemas must be Pydantic models.")
         return value
-
-    def invoke(
-        self,
-        context: CapabilityContext,
-        payload: BaseModel | Mapping[str, Any],
-    ) -> BaseModel:
-        request = self.input_model.model_validate(payload)
-        result = self.handler(context, request)
-        return self.output_model.model_validate(result)
-
 
 class CapabilityIndexResult(_ContractModel):
     """Summary and timing data returned by an indexing handler."""
@@ -141,27 +135,21 @@ ModelManifest = Callable[
     [IndexConfig, tuple[VideoSource, ...]],
     Mapping[str, Any],
 ]
-CLIFactory = Callable[[], Any]
+ExecutorFactory = Callable[[], "CapabilityExecutor"]
 
 
 class CapabilityDefinition(_ContractModel):
-    """Everything the application needs to run one named capability."""
+    """Domain metadata for one named capability."""
 
     name: str = Field(min_length=1)
     description: str = Field(min_length=1)
     extra: str = Field(min_length=1)
     config_model: type[CapabilityConfig] = CapabilityConfig
-    runtime_checks: tuple[RuntimeCheck, ...] = ()
     collection_name: str | None = None
-    indexer: IndexHandler | None = None
-    index_processor: Any | None = None
     index_stage: str | None = None
+    execution_group: str | None = None
     operations: Mapping[str, OperationDefinition] = Field(default_factory=dict)
-    requirement_filter: RequirementFilter | None = None
-    prepare: PrepareHandler | None = None
-    model_manifest: ModelManifest | None = None
-    cli_name: str | None = None
-    cli_factory: CLIFactory | None = None
+    prepares_models: bool = False
 
     @field_validator("config_model")
     @classmethod
@@ -187,28 +175,44 @@ class CapabilityDefinition(_ContractModel):
         return MappingProxyType(dict(value))
 
     @model_validator(mode="after")
-    def _require_complete_integrations(self) -> CapabilityDefinition:
+    def _require_complete_metadata(self) -> CapabilityDefinition:
         indexing_fields = (
             self.collection_name,
-            self.indexer,
             self.index_stage,
+            self.execution_group,
         )
         if any(value is not None for value in indexing_fields) and not all(
             value is not None for value in indexing_fields
         ):
             raise ValueError(
                 "Indexable capabilities must declare collection names, "
-                "an indexer, and an index stage together."
+                "an index stage, and an execution group together."
             )
-        if (self.cli_name is None) != (self.cli_factory is None):
+        if self.collection_name is None and not self.operations:
             raise ValueError(
-                "cli_name and cli_factory must either both be set or both be unset."
-            )
-        if self.indexer is None and not self.operations:
-            raise ValueError(
-                "A capability must provide an indexer or at least one operation."
+                "A capability must support indexing or at least one operation."
             )
         return self
+
+
+class CapabilityExecutor(_ContractModel):
+    """Infrastructure hooks bound to one capability definition."""
+
+    indexer: IndexHandler | None = None
+    index_processor: Any | None = None
+    operations: Mapping[str, OperationHandler] = Field(default_factory=dict)
+    runtime_checks: tuple[RuntimeCheck, ...] = ()
+    requirement_filter: RequirementFilter | None = None
+    prepare: PrepareHandler | None = None
+    model_manifest: ModelManifest | None = None
+
+    @field_validator("operations")
+    @classmethod
+    def _freeze_operation_handlers(
+        cls,
+        value: Mapping[str, OperationHandler],
+    ) -> Mapping[str, OperationHandler]:
+        return MappingProxyType(dict(value))
 
     def source_requirements(
         self,
@@ -218,6 +222,12 @@ class CapabilityDefinition(_ContractModel):
         if self.requirement_filter is None:
             return requirements
         return self.requirement_filter(source, requirements)
+
+
+class CapabilityPlugin(_ContractModel):
+    definition: CapabilityDefinition
+    executor_factory: ExecutorFactory
+    contract_version: int = CAPABILITY_CONTRACT_VERSION
 
 
 def capability_install_hint(name: str) -> str:

@@ -31,7 +31,7 @@ class BenchmarkCliTests(unittest.TestCase):
             with (
                 patch.object(
                     cli,
-                    "VidXPService",
+                    "create_application",
                     return_value=service,
                 ),
                 patch(

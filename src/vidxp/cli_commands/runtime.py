@@ -5,7 +5,11 @@ from typing import Annotated
 
 import typer
 
-from vidxp.capabilities.registry import CAPABILITIES, capability_names
+from vidxp.application_models import (
+    DependencyCheckCommand,
+    PrepareModelsCommand,
+)
+from vidxp.capabilities.registry import create_capability_registry
 from vidxp.cli_support import (
     OutputFormat,
     effective_output_format,
@@ -15,11 +19,10 @@ from vidxp.cli_support import (
     state_from_context,
 )
 
-ALL_CAPABILITIES = ",".join(capability_names())
+_COMMAND_REGISTRY = create_capability_registry()
+ALL_CAPABILITIES = ",".join(_COMMAND_REGISTRY.names())
 PREPARABLE_CAPABILITIES = ",".join(
-    name
-    for name, capability in CAPABILITIES.items()
-    if capability.prepare is not None
+    _COMMAND_REGISTRY.preparable_names()
 )
 
 
@@ -40,13 +43,16 @@ def doctor(
 ) -> None:
     """Validate selected indexing dependencies without downloading models."""
 
-    selected = parse_modalities(modalities)
     state = state_from_context(ctx)
-    result = state.service.check_dependencies(selected)
+    selected = parse_modalities(modalities, state.service.registry)
+    result = state.service.check_dependencies(
+        DependencyCheckCommand(modalities=selected)
+    )
+    payload = result.model_dump(mode="json")
     if effective_output_format(state, json_output) == OutputFormat.json:
-        emit_json(result)
+        emit_json(payload)
     else:
-        for check in result["checks"]:
+        for check in payload["checks"]:
             if check["ok"]:
                 detail = f": {check['path']}" if check.get("path") else ""
                 typer.secho(
@@ -58,7 +64,7 @@ def doctor(
                     f"FAILED {check['name']}: {check['error']}",
                     fg=typer.colors.RED,
                 )
-    if not result["ok"]:
+    if not result.ok:
         raise typer.Exit(1)
     if effective_output_format(state, json_output) == OutputFormat.rich:
         typer.secho(
@@ -95,11 +101,13 @@ def prepare(
 ) -> None:
     """Download and cache selected runtime models before indexing."""
 
-    selected = parse_modalities(modalities)
     state = state_from_context(ctx)
+    selected = parse_modalities(modalities, state.service.registry)
     result = state.service.prepare_models(
-        selected,
-        capability_options=parse_capability_options(capability_options),
+        PrepareModelsCommand(
+            modalities=selected,
+            capability_options=parse_capability_options(capability_options),
+        ),
         progress_callback=(
             None
             if state.quiet
@@ -109,7 +117,7 @@ def prepare(
         ),
     )
     if effective_output_format(state, json_output) == OutputFormat.json:
-        emit_json(result)
+        emit_json(result.model_dump(mode="json"))
     else:
         typer.secho(
             "Selected VidXP runtime models are prepared.",
@@ -139,7 +147,7 @@ def ui(
     state = state_from_context(ctx)
     os.environ["VIDXP_CONFIG_FILE"] = str(state.registry.path)
     os.environ["VIDXP_REPOSITORY"] = state.repository.name
-    os.environ["VIDXP_INDEX_DIR"] = str(state.service.index_directory)
+    os.environ["VIDXP_INDEX_DIR"] = str(state.service.layout.root)
     if state.service.device is None:
         os.environ.pop("VIDXP_DEVICE", None)
     else:
@@ -155,13 +163,6 @@ def ui(
             ) from exc
         raise
 
-    frontend.SERVICE = state.service
-    frontend.SAVED_VIDEO_PATH = (
-        state.service.index_directory / "source-video.mp4"
-    )
-    frontend.ACTOR_OUTPUT_PATH = (
-        state.service.index_directory / "actor-result.mp4"
-    )
     streamlit_arguments = []
     if host is not None:
         streamlit_arguments.append(f"--server.address={host}")

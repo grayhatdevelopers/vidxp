@@ -11,7 +11,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import quote
 
 
-INDEX_SCHEMA_VERSION = 3
+INDEX_SCHEMA_VERSION = 4
 MANIFEST_SCHEMA_VERSION = 1
 
 
@@ -176,9 +176,7 @@ class IndexConfig:
             "storage_directory": "chroma_data",
         }
         if "enabled_modalities" not in changes:
-            from vidxp.capabilities.registry import index_capability_names
-
-            defaults["enabled_modalities"] = index_capability_names()
+            defaults["enabled_modalities"] = ("dialogue", "scene", "actor")
         defaults.update(changes)
         return cls(**defaults)
 

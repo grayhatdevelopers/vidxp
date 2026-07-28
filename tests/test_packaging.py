@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from vidxp.capabilities.registry import CAPABILITIES
+from vidxp.capabilities.registry import create_capability_registry
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +16,7 @@ class PackagingTests(unittest.TestCase):
             1,
         )[0]
 
-        for capability in CAPABILITIES.values():
+        for capability in create_capability_registry().definitions.values():
             extra_block = pyproject.split(
                 f"{capability.extra} = {{ file = [",
                 1,
@@ -38,7 +38,7 @@ class PackagingTests(unittest.TestCase):
         self.assertIn(f'storage = {{ file = ["{storage}"] }}', pyproject)
         self.assertEqual(
             sum(
-                line.strip() == "chromadb"
+                line.strip().startswith("chromadb")
                 for path in (ROOT / "src" / "vidxp").rglob("*.txt")
                 for line in path.read_text(encoding="utf-8").splitlines()
             ),
@@ -56,14 +56,13 @@ class PackagingTests(unittest.TestCase):
 
         for distribution in (
             "chromadb",
-            "face-recognition",
-            "moviepy",
+            "faster-whisper",
             "numpy",
-            "opencv-python",
+            "opencv-python-headless",
             "sentence-transformers",
             "torch",
-            "whisperx",
-            "clip-anytorch",
+            "transformers",
+            "pooch",
             "streamlit",
             "srt",
         ):

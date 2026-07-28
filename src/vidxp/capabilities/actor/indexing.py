@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vidxp.capabilities.actor.config import actor_config
+from vidxp.capabilities.actor.models import ActorModels, get_actor_models
 from vidxp.core.contracts import (
     CancellationToken,
     IndexConfig,
@@ -13,10 +14,12 @@ from vidxp.core.contracts import (
 )
 from vidxp.core.indexing_common import ProgressCallback
 from vidxp.core.storage import IndexStorage
+from vidxp.runtime import ModelRuntime
 
 
 @dataclass
 class ActorIndexState:
+    models: ActorModels
     known_encodings: list[Any] = field(default_factory=list)
     known_ids: list[str] = field(default_factory=list)
     histories: dict[str, list[Any]] = field(default_factory=dict)
@@ -24,17 +27,14 @@ class ActorIndexState:
     processed_frames: int = 0
 
 
-def _best_face_match(
-    face_recognition,
-    known_encodings,
-    encoding,
-    threshold,
-):
+def _best_face_match(known_encodings, encoding, threshold):
+    import numpy as np
+
     if not known_encodings:
         return None
-    distances = face_recognition.face_distance(known_encodings, encoding)
-    match = int(distances.argmin())
-    return match if distances[match] < threshold else None
+    similarities = np.asarray(known_encodings) @ encoding
+    match = int(similarities.argmax())
+    return match if similarities[match] >= threshold else None
 
 
 def _actor_records(
@@ -78,7 +78,7 @@ def process_actor_samples(
     storage: IndexStorage,
     cancellation: CancellationToken,
 ) -> None:
-    import face_recognition
+    import cv2
     import numpy as np
 
     settings = actor_config(config)
@@ -87,17 +87,25 @@ def process_actor_samples(
         detections = []
         for sample in group:
             cancellation.raise_if_cancelled()
-            locations = face_recognition.face_locations(sample.frame)
-            encodings = face_recognition.face_encodings(
-                sample.frame,
-                locations,
-                num_jitters=settings.num_jitters,
+            frame = cv2.cvtColor(sample.frame, cv2.COLOR_RGB2BGR)
+            height, width = frame.shape[:2]
+            state.models.detector.setInputSize((width, height))
+            state.models.detector.setScoreThreshold(
+                settings.detection_threshold
             )
-            for ordinal, (encoding, location) in enumerate(
-                zip(encodings, locations)
-            ):
+            _, faces = state.models.detector.detect(frame)
+            for ordinal, face in enumerate(faces if faces is not None else ()):
+                aligned = state.models.recognizer.alignCrop(frame, face)
+                encoding = (
+                    state.models.recognizer.feature(aligned)
+                    .flatten()
+                    .astype("float32")
+                )
+                norm = float(np.linalg.norm(encoding))
+                if norm == 0:
+                    continue
+                encoding /= norm
                 match = _best_face_match(
-                    face_recognition,
                     state.known_encodings,
                     encoding,
                     settings.match_threshold,
@@ -113,7 +121,10 @@ def process_actor_samples(
                     history.append(encoding)
                     if len(history) > 5:
                         history.pop(0)
-                    state.known_encodings[match] = np.mean(history, axis=0)
+                    centroid = np.mean(history, axis=0)
+                    state.known_encodings[match] = (
+                        centroid / np.linalg.norm(centroid)
+                    )
                 state.cluster_sizes[cluster_id] = (
                     state.cluster_sizes.get(cluster_id, 0) + 1
                 )
@@ -125,7 +136,12 @@ def process_actor_samples(
                         "cluster_id": cluster_id,
                         "frame_index": sample.frame_index,
                         "timestamp": sample.timestamp,
-                        "bbox": tuple(int(value) for value in location),
+                        "bbox": (
+                            max(0, int(face[1])),
+                            min(width, int(face[0] + face[2])),
+                            min(height, int(face[1] + face[3])),
+                            max(0, int(face[0])),
+                        ),
                     }
                 )
             state.processed_frames += 1
@@ -170,9 +186,10 @@ class ActorVisualProcessor:
     def prepare(
         self,
         config: IndexConfig,
+        runtime: ModelRuntime,
         progress: ProgressCallback | None,
     ) -> ActorIndexState:
-        return ActorIndexState()
+        return ActorIndexState(models=get_actor_models(runtime))
 
     def process(
         self,

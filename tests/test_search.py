@@ -12,6 +12,8 @@ from vidxp.capabilities.search import (
     stable_query_id,
 )
 from vidxp.core.contracts import IndexConfig, IndexSchemaError
+from vidxp.runtime import ModelRuntime
+from vidxp.settings import VidXPSettings
 
 
 class FakeStorage:
@@ -51,6 +53,12 @@ class SearchTests(unittest.TestCase):
             run_id="run-1",
             enabled_modalities=("dialogue",),
         )
+        self.runtime = ModelRuntime(
+            VidXPSettings(
+                repository_root="unused",
+                runtime_backend="cpu",
+            )
+        )
 
     def test_top_k_filter_order_distance_and_score_are_preserved(self):
         storage = FakeStorage(
@@ -67,6 +75,7 @@ class SearchTests(unittest.TestCase):
             result = search_dialogue(
                 "fresh bread",
                 config=self.config,
+                runtime=self.runtime,
                 top_k=3,
                 video_id="video-1",
                 query_id="query-7",
@@ -111,6 +120,7 @@ class SearchTests(unittest.TestCase):
             search_dialogue(
                 "query",
                 config=self.config,
+                runtime=self.runtime,
                 top_k=0,
                 storage=FakeStorage([]),
             )
@@ -135,6 +145,7 @@ class SearchTests(unittest.TestCase):
             search_dialogue(
                 "query",
                 config=self.config,
+                runtime=self.runtime,
                 storage=storage,
             )
 

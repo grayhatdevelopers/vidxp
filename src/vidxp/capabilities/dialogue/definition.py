@@ -7,16 +7,13 @@ from packaging.utils import canonicalize_name
 
 from vidxp.capabilities.contracts import (
     CapabilityDefinition,
+    CapabilityExecutor,
+    CapabilityPlugin,
     OperationDefinition,
     PreparationContext,
-    RuntimeCheck,
 )
 from vidxp.capabilities.dialogue.config import DialogueConfig, dialogue_config
-from vidxp.capabilities.dialogue.models import (
-    get_alignment_model,
-    get_embedder,
-    get_whisper_model,
-)
+from vidxp.capabilities.dialogue.models import get_embedder, get_whisper_model
 from vidxp.capabilities.dialogue.operations import (
     index_capability,
     search_operation,
@@ -24,16 +21,6 @@ from vidxp.capabilities.dialogue.operations import (
 from vidxp.capabilities.schemas import SearchInput, SearchResult
 from vidxp.core.contracts import IndexConfig, VideoSource
 from vidxp.core.indexing_common import ProgressCallback
-from vidxp.core.video import ffmpeg_binary
-
-
-FFMPEG = RuntimeCheck(
-    label="FFmpeg",
-    check=ffmpeg_binary,
-    applies_to=lambda source: source.transcript is None,
-)
-
-
 def filter_requirements_for_source(
     source: VideoSource,
     requirements: tuple[Requirement, ...],
@@ -69,23 +56,22 @@ def prepare_models(
         "dialogue_model",
         f"Preparing dialogue model: {settings.sentence_model}",
     )
-    get_embedder(settings.sentence_model, context.device)
+    get_embedder(
+        context.runtime,
+        settings.sentence_model,
+        settings.sentence_revision,
+    )
     prepared.append(settings.sentence_model)
     report(
         "transcription_model",
-        f"Preparing transcription model: WhisperX {settings.whisper_model}",
+        f"Preparing transcription model: faster-whisper {settings.whisper_model}",
     )
-    get_whisper_model(settings.whisper_model, context.device)
+    get_whisper_model(
+        context.runtime,
+        settings.whisper_model,
+        settings.whisper_revision,
+    )
     prepared.append(settings.whisper_model)
-    if settings.alignment_language:
-        report(
-            "alignment_model",
-            f"Preparing the {settings.alignment_language} alignment model.",
-        )
-        get_alignment_model(settings.alignment_language, context.device)
-        prepared.append(
-            f"whisperx-alignment:{settings.alignment_language}"
-        )
     return tuple(prepared)
 
 
@@ -94,9 +80,19 @@ def model_manifest(
     sources: tuple[VideoSource, ...],
 ) -> Mapping[str, Any]:
     settings = dialogue_config(config)
-    result: dict[str, Any] = {"dialogue": settings.sentence_model}
+    result: dict[str, Any] = {
+        "dialogue": {
+            "provider": "sentence-transformers",
+            "model": settings.sentence_model,
+            "revision": settings.sentence_revision,
+        }
+    }
     if any(source.transcript is None for source in sources):
-        result["transcription"] = settings.whisper_model
+        result["transcription"] = {
+            "provider": "faster-whisper",
+            "model": settings.whisper_model,
+            "revision": settings.whisper_revision,
+        }
     return result
 
 
@@ -106,17 +102,29 @@ DEFINITION = CapabilityDefinition(
     extra="dialogue",
     config_model=DialogueConfig,
     collection_name="dialogue",
-    indexer=index_capability,
     index_stage="dialogue_indexing",
-    runtime_checks=(FFMPEG,),
-    requirement_filter=filter_requirements_for_source,
-    prepare=prepare_models,
-    model_manifest=model_manifest,
+    execution_group="dialogue",
+    prepares_models=True,
     operations={
         "search": OperationDefinition(
             input_model=SearchInput,
             output_model=SearchResult,
-            handler=search_operation,
         )
     },
+)
+
+
+def create_executor() -> CapabilityExecutor:
+    return CapabilityExecutor(
+        indexer=index_capability,
+        operations={"search": search_operation},
+        requirement_filter=filter_requirements_for_source,
+        prepare=prepare_models,
+        model_manifest=model_manifest,
+    )
+
+
+PLUGIN = CapabilityPlugin(
+    definition=DEFINITION,
+    executor_factory=create_executor,
 )

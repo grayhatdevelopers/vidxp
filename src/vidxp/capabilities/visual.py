@@ -5,6 +5,7 @@ from time import perf_counter
 from typing import Any, Protocol, Sequence
 
 from vidxp.capabilities.contracts import CapabilityIndexResult
+from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.core.contracts import (
     CancellationToken,
     IndexConfig,
@@ -12,6 +13,7 @@ from vidxp.core.contracts import (
 )
 from vidxp.core.indexing_common import ProgressCallback, report_progress
 from vidxp.core.storage import IndexStorage
+from vidxp.runtime import ModelRuntime
 from vidxp.core.video import (
     FrameSample,
     FrameStreamStats,
@@ -26,6 +28,7 @@ class VisualProcessor(Protocol):
     def prepare(
         self,
         config: IndexConfig,
+        runtime: ModelRuntime,
         progress: ProgressCallback | None,
     ) -> Any: ...
 
@@ -73,20 +76,20 @@ def _participants(
     names: Sequence[str],
     *,
     config: IndexConfig,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntime,
     progress: ProgressCallback | None,
     timings: dict[str, float],
 ) -> list[_Participant]:
-    from vidxp.capabilities.registry import get_capability
-
     participants = []
     for name in names:
-        processor = get_capability(name).index_processor
+        processor = registry.executor(name).index_processor
         if processor is None:
             raise ValueError(
                 f"Capability {name!r} does not provide a visual processor."
             )
         started = perf_counter()
-        state = processor.prepare(config, progress)
+        state = processor.prepare(config, runtime, progress)
         timings[name] = perf_counter() - started
         participants.append(_Participant(name, processor, state))
     return participants
@@ -185,6 +188,8 @@ def index_visuals(
     config: IndexConfig,
     storage: IndexStorage,
     cancellation: CancellationToken,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntime,
     progress: ProgressCallback | None = None,
     modalities: Sequence[str] | None = None,
 ) -> CapabilityIndexResult:
@@ -210,6 +215,8 @@ def index_visuals(
     participants = _participants(
         selected,
         config=config,
+        registry=registry,
+        runtime=runtime,
         progress=progress,
         timings=timings,
     )
@@ -261,6 +268,8 @@ def index_capabilities(
     config: IndexConfig,
     storage: IndexStorage,
     cancellation: CancellationToken,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntime,
     progress: ProgressCallback | None = None,
     modalities: Sequence[str] | None = None,
 ) -> CapabilityIndexResult:
@@ -269,6 +278,8 @@ def index_capabilities(
         config=config,
         storage=storage,
         cancellation=cancellation,
+        registry=registry,
+        runtime=runtime,
         progress=progress,
         modalities=modalities,
     )

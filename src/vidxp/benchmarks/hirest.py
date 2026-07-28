@@ -489,7 +489,7 @@ def run_hirest(
                 "duration_relative_window_mean_second_score"
             ),
             "temporal_window_fraction": temporal_window_fraction,
-            "whisperx_used": False,
+            "transcription_provider": "supplied-transcript",
             "video_decode_used": False,
         }
         if split == "test":

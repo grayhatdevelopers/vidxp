@@ -4,12 +4,14 @@ from typing import Any, Mapping
 
 from vidxp.capabilities.contracts import (
     CapabilityDefinition,
+    CapabilityExecutor,
+    CapabilityPlugin,
     OperationDefinition,
     PreparationContext,
 )
 from vidxp.capabilities.scene.config import SceneConfig, scene_config
 from vidxp.capabilities.scene.indexing import VISUAL_PROCESSOR
-from vidxp.capabilities.scene.models import get_clip_model
+from vidxp.capabilities.scene.models import get_scene_model
 from vidxp.capabilities.scene.operations import search_operation
 from vidxp.capabilities.schemas import SearchInput, SearchResult
 from vidxp.capabilities.visual import index_capabilities
@@ -27,11 +29,15 @@ def prepare_models(
                 "state": "preparing",
                 "stage": "scene_model",
                 "message": (
-                    f"Preparing scene model: CLIP {settings.model}"
+                    f"Preparing scene model: SigLIP2 {settings.model}"
                 ),
             }
         )
-    get_clip_model(settings.model, context.device)
+    get_scene_model(
+        context.runtime,
+        settings.model,
+        settings.revision,
+    )
     return (settings.model,)
 
 
@@ -39,7 +45,14 @@ def model_manifest(
     config: IndexConfig,
     _sources: tuple[VideoSource, ...],
 ) -> Mapping[str, Any]:
-    return {"scene": scene_config(config).model}
+    settings = scene_config(config)
+    return {
+        "scene": {
+            "provider": "transformers",
+            "model": settings.model,
+            "revision": settings.revision,
+        }
+    }
 
 
 DEFINITION = CapabilityDefinition(
@@ -48,16 +61,29 @@ DEFINITION = CapabilityDefinition(
     extra="scene",
     config_model=SceneConfig,
     collection_name="scene",
-    indexer=index_capabilities,
-    index_processor=VISUAL_PROCESSOR,
     index_stage="visual_indexing",
-    prepare=prepare_models,
-    model_manifest=model_manifest,
+    execution_group="visual",
+    prepares_models=True,
     operations={
         "search": OperationDefinition(
             input_model=SearchInput,
             output_model=SearchResult,
-            handler=search_operation,
         )
     },
+)
+
+
+def create_executor() -> CapabilityExecutor:
+    return CapabilityExecutor(
+        indexer=index_capabilities,
+        index_processor=VISUAL_PROCESSOR,
+        operations={"search": search_operation},
+        prepare=prepare_models,
+        model_manifest=model_manifest,
+    )
+
+
+PLUGIN = CapabilityPlugin(
+    definition=DEFINITION,
+    executor_factory=create_executor,
 )

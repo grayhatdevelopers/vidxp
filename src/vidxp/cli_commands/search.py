@@ -4,7 +4,8 @@ from typing import Annotated, Callable
 
 import typer
 
-from vidxp.capabilities.registry import CAPABILITIES
+from vidxp.application_models import SearchCommand
+from vidxp.capabilities.registry import create_capability_registry
 from vidxp.capabilities.schemas import SearchResult
 from vidxp.cli_support import (
     CLIState,
@@ -25,7 +26,13 @@ def run_search(
     top_k: int,
     json_output: bool,
 ) -> SearchResult:
-    result = state.service.search(capability, query, top_k=top_k)
+    result = state.service.search(
+        SearchCommand(
+            modality=capability,
+            query=query,
+            top_k=top_k,
+        )
+    )
     emit_search(
         result,
         output_format=effective_output_format(state, json_output),
@@ -63,10 +70,10 @@ def _search_command(capability: str) -> Callable:
         )
 
     command.__name__ = f"search_{capability}"
-    command.__doc__ = CAPABILITIES[capability].description
+    command.__doc__ = create_capability_registry().get(capability).description
     return command
 
 
-for _name, _capability in CAPABILITIES.items():
+for _name, _capability in create_capability_registry().definitions.items():
     if "search" in _capability.operations:
         app.command(_name)(_search_command(_name))

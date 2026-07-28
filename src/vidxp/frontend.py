@@ -1,12 +1,14 @@
 import hashlib
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Sequence
 
 import streamlit as st
 
-from vidxp.application import VidXPService
-from vidxp.capabilities.registry import index_capability_names
+from vidxp.application import VidXPApplication
+from vidxp.application_models import DependencyCheckCommand, SearchCommand
+from vidxp.composition import create_application
 from vidxp.index_state import IndexNotReadyError
 from vidxp.index_worker import (
     cancel_indexing,
@@ -14,19 +16,20 @@ from vidxp.index_worker import (
     start_indexing,
 )
 from vidxp.repositories import resolve_repository
+from vidxp.settings import VidXPSettings
 
 
-def _configured_service() -> VidXPService:
+@lru_cache(maxsize=1)
+def _configured_service() -> VidXPApplication:
     _, repository = resolve_repository()
-    return VidXPService(
-        repository.index_directory,
-        device=repository.device,
+    return create_application(
+        VidXPSettings(
+            repository_root=repository.index_directory,
+            runtime_backend=repository.device or "auto",
+        )
     )
 
 
-SERVICE = _configured_service()
-SAVED_VIDEO_PATH = SERVICE.index_directory / "source-video.mp4"
-ACTOR_OUTPUT_PATH = SERVICE.index_directory / "actor-result.mp4"
 INDEX_REQUESTED_KEY = "_vidxp_index_requested"
 INDEX_ERROR_KEY = "_vidxp_index_error"
 SEARCH_RESULT_KEY = "_vidxp_search_result"
@@ -40,10 +43,11 @@ def _video_hash(uploaded_video) -> str | None:
 
 
 def _is_search_ready(status, uploaded_video) -> bool:
+    saved_video_path = _configured_service().layout.media / "source-video.mp4"
     if not status or status.get("state") != "ready":
         return False
     if uploaded_video is None:
-        return SAVED_VIDEO_PATH.is_file()
+        return saved_video_path.is_file()
     return status.get("video", {}).get("sha256") == _video_hash(uploaded_video)
 
 
@@ -124,29 +128,34 @@ def _request_cancellation():
 
 
 def _available_index_modalities() -> tuple[str, ...]:
+    service = _configured_service()
     return tuple(
         name
-        for name in index_capability_names()
-        if SERVICE.check_dependencies((name,))["ok"]
+        for name in service.registry.index_names()
+        if service.check_dependencies(
+            DependencyCheckCommand(modalities=(name,))
+        ).ok
     )
 
 
 def _run_indexing(uploaded_video, status, modalities):
+    service = _configured_service()
+    saved_video_path = service.layout.media / "source-video.mp4"
     try:
         if uploaded_video is not None:
-            SAVED_VIDEO_PATH.parent.mkdir(parents=True, exist_ok=True)
-            SAVED_VIDEO_PATH.write_bytes(uploaded_video.getvalue())
+            saved_video_path.parent.mkdir(parents=True, exist_ok=True)
+            saved_video_path.write_bytes(uploaded_video.getvalue())
             source_name = uploaded_video.name
         else:
             source_name = (
-                status.get("video", {}).get("source_name", SAVED_VIDEO_PATH.name)
+                status.get("video", {}).get("source_name", saved_video_path.name)
                 if status
-                else SAVED_VIDEO_PATH.name
+                else saved_video_path.name
             )
         start_indexing(
-            str(SAVED_VIDEO_PATH),
+            str(saved_video_path),
             source_name,
-            SERVICE,
+            service,
             modalities=modalities,
         )
     except Exception as exc:
@@ -159,32 +168,37 @@ def _run_indexing(uploaded_video, status, modalities):
 
 
 def _run_search(search_type, query):
+    service = _configured_service()
+    saved_video_path = service.layout.media / "source-video.mp4"
+    actor_output_path = service.layout.artifacts / "actor-result.mp4"
     try:
-        status = SERVICE.index_status()
+        status = service.index_status().model_dump(mode="json")
         if status.get("state") != "ready":
             raise IndexNotReadyError("The video index is not ready.")
         if search_type == "actor":
-            ACTOR_OUTPUT_PATH.unlink(missing_ok=True)
-            SERVICE.render_actor(
+            actor_output_path.unlink(missing_ok=True)
+            service.render_actor(
                 query,
-                SAVED_VIDEO_PATH,
-                ACTOR_OUTPUT_PATH,
+                saved_video_path,
+                actor_output_path,
             )
             if (
-                not ACTOR_OUTPUT_PATH.is_file()
-                or ACTOR_OUTPUT_PATH.stat().st_size == 0
+                not actor_output_path.is_file()
+                or actor_output_path.stat().st_size == 0
             ):
                 return {"error": "Actor result video could not be generated."}
             return {
                 "type": search_type,
                 "query": query,
-                "video_path": str(ACTOR_OUTPUT_PATH),
+                "video_path": str(actor_output_path),
             }
 
-        result = SERVICE.search(
-            search_type,
-            query,
-            top_k=1,
+        result = service.search(
+            SearchCommand(
+                modality=search_type,
+                query=query,
+                top_k=1,
+            )
         )
         if not result.hits:
             return {"error": f"No {search_type} match was found."}
@@ -194,7 +208,7 @@ def _run_search(search_type, query):
             "query": query,
             "timestamp": hit.start,
             "hit": hit.to_dict(),
-            "video_path": str(SAVED_VIDEO_PATH),
+            "video_path": str(saved_video_path),
         }
     except IndexNotReadyError as exc:
         return {"error": str(exc)}
@@ -230,10 +244,11 @@ def _render_search_result(result):
 
 
 def _select_video(busy):
+    saved_video_path = _configured_service().layout.media / "source-video.mp4"
     st.subheader("Video")
     upload_slot = st.empty()
     has_session_upload = st.session_state.get("video_upload") is not None
-    if busy and not has_session_upload and SAVED_VIDEO_PATH.is_file():
+    if busy and not has_session_upload and saved_video_path.is_file():
         uploaded_video = None
         st.caption("Indexing the saved video.")
     else:
@@ -247,10 +262,10 @@ def _select_video(busy):
 
     if uploaded_video is not None:
         st.video(uploaded_video, width=560)
-    elif SAVED_VIDEO_PATH.is_file():
+    elif saved_video_path.is_file():
         if not busy:
             st.caption("Using the saved video.")
-        st.video(str(SAVED_VIDEO_PATH), width=560)
+        st.video(str(saved_video_path), width=560)
     return uploaded_video
 
 
@@ -290,17 +305,19 @@ def _search_controls(ready, uploaded_video, available_modalities):
 
 
 def run():
+    service = _configured_service()
+    saved_video_path = service.layout.media / "source-video.mp4"
     st.set_page_config(page_title="VidXP", page_icon="🎬", layout="wide")
     st.title("VidXP")
     st.caption("Index and search video by dialogue, scene, and actor.")
-    st.caption(f"Index repository: {SERVICE.index_directory}")
+    st.caption(f"Index repository: {service.layout.root}")
 
-    active = indexing_in_progress(SERVICE)
+    active = indexing_in_progress(service)
     if not active:
         st.session_state.pop(CANCEL_REQUESTED_KEY, None)
     requested = st.session_state.get(INDEX_REQUESTED_KEY, False)
     busy = active or requested
-    status = SERVICE.index_status()
+    status = service.index_status().model_dump(mode="json")
     installed_modalities = _available_index_modalities()
     video_column, workflow_column = st.columns(
         [0.95, 1.05],
@@ -332,7 +349,7 @@ def run():
             type="primary",
             disabled=busy
             or not selected_modalities
-            or (uploaded_video is None and not SAVED_VIDEO_PATH.is_file()),
+            or (uploaded_video is None and not saved_video_path.is_file()),
             help=(
                 "Indexing is already running."
                 if busy
@@ -358,9 +375,9 @@ def run():
 
             @st.fragment(run_every="1s")
             def poll_index_status():
-                latest_active = indexing_in_progress(SERVICE)
+                latest_active = indexing_in_progress(service)
                 _render_index_status(
-                    SERVICE.index_status(),
+                    service.index_status().model_dump(mode="json"),
                     latest_active,
                     uploaded_video,
                     st.session_state.get(INDEX_ERROR_KEY),

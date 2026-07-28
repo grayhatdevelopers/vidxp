@@ -47,8 +47,8 @@ class IndexWorkerTests(unittest.TestCase):
         index_worker._process = None
         index_worker._cancel_event = None
         self.service = Mock()
-        self.service.index_directory = Path("selected-index")
-        self.service.device = "cuda"
+        self.service.layout.root = Path("selected-repository")
+        self.service.runtime.backends.requested = "cuda"
         self.service.indexing_in_progress.return_value = False
 
     def tearDown(self):
@@ -75,7 +75,7 @@ class IndexWorkerTests(unittest.TestCase):
                 "video.mp4",
                 "source.mp4",
                 context.event,
-                "selected-index",
+                "selected-repository",
                 "cuda",
                 ("scene",),
             ),
@@ -86,26 +86,31 @@ class IndexWorkerTests(unittest.TestCase):
         service = Mock()
         with patch.object(
             index_worker,
-            "VidXPService",
+            "create_application",
             return_value=service,
-        ) as service_type:
+        ) as create:
             index_worker._run_indexing(
                 "video.mp4",
                 "source.mp4",
                 FakeEvent(),
-                "selected-index",
+                "selected-repository",
                 "cuda",
                 ("scene",),
             )
 
-        service_type.assert_called_once_with("selected-index", device="cuda")
+        settings = create.call_args.args[0]
+        self.assertEqual(
+            settings.repository_root,
+            Path("selected-repository"),
+        )
+        self.assertEqual(settings.runtime_backend, "cuda")
         service.create_index.assert_called_once()
         self.assertEqual(
-            service.create_index.call_args.kwargs["source_name"],
+            service.create_index.call_args.args[0].source_name,
             "source.mp4",
         )
         self.assertEqual(
-            service.create_index.call_args.kwargs["modalities"],
+            service.create_index.call_args.args[0].modalities,
             ("scene",),
         )
 

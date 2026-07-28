@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict
+
+
+class RepositoryLayout(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    root: Path
+
+    @property
+    def descriptor(self) -> Path:
+        return self.root / "repository.json"
+
+    @property
+    def media(self) -> Path:
+        return self.root / "media"
+
+    @property
+    def indexes(self) -> Path:
+        return self.root / "indexes"
+
+    @property
+    def local_index(self) -> Path:
+        """Single-index location until generation snapshots land in phase 3."""
+
+        return self.indexes / "current"
+
+    @property
+    def generations(self) -> Path:
+        return self.indexes / "generations"
+
+    @property
+    def snapshots(self) -> Path:
+        return self.indexes / "snapshots"
+
+    @property
+    def active_snapshot(self) -> Path:
+        return self.indexes / "active-snapshot.json"
+
+    @property
+    def artifacts(self) -> Path:
+        return self.root / "artifacts"
+
+    @property
+    def local_workflows(self) -> Path:
+        return self.root / "local-workflows"
+
+    def ensure_local_directories(self) -> None:
+        for path in (
+            self.root,
+            self.media,
+            self.indexes,
+            self.artifacts,
+            self.local_workflows,
+        ):
+            path.mkdir(parents=True, exist_ok=True)

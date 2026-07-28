@@ -591,23 +591,32 @@ composition root and is sorted deterministically.
 
 ### 14.1 Collector dependency decisions
 
-- Scene: remove `clip-anytorch` and its `setuptools<81` compatibility pin. Use the
-  latest stable Hugging Face Transformers vision-text implementation as the default
-  provider. Benchmark current stable SigLIP-family and other eligible retrieval
-  checkpoints against the existing scene benchmark; use `open_clip_torch` only when
-  it produces a material measured advantage. Only checkpoints with verified
-  redistribution terms are eligible. The winner and immutable checkpoint revision
-  define a new index schema/model identity.
+- Scene: remove `clip-anytorch` and its `setuptools<81` compatibility pin. Use
+  Transformers with `google/siglip2-base-patch16-224` at immutable revision
+  `75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2`. The 2025 SigLIP 2 paper reports
+  retrieval improvements over SigLIP across model scales, and MIEB independently
+  places SigLIP-family models among strong multimodal retrieval encoders. That
+  evidence is recent and matches the image/text retrieval task closely enough that
+  downloading several large candidates for another selection benchmark is not
+  justified in this delivery phase. VidXP's existing scene benchmark remains the
+  regression gate.
 - Dialogue: replace WhisperX as the default provider because its stable release
   blocks current Python and constrains an older Torch family. The first replacement
   is latest stable `faster-whisper`/CTranslate2 using batched transcription, VAD, and
-  word timestamps. Its transcript/timestamp output is tested against the existing
+  word timestamps. The default is
+  `mobiuslabsgmbh/faster-whisper-large-v3-turbo` at immutable revision
+  `0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf`. Its transcript/timestamp output is
+  tested against the existing
   dialogue contract. Forced alignment is an optional provider behind a separate
   contract; it cannot hold base transcription or Python back. Sentence embeddings
-  use the latest stable sentence-transformers stack with a pinned, licensed model
-  revision.
+  use Qwen3-Embedding-0.6B at immutable revision
+  `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`; its published multilingual MTEB
+  retrieval results materially exceed the older multilingual E5 baseline and its
+  Apache-2.0 license permits the intended deployment.
 - Actor: replace `face_recognition`/dlib with OpenCV Zoo YuNet plus SFace through
-  ONNX Runtime. YuNet model files are MIT and SFace model files are Apache-2.0.
+  OpenCV's maintained DNN APIs. Model files are retrieved with `pooch`, pinned to
+  OpenCV Zoo commit `47534e27c9851bb1128ccc0102f1145e27f23f98`, and verified
+  against recorded SHA-256 digests before use.
   Migration requires clustering/search parity, a new index-schema/model identity,
   and CPU performance gates. Actor remains CPU-routed until the ONNX GPU provider
   passes the same gates.
@@ -1351,8 +1360,17 @@ Validated on 2026-07-28:
   clean-environment runtime gates above. The current stable WhisperX release blocks
   that Python baseline and constrains an older Torch family, so it is rejected as
   the default transcription provider rather than allowed to hold the platform back.
-  `faster-whisper`/CTranslate2 is the first provider candidate and must still pass
-  the Python 3.14, Apple Silicon, transcript, timestamp, and license gates.
+  `faster-whisper`/CTranslate2 is accepted as the CPU transcription provider and
+  must still pass the Python 3.14, Apple Silicon, transcript, timestamp, and license
+  release gates.
+- **CPU model selection:** accepted without a new multi-model download run.
+  SigLIP 2 and MIEB provide recent task-matched evidence for the scene encoder;
+  Qwen3-Embedding publishes stronger multilingual retrieval results than the older
+  available baselines; faster-whisper publishes CPU/GPU speed and memory comparisons
+  against Whisper implementations; and OpenCV Zoo publishes the selected detector
+  and recognizer with evaluation data. VidXP runs regression and compatibility
+  smoke tests now; a new comparison benchmark is required only when newer evidence
+  conflicts, deployment measurements regress, or a provider change is proposed.
 - **GPU package matrix:** intentionally deferred. The previously proposed Python
   3.11/PyTorch 2.8/WhisperX/CUDA 12.8 matrix is rejected as a target. Phase 10
   resolves the latest mutually compatible stable stack from the then-current CPU

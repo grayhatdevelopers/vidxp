@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from vidxp.capabilities.dialogue.config import dialogue_config
-from vidxp.capabilities.dialogue.models import (
-    get_alignment_model,
-    get_embedder,
-    get_whisper_model,
-)
+from vidxp.capabilities.dialogue.models import get_embedder, get_whisper_model
 from vidxp.core.contracts import (
     CancellationToken,
     IndexConfig,
@@ -20,7 +15,7 @@ from vidxp.core.contracts import (
 )
 from vidxp.core.indexing_common import ProgressCallback, report_progress
 from vidxp.core.storage import IndexStorage
-from vidxp.core.video import extract_audio
+from vidxp.runtime import ModelRuntime
 
 
 @dataclass(frozen=True)
@@ -118,73 +113,57 @@ def transcribe_video(
     input_path: str | Path,
     *,
     config: IndexConfig,
-    work_directory: str | Path,
     cancellation: CancellationToken,
+    runtime: ModelRuntime,
     progress: ProgressCallback | None,
 ) -> tuple[list[Mapping[str, Any]], str]:
-    import whisperx
+    from faster_whisper import BatchedInferencePipeline
 
     settings = dialogue_config(config)
     cancellation.raise_if_cancelled()
-    audio_name = hashlib.sha256(
-        str(config.video_id).encode("utf-8")
-    ).hexdigest()
-    audio_path = Path(work_directory) / f"{audio_name}.wav"
     report_progress(
         progress,
-        "extracting_audio",
-        "Extracting audio from the video.",
+        "preparing_transcription_model",
+        f"Preparing transcription model: faster-whisper {settings.whisper_model}.",
     )
-    extract_audio(input_path, audio_path)
-    try:
+    whisper_model = get_whisper_model(
+        runtime,
+        settings.whisper_model,
+        settings.whisper_revision,
+    )
+    report_progress(
+        progress,
+        "transcribing_audio",
+        "Transcribing and timestamping the video audio.",
+    )
+    segments, info = BatchedInferencePipeline(
+        model=whisper_model
+    ).transcribe(
+        str(input_path),
+        batch_size=settings.transcription_batch_size,
+        word_timestamps=True,
+        vad_filter=True,
+    )
+    result = []
+    for segment in segments:
         cancellation.raise_if_cancelled()
-        report_progress(
-            progress,
-            "preparing_transcription_model",
-            f"Preparing transcription model: WhisperX {settings.whisper_model}.",
+        result.append(
+            {
+                "text": segment.text,
+                "start": segment.start,
+                "end": segment.end,
+                "words": [
+                    {
+                        "word": word.word,
+                        "start": word.start,
+                        "end": word.end,
+                    }
+                    for word in (segment.words or ())
+                    if word.start is not None and word.end is not None
+                ],
+            }
         )
-        whisper_model = get_whisper_model(
-            settings.whisper_model,
-            config.device,
-        )
-        audio = whisperx.load_audio(str(audio_path))
-        report_progress(
-            progress,
-            "transcribing_audio",
-            "Transcribing the video audio.",
-        )
-        transcription = whisper_model.transcribe(
-            audio,
-            batch_size=settings.transcription_batch_size,
-        )
-        language = str(transcription["language"])
-
-        cancellation.raise_if_cancelled()
-        report_progress(
-            progress,
-            "preparing_alignment_model",
-            f"Preparing the {language} alignment model.",
-        )
-        alignment_model, alignment_metadata = get_alignment_model(
-            language,
-            config.device,
-        )
-        report_progress(
-            progress,
-            "aligning_audio",
-            "Aligning transcript timestamps.",
-        )
-        aligned = whisperx.align(
-            transcription["segments"],
-            alignment_model,
-            alignment_metadata,
-            audio,
-            config.device,
-            return_char_alignments=False,
-        )
-        return list(aligned["segments"]), language
-    finally:
-        audio_path.unlink(missing_ok=True)
+    return result, str(info.language)
 
 
 def _dialogue_records(
@@ -223,6 +202,7 @@ def index_dialogue(
     config: IndexConfig,
     storage: IndexStorage,
     cancellation: CancellationToken,
+    runtime: ModelRuntime,
     progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     if config.video_id is None:
@@ -240,8 +220,8 @@ def index_dialogue(
         segments, language = transcribe_video(
             source.path,
             config=config,
-            work_directory=config.run_directory / "work",
             cancellation=cancellation,
+            runtime=runtime,
             progress=progress,
         )
 
@@ -259,7 +239,11 @@ def index_dialogue(
         0,
         len(phrases),
     )
-    encoder = get_embedder(settings.sentence_model, config.device)
+    encoder = get_embedder(
+        runtime,
+        settings.sentence_model,
+        settings.sentence_revision,
+    )
     report_progress(
         progress,
         "dialogue_indexing",

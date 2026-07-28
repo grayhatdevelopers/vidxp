@@ -6,6 +6,7 @@ from vidxp.capabilities.contracts import (
     CapabilityContext,
     CapabilityIndexResult,
 )
+from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.capabilities.dialogue.config import dialogue_config
 from vidxp.capabilities.dialogue.indexing import index_dialogue
 from vidxp.capabilities.dialogue.models import get_embedder
@@ -18,6 +19,7 @@ from vidxp.core.contracts import (
 )
 from vidxp.core.indexing_common import ProgressCallback
 from vidxp.core.storage import IndexStorage
+from vidxp.runtime import ModelRuntime
 
 
 REQUIRED_METADATA = frozenset(
@@ -42,6 +44,8 @@ def index_capability(
     config: IndexConfig,
     storage: IndexStorage,
     cancellation: CancellationToken,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntime,
     progress: ProgressCallback | None = None,
     modalities: tuple[str, ...] = ("dialogue",),
 ) -> CapabilityIndexResult:
@@ -54,15 +58,28 @@ def index_capability(
             storage=storage,
             cancellation=cancellation,
             progress=progress,
+            runtime=runtime,
         )
     )
 
 
-def dialogue_embedding(query: str, config: IndexConfig) -> list[float]:
+def dialogue_embedding(
+    query: str,
+    config: IndexConfig,
+    runtime: ModelRuntime,
+) -> list[float]:
     settings = dialogue_config(config)
-    encoder = get_embedder(settings.sentence_model, config.device)
+    encoder = get_embedder(
+        runtime,
+        settings.sentence_model,
+        settings.sentence_revision,
+    )
     encoded = encoder.encode(
         [query],
+        prompt=(
+            "Instruct: Retrieve spoken video passages relevant to the query\n"
+            "Query: "
+        ),
         convert_to_numpy=True,
         normalize_embeddings=settings.normalize_embeddings,
     )
@@ -73,6 +90,7 @@ def search_dialogue(
     query: str,
     *,
     config: IndexConfig,
+    runtime: ModelRuntime,
     top_k: int = 10,
     video_id: str | None = None,
     query_id: str | None = None,
@@ -87,7 +105,7 @@ def search_dialogue(
     return search_embeddings(
         cleaned,
         "dialogue",
-        dialogue_embedding(cleaned, config),
+        dialogue_embedding(cleaned, config, runtime),
         config=config,
         required_metadata=REQUIRED_METADATA,
         top_k=top_k,
@@ -108,4 +126,5 @@ def search_operation(
         config=config,
         top_k=request.top_k,
         video_id=config.video_id,
+        runtime=context.runtime,
     )

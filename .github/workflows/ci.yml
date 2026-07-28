@@ -18,6 +18,10 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -67,7 +71,7 @@ jobs:
       - uses: actions/setup-python@v7
         if: steps.scope.outputs.needs_python == 'true'
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install repository tooling
@@ -77,7 +81,7 @@ jobs:
           python -m pip install -r utils/build-requirements.txt
 
       - name: Require a changelog fragment
-        if: steps.scope.outputs.require_changelog == 'true'
+        if: steps.scope.outputs.require_changelog == 'true' && matrix.python-version == '3.14'
         run: towncrier check --compare-with "${{ github.event.pull_request.base.sha }}"
 
       - name: Install test surface
@@ -85,7 +89,7 @@ jobs:
         run: python -m pip install ".[scene,frontend,benchmarks]"
 
       - name: Lint
-        if: steps.scope.outputs.run_suite == 'true'
+        if: steps.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
         run: ruff check src tests
 
       - name: Test
@@ -95,11 +99,11 @@ jobs:
           PYTHONPATH: src
 
       - name: Build wheel and source distribution
-        if: steps.scope.outputs.run_suite == 'true'
+        if: steps.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
         run: python -m build
 
       - name: Verify minimal wheel
-        if: steps.scope.outputs.run_suite == 'true'
+        if: steps.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
         shell: bash
         run: |
           python -m venv .wheel-smoke
@@ -111,9 +115,11 @@ jobs:
           from subprocess import check_output
 
           import vidxp
-          from vidxp.capabilities.registry import capability_names
+          from vidxp.capabilities.registry import create_capability_registry
 
-          assert capability_names() == ("dialogue", "scene", "actor")
+          assert create_capability_registry().names() == (
+              "dialogue", "scene", "actor"
+          )
           help_text = check_output(
               [".wheel-smoke/bin/vidxp", "--help"],
               text=True,
@@ -121,28 +127,26 @@ jobs:
           assert "benchmark" not in help_text
           for module in (
               "chromadb",
-              "clip",
               "cv2",
-              "face_recognition",
+              "faster_whisper",
               "sentence_transformers",
-              "srt",
               "streamlit",
               "torch",
-              "whisperx",
+              "transformers",
           ):
               assert find_spec(module) is None, module
           PY
 
       - name: Validate Compose configuration
-        if: steps.scope.outputs.run_container == 'true'
+        if: steps.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
         run: docker compose config --quiet
 
       - name: Build container
-        if: steps.scope.outputs.run_container == 'true'
+        if: steps.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
         run: docker build --tag vidxp:ci .
 
       - name: Smoke container
-        if: steps.scope.outputs.run_container == 'true'
+        if: steps.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
         shell: bash
         run: |
           docker run --detach --name vidxp-ci \
@@ -151,7 +155,7 @@ jobs:
 
           docker exec vidxp-ci vidxp --version
           docker exec vidxp-ci python -c \
-            'import clip, face_recognition, whisperx'
+            'import cv2, faster_whisper, sentence_transformers, transformers'
           docker exec vidxp-ci sh -c \
             'test ! -d "$HOME/.cache/huggingface" && test ! -d "$HOME/.cache/clip"'
 

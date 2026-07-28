@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from vidxp.capabilities.registry import (
-    get_capability,
-    runtime_distributions,
+    CapabilityRegistry,
+    create_capability_registry,
 )
 from vidxp.core.contracts import (
     INDEX_SCHEMA_VERSION,
@@ -21,6 +21,7 @@ from vidxp.core.contracts import (
     IndexConfig,
     VideoSource,
 )
+from vidxp.runtime import ModelRuntime
 
 
 MANIFEST_FILE = "manifest.json"
@@ -153,9 +154,12 @@ def implementation_digest() -> str:
     return digest.hexdigest()
 
 
-def dependency_versions() -> dict[str, str | None]:
+def dependency_versions(
+    registry: CapabilityRegistry | None = None,
+) -> dict[str, str | None]:
+    active_registry = registry or create_capability_registry()
     versions: dict[str, str | None] = {}
-    for package in runtime_distributions():
+    for package in active_registry.runtime_distributions():
         try:
             versions[package] = version(package)
         except PackageNotFoundError:
@@ -163,7 +167,9 @@ def dependency_versions() -> dict[str, str | None]:
     return versions
 
 
-def execution_state() -> dict[str, Any]:
+def execution_state(
+    registry: CapabilityRegistry | None = None,
+) -> dict[str, Any]:
     try:
         package_version = version("vidxp")
     except PackageNotFoundError:
@@ -174,7 +180,7 @@ def execution_state() -> dict[str, Any]:
         "package_version": package_version,
         "python": sys.version,
         "platform": platform.platform(),
-        "dependencies": dependency_versions(),
+        "dependencies": dependency_versions(registry),
     }
 
 
@@ -193,8 +199,16 @@ def execution_fingerprint(state: Mapping[str, Any]) -> str:
 
 
 class ManifestStore:
-    def __init__(self, config: IndexConfig):
+    def __init__(
+        self,
+        config: IndexConfig,
+        *,
+        registry: CapabilityRegistry | None = None,
+        runtime: ModelRuntime | None = None,
+    ):
         self.config = config
+        self.registry = registry or create_capability_registry()
+        self.runtime = runtime
         self.run_directory = config.run_directory
         self.manifest_path = self.run_directory / MANIFEST_FILE
         self.timings_path = self.run_directory / TIMINGS_FILE
@@ -214,10 +228,17 @@ class ManifestStore:
             tuple[str, VideoSource, str, Mapping[str, str]]
         ],
     ) -> dict[str, Any]:
-        models: dict[str, Any] = {"device": self.config.device}
+        models: dict[str, Any] = {
+            "device": self.config.device,
+            "runtime": (
+                self.runtime.describe()
+                if self.runtime is not None
+                else {"torch_device": self.config.device}
+            ),
+        }
         source_values = tuple(source for _, source, _, _ in sources)
         for name in self.config.enabled_modalities:
-            manifest = get_capability(name).model_manifest
+            manifest = self.registry.executor(name).model_manifest
             if manifest is not None:
                 models.update(manifest(self.config, source_values))
         return models
@@ -230,7 +251,7 @@ class ManifestStore:
     ) -> dict[str, Any]:
         self.run_directory.mkdir(parents=True, exist_ok=True)
         config_fingerprint = self.config.fingerprint()
-        current_execution = execution_state()
+        current_execution = execution_state(self.registry)
         current_execution_fingerprint = execution_fingerprint(
             current_execution
         )

@@ -2,21 +2,26 @@ from multiprocessing import get_context
 from multiprocessing.process import BaseProcess
 from threading import Lock
 
-from vidxp.application import VidXPService
+from vidxp.application import VidXPApplication
+from vidxp.application_models import CreateIndexCommand
+from vidxp.composition import create_application
 from vidxp.core.contracts import CancellationToken
 from vidxp.index_state import IndexingInProgressError
 from vidxp.repositories import resolve_repository
+from vidxp.settings import VidXPSettings
 
 _process: BaseProcess | None = None
 _cancel_event = None
 _start_lock = Lock()
 
 
-def _configured_service() -> VidXPService:
+def _configured_service() -> VidXPApplication:
     _, repository = resolve_repository()
-    return VidXPService(
-        repository.index_directory,
-        device=repository.device,
+    return create_application(
+        VidXPSettings(
+            repository_root=repository.index_directory,
+            runtime_backend=repository.device or "auto",
+        )
     )
 
 
@@ -24,19 +29,26 @@ def _run_indexing(
     path: str,
     source_name: str,
     cancel_event,
-    index_directory: str,
-    device: str | None,
+    repository_root: str,
+    runtime_backend: str,
     modalities: tuple[str, ...],
 ) -> None:
-    VidXPService(index_directory, device=device).create_index(
-        path,
-        modalities=modalities,
-        source_name=source_name,
+    create_application(
+        VidXPSettings(
+            repository_root=repository_root,
+            runtime_backend=runtime_backend,
+        )
+    ).create_index(
+        CreateIndexCommand(
+            path=path,
+            modalities=modalities,
+            source_name=source_name,
+        ),
         cancellation=CancellationToken(cancel_event),
     )
 
 
-def indexing_in_progress(service: VidXPService | None = None) -> bool:
+def indexing_in_progress(service: VidXPApplication | None = None) -> bool:
     active_service = service or _configured_service()
     return (
         _process is not None and _process.is_alive()
@@ -46,7 +58,7 @@ def indexing_in_progress(service: VidXPService | None = None) -> bool:
 def start_indexing(
     path: str,
     source_name: str,
-    service: VidXPService | None = None,
+    service: VidXPApplication | None = None,
     *,
     modalities: tuple[str, ...],
 ) -> None:
@@ -65,8 +77,8 @@ def start_indexing(
                 path,
                 source_name,
                 _cancel_event,
-                str(active_service.index_directory),
-                active_service.device,
+                str(active_service.layout.root),
+                active_service.runtime.backends.requested,
                 modalities,
             ),
             name="vidxp-indexer",

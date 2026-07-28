@@ -281,10 +281,12 @@ class RunnerTests(unittest.TestCase):
             ):
                 run_index([source], config, storage=FakeStorage())
 
-        dependency_check.assert_called_once_with(
-            ("dialogue",),
-            source=source,
+        dependency_check.assert_called_once()
+        self.assertEqual(
+            dependency_check.call_args.args,
+            (("dialogue",),),
         )
+        self.assertIs(dependency_check.call_args.kwargs["source"], source)
 
     def test_manifest_adds_transcription_model_when_run_later_needs_it(self):
         with TemporaryDirectory() as directory:
@@ -321,10 +323,10 @@ class RunnerTests(unittest.TestCase):
                 )
 
             self.assertNotIn("transcription", first["models"])
-            self.assertEqual(
-                second["models"]["transcription"],
-                dialogue_config(config).whisper_model,
-            )
+        self.assertEqual(
+            second["models"]["transcription"]["model"],
+            dialogue_config(config).whisper_model,
+        )
 
     def test_changed_input_is_not_silently_accepted_by_checkpoint(self):
         with TemporaryDirectory() as directory:

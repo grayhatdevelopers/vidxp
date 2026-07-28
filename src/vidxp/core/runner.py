@@ -8,8 +8,8 @@ from typing import Any, Callable, Sequence
 from filelock import FileLock, Timeout
 
 from vidxp.capabilities.registry import (
-    get_capability,
-    require_dependencies,
+    CapabilityRegistry,
+    create_capability_registry,
 )
 from vidxp.core.contracts import (
     INDEX_SCHEMA_VERSION,
@@ -30,10 +30,23 @@ from vidxp.index_state import (
     IndexingInProgressError,
     write_index_status,
 )
+from vidxp.runtime import ModelRuntime
+from vidxp.settings import VidXPSettings
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
 _INDEXING_LOCK = Lock()
+
+
+def require_dependencies(
+    names: tuple[str, ...],
+    *,
+    source: VideoSource,
+    registry: CapabilityRegistry,
+) -> None:
+    """Single testable dependency gate for an injected registry."""
+
+    registry.require_dependencies(names, source=source)
 
 
 class _RunLock:
@@ -144,15 +157,18 @@ def _run_capability_group(
     manifest: ManifestStore,
     cancellation: CancellationToken,
     progress_callback: ProgressCallback | None,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntime,
 ) -> dict[str, Any]:
-    definitions = tuple(get_capability(name) for name in names)
-    indexer = definitions[0].indexer
+    definitions = tuple(registry.get(name) for name in names)
+    indexers = tuple(registry.executor(name).indexer for name in names)
+    indexer = indexers[0]
     index_stage = definitions[0].index_stage
     if indexer is None or index_stage is None:
         raise ValueError(
             f"Capability {names[0]!r} does not support indexing."
         )
-    if any(definition.indexer is not indexer for definition in definitions):
+    if any(candidate is not indexer for candidate in indexers):
         raise RuntimeError("Grouped capabilities must share one indexer.")
     if any(
         definition.index_stage != index_stage
@@ -192,6 +208,8 @@ def _run_capability_group(
             cancellation=cancellation,
             progress=stage_progress,
             modalities=names,
+            registry=registry,
+            runtime=runtime,
         )
     except BaseException:
         if active_substage is not None and active_substage != index_stage:
@@ -241,23 +259,27 @@ def _run_capability_group(
     return dict(result.summary)
 
 
-def _index_groups(names: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
+def _index_groups(
+    names: tuple[str, ...],
+    registry: CapabilityRegistry,
+) -> tuple[tuple[str, ...], ...]:
     groups: list[list[str]] = []
-    handlers = []
+    execution_groups: list[str] = []
     for name in names:
-        handler = get_capability(name).indexer
-        if handler is None:
+        definition = registry.get(name)
+        if registry.executor(name).indexer is None:
             raise ValueError(
                 f"Capability {name!r} does not support indexing."
             )
-        try:
-            group_index = next(
-                index
-                for index, existing in enumerate(handlers)
-                if existing is handler
+        execution_group = definition.execution_group
+        if execution_group is None:
+            raise RuntimeError(
+                f"Capability {name!r} has no execution group."
             )
-        except StopIteration:
-            handlers.append(handler)
+        try:
+            group_index = execution_groups.index(execution_group)
+        except ValueError:
+            execution_groups.append(execution_group)
             groups.append([name])
         else:
             groups[group_index].append(name)
@@ -272,11 +294,13 @@ def _run_enabled_modalities(
     cancellation: CancellationToken,
     progress_callback: ProgressCallback | None,
     set_stage: Callable[[str], None],
+    registry: CapabilityRegistry,
+    runtime: ModelRuntime,
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {}
-    for names in _index_groups(config.enabled_modalities):
+    for names in _index_groups(config.enabled_modalities, registry):
         cancellation.raise_if_cancelled()
-        set_stage(get_capability(names[0]).index_stage)
+        set_stage(str(registry.get(names[0]).index_stage))
         summary.update(
             _run_capability_group(
                 names,
@@ -286,6 +310,8 @@ def _run_enabled_modalities(
                 manifest,
                 cancellation,
                 progress_callback,
+                registry,
+                runtime,
             )
         )
     return summary
@@ -302,6 +328,8 @@ def _process_video(
     progress_callback: ProgressCallback | None,
     *,
     fail_fast: bool,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntime,
 ) -> None:
     video_config = config.for_video(video_id)
     manifest.start_video(video_id)
@@ -320,6 +348,7 @@ def _process_video(
         require_dependencies(
             config.enabled_modalities,
             source=source,
+            registry=registry,
         )
         stage = "preparing_storage"
         for modality in config.enabled_modalities:
@@ -334,6 +363,8 @@ def _process_video(
                 cancellation,
                 progress_callback,
                 set_stage,
+                registry,
+                runtime,
             )
         )
         manifest.complete_video(
@@ -382,15 +413,25 @@ def _run_index_unlocked(
     fail_fast: bool = True,
     storage: IndexStorage | None = None,
     manifest_store: ManifestStore | None = None,
+    registry: CapabilityRegistry | None = None,
+    runtime: ModelRuntime | None = None,
 ) -> dict[str, Any]:
     if not sources:
         raise ValueError("At least one video or transcript source is required.")
     cancellation = cancellation or CancellationToken()
+    registry = registry or create_capability_registry()
+    runtime = runtime or ModelRuntime(
+        VidXPSettings(runtime_backend=config.device)
+    )
     resolved = _resolve_sources(sources, config)
     owns_storage = storage is None
     store = storage or IndexStorage(config)
     try:
-        manifest = manifest_store or ManifestStore(config)
+        manifest = manifest_store or ManifestStore(
+            config,
+            registry=registry,
+            runtime=runtime,
+        )
         if reset:
             store.clear()
         manifest.initialize(resolved, reset=reset)
@@ -422,6 +463,8 @@ def _run_index_unlocked(
                 cancellation,
                 progress_callback,
                 fail_fast=fail_fast,
+                registry=registry,
+                runtime=runtime,
             )
 
         return manifest.complete_run(index_size_bytes=store.size_bytes())
@@ -441,6 +484,8 @@ def run_index(
     fail_fast: bool = True,
     storage: IndexStorage | None = None,
     manifest_store: ManifestStore | None = None,
+    registry: CapabilityRegistry | None = None,
+    runtime: ModelRuntime | None = None,
 ) -> dict[str, Any]:
     with _RunLock(config.run_directory):
         return _run_index_unlocked(
@@ -453,6 +498,8 @@ def run_index(
             fail_fast=fail_fast,
             storage=storage,
             manifest_store=manifest_store,
+            registry=registry,
+            runtime=runtime,
         )
 
 
@@ -473,6 +520,8 @@ def index_video(
     *,
     config: IndexConfig | None = None,
     cancellation: CancellationToken | None = None,
+    registry: CapabilityRegistry | None = None,
+    runtime: ModelRuntime | None = None,
 ) -> dict[str, Any]:
     input_path = Path(path)
     if not input_path.is_file():
@@ -534,6 +583,8 @@ def index_video(
             active_config,
             progress_callback=report,
             cancellation=cancellation,
+            registry=registry,
+            runtime=runtime,
             resume=False,
             reset=True,
             fail_fast=True,

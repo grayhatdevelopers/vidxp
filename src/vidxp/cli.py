@@ -9,14 +9,15 @@ from typing import Annotated
 import typer
 
 from vidxp import __version__
-from vidxp.application import VidXPService
+from vidxp.application_models import ApplicationError
 from vidxp.capabilities.actor.results import ActorClusterNotFoundError
-from vidxp.capabilities.registry import CAPABILITIES
+from vidxp.capabilities.actor.cli import app as actor_app
 from vidxp.cli_commands.index import app as index_app
 from vidxp.cli_commands.repositories import app as repositories_app
 from vidxp.cli_commands.runtime import doctor, prepare, ui
 from vidxp.cli_commands.search import app as search_app
 from vidxp.cli_support import CLIState, OutputFormat
+from vidxp.composition import create_application
 from vidxp.core.contracts import IndexSchemaError
 from vidxp.dependencies import requirements_available
 from vidxp.index_state import (
@@ -24,6 +25,7 @@ from vidxp.index_state import (
     IndexNotReadyError,
 )
 from vidxp.repositories import resolve_repository
+from vidxp.settings import VidXPSettings
 
 
 app = typer.Typer(
@@ -33,6 +35,7 @@ app = typer.Typer(
 app.add_typer(index_app, name="index")
 app.add_typer(search_app, name="search")
 app.add_typer(repositories_app, name="repositories")
+app.add_typer(actor_app, name="actors")
 
 
 def _load_benchmark_app():
@@ -45,12 +48,6 @@ def _load_benchmark_app():
 
 if _benchmark_app := _load_benchmark_app():
     app.add_typer(_benchmark_app, name="benchmark")
-for _capability in CAPABILITIES.values():
-    if _capability.cli_factory is not None:
-        app.add_typer(
-            _capability.cli_factory(),
-            name=_capability.cli_name,
-        )
 app.command()(doctor)
 app.command()(prepare)
 app.command()(ui)
@@ -126,9 +123,11 @@ def app_options(
         device=device,
     )
     ctx.obj = CLIState(
-        service=VidXPService(
-            repository.index_directory,
-            device=repository.device,
+        service=create_application(
+            VidXPSettings(
+                repository_root=repository.index_directory,
+                runtime_backend=repository.device or "auto",
+            )
         ),
         registry=registry,
         repository=repository,
@@ -161,15 +160,20 @@ def _exit_code(exc: Exception) -> int:
 def _emit_error(exc: Exception, *, json_output: bool) -> None:
     message = _error_message(exc)
     if json_output:
+        error = (
+            exc.to_dict()
+            if isinstance(exc, ApplicationError)
+            else {
+                "type": type(exc).__name__,
+                "message": message,
+                "exit_code": _exit_code(exc),
+            }
+        )
         typer.echo(
             json.dumps(
                 {
                     "ok": False,
-                    "error": {
-                        "type": type(exc).__name__,
-                        "message": message,
-                        "exit_code": _exit_code(exc),
-                    },
+                    "error": error,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -192,6 +196,9 @@ def main() -> None:
         _emit_error(exc, json_output=_wants_json())
         raise SystemExit(1) from exc
     except Exception as exc:
+        if isinstance(exc, ApplicationError):
+            _emit_error(exc, json_output=_wants_json())
+            raise SystemExit(_exit_code(exc)) from exc
         is_command_error = hasattr(exc, "exit_code") and hasattr(
             exc,
             "format_message",

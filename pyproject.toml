@@ -15,7 +15,7 @@ authors = [
 ]
 description = "VidXP - Video indexing and search by dialogue, scene, and actor"
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.15"
 license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["video", "search", "indexing", "cli", "streamlit"]
@@ -26,19 +26,21 @@ classifiers = [
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Multimedia :: Video",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dynamic = ["optional-dependencies"]
 dependencies = [
-  "filelock>=3.13",
-  "packaging>=24",
-  "pydantic>=2.8,<3",
-  "rich",
+  "filelock>=3.32,<4",
+  "packaging>=26.2,<27",
+  "platformdirs>=4.11,<5",
+  "pydantic>=2.13.4,<3",
+  "pydantic-settings>=2.14.2,<3",
+  "rich>=15,<16",
   "typer>=0.27,<1",
 ]
 
@@ -88,7 +90,7 @@ frontend = { file = ["src/vidxp/requirements/frontend.txt"] }
 benchmarks = { file = ["src/vidxp/benchmarks/requirements.txt"] }
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
