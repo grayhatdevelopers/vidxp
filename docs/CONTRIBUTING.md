@@ -73,7 +73,9 @@ are stored, state whether an existing `chroma_data` index must be rebuilt.
    reload, and search.
 4. Confirm that a failed or incomplete generation leaves the previous active
    snapshot searchable.
-5. Do not commit model weights, generated indexes, benchmark runs, or local
+5. For media or artifact changes, verify that public models contain IDs and
+   metadata only; storage keys and local paths remain behind their ports.
+6. Do not commit model weights, generated indexes, benchmark runs, or local
    sample media.
 
 Run the complete automated suite with:

@@ -439,7 +439,7 @@ class LocalSnapshotRepository:
         resolved = self._read_active()
         if resolved is None:
             return None
-        pointer, snapshot = resolved
+        _, snapshot = resolved
         media_ids = sorted(snapshot.generations)
         ready = bool(media_ids)
         return {
@@ -455,10 +455,10 @@ class LocalSnapshotRepository:
             "summary": {
                 "index_schema_version": INDEX_SCHEMA_VERSION,
                 "snapshot_id": snapshot.snapshot_id,
-                "snapshot_sha256": pointer.snapshot_sha256,
                 "media_count": len(media_ids),
                 "media_ids": media_ids,
-                "config_fingerprint": snapshot.config_fingerprint,
-                "configuration": dict(snapshot.configuration),
+                "modalities": tuple(
+                    snapshot.configuration.get("enabled_modalities", ())
+                ),
             },
         }

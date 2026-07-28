@@ -19,6 +19,7 @@ from vidxp.application_models import (
     RemoveIndexCommand,
     SearchCommand,
 )
+from vidxp.core.media import MediaUnavailableError
 from vidxp.core.contracts import IndexConfig, IndexSchemaError
 from vidxp.infrastructure.local_index import LocalIndexBackend
 from vidxp.capabilities.contracts import (
@@ -40,6 +41,11 @@ from vidxp.settings import VidXPSettings
 from vidxp.ports import IndexStore
 
 
+MEDIA_ID = "123456781234423481234567890abcde"
+GENERATION_ID = "223456781234423481234567890abcde"
+SNAPSHOT_ID = "323456781234423481234567890abcde"
+
+
 class ApplicationTests(unittest.TestCase):
     def application(
         self,
@@ -55,6 +61,8 @@ class ApplicationTests(unittest.TestCase):
         )
         runtime = ModelRuntime(settings)
         active_backend = backend or Mock()
+        media_service = Mock()
+        artifact_service = Mock()
         return (
             VidXPApplication(
                 settings=settings,
@@ -62,6 +70,8 @@ class ApplicationTests(unittest.TestCase):
                 registry=registry or create_capability_registry(),
                 runtime=runtime,
                 index_backend=active_backend,
+                media_service=media_service,
+                artifact_service=artifact_service,
             ),
             active_backend,
         )
@@ -145,22 +155,43 @@ class ApplicationTests(unittest.TestCase):
 
         self.assertEqual(status.state, "missing")
         self.assertEqual(status.schema_version, 1)
-        self.assertEqual(status.index_directory, Path("missing/indexes"))
 
     def test_create_index_builds_one_central_config(self):
         with TemporaryDirectory() as directory:
             application, backend = self.application(directory)
-            backend.create.return_value = {"scene_frames": 1}
+            application.media_service.require_record.return_value = Mock(
+                original_filename="video.mp4",
+                sha256="1" * 64,
+            )
+            application.media_service.content.return_value = Mock(
+                path=Path("managed.mp4")
+            )
+            backend.create.return_value = {
+                "media_id": MEDIA_ID,
+                "generation_id": GENERATION_ID,
+                "snapshot_id": SNAPSHOT_ID,
+                "active_media_count": 1,
+                "record_counts": {"scene": 1},
+            }
 
             result = application.create_index(
                 CreateIndexCommand(
-                    path=Path("video.mp4"),
+                    media_id=MEDIA_ID,
                     modalities=("scene",),
                     frame_stride=5,
                 )
             )
 
-        self.assertEqual(result, IndexResult(summary={"scene_frames": 1}))
+        self.assertEqual(
+            result,
+            IndexResult(
+                media_id=MEDIA_ID,
+                generation_id=GENERATION_ID,
+                snapshot_id=SNAPSHOT_ID,
+                active_media_count=1,
+                record_counts={"scene": 1},
+            ),
+        )
         config = backend.create.call_args.kwargs["config"]
         self.assertEqual(config.enabled_modalities, ("scene",))
         self.assertEqual(config.frame_stride, 5)
@@ -293,11 +324,14 @@ class ApplicationTests(unittest.TestCase):
     def test_missing_media_error_does_not_expose_path(self):
         application, _ = self.application("unused")
         secret_path = Path("private/customer/video.mp4")
+        application.media_service.require_record.side_effect = (
+            MediaUnavailableError("secret")
+        )
 
         with self.assertRaises(ApplicationError) as raised:
             application.create_index(
                 CreateIndexCommand(
-                    path=secret_path,
+                    media_id=MEDIA_ID,
                     modalities=("scene",),
                 )
             )
@@ -313,12 +347,17 @@ class ApplicationTests(unittest.TestCase):
             path = Path(directory) / "video.mp4"
             path.write_bytes(b"video")
             application, backend = self.application(directory)
+            application.media_service.require_record.return_value = Mock(
+                original_filename="video.mp4",
+                sha256="1" * 64,
+            )
+            application.media_service.content.return_value = Mock(path=path)
             backend.create.side_effect = FileNotFoundError("ffmpeg")
 
             with self.assertRaises(DependencyUnavailableError) as raised:
                 application.create_index(
                     CreateIndexCommand(
-                        path=path,
+                        media_id=MEDIA_ID,
                         modalities=("scene",),
                     )
                 )
@@ -584,7 +623,7 @@ class ApplicationTests(unittest.TestCase):
 
         self.assertTrue(
             application.remove_from_index(
-                RemoveIndexCommand(media_id="episode-1")
+                RemoveIndexCommand(media_id=MEDIA_ID)
             )
         )
 
@@ -593,7 +632,7 @@ class ApplicationTests(unittest.TestCase):
             Path(config.storage_directory),
             Path("repository") / "indexes",
         )
-        self.assertEqual(media_id, "episode-1")
+        self.assertEqual(media_id, MEDIA_ID)
 
     def test_generation_storage_validation_checks_identity_and_count(self):
         config = IndexConfig.local(
@@ -641,6 +680,7 @@ class ApplicationTests(unittest.TestCase):
             storage = MagicMock()
             storage.__enter__.return_value = storage
             config = IndexConfig.local(
+                video_id=MEDIA_ID,
                 enabled_modalities=("scene",),
                 collection_names={"scene": "scene"},
                 storage_directory=settings.layout.indexes,
@@ -658,10 +698,6 @@ class ApplicationTests(unittest.TestCase):
                     "vidxp.infrastructure.local_index.index_video",
                     return_value={"scene_frames": 1},
                 ) as index_video,
-                patch(
-                    "vidxp.infrastructure.local_index.source_checksum",
-                    return_value="1" * 64,
-                ),
                 patch(
                     "vidxp.infrastructure.local_index.LocalSnapshotRepository."
                     "generation_reference",
@@ -688,10 +724,11 @@ class ApplicationTests(unittest.TestCase):
                     progress=None,
                     cancellation=None,
                     source_name=None,
+                    source_checksum="1" * 64,
                 )
 
-            self.assertEqual(result["scene_frames"], 1)
-            self.assertEqual(result["media_id"], "1" * 64)
+            self.assertEqual(result["record_counts"], {"scene": 1})
+            self.assertEqual(result["media_id"], MEDIA_ID)
             self.assertEqual(result["snapshot_id"], "a" * 32)
             self.assertIs(index_video.call_args.kwargs["storage"], storage)
             self.assertIs(

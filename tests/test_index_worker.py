@@ -7,6 +7,9 @@ from vidxp.index_state import IndexingInProgressError
 from vidxp.settings import VidXPSettings
 
 
+MEDIA_ID = "123456781234423481234567890abcde"
+
+
 class FakeProcess:
     def __init__(self, **options):
         self.options = options
@@ -72,8 +75,7 @@ class IndexWorkerTests(unittest.TestCase):
 
         with patch.object(index_worker, "get_context", return_value=context):
             index_worker.start_indexing(
-                "video.mp4",
-                "source.mp4",
+                MEDIA_ID,
                 self.service,
                 modalities=("scene",),
             )
@@ -84,8 +86,7 @@ class IndexWorkerTests(unittest.TestCase):
         self.assertEqual(
             context.process.options["args"],
             (
-                "video.mp4",
-                "source.mp4",
+                MEDIA_ID,
                 context.event,
                 self.service.settings.model_dump(mode="python"),
                 ("scene",),
@@ -101,8 +102,7 @@ class IndexWorkerTests(unittest.TestCase):
             return_value=service,
         ) as create:
             index_worker._run_indexing(
-                "video.mp4",
-                "source.mp4",
+                MEDIA_ID,
                 FakeEvent(),
                 self.service.settings.model_dump(mode="python"),
                 ("scene",),
@@ -112,8 +112,8 @@ class IndexWorkerTests(unittest.TestCase):
         self.assertEqual(settings, self.service.settings)
         service.create_index.assert_called_once()
         self.assertEqual(
-            service.create_index.call_args.args[0].source_name,
-            "source.mp4",
+            service.create_index.call_args.args[0].media_id,
+            MEDIA_ID,
         )
         self.assertEqual(
             service.create_index.call_args.args[0].modalities,
@@ -125,15 +125,13 @@ class IndexWorkerTests(unittest.TestCase):
 
         with patch.object(index_worker, "get_context", return_value=context):
             index_worker.start_indexing(
-                "video.mp4",
-                "source.mp4",
+                MEDIA_ID,
                 self.service,
                 modalities=("scene",),
             )
             with self.assertRaises(IndexingInProgressError):
                 index_worker.start_indexing(
-                    "video.mp4",
-                    "source.mp4",
+                    MEDIA_ID,
                     self.service,
                     modalities=("scene",),
                 )
@@ -147,8 +145,7 @@ class IndexWorkerTests(unittest.TestCase):
         context = FakeContext()
         with patch.object(index_worker, "get_context", return_value=context):
             index_worker.start_indexing(
-                "video.mp4",
-                "source.mp4",
+                MEDIA_ID,
                 self.service,
                 modalities=("scene",),
             )

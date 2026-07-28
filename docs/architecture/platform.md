@@ -166,6 +166,11 @@ Required identifiers:
 - `JobId`
 - `ArtifactId`
 
+For the current single-source media pipeline, `VideoId` is the same opaque value
+as `MediaId`. A separate video-track identity is introduced only when one media
+asset can produce multiple independently addressable video tracks; adapters must
+not invent a second identifier before then.
+
 Required shared models:
 
 - `MediaAsset`
@@ -238,7 +243,9 @@ One `RepositoryLayout` defines all persistent paths:
 ```text
 repository/
   repository.json
+  catalog.sqlite3
   media/
+    objects/
   indexes/
     store/
     generations/
@@ -247,6 +254,7 @@ repository/
       <snapshot-id>.json
     active-snapshot.json
   artifacts/
+    objects/
   local-workflows/
 ```
 

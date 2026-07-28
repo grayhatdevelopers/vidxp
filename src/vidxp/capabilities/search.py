@@ -14,6 +14,18 @@ from vidxp.core.contracts import (
 from vidxp.ports import IndexStore
 
 
+PUBLIC_SEARCH_METADATA = frozenset(
+    {
+        "text",
+        "phrase_id",
+        "frame_index",
+        "timestamp",
+        "fps",
+        "duration",
+    }
+)
+
+
 def distance_to_score(raw_distance: float) -> float:
     """Map distance to an ordering score without claiming probability.
 
@@ -57,7 +69,9 @@ def _to_hits(
     hits = []
     for rank, row in enumerate(ordered, start=1):
         metadata = row["metadata"]
-        missing = sorted(required_metadata - metadata.keys())
+        missing = sorted(
+            (required_metadata | {"generation_id"}) - metadata.keys()
+        )
         if missing:
             raise IndexSchemaError(
                 "The saved index predates the benchmark-ready schema and must "
@@ -74,14 +88,20 @@ def _to_hits(
         hits.append(
             SearchHit(
                 rank=rank,
+                media_id=str(metadata["video_id"]),
                 video_id=str(metadata["video_id"]),
+                generation_id=str(metadata["generation_id"]),
                 start=start,
                 end=end,
                 score=distance_to_score(distance),
                 raw_distance=distance,
                 modality=modality,
                 source_id=str(row["source_id"]),
-                metadata=metadata,
+                metadata={
+                    key: value
+                    for key, value in metadata.items()
+                    if key in PUBLIC_SEARCH_METADATA
+                },
             )
         )
     return tuple(hits)

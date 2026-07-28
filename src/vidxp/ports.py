@@ -12,17 +12,158 @@ from typing import (
 )
 
 from vidxp.application_models import RuntimeProfile
+from vidxp.core.artifacts import (
+    ArtifactRecord,
+    StagedArtifact,
+    StoredArtifact,
+)
 from vidxp.core.contracts import (
     CancellationToken,
     IndexConfig,
     StorageRecord,
 )
 from vidxp.core.indexing_common import ProgressCallback
+from vidxp.core.media import (
+    MediaProbe,
+    MediaRecord,
+    StagedMedia,
+    StoredMedia,
+)
 from vidxp.model_contracts import ArtifactSpec, ModelKey, ModelSpec
 
 
 class ResourceLimitError(RuntimeError):
     """Raised when configured host capacity cannot admit model work."""
+
+
+class LocalFileResource:
+    """Authorized local delivery handle; never serialize this object."""
+
+    __slots__ = ("path", "filename", "mime_type", "byte_size", "etag")
+
+    def __init__(
+        self,
+        *,
+        path: Path,
+        filename: str,
+        mime_type: str,
+        byte_size: int,
+        etag: str,
+    ) -> None:
+        self.path = path
+        self.filename = filename
+        self.mime_type = mime_type
+        self.byte_size = byte_size
+        self.etag = etag
+
+
+@runtime_checkable
+class MediaCatalogPort(Protocol):
+    def get_media(self, media_id: str) -> MediaRecord | None: ...
+
+    def get_media_by_checksum(self, sha256: str) -> MediaRecord | None: ...
+
+    def put_media(self, record: MediaRecord) -> MediaRecord: ...
+
+    def list_media(
+        self,
+        *,
+        limit: int,
+        offset: int = 0,
+    ) -> tuple[MediaRecord, ...]: ...
+
+    def count_media(self) -> int: ...
+
+
+@runtime_checkable
+class MediaStorePort(Protocol):
+    def stage_local(self, path: Path) -> StagedMedia: ...
+
+    def publication_lock(self, sha256: str) -> ContextManager[None]: ...
+
+    def publish(self, staged: StagedMedia) -> StoredMedia: ...
+
+    def discard(self, staged: StagedMedia) -> None: ...
+
+    def delete(self, storage_key: str) -> None: ...
+
+    def verify(
+        self,
+        storage_key: str,
+        *,
+        sha256: str,
+        byte_size: int,
+    ) -> Path: ...
+
+    def resolve(self, storage_key: str) -> Path: ...
+
+
+@runtime_checkable
+class MediaProbePort(Protocol):
+    def probe(self, path: Path) -> MediaProbe: ...
+
+
+@runtime_checkable
+class ArtifactCatalogPort(Protocol):
+    def get_artifact(self, artifact_id: str) -> ArtifactRecord | None: ...
+
+    def get_artifact_by_request(
+        self,
+        request_key: str,
+    ) -> ArtifactRecord | None: ...
+
+    def invalidate_artifact_request(
+        self,
+        request_key: str,
+        artifact_id: str,
+    ) -> None: ...
+
+    def put_artifact(self, record: ArtifactRecord) -> ArtifactRecord: ...
+
+
+@runtime_checkable
+class ArtifactStorePort(Protocol):
+    def stage(self, artifact_id: str, *, suffix: str) -> StagedArtifact: ...
+
+    def publish(self, staged: StagedArtifact) -> StoredArtifact: ...
+
+    def discard(self, staged: StagedArtifact) -> None: ...
+
+    def delete(self, storage_key: str) -> None: ...
+
+    def verify(
+        self,
+        storage_key: str,
+        *,
+        sha256: str,
+        byte_size: int,
+    ) -> Path: ...
+
+    def resolve(self, storage_key: str) -> Path: ...
+
+
+@runtime_checkable
+class ActorRendererPort(Protocol):
+    def render(
+        self,
+        source: Path,
+        destination: Path,
+        cluster_id: str,
+        detections: list[dict[str, Any]],
+    ) -> None: ...
+
+
+@runtime_checkable
+class SnippetRendererPort(Protocol):
+    def render(
+        self,
+        source: Path,
+        destination: Path,
+        *,
+        start_seconds: float,
+        end_seconds: float,
+        compatible_mp4: bool,
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -80,6 +221,24 @@ class IndexReader(Protocol):
         filters: Mapping[str, Any] | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    def records(
+        self,
+        modality: str,
+        *,
+        video_id: str | None = None,
+        filters: Mapping[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]: ...
+
+    def count_records(
+        self,
+        modality: str,
+        *,
+        video_id: str | None = None,
+        filters: Mapping[str, Any] | None = None,
+    ) -> int: ...
+
 
 @runtime_checkable
 class IndexStore(IndexReader, Protocol):
@@ -112,15 +271,6 @@ class IndexStore(IndexReader, Protocol):
         cancellation: CancellationToken,
     ) -> int: ...
 
-    def records(
-        self,
-        modality: str,
-        *,
-        video_id: str | None = None,
-        filters: Mapping[str, Any] | None = None,
-    ) -> list[dict[str, Any]]: ...
-
-
 class IndexBackend(Protocol):
     """Infrastructure operations needed by the application layer."""
 
@@ -141,6 +291,7 @@ class IndexBackend(Protocol):
         progress: ProgressCallback | None,
         cancellation: CancellationToken | None,
         source_name: str | None,
+        source_checksum: str,
     ) -> dict[str, Any]: ...
 
     def indexing_in_progress(self, config: IndexConfig) -> bool: ...

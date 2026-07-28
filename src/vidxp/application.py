@@ -9,7 +9,10 @@ from pydantic import BaseModel, JsonValue, ValidationError
 
 from vidxp.application_models import (
     ApplicationError,
+    Artifact,
     CreateIndexCommand,
+    CreateActorOverlayCommand,
+    CreateSnippetCommand,
     DependencyCheckCommand,
     DependencyCheckResult,
     DependencyUnavailableError,
@@ -17,6 +20,10 @@ from vidxp.application_models import (
     InvalidRequestError,
     IndexResult,
     IndexStatus,
+    ImportMediaCommand,
+    ListMediaCommand,
+    MediaAsset,
+    MediaPage,
     PrepareModelsCommand,
     PrepareModelsResult,
     RemoveIndexCommand,
@@ -24,9 +31,8 @@ from vidxp.application_models import (
     SearchCommand,
 )
 from vidxp.capabilities.actor.schemas import (
-    ActorClusterSummary,
-    ActorDetection,
-    ActorRenderResult,
+    ActorClustersOutput,
+    ActorDetectionsOutput,
 )
 from vidxp.capabilities.actor.results import ActorClusterNotFoundError
 from vidxp.capabilities.contracts import (
@@ -43,6 +49,11 @@ from vidxp.core.contracts import (
     IndexConfig,
     IndexSchemaError,
 )
+from vidxp.core.artifacts import (
+    ArtifactIntegrityError,
+    ArtifactRenderError,
+    ArtifactRendererUnavailableError,
+)
 from vidxp.core.indexing_common import ProgressCallback
 from vidxp.index_state import (
     INDEX_STATUS_SCHEMA,
@@ -50,9 +61,27 @@ from vidxp.index_state import (
     IndexNotReadyError,
 )
 from vidxp.ports import IndexBackend, ModelRuntimePort, ResourceLimitError
+from vidxp.ports import LocalFileResource
 from vidxp.model_contracts import ModelArtifactUnavailableError
 from vidxp.repository_layout import RepositoryLayout
 from vidxp.settings import VidXPSettings
+from vidxp.artifact_service import (
+    ArtifactRequestError,
+    ArtifactService,
+    ArtifactUnavailableError,
+    InvalidArtifactError,
+)
+from vidxp.core.media import (
+    InvalidMediaError,
+    MediaImportLimitError,
+    MediaProbeUnavailableError,
+    MediaStoreIntegrityError,
+    MediaUnavailableError,
+)
+from vidxp.media_service import (
+    MediaImportNotAllowedError,
+    MediaService,
+)
 
 
 def _validation_details(
@@ -126,6 +155,68 @@ def application_boundary(handler: Callable) -> Callable:
             ) from exc
         except CapabilityRequestError as exc:
             raise InvalidRequestError() from exc
+        except InvalidMediaError as exc:
+            raise ApplicationError(
+                "media_invalid",
+                ErrorCategory.validation,
+                "The selected file is not a valid supported video.",
+            ) from exc
+        except MediaImportLimitError as exc:
+            raise ApplicationError(
+                "media_too_large",
+                ErrorCategory.resource_limit,
+                "The selected media exceeds the configured import limit.",
+            ) from exc
+        except MediaProbeUnavailableError as exc:
+            raise ApplicationError(
+                "media_probe_unavailable",
+                ErrorCategory.unavailable,
+                "The media probe dependency is unavailable.",
+                retryable=True,
+            ) from exc
+        except MediaImportNotAllowedError as exc:
+            raise ApplicationError(
+                "media_import_forbidden",
+                ErrorCategory.authorization,
+                "The selected local media cannot be imported.",
+            ) from exc
+        except MediaStoreIntegrityError as exc:
+            raise ApplicationError(
+                "media_integrity_failed",
+                ErrorCategory.conflict,
+                "The media changed or failed an integrity check.",
+            ) from exc
+        except MediaUnavailableError as exc:
+            raise ResourceNotFoundError("media") from exc
+        except ArtifactUnavailableError as exc:
+            raise ResourceNotFoundError("artifact") from exc
+        except ArtifactIntegrityError as exc:
+            raise ApplicationError(
+                "artifact_integrity_failed",
+                ErrorCategory.conflict,
+                "The artifact failed an integrity check.",
+            ) from exc
+        except ArtifactRendererUnavailableError as exc:
+            raise ApplicationError(
+                "artifact_renderer_unavailable",
+                ErrorCategory.unavailable,
+                "The configured artifact renderer is unavailable.",
+                retryable=True,
+            ) from exc
+        except ArtifactRenderError as exc:
+            raise ApplicationError(
+                "artifact_render_failed",
+                ErrorCategory.internal,
+                "The requested artifact could not be rendered.",
+            ) from exc
+        except ArtifactRequestError as exc:
+            raise InvalidRequestError() from exc
+        except InvalidArtifactError as exc:
+            raise ApplicationError(
+                "artifact_render_invalid",
+                ErrorCategory.internal,
+                "The generated artifact failed media validation.",
+            ) from exc
 
     return wrapped
 
@@ -141,12 +232,16 @@ class VidXPApplication:
         registry: CapabilityRegistry,
         runtime: ModelRuntimePort,
         index_backend: IndexBackend,
+        media_service: MediaService,
+        artifact_service: ArtifactService,
     ) -> None:
         self.settings = settings
         self.layout = layout
         self.registry = registry
         self.runtime = runtime
         self.index_backend = index_backend
+        self.media_service = media_service
+        self.artifact_service = artifact_service
 
     @contextmanager
     def _capability_dependencies(
@@ -195,20 +290,45 @@ class VidXPApplication:
                 "message": "No local video index was found.",
             }
         )
-        payload.update(
-            {
-                "repository_root": self.layout.root,
-                "index_directory": self.index_directory,
-            }
-        )
         return IndexStatus.model_validate(payload)
 
     @application_boundary
-    def active_config(self) -> tuple[IndexConfig, dict[str, Any]]:
+    def _active_config(self) -> tuple[IndexConfig, dict[str, Any]]:
         return self.index_backend.active_config(
             self.index_directory,
             device=self.device,
         )
+
+    @application_boundary
+    def import_media(self, command: ImportMediaCommand) -> MediaAsset:
+        self.layout.ensure_local_directories()
+        return self.media_service.import_local(command)
+
+    @application_boundary
+    def get_media(self, media_id: str) -> MediaAsset:
+        return self.media_service.get(media_id)
+
+    @application_boundary
+    def list_media(
+        self,
+        command: ListMediaCommand,
+    ) -> MediaPage:
+        try:
+            return self.media_service.list(command)
+        except ValueError as exc:
+            raise InvalidRequestError() from exc
+
+    @application_boundary
+    def open_media_content(self, media_id: str) -> LocalFileResource:
+        return self.media_service.content(media_id)
+
+    @application_boundary
+    def get_artifact(self, artifact_id: str) -> Artifact:
+        return self.artifact_service.get(artifact_id)
+
+    @application_boundary
+    def open_artifact_content(self, artifact_id: str) -> LocalFileResource:
+        return self.artifact_service.content(artifact_id)
 
     @application_boundary
     def create_index(
@@ -228,8 +348,8 @@ class VidXPApplication:
             raise CapabilityRequestError(
                 "One or more selected capabilities do not support indexing."
             )
-        if not command.path.is_file():
-            raise ResourceNotFoundError("media")
+        media = self.media_service.require_record(command.media_id)
+        content = self.media_service.content(command.media_id)
         self.layout.ensure_local_directories()
         config = IndexConfig.local(
             video_id=command.media_id,
@@ -245,15 +365,15 @@ class VidXPApplication:
         )
         with self.runtime.scheduler.indexing():
             with self._capability_dependencies(selected):
-                return IndexResult(
-                    summary=self.index_backend.create(
-                        command.path,
-                        config=config,
-                        progress=progress_callback,
-                        cancellation=cancellation,
-                        source_name=command.source_name,
-                    )
+                result = self.index_backend.create(
+                    content.path,
+                    config=config,
+                    progress=progress_callback,
+                    cancellation=cancellation,
+                    source_name=media.original_filename,
+                    source_checksum=media.sha256,
                 )
+                return IndexResult.model_validate(result)
 
     @application_boundary
     def indexing_in_progress(self) -> bool:
@@ -313,7 +433,7 @@ class VidXPApplication:
         return PrepareModelsResult(
             prepared=tuple(prepared),
             modalities=selected,
-            runtime=self.runtime.describe(),
+            runtime=self.runtime.backends,
         )
 
     @application_boundary
@@ -336,7 +456,7 @@ class VidXPApplication:
 
         config = None
         if contract.requires_index:
-            config, _ = self.active_config()
+            config, _ = self._active_config()
             if capability not in config.enabled_modalities:
                 raise CapabilityRequestError(
                     f"The {capability} capability is not present in this index."
@@ -377,38 +497,83 @@ class VidXPApplication:
         )
 
     @application_boundary
-    def actor_clusters(self) -> tuple[ActorClusterSummary, ...]:
-        result = self.execute("actor", "clusters", {})
-        return tuple(result.clusters)
+    def actor_clusters(
+        self,
+        *,
+        page_size: int = 50,
+        cursor: str | None = None,
+    ) -> ActorClustersOutput:
+        return cast(
+            ActorClustersOutput,
+            self.execute(
+                "actor",
+                "clusters",
+                {"page_size": page_size, "cursor": cursor},
+            ),
+        )
 
     @application_boundary
-    def actor_detections(self, cluster_id: str) -> list[ActorDetection]:
-        result = self.execute(
-            "actor",
-            "detections",
-            {"cluster_id": cluster_id},
+    def actor_detections(
+        self,
+        cluster_id: str,
+        *,
+        page_size: int = 50,
+        cursor: str | None = None,
+    ) -> ActorDetectionsOutput:
+        return cast(
+            ActorDetectionsOutput,
+            self.execute(
+                "actor",
+                "detections",
+                {
+                    "cluster_id": cluster_id,
+                    "page_size": page_size,
+                    "cursor": cursor,
+                },
+            ),
         )
-        return list(result.detections)
 
     @application_boundary
     def render_actor(
         self,
-        cluster_id: str,
-        input_path: str | Path,
-        output_path: str | Path,
-    ) -> ActorRenderResult:
-        return cast(
-            ActorRenderResult,
-            self.execute(
-                "actor",
-                "render",
-                {
-                    "cluster_id": cluster_id,
-                    "input_path": input_path,
-                    "output_path": output_path,
-                },
-            ),
+        command: CreateActorOverlayCommand,
+    ) -> Artifact:
+        detections = []
+        cursor = None
+        while True:
+            page = self.actor_detections(
+                command.cluster_id,
+                page_size=100,
+                cursor=cursor,
+            )
+            detections.extend(page.detections)
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+        identities = {
+            (detection.media_id, detection.generation_id)
+            for detection in detections
+        }
+        if identities != {(command.media_id, command.generation_id)}:
+            raise ApplicationError(
+                "actor_cluster_identity_invalid",
+                ErrorCategory.conflict,
+                "The actor cluster does not match the requested index identity.",
+            )
+        return self.artifact_service.create_actor_overlay(
+            media_id=command.media_id,
+            generation_id=command.generation_id,
+            cluster_id=command.cluster_id,
+            detections=[
+                detection.model_dump(mode="python")
+                for detection in detections
+            ],
+            profile=command.profile,
         )
+
+    @application_boundary
+    def create_snippet(self, command: CreateSnippetCommand) -> Artifact:
+        return self.artifact_service.create_snippet(command)
 
     @application_boundary
     def clear_index(self) -> bool:

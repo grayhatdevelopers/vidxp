@@ -1,7 +1,8 @@
 import argparse
-import hashlib
 import logging
+import shutil
 import sys
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Sequence
@@ -11,7 +12,9 @@ import streamlit as st
 from vidxp.application import VidXPApplication
 from vidxp.application_models import (
     ApplicationError,
+    CreateActorOverlayCommand,
     DependencyCheckCommand,
+    ImportMediaCommand,
     SearchCommand,
 )
 from vidxp.composition import create_application
@@ -51,21 +54,26 @@ INDEX_REQUESTED_KEY = "_vidxp_index_requested"
 INDEX_ERROR_KEY = "_vidxp_index_error"
 SEARCH_RESULT_KEY = "_vidxp_search_result"
 CANCEL_REQUESTED_KEY = "_vidxp_cancel_requested"
+MEDIA_ID_KEY = "_vidxp_media_id"
+UPLOAD_TOKEN_KEY = "_vidxp_upload_token"
 
 
-def _video_hash(uploaded_video) -> str | None:
+def _upload_token(uploaded_video):
     if uploaded_video is None:
         return None
-    return hashlib.sha256(uploaded_video.getvalue()).hexdigest()
+    return (
+        getattr(uploaded_video, "file_id", None),
+        uploaded_video.name,
+        getattr(uploaded_video, "size", None),
+    )
 
 
-def _is_search_ready(status, uploaded_video) -> bool:
-    saved_video_path = _configured_service().layout.media / "source-video.mp4"
+def _is_search_ready(status, media_id: str | None) -> bool:
     if not status or status.get("state") != "ready":
         return False
-    if uploaded_video is None:
-        return saved_video_path.is_file()
-    return status.get("video", {}).get("sha256") == _video_hash(uploaded_video)
+    return media_id is not None and media_id in (
+        (status.get("summary") or {}).get("media_ids") or ()
+    )
 
 
 def _render_summary(summary):
@@ -74,10 +82,9 @@ def _render_summary(summary):
     st.caption(
         " · ".join(
             (
-                f"Language: {summary.get('language', '—')}",
-                f"Dialogue phrases: {summary.get('dialogue_phrases', 0):,}",
-                f"Scene frames: {summary.get('scene_frames', 0):,}",
-                f"Actor clusters: {summary.get('actor_clusters', 0):,}",
+                f"Media: {summary.get('media_count', 0):,}",
+                "Capabilities: "
+                + ", ".join(summary.get("modalities", ())),
             )
         )
     )
@@ -93,7 +100,7 @@ def _render_progress(event):
         )
 
 
-def _render_index_status(status, active, uploaded_video, request_error=None):
+def _render_index_status(status, active, media_id, request_error=None):
     if request_error:
         st.error(request_error)
         return
@@ -108,7 +115,7 @@ def _render_index_status(status, active, uploaded_video, request_error=None):
     elif not status or status.get("state") == "missing":
         st.caption("First indexing may download missing runtime model weights.")
     elif status["state"] == "ready":
-        if _is_search_ready(status, uploaded_video):
+        if _is_search_ready(status, media_id):
             st.success(status.get("message", "The video index is ready."))
             _render_summary(status.get("summary"))
         else:
@@ -157,21 +164,37 @@ def _available_index_modalities() -> tuple[str, ...]:
 
 def _run_indexing(uploaded_video, status, modalities):
     service = _configured_service()
-    saved_video_path = service.layout.media / "source-video.mp4"
+    temporary_path = None
     try:
         if uploaded_video is not None:
-            saved_video_path.parent.mkdir(parents=True, exist_ok=True)
-            saved_video_path.write_bytes(uploaded_video.getvalue())
-            source_name = uploaded_video.name
-        else:
-            source_name = (
-                status.get("video", {}).get("source_name", saved_video_path.name)
-                if status
-                else saved_video_path.name
+            suffix = Path(uploaded_video.name).suffix
+            with tempfile.NamedTemporaryFile(
+                mode="w+b",
+                suffix=suffix,
+                delete=False,
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                uploaded_video.seek(0)
+                shutil.copyfileobj(uploaded_video, temporary)
+            asset = service.import_media(
+                ImportMediaCommand(
+                    path=temporary_path,
+                    original_filename=Path(uploaded_video.name).name,
+                    declared_mime_type=getattr(uploaded_video, "type", None),
+                )
             )
+            media_id = asset.media_id
+            st.session_state[MEDIA_ID_KEY] = media_id
+            st.session_state[UPLOAD_TOKEN_KEY] = _upload_token(uploaded_video)
+        else:
+            media_id = st.session_state.get(MEDIA_ID_KEY)
+            if media_id is None and status:
+                media_ids = (status.get("summary") or {}).get("media_ids") or ()
+                media_id = media_ids[0] if len(media_ids) == 1 else None
+            if media_id is None:
+                raise ValueError("Select or import media before indexing.")
         start_indexing(
-            str(saved_video_path),
-            source_name,
+            media_id,
             service,
             modalities=modalities,
         )
@@ -185,34 +208,41 @@ def _run_indexing(uploaded_video, status, modalities):
     else:
         st.session_state.pop(INDEX_ERROR_KEY, None)
     finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
         st.session_state[INDEX_REQUESTED_KEY] = False
     st.rerun()
 
 
 def _run_search(search_type, query):
     service = _configured_service()
-    saved_video_path = service.layout.media / "source-video.mp4"
-    actor_output_path = service.layout.artifacts / "actor-result.mp4"
     try:
         status = service.index_status().model_dump(mode="json")
         if status.get("state") != "ready":
             raise IndexNotReadyError("The video index is not ready.")
         if search_type == "actor":
-            actor_output_path.unlink(missing_ok=True)
-            service.render_actor(
-                query,
-                saved_video_path,
-                actor_output_path,
+            clusters = service.actor_clusters(page_size=100).clusters
+            cluster = next(
+                (
+                    item
+                    for item in clusters
+                    if item.cluster_id == query
+                ),
+                None,
             )
-            if (
-                not actor_output_path.is_file()
-                or actor_output_path.stat().st_size == 0
-            ):
-                return {"error": "Actor result video could not be generated."}
+            if cluster is None:
+                return {"error": "No matching actor cluster was found."}
+            artifact = service.render_actor(
+                CreateActorOverlayCommand(
+                    cluster_id=query,
+                    media_id=cluster.media_id,
+                    generation_id=cluster.generation_id,
+                )
+            )
             return {
                 "type": search_type,
                 "query": query,
-                "video_path": str(actor_output_path),
+                "artifact_id": artifact.artifact_id,
             }
 
         result = service.search(
@@ -230,7 +260,7 @@ def _run_search(search_type, query):
             "query": query,
             "timestamp": hit.start,
             "hit": hit.to_dict(),
-            "video_path": str(saved_video_path),
+            "media_id": hit.media_id,
         }
     except IndexNotReadyError as exc:
         return {"error": str(exc)}
@@ -248,34 +278,44 @@ def _render_search_result(result):
         st.error(error)
         return
 
-    video_path = Path(result["video_path"])
-    if not video_path.is_file():
+    service = _configured_service()
+    try:
+        resource = (
+            service.open_artifact_content(result["artifact_id"])
+            if result["type"] == "actor"
+            else service.open_media_content(result["media_id"])
+        )
+    except ApplicationError:
         st.error("The search result video is no longer available.")
         return
 
     search_type = result["type"]
     if search_type == "actor":
         st.success(f"Actor cluster {result['query']}")
-        st.video(str(video_path), format="video/mp4", width="stretch")
+        st.video(
+            str(resource.path),
+            format=resource.mime_type,
+            width="stretch",
+        )
         return
 
     timestamp = result["timestamp"]
     st.success(f"Best {search_type} match: {timestamp:.3f} seconds")
     st.video(
-        str(video_path),
+        str(resource.path),
         start_time=timestamp,
         width="stretch",
     )
 
 
-def _select_video(busy):
-    saved_video_path = _configured_service().layout.media / "source-video.mp4"
+def _select_video(busy, media_id):
+    service = _configured_service()
     st.subheader("Video")
     upload_slot = st.empty()
     has_session_upload = st.session_state.get("video_upload") is not None
-    if busy and not has_session_upload and saved_video_path.is_file():
+    if busy and not has_session_upload and media_id is not None:
         uploaded_video = None
-        st.caption("Indexing the saved video.")
+        st.caption("Indexing the registered video.")
     else:
         with upload_slot:
             uploaded_video = st.file_uploader(
@@ -287,10 +327,15 @@ def _select_video(busy):
 
     if uploaded_video is not None:
         st.video(uploaded_video, width=560)
-    elif saved_video_path.is_file():
-        if not busy:
-            st.caption("Using the saved video.")
-        st.video(str(saved_video_path), width=560)
+    elif media_id is not None:
+        try:
+            resource = service.open_media_content(media_id)
+        except ApplicationError:
+            st.warning("The registered video is no longer available.")
+        else:
+            if not busy:
+                st.caption("Using the registered video.")
+            st.video(str(resource.path), width=560)
     return uploaded_video
 
 
@@ -331,7 +376,6 @@ def _search_controls(ready, uploaded_video, available_modalities):
 
 def run():
     service = _configured_service()
-    saved_video_path = service.layout.media / "source-video.mp4"
     st.set_page_config(page_title="VidXP", page_icon="🎬", layout="wide")
     st.title("VidXP")
     st.caption("Index and search video by dialogue, scene, and actor.")
@@ -343,6 +387,12 @@ def run():
     requested = st.session_state.get(INDEX_REQUESTED_KEY, False)
     busy = active or requested
     status = service.index_status().model_dump(mode="json")
+    media_id = st.session_state.get(MEDIA_ID_KEY)
+    if media_id is None:
+        indexed_media = (status.get("summary") or {}).get("media_ids") or ()
+        if len(indexed_media) == 1:
+            media_id = indexed_media[0]
+            st.session_state[MEDIA_ID_KEY] = media_id
     installed_modalities = _available_index_modalities()
     video_column, workflow_column = st.columns(
         [0.95, 1.05],
@@ -351,7 +401,14 @@ def run():
     )
 
     with video_column:
-        uploaded_video = _select_video(busy)
+        uploaded_video = _select_video(busy, media_id)
+    selected_media_id = (
+        media_id
+        if uploaded_video is None
+        or st.session_state.get(UPLOAD_TOKEN_KEY)
+        == _upload_token(uploaded_video)
+        else None
+    )
 
     with workflow_column:
         st.subheader("Build index")
@@ -374,7 +431,7 @@ def run():
             type="primary",
             disabled=busy
             or not selected_modalities
-            or (uploaded_video is None and not saved_video_path.is_file()),
+            or (uploaded_video is None and media_id is None),
             help=(
                 "Indexing is already running."
                 if busy
@@ -404,7 +461,7 @@ def run():
                 _render_index_status(
                     service.index_status().model_dump(mode="json"),
                     latest_active,
-                    uploaded_video,
+                    selected_media_id,
                     st.session_state.get(INDEX_ERROR_KEY),
                 )
                 if not latest_active:
@@ -415,14 +472,14 @@ def run():
             _render_index_status(
                 status,
                 False,
-                uploaded_video,
+                selected_media_id,
                 st.session_state.get(INDEX_ERROR_KEY),
             )
 
-        ready = not busy and _is_search_ready(status, uploaded_video)
+        ready = not busy and _is_search_ready(status, selected_media_id)
         configured_modalities = (
-            (status.get("summary", {}).get("configuration") or {}).get(
-                "enabled_modalities",
+            (status.get("summary") or {}).get(
+                "modalities",
                 ("scene", "dialogue", "actor"),
             )
             if ready

@@ -35,11 +35,18 @@ class _ContractModel(BaseModel):
 class CapabilityInput(BaseModel):
     """Base model for validated capability input."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
 class CapabilityOutput(_ContractModel):
     """Base model for validated capability output."""
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="forbid",
+        frozen=True,
+        allow_inf_nan=False,
+    )
 
 
 class CapabilityConfig(_ContractModel):
@@ -121,6 +128,7 @@ class OperationDefinition(_ContractModel):
     input_model: type[BaseModel]
     output_model: type[BaseModel]
     requires_index: bool = True
+    public: bool = True
 
     @field_validator("input_model", "output_model")
     @classmethod
@@ -131,6 +139,55 @@ class OperationDefinition(_ContractModel):
         if not isinstance(value, type) or not issubclass(value, BaseModel):
             raise ValueError("Operation schemas must be Pydantic models.")
         return value
+
+    @model_validator(mode="after")
+    def _validate_public_schemas(self) -> "OperationDefinition":
+        if not self.public:
+            return self
+        forbidden_names = {
+            "path",
+            "input_path",
+            "output_path",
+            "storage_key",
+            "repository_root",
+            "index_directory",
+        }
+
+        def inspect(value: Any) -> None:
+            if isinstance(value, dict):
+                properties = value.get("properties")
+                if isinstance(properties, dict):
+                    unsafe = {
+                        name
+                        for name in properties
+                        if (
+                            name in forbidden_names
+                            or name.endswith("_path")
+                            or name.endswith("_directory")
+                        )
+                    }
+                    if unsafe:
+                        fields = ", ".join(sorted(unsafe))
+                        raise ValueError(
+                            f"Public operation schema exposes {fields}."
+                        )
+                if value.get("format") in {"path", "binary"}:
+                    raise ValueError(
+                        "Public operation schema exposes local or binary data."
+                    )
+                if value.get("contentEncoding") == "base64":
+                    raise ValueError(
+                        "Public operation schema embeds binary content."
+                    )
+                for nested in value.values():
+                    inspect(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    inspect(nested)
+
+        inspect(self.input_model.model_json_schema())
+        inspect(self.output_model.model_json_schema())
+        return self
 
 
 class CapabilityIndexResult(_ContractModel):

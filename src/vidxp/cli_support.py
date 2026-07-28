@@ -104,15 +104,8 @@ def emit_status(
     table.add_row("Message", str(status.get("message", "—")))
     if updated_at := status.get("updated_at"):
         table.add_row("Updated", str(updated_at))
-    if video := status.get("video"):
-        table.add_row(
-            "Video",
-            str(video.get("source_name") or video.get("path") or "—"),
-        )
     summary = status.get("summary") or {}
-    if modalities := (summary.get("configuration") or {}).get(
-        "enabled_modalities"
-    ):
+    if modalities := summary.get("modalities"):
         table.add_row("Modalities", ", ".join(map(str, modalities)))
     Console().print(table)
 

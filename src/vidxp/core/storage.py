@@ -250,10 +250,16 @@ class IndexStorage:
         video_id: str | None = None,
         generation_ids: Iterable[str] | None = None,
         filters: Mapping[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         selected_generations = _generation_ids(generation_ids)
         if selected_generations == ():
             return []
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be positive")
+        if offset < 0:
+            raise ValueError("offset must be nonnegative")
         result = self.collection(modality).get(
             where=metadata_filter(
                 self.config,
@@ -262,6 +268,8 @@ class IndexStorage:
                 extra=filters,
             ),
             include=["metadatas"],
+            limit=limit,
+            offset=offset,
         )
         return [
             dict(metadata)
@@ -275,6 +283,7 @@ class IndexStorage:
         *,
         video_id: str | None = None,
         generation_ids: Iterable[str] | None = None,
+        filters: Mapping[str, Any] | None = None,
     ) -> int:
         selected_generations = _generation_ids(generation_ids)
         if selected_generations == ():
@@ -284,6 +293,7 @@ class IndexStorage:
                 self.config,
                 video_id=video_id,
                 generation_ids=selected_generations,
+                extra=filters,
             ),
             include=[],
         )
@@ -341,8 +351,28 @@ class SnapshotScopedIndexStore:
         *,
         video_id: str | None = None,
         filters: Mapping[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        return self._store.records(
+        options: dict[str, Any] = {
+            "video_id": video_id,
+            "generation_ids": self._generation_ids,
+            "filters": filters,
+        }
+        if limit is not None:
+            options["limit"] = limit
+        if offset:
+            options["offset"] = offset
+        return self._store.records(modality, **options)
+
+    def count_records(
+        self,
+        modality: str,
+        *,
+        video_id: str | None = None,
+        filters: Mapping[str, Any] | None = None,
+    ) -> int:
+        return self._store.count_records(
             modality,
             video_id=video_id,
             generation_ids=self._generation_ids,

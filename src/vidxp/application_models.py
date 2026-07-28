@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Generic, Mapping, TypeVar
+from typing import Any, Generic, Literal, Mapping, TypeVar
 
 from pydantic import (
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
     JsonValue,
+    NonNegativeInt,
+    field_validator,
 )
 
 from vidxp.core.identifiers import (
@@ -18,15 +21,32 @@ from vidxp.core.identifiers import (
     IndexSnapshotId as IndexSnapshotId,
     JobId as JobId,
     MediaId as MediaId,
+    MimeType,
     RepositoryId as RepositoryId,
+    Sha256,
     VideoId as VideoId,
+)
+from vidxp.core.artifacts import (
+    ARTIFACT_SCHEMA_VERSION,
+    ArtifactKind,
+    ArtifactState,
+)
+from vidxp.core.media import (
+    MEDIA_SCHEMA_VERSION,
+    MediaState,
+    MediaStream,
+    validate_display_filename,
 )
 
 T = TypeVar("T")
 
 
 class ApplicationModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        allow_inf_nan=False,
+    )
 
 
 class Page(ApplicationModel, Generic[T]):
@@ -167,23 +187,108 @@ class CapabilityDependencyCheck(ApplicationModel):
     error: str | None = None
 
 
-class CreateIndexCommand(ApplicationModel):
+class ImportMediaCommand(ApplicationModel):
+    """Local-adapter command; remote ingestion uses the upload workflow."""
+
     path: Path
-    media_id: MediaId | None = None
+    original_filename: str | None = Field(default=None, min_length=1)
+    declared_mime_type: MimeType | None = None
+
+    @field_validator("original_filename")
+    @classmethod
+    def _filename_only(cls, value: str | None) -> str | None:
+        return None if value is None else validate_display_filename(value)
+
+
+class MediaAsset(ApplicationModel):
+    schema_version: Literal[MEDIA_SCHEMA_VERSION] = MEDIA_SCHEMA_VERSION
+    media_id: MediaId
+    video_id: VideoId
+    original_filename: str = Field(min_length=1)
+    sha256: Sha256
+    byte_size: int = Field(gt=0)
+    declared_mime_type: MimeType | None = None
+    detected_mime_type: MimeType
+    container: str = Field(min_length=1)
+    duration_seconds: float = Field(gt=0)
+    streams: tuple[MediaStream, ...] = Field(min_length=1)
+    state: MediaState
+    created_at: AwareDatetime
+
+
+class ListMediaCommand(ApplicationModel):
+    page_size: int = Field(default=50, gt=0, le=100)
+    cursor: str | None = Field(default=None, min_length=1, max_length=512)
+
+
+class MediaPage(Page[MediaAsset]):
+    pass
+
+
+class CreateIndexCommand(ApplicationModel):
+    media_id: MediaId
     modalities: tuple[str, ...]
     frame_stride: int = Field(default=1, gt=0)
-    capability_options: Mapping[str, Mapping[str, Any]] = Field(
+    capability_options: Mapping[str, Mapping[str, JsonValue]] = Field(
         default_factory=dict
     )
-    source_name: str | None = Field(default=None, min_length=1)
 
 
 class IndexResult(ApplicationModel):
-    summary: Mapping[str, Any]
+    media_id: MediaId
+    generation_id: IndexGenerationId
+    snapshot_id: IndexSnapshotId
+    active_media_count: int = Field(gt=0)
+    record_counts: dict[str, NonNegativeInt] = Field(default_factory=dict)
 
 
 class RemoveIndexCommand(ApplicationModel):
     media_id: MediaId
+
+
+class Artifact(ApplicationModel):
+    schema_version: Literal[ARTIFACT_SCHEMA_VERSION] = (
+        ARTIFACT_SCHEMA_VERSION
+    )
+    artifact_id: ArtifactId
+    media_id: MediaId
+    generation_id: IndexGenerationId | None = None
+    job_id: JobId | None = None
+    kind: ArtifactKind
+    profile: str = Field(min_length=1)
+    mime_type: MimeType
+    byte_size: int = Field(gt=0)
+    sha256: Sha256
+    state: ArtifactState
+    created_at: AwareDatetime
+    expires_at: AwareDatetime | None = None
+
+
+class ActorOverlayProfile(StrEnum):
+    default = "default"
+
+
+class CreateActorOverlayCommand(ApplicationModel):
+    media_id: MediaId
+    generation_id: IndexGenerationId
+    cluster_id: str = Field(min_length=1)
+    profile: ActorOverlayProfile = ActorOverlayProfile.default
+
+
+class SnippetProfile(StrEnum):
+    source = "source"
+    compatible_mp4 = "compatible_mp4"
+
+
+class CreateSnippetCommand(ApplicationModel):
+    media_id: MediaId
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+    profile: SnippetProfile = SnippetProfile.compatible_mp4
+
+    def model_post_init(self, _context: Any) -> None:
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
 
 
 class IndexStatus(ApplicationModel):
@@ -191,14 +296,16 @@ class IndexStatus(ApplicationModel):
     state: str = Field(min_length=1)
     stage: str = Field(min_length=1)
     message: str = Field(min_length=1)
-    repository_root: Path
-    index_directory: Path
-    updated_at: str | None = None
-    current: int | None = Field(default=None, ge=0)
-    total: int | None = Field(default=None, ge=0)
-    video: Mapping[str, Any] | None = None
-    summary: Mapping[str, Any] | None = None
-    error: str | None = None
+    updated_at: AwareDatetime | None = None
+    summary: "IndexStatusSummary | None" = None
+
+
+class IndexStatusSummary(ApplicationModel):
+    index_schema_version: int = Field(ge=1)
+    snapshot_id: IndexSnapshotId
+    media_count: int = Field(ge=0)
+    media_ids: tuple[MediaId, ...] = ()
+    modalities: tuple[str, ...] = ()
 
 
 class SearchCommand(ApplicationModel):
@@ -209,7 +316,7 @@ class SearchCommand(ApplicationModel):
 
 class PrepareModelsCommand(ApplicationModel):
     modalities: tuple[str, ...]
-    capability_options: Mapping[str, Mapping[str, Any]] = Field(
+    capability_options: Mapping[str, Mapping[str, JsonValue]] = Field(
         default_factory=dict
     )
 
@@ -227,4 +334,4 @@ class DependencyCheckResult(ApplicationModel):
 class PrepareModelsResult(ApplicationModel):
     prepared: tuple[str, ...]
     modalities: tuple[str, ...]
-    runtime: Mapping[str, Any]
+    runtime: RuntimeProfile

@@ -19,6 +19,10 @@ from vidxp.runtime import ModelRuntime
 from vidxp.settings import VidXPSettings
 
 
+MEDIA_ID = "123456781234423481234567890abcde"
+GENERATION_ID = "223456781234423481234567890abcde"
+
+
 class FakeStorage:
     def __init__(self, rows):
         self.rows = rows
@@ -29,7 +33,7 @@ class FakeStorage:
         return list(self.rows)
 
 
-def dialogue_row(source_id, distance, video_id="video-1"):
+def dialogue_row(source_id, distance, video_id=MEDIA_ID):
     return {
         "source_id": source_id,
         "raw_distance": distance,
@@ -38,6 +42,7 @@ def dialogue_row(source_id, distance, video_id="video-1"):
             "split": "test",
             "run_id": "run-1",
             "video_id": video_id,
+            "generation_id": GENERATION_ID,
             "source_id": source_id,
             "start": 1.0,
             "end": 2.0,
@@ -80,7 +85,7 @@ class SearchTests(unittest.TestCase):
                 config=self.config,
                 runtime=self.runtime,
                 top_k=3,
-                video_id="video-1",
+                video_id=MEDIA_ID,
                 query_id="query-7",
                 storage=storage,
             )
@@ -96,8 +101,12 @@ class SearchTests(unittest.TestCase):
         self.assertEqual([hit.rank for hit in result.hits], [1, 2, 3])
         self.assertEqual(result.hits[0].raw_distance, 0.1)
         self.assertEqual(result.hits[0].score, -0.1)
+        self.assertEqual(
+            result.hits[0].metadata,
+            {"text": "fresh bread", "phrase_id": 3},
+        )
         self.assertEqual(storage.calls[0][2]["top_k"], 3)
-        self.assertEqual(storage.calls[0][2]["video_id"], "video-1")
+        self.assertEqual(storage.calls[0][2]["video_id"], MEDIA_ID)
 
     def test_score_is_strictly_monotonic_and_not_a_probability(self):
         self.assertGreater(distance_to_score(0.1), distance_to_score(0.2))

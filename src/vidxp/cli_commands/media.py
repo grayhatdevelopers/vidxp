@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Annotated
+
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from vidxp.application_models import ImportMediaCommand, ListMediaCommand
+from vidxp.cli_support import (
+    OutputFormat,
+    effective_output_format,
+    emit_json,
+    state_from_context,
+)
+
+
+app = typer.Typer(no_args_is_help=True, help="Import and inspect local media.")
+
+
+@app.command("import")
+def import_media(
+    ctx: typer.Context,
+    path: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+            help="Local video file to copy into managed storage.",
+        ),
+    ],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Validate and register a local video, returning its stable media ID."""
+
+    state = state_from_context(ctx)
+    result = state.service.import_media(ImportMediaCommand(path=path))
+    payload = result.model_dump(mode="json")
+    if effective_output_format(state, json_output) == OutputFormat.json:
+        emit_json(payload)
+    else:
+        typer.secho(
+            f"Imported {result.original_filename} as {result.media_id}",
+            fg=typer.colors.GREEN,
+        )
+
+
+@app.command("list")
+def list_media(
+    ctx: typer.Context,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", min=1, max=100),
+    ] = 100,
+    cursor: Annotated[
+        str | None,
+        typer.Option("--cursor", help="Cursor returned by the previous page."),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """List ready media assets in the selected repository."""
+
+    state = state_from_context(ctx)
+    page = state.service.list_media(
+        ListMediaCommand(page_size=limit, cursor=cursor)
+    )
+    assets = page.items
+    payload = page.model_dump(mode="json")
+    if effective_output_format(state, json_output) == OutputFormat.json:
+        emit_json(payload)
+        return
+    table = Table(title="Media")
+    table.add_column("ID")
+    table.add_column("Filename")
+    table.add_column("Duration", justify="right")
+    table.add_column("Size", justify="right")
+    for asset in assets:
+        table.add_row(
+            asset.media_id,
+            asset.original_filename,
+            f"{asset.duration_seconds:.3f}s",
+            f"{asset.byte_size:,}",
+        )
+    Console().print(table)

@@ -17,7 +17,7 @@ from vidxp.core.contracts import (
     INDEX_SCHEMA_VERSION,
     MANIFEST_SCHEMA_VERSION,
 )
-from vidxp.core.identifiers import Identifier, Sha256, Uuid4Hex
+from vidxp.core.identifiers import Identifier, IndexGenerationId, Sha256
 
 
 class _GenerationManifestModel(BaseModel):
@@ -60,7 +60,7 @@ class CompletedGenerationManifest(_GenerationManifestModel):
     dataset: Identifier
     split: Identifier
     run_id: Identifier
-    generation_id: Uuid4Hex
+    generation_id: IndexGenerationId
     state: Literal["complete"]
     created_at: AwareDatetime
     updated_at: AwareDatetime

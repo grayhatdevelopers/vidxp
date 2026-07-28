@@ -16,8 +16,7 @@ _start_lock = Lock()
 
 
 def _run_indexing(
-    path: str,
-    source_name: str,
+    media_id: str,
     cancel_event,
     settings_payload: Mapping[str, Any],
     modalities: tuple[str, ...],
@@ -26,9 +25,8 @@ def _run_indexing(
         VidXPSettings.model_validate(settings_payload)
     ).create_index(
         CreateIndexCommand(
-            path=path,
+            media_id=media_id,
             modalities=modalities,
-            source_name=source_name,
         ),
         cancellation=CancellationToken(cancel_event),
     )
@@ -41,8 +39,7 @@ def indexing_in_progress(service: VidXPApplication) -> bool:
 
 
 def start_indexing(
-    path: str,
-    source_name: str,
+    media_id: str,
     service: VidXPApplication,
     *,
     modalities: tuple[str, ...],
@@ -58,8 +55,7 @@ def start_indexing(
         _process = context.Process(
             target=_run_indexing,
             args=(
-                path,
-                source_name,
+                media_id,
                 _cancel_event,
                 service.settings.model_dump(mode="python"),
                 modalities,

@@ -12,6 +12,10 @@ from vidxp.core.contracts import (
 from vidxp.capabilities.schemas import SearchHit, SearchResult
 
 
+MEDIA_ID = "123456781234423481234567890abcde"
+GENERATION_ID = "223456781234423481234567890abcde"
+
+
 class ContractTests(unittest.TestCase):
     def test_stable_source_ids_escape_delimiters_without_collisions(self):
         first = stable_source_id("run:a", "video", "scene", "1")
@@ -28,7 +32,7 @@ class ContractTests(unittest.TestCase):
             "video",
             "scene",
             "1",
-            generation_id="generation-1",
+            generation_id=GENERATION_ID,
         )
         self.assertNotEqual(first, scoped)
         self.assertEqual(scoped.count(":"), 4)
@@ -136,7 +140,9 @@ class ContractTests(unittest.TestCase):
     def test_result_contract_serializes_complete_ranked_hits(self):
         hit = SearchHit(
             rank=1,
-            video_id="video-1",
+            media_id=MEDIA_ID,
+            video_id=MEDIA_ID,
+            generation_id=GENERATION_ID,
             start=1.0,
             end=2.0,
             score=-0.2,
@@ -152,7 +158,7 @@ class ContractTests(unittest.TestCase):
             hits=(hit,),
         )
 
-        self.assertEqual(result.to_prediction()["q1"][0]["video_id"], "video-1")
+        self.assertEqual(result.to_prediction()["q1"][0]["video_id"], MEDIA_ID)
         self.assertEqual(result.to_dict()["hits"][0]["raw_distance"], 0.2)
 
     def test_cancellation_is_cooperative(self):

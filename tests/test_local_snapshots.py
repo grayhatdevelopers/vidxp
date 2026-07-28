@@ -276,6 +276,7 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
             self.repository.layout,
         )
         build = IndexConfig.local(
+            video_id="b" * 64,
             enabled_modalities=("scene",),
             collection_names={"scene": "scene"},
             storage_directory=self.repository.indexes,
@@ -303,10 +304,6 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
                     return_value=storage,
                 ),
                 patch(
-                    "vidxp.infrastructure.local_index.source_checksum",
-                    return_value="b" * 64,
-                ),
-                patch(
                     "vidxp.infrastructure.local_index.index_video",
                     side_effect=fail_index,
                 ),
@@ -318,6 +315,7 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
                     progress=None,
                     cancellation=None,
                     source_name=None,
+                    source_checksum="b" * 64,
                 )
 
             self.assertEqual(
@@ -450,6 +448,7 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
             self.repository.layout,
         )
         build = IndexConfig.local(
+            video_id="b" * 64,
             enabled_modalities=("scene",),
             collection_names={"scene": "scene"},
             storage_directory=self.repository.indexes,
@@ -479,10 +478,6 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
                 return_value=storage,
             ),
             patch(
-                "vidxp.infrastructure.local_index.source_checksum",
-                return_value="b" * 64,
-            ),
-            patch(
                 "vidxp.infrastructure.local_index.index_video",
                 side_effect=complete_index,
             ),
@@ -494,6 +489,7 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
                 progress=None,
                 cancellation=cancellation,
                 source_name=None,
+                source_checksum="b" * 64,
             )
 
         self.assertEqual(

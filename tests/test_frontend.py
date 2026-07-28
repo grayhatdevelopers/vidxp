@@ -10,6 +10,10 @@ from vidxp.capabilities.schemas import SearchHit, SearchResult
 from vidxp.settings import VidXPSettings
 
 
+MEDIA_ID = "123456781234423481234567890abcde"
+GENERATION_ID = "223456781234423481234567890abcde"
+
+
 class UploadedVideo:
     name = "video.mp4"
 
@@ -63,7 +67,7 @@ class FrontendTests(unittest.TestCase):
         create.assert_called_once()
         self.assertEqual(settings, expected)
 
-    def test_uploaded_video_identity_controls_search_readiness(self):
+    def test_media_identity_controls_search_readiness(self):
         with TemporaryDirectory() as directory:
             service = self.service(Path(directory))
             with patch.object(
@@ -71,17 +75,16 @@ class FrontendTests(unittest.TestCase):
                 "_configured_service",
                 return_value=service,
             ):
-                uploaded = UploadedVideo(b"video")
                 matching = {
                     "state": "ready",
-                    "video": {"sha256": frontend._video_hash(uploaded)},
+                    "summary": {"media_ids": [MEDIA_ID]},
                 }
                 stale = {
                     "state": "ready",
-                    "video": {"sha256": "different"},
+                    "summary": {"media_ids": []},
                 }
-                self.assertTrue(frontend._is_search_ready(matching, uploaded))
-                self.assertFalse(frontend._is_search_ready(stale, uploaded))
+                self.assertTrue(frontend._is_search_ready(matching, MEDIA_ID))
+                self.assertFalse(frontend._is_search_ready(stale, MEDIA_ID))
 
     def test_available_modalities_use_application_dependency_commands(self):
         with TemporaryDirectory() as directory:
@@ -113,8 +116,6 @@ class FrontendTests(unittest.TestCase):
                 state="ready",
                 stage="complete",
                 message="ready",
-                repository_root=root,
-                index_directory=root / "indexes",
             )
             service.search.return_value = SearchResult(
                 query_id="scene:1",
@@ -123,7 +124,9 @@ class FrontendTests(unittest.TestCase):
                 hits=(
                     SearchHit(
                         rank=1,
-                        video_id="video-1",
+                        media_id=MEDIA_ID,
+                        video_id=MEDIA_ID,
+                        generation_id=GENERATION_ID,
                         start=12.5,
                         end=13.0,
                         score=-0.1,

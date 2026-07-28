@@ -13,15 +13,6 @@ Identifier: TypeAlias = Annotated[
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
     ),
 ]
-RepositoryId: TypeAlias = Identifier
-MediaId: TypeAlias = Identifier
-VideoId: TypeAlias = Identifier
-IndexGenerationId: TypeAlias = Identifier
-IndexSnapshotId: TypeAlias = Identifier
-JobId: TypeAlias = Identifier
-ArtifactId: TypeAlias = Identifier
-
-
 def _require_uuid4_hex(value: str) -> str:
     identifier = UUID(hex=value)
     if identifier.version != 4 or identifier.hex != value:
@@ -38,3 +29,20 @@ Sha256: TypeAlias = Annotated[
     str,
     StringConstraints(pattern=r"^[0-9a-f]{64}$"),
 ]
+MimeType: TypeAlias = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=3,
+        max_length=127,
+        pattern=r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$",
+    ),
+]
+
+RepositoryId: TypeAlias = Identifier
+MediaId: TypeAlias = Uuid4Hex
+VideoId: TypeAlias = MediaId
+IndexGenerationId: TypeAlias = Uuid4Hex
+IndexSnapshotId: TypeAlias = Uuid4Hex
+JobId: TypeAlias = Identifier
+ArtifactId: TypeAlias = Uuid4Hex

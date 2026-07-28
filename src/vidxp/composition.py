@@ -12,6 +12,15 @@ from vidxp.infrastructure.local_index import (
     LOCAL_INDEX_RUNTIME_CHECKS,
     LocalIndexBackend,
 )
+from vidxp.infrastructure.local_artifacts import (
+    FFmpegSnippetRenderer,
+    LocalActorRenderer,
+    LocalArtifactStore,
+)
+from vidxp.infrastructure.local_catalog import LocalCatalog
+from vidxp.infrastructure.local_media import FFprobeMediaProbe, LocalMediaStore
+from vidxp.artifact_service import ArtifactService
+from vidxp.media_service import MediaService
 from vidxp.runtime import ModelRuntime, RuntimeBackendUnavailableError
 from vidxp.repositories import (
     RepositoryConfig,
@@ -57,12 +66,38 @@ def create_application(
             "The requested runtime backend is unavailable.",
         ) from exc
     backend = LocalIndexBackend(registry, runtime, active_settings.layout)
+    active_settings.layout.ensure_local_directories()
+    catalog = LocalCatalog(active_settings.layout.catalog)
+    media = MediaService(
+        settings=active_settings,
+        catalog=catalog,
+        store=LocalMediaStore(
+            active_settings.layout.media,
+            max_bytes=active_settings.max_local_import_bytes,
+        ),
+        probe=FFprobeMediaProbe(active_settings.ffprobe_executable),
+    )
+    artifacts = ArtifactService(
+        catalog=catalog,
+        store=LocalArtifactStore(active_settings.layout.artifacts),
+        media=media,
+        probe=FFprobeMediaProbe(active_settings.ffprobe_executable),
+        actor_renderer=LocalActorRenderer(),
+        snippet_renderer=FFmpegSnippetRenderer(
+            active_settings.ffmpeg_executable
+        ),
+        max_snippet_duration_seconds=(
+            active_settings.max_snippet_duration_seconds
+        ),
+    )
     return VidXPApplication(
         settings=active_settings,
         layout=active_settings.layout,
         registry=registry,
         runtime=runtime,
         index_backend=backend,
+        media_service=media,
+        artifact_service=artifacts,
     )
 
 

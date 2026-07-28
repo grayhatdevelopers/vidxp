@@ -42,6 +42,18 @@ class VidXPSettings(BaseSettings):
         le=256,
     )
     minimum_available_memory_mb: int = Field(default=1024, ge=0)
+    max_local_import_bytes: int = Field(
+        default=50 * 1024 * 1024 * 1024,
+        gt=0,
+    )
+    max_snippet_duration_seconds: float = Field(
+        default=300,
+        gt=0,
+        le=3600,
+    )
+    trusted_local_import_roots: tuple[Path, ...] = ()
+    ffprobe_executable: str = Field(default="ffprobe", min_length=1)
+    ffmpeg_executable: str = Field(default="ffmpeg", min_length=1)
     external_capabilities: bool = False
     capability_allowlist: tuple[str, ...] = ()
 
@@ -74,6 +86,16 @@ class VidXPSettings(BaseSettings):
                 "DISTRIBUTION:ENTRY_POINT."
             )
         return cleaned
+
+    @field_validator("trusted_local_import_roots")
+    @classmethod
+    def _clean_import_roots(
+        cls,
+        values: tuple[Path, ...],
+    ) -> tuple[Path, ...]:
+        return tuple(
+            dict.fromkeys(path.expanduser() for path in values)
+        )
 
     @model_validator(mode="after")
     def _require_explicit_server_backend(self) -> "VidXPSettings":

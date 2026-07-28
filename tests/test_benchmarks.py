@@ -26,10 +26,16 @@ from vidxp.benchmarks.hirest import (
 from vidxp.capabilities.schemas import SearchHit
 
 
+MEDIA_ID = "123456781234423481234567890abcde"
+GENERATION_ID = "223456781234423481234567890abcde"
+
+
 def scene_hit(chunk, score):
     return SearchHit(
         rank=chunk + 1,
-        video_id="video",
+        media_id=MEDIA_ID,
+        video_id=MEDIA_ID,
+        generation_id=GENERATION_ID,
         start=chunk * 5.0,
         end=chunk * 5.0 + 1.0,
         score=score,
@@ -43,7 +49,9 @@ def scene_hit(chunk, score):
 def timed_hit(start, end, score, rank=1):
     return SearchHit(
         rank=rank,
-        video_id="video",
+        media_id=MEDIA_ID,
+        video_id=MEDIA_ID,
+        generation_id=GENERATION_ID,
         start=start,
         end=end,
         score=score,

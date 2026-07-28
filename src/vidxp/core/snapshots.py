@@ -11,7 +11,12 @@ from pydantic import (
     model_validator,
 )
 
-from vidxp.core.identifiers import Identifier, Sha256, Uuid4Hex
+from vidxp.core.identifiers import (
+    Identifier,
+    IndexGenerationId,
+    IndexSnapshotId,
+    Sha256,
+)
 
 
 INDEX_SNAPSHOT_SCHEMA_VERSION = 1
@@ -27,7 +32,7 @@ class _SnapshotModel(BaseModel):
 
 
 class GenerationReference(_SnapshotModel):
-    generation_id: Uuid4Hex
+    generation_id: IndexGenerationId
     media_id: Identifier
     manifest_sha256: Sha256
     input_sha256: Sha256
@@ -51,7 +56,7 @@ class IndexSnapshot(_SnapshotModel):
     schema_version: Literal[INDEX_SNAPSHOT_SCHEMA_VERSION] = (
         INDEX_SNAPSHOT_SCHEMA_VERSION
     )
-    snapshot_id: Uuid4Hex
+    snapshot_id: IndexSnapshotId
     created_at: AwareDatetime
     config_fingerprint: Sha256
     configuration: dict[str, JsonValue]
@@ -75,6 +80,6 @@ class ActiveSnapshotPointer(_SnapshotModel):
     schema_version: Literal[ACTIVE_SNAPSHOT_POINTER_SCHEMA_VERSION] = (
         ACTIVE_SNAPSHOT_POINTER_SCHEMA_VERSION
     )
-    snapshot_id: Uuid4Hex
+    snapshot_id: IndexSnapshotId
     snapshot_sha256: Sha256
     updated_at: AwareDatetime

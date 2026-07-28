@@ -19,6 +19,14 @@ class RepositoryLayout(BaseModel):
         return self.root / "media"
 
     @property
+    def catalog(self) -> Path:
+        return self.root / "catalog.sqlite3"
+
+    @property
+    def media_objects(self) -> Path:
+        return self.media / "objects"
+
+    @property
     def indexes(self) -> Path:
         return self.root / "indexes"
 
@@ -49,6 +57,10 @@ class RepositoryLayout(BaseModel):
     @property
     def artifacts(self) -> Path:
         return self.root / "artifacts"
+
+    @property
+    def artifact_objects(self) -> Path:
+        return self.artifacts / "objects"
 
     @property
     def local_workflows(self) -> Path:

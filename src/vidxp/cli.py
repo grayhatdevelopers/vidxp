@@ -10,8 +10,10 @@ import typer
 
 from vidxp import __version__
 from vidxp.application_models import ApplicationError
-from vidxp.capabilities.actor.cli import app as actor_app
+from vidxp.cli_commands.actors import app as actor_app
 from vidxp.cli_commands.index import app as index_app
+from vidxp.cli_commands.media import app as media_app
+from vidxp.cli_commands.artifacts import app as artifacts_app
 from vidxp.cli_commands.repositories import app as repositories_app
 from vidxp.cli_commands.runtime import doctor, prepare, ui
 from vidxp.cli_commands.search import search
@@ -25,6 +27,8 @@ app = typer.Typer(
     help="Index and search video with installable capabilities.",
 )
 app.add_typer(index_app, name="index")
+app.add_typer(media_app, name="media")
+app.add_typer(artifacts_app, name="artifacts")
 app.command("search")(search)
 app.add_typer(repositories_app, name="repositories")
 app.add_typer(actor_app, name="actors")

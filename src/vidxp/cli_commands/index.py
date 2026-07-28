@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Annotated, Iterable
 
 import typer
@@ -24,9 +23,8 @@ app = typer.Typer(no_args_is_help=True, help="Manage a local video index.")
 
 def create_index(
     state: CLIState,
-    path: Path,
+    media_id: str,
     *,
-    media_id: str | None,
     modalities: Iterable[str],
     frame_stride: int,
     capability_options: dict[str, dict],
@@ -37,7 +35,6 @@ def create_index(
     with IndexProgress(show_progress) as progress:
         result = state.service.create_index(
             CreateIndexCommand(
-                path=path,
                 media_id=media_id,
                 modalities=tuple(modalities),
                 frame_stride=frame_stride,
@@ -45,7 +42,7 @@ def create_index(
             ),
             progress_callback=progress.update,
         )
-        summary = dict(result.summary)
+        summary = result.model_dump(mode="json")
     if state.output_format == OutputFormat.json:
         emit_json(summary)
     else:
@@ -60,15 +57,9 @@ def create_index(
 @app.command("create")
 def index_create(
     ctx: typer.Context,
-    path: Annotated[
-        Path,
-        typer.Argument(
-            exists=True,
-            dir_okay=False,
-            readable=True,
-            resolve_path=True,
-            help="Local video file to index.",
-        ),
+    media_id: Annotated[
+        str,
+        typer.Argument(help="Registered media identifier to index."),
     ],
     modalities: Annotated[
         list[str] | None,
@@ -76,15 +67,6 @@ def index_create(
             "--modality",
             "-m",
             help="Modality to index; repeat to select more than one.",
-        ),
-    ] = None,
-    media_id: Annotated[
-        str | None,
-        typer.Option(
-            "--media-id",
-            help=(
-                "Stable media identifier. Defaults to the input content hash."
-            ),
         ),
     ] = None,
     frame_stride: Annotated[
@@ -111,7 +93,6 @@ def index_create(
     state = state_from_context(ctx)
     create_index(
         state,
-        path,
         media_id=media_id,
         modalities=selected_modalities(
             modalities,
@@ -191,7 +172,6 @@ def index_clear(
     cleared = state.service.clear_index()
     payload = {
         "cleared": cleared,
-        "index_directory": str(state.service.index_directory),
     }
     if effective_output_format(state, json_output) == OutputFormat.json:
         emit_json(payload)

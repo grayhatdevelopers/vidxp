@@ -1,6 +1,7 @@
 import json
 import os
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
@@ -14,13 +15,20 @@ from vidxp.application_models import (
     DependencyCheckResult,
     IndexResult,
     IndexStatus,
+    MediaAsset,
     PrepareModelsResult,
     RemoveIndexCommand,
     SearchCommand,
 )
+from vidxp.core.media import MediaState, MediaStream
 from vidxp.capabilities.registry import create_capability_registry
 from vidxp.capabilities.schemas import SearchResult
 from vidxp.repositories import RepositoryConfig, RepositoryRegistry
+
+
+MEDIA_ID = "123456781234423481234567890abcde"
+GENERATION_ID = "223456781234423481234567890abcde"
+SNAPSHOT_ID = "323456781234423481234567890abcde"
 
 
 class CliTests(unittest.TestCase):
@@ -55,7 +63,15 @@ class CliTests(unittest.TestCase):
     def test_grouped_commands_are_exposed(self):
         result = self.invoke(["--help"])
         self.assertEqual(result.exit_code, 0, result.output)
-        for command in ("index", "search", "actors", "doctor", "prepare"):
+        for command in (
+            "media",
+            "index",
+            "search",
+            "actors",
+            "artifacts",
+            "doctor",
+            "prepare",
+        ):
             self.assertIn(command, result.output)
 
     def test_search_constructs_shared_command(self):
@@ -80,61 +96,76 @@ class CliTests(unittest.TestCase):
         self.assertEqual(json.loads(result.output)["query"], "yellow taxi")
 
     def test_index_constructs_shared_command(self):
-        with TemporaryDirectory() as directory:
-            video = Path(directory) / "video.mp4"
-            video.write_bytes(b"video")
-            self.service.create_index.return_value = IndexResult(
-                summary={"scene_frames": 1}
-            )
+        self.service.create_index.return_value = IndexResult(
+            media_id=MEDIA_ID,
+            generation_id=GENERATION_ID,
+            snapshot_id=SNAPSHOT_ID,
+            active_media_count=1,
+            record_counts={"scene": 1},
+        )
 
-            result = self.invoke(
-                [
-                    "--format",
-                    "json",
-                    "index",
-                    "create",
-                    str(video),
-                    "--modality",
-                    "scene",
-                    "--frame-stride",
-                    "5",
-                ]
-            )
+        result = self.invoke(
+            [
+                "--format",
+                "json",
+                "index",
+                "create",
+                MEDIA_ID,
+                "--modality",
+                "scene",
+                "--frame-stride",
+                "5",
+            ]
+        )
 
         self.assertEqual(result.exit_code, 0, result.output)
         command = self.service.create_index.call_args.args[0]
         self.assertIsInstance(command, CreateIndexCommand)
         self.assertEqual(command.modalities, ("scene",))
         self.assertEqual(command.frame_stride, 5)
-        self.assertIsNone(command.media_id)
+        self.assertEqual(command.media_id, MEDIA_ID)
 
-    def test_media_id_and_remove_use_shared_commands(self):
+    def test_remove_uses_shared_media_id_command(self):
+        self.service.remove_from_index.return_value = True
+        removed = self.invoke(["index", "remove", MEDIA_ID, "--json"])
+        self.assertEqual(removed.exit_code, 0, removed.output)
+        self.service.remove_from_index.assert_called_once_with(
+            RemoveIndexCommand(media_id=MEDIA_ID)
+        )
+
+    def test_media_import_uses_the_local_import_command(self):
+        self.service.import_media.return_value = MediaAsset(
+            schema_version=1,
+            media_id=MEDIA_ID,
+            video_id=MEDIA_ID,
+            original_filename="video.mp4",
+            sha256="1" * 64,
+            byte_size=5,
+            detected_mime_type="video/mp4",
+            container="mp4",
+            duration_seconds=1,
+            streams=(
+                MediaStream(
+                    index=0,
+                    kind="video",
+                    codec="h264",
+                    width=1,
+                    height=1,
+                ),
+            ),
+            state=MediaState.ready,
+            created_at=datetime.now(timezone.utc),
+        )
         with TemporaryDirectory() as directory:
             video = Path(directory) / "video.mp4"
             video.write_bytes(b"video")
-            self.service.create_index.return_value = IndexResult(summary={})
-            created = self.invoke(
-                [
-                    "--format",
-                    "json",
-                    "index",
-                    "create",
-                    str(video),
-                    "--media-id",
-                    "episode-1",
-                ]
-            )
+            result = self.invoke(["media", "import", str(video), "--json"])
 
-        self.assertEqual(created.exit_code, 0, created.output)
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(json.loads(result.output)["media_id"], MEDIA_ID)
         self.assertEqual(
-            self.service.create_index.call_args.args[0].media_id,
-            "episode-1",
-        )
-        self.service.remove_from_index.return_value = True
-        removed = self.invoke(["index", "remove", "episode-1", "--json"])
-        self.assertEqual(removed.exit_code, 0, removed.output)
-        self.service.remove_from_index.assert_called_once_with(
-            RemoveIndexCommand(media_id="episode-1")
+            self.service.import_media.call_args.args[0].path,
+            video.resolve(),
         )
 
     def test_status_serializes_shared_model(self):
@@ -143,8 +174,6 @@ class CliTests(unittest.TestCase):
             state="missing",
             stage="status",
             message="No index.",
-            repository_root=Path("repo"),
-            index_directory=Path("repo/indexes"),
         )
 
         result = self.invoke(["index", "status", "--json"])
@@ -161,7 +190,11 @@ class CliTests(unittest.TestCase):
         self.service.prepare_models.return_value = PrepareModelsResult(
             prepared=("scene-model",),
             modalities=("scene",),
-            runtime={"torch_device": "cpu"},
+            runtime={
+                "requested": "cpu",
+                "torch_device": "cpu",
+                "transcription_device": "cpu",
+            },
         )
 
         checked = self.invoke(

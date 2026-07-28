@@ -544,7 +544,6 @@ def index_video(
                 "split": active_config.split,
                 "run_id": active_config.run_id,
                 "video_id": video_id,
-                "configuration": active_config.to_dict(),
             }
         )
         report(

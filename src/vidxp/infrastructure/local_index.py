@@ -16,10 +16,9 @@ from vidxp.core.contracts import (
     CancellationToken,
     IndexConfig,
     IndexSchemaError,
-    VideoSource,
 )
 from vidxp.core.indexing_common import ProgressCallback
-from vidxp.core.manifest import MANIFEST_FILE, ManifestStore, source_checksum
+from vidxp.core.manifest import MANIFEST_FILE, ManifestStore
 from vidxp.core.runner import index_video
 from vidxp.core.storage import IndexStorage, SnapshotScopedIndexStore
 from vidxp.infrastructure.local_snapshots import LocalSnapshotRepository
@@ -103,15 +102,13 @@ class LocalIndexBackend:
         progress: ProgressCallback | None,
         cancellation: CancellationToken | None,
         source_name: str | None,
+        source_checksum: str,
     ) -> dict[str, Any]:
         self._require_index_directory(config.index_directory)
         repository = self.repository
-        source = VideoSource(
-            path=path,
-            source_name=source_name or path.name,
-        )
-        input_sha256 = source_checksum(source)
-        media_id = config.video_id or input_sha256
+        media_id = config.video_id
+        if media_id is None:
+            raise ValueError("A catalog media_id is required for indexing.")
         generation_id = repository.new_generation_id()
         generation_directory = repository.generation_directory(generation_id)
         build_config = replace(
@@ -153,11 +150,11 @@ class LocalIndexBackend:
                     runtime=self.runtime,
                 )
                 with IndexStorage(build_config) as storage:
-                    summary = index_video(
+                    index_video(
                         str(path),
                         progress_callback=progress,
                         source_name=source_name,
-                        checksum=input_sha256,
+                        checksum=source_checksum,
                         config=build_config,
                         cancellation=cancellation,
                         storage=storage,
@@ -197,16 +194,13 @@ class LocalIndexBackend:
                     pass
                 raise
 
-        result = dict(summary)
-        result.update(
-            {
-                "media_id": media_id,
-                "generation_id": generation_id,
-                "snapshot_id": snapshot.snapshot_id,
-                "active_media_count": len(snapshot.generations),
-            }
-        )
-        return result
+        return {
+            "media_id": media_id,
+            "generation_id": generation_id,
+            "snapshot_id": snapshot.snapshot_id,
+            "active_media_count": len(snapshot.generations),
+            "record_counts": record_counts,
+        }
 
     @staticmethod
     def _validate_generation_records(
