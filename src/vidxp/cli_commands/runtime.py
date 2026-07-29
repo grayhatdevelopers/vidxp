@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated
 
 import typer
@@ -40,19 +41,30 @@ def doctor(
     """Validate selected indexing dependencies without downloading models."""
 
     state = state_from_context(ctx)
-    available = tuple(
-        capability.name for capability in state.service.list_capabilities()
-    )
+    capabilities = tuple(state.service.list_capabilities())
+    available = tuple(capability.name for capability in capabilities)
     selected = (
         available
         if modalities is None
         else parse_modalities(",".join(modalities), available)
     )
+    output_format = effective_output_format(state, json_output)
+
+    def show_check_start(capability: str, name: str) -> None:
+        timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
+        typer.secho(
+            f"[{timestamp}] Checking [{capability}] {name}...",
+            fg=typer.colors.BLUE,
+        )
+
     result = state.service.check_dependencies(
-        DependencyCheckCommand(modalities=selected)
+        DependencyCheckCommand(modalities=selected),
+        on_runtime_check_start=(
+            show_check_start if output_format == OutputFormat.rich else None
+        ),
     )
     payload = result.model_dump(mode="json")
-    if effective_output_format(state, json_output) == OutputFormat.json:
+    if output_format == OutputFormat.json:
         emit_json(payload)
     else:
         for check in payload["checks"]:
@@ -72,9 +84,50 @@ def doctor(
                     f"FAILED [{owner}] {check['name']}: {check['error']}",
                     fg=typer.colors.RED,
                 )
+        python_failures = tuple(
+            check
+            for check in result.checks
+            if not check.ok and check.capability != "media"
+        )
+        if python_failures:
+            selected_capabilities = {
+                capability.name: capability for capability in capabilities
+            }
+            builtin_extras = tuple(
+                dict.fromkeys(
+                    selected_capabilities[name].install_extra
+                    for name in selected
+                    if selected_capabilities[name].provenance is None
+                )
+            )
+            external_distributions = tuple(
+                dict.fromkeys(
+                    selected_capabilities[name].provenance.distribution
+                    for name in selected
+                    if selected_capabilities[name].provenance is not None
+                )
+            )
+            if builtin_extras:
+                typer.secho(
+                    "REMEDY: In a source checkout, rerun uv sync with all "
+                    "profiles you use and include --extra local-worker.",
+                    fg=typer.colors.YELLOW,
+                )
+                typer.secho(
+                    'Published package: pip install "vidxp['
+                    + ",".join(builtin_extras)
+                    + ']"',
+                    fg=typer.colors.YELLOW,
+                )
+            if external_distributions:
+                typer.secho(
+                    "External capabilities: pip install "
+                    + " ".join(external_distributions),
+                    fg=typer.colors.YELLOW,
+                )
     if not result.ok:
         raise typer.Exit(1)
-    if effective_output_format(state, json_output) == OutputFormat.rich:
+    if output_format == OutputFormat.rich:
         typer.secho(
             "Selected VidXP dependencies are available.",
             fg=typer.colors.GREEN,

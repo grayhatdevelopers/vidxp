@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from importlib.metadata import EntryPoint, entry_points
 from threading import RLock
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
@@ -348,6 +348,7 @@ class CapabilityRegistry:
         *,
         source: VideoSource | None = None,
         include_runtime_checks: bool = True,
+        on_runtime_check_start: Callable[[str, str], None] | None = None,
     ) -> tuple[CapabilityDependencyCheck, ...]:
         selected = self.validate_names(names)
         checks = []
@@ -366,6 +367,11 @@ class CapabilityRegistry:
                 selected,
                 source=source,
             ):
+                if on_runtime_check_start is not None:
+                    on_runtime_check_start(
+                        binding.capability,
+                        binding.check.label,
+                    )
                 result = binding.check.inspect()
                 checks.append(
                     CapabilityDependencyCheck(

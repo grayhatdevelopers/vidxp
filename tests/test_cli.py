@@ -12,8 +12,10 @@ from vidxp import cli
 from vidxp.composition import LocalApplicationContext, settings_for_repository
 from vidxp.settings import ApplicationMode
 from vidxp.application_models import (
+    CapabilityDependencyCheck,
     CreateIndexCommand,
     DependencyCheckResult,
+    DependencyKind,
     FusedSearchResult,
     FusionProvenance,
     IndexJobResult,
@@ -365,6 +367,53 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         command = self.service.check_dependencies.call_args.args[0]
         self.assertEqual(command.modalities, ("dialogue", "scene"))
+
+    def test_doctor_streams_timestamped_runtime_check_progress(self):
+        def check_dependencies(_command, *, on_runtime_check_start):
+            on_runtime_check_start("scene", "Torch import")
+            return DependencyCheckResult(
+                ok=True,
+                modalities=("scene",),
+                checks=(),
+            )
+
+        self.service.check_dependencies.side_effect = check_dependencies
+
+        result = self.invoke(["doctor", "--modalities", "scene"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertRegex(
+            result.output,
+            r"\[\d{2}:\d{2}:\d{2}\] Checking \[scene\] Torch import\.\.\.",
+        )
+
+    def test_doctor_prints_install_remedy_for_python_failures(self):
+        self.service.check_dependencies.return_value = DependencyCheckResult(
+            ok=False,
+            modalities=("scene",),
+            checks=(
+                CapabilityDependencyCheck(
+                    capability="scene",
+                    kind=DependencyKind.distribution,
+                    name="transformers",
+                    requirement="transformers>=5,<6",
+                    ok=False,
+                    error="distribution is not installed",
+                ),
+            ),
+        )
+
+        result = self.invoke(["doctor", "--modalities", "scene"])
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn(
+            "include --extra local-worker",
+            result.output,
+        )
+        self.assertIn(
+            'pip install "vidxp[scene]"',
+            result.output,
+        )
 
     def test_invalid_capability_is_a_cli_parameter_error(self):
         result = self.invoke(

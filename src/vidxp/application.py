@@ -245,15 +245,20 @@ class VidXPApplication(ControlPlaneApplication):
     def check_dependencies(
         self,
         command: DependencyCheckCommand,
+        *,
+        on_runtime_check_start: Callable[[str, str], None] | None = None,
     ) -> DependencyCheckResult:
         selected = self.registry.validate_names(command.modalities)
         checks = (
             *self.registry.dependency_checks(
                 selected,
                 include_runtime_checks=command.include_runtime_checks,
+                on_runtime_check_start=on_runtime_check_start,
             ),
             *(
-                self._media_runtime_checks()
+                self._media_runtime_checks(
+                    on_runtime_check_start=on_runtime_check_start
+                )
                 if command.include_runtime_checks
                 else ()
             ),
@@ -266,6 +271,8 @@ class VidXPApplication(ControlPlaneApplication):
 
     def _media_runtime_checks(
         self,
+        *,
+        on_runtime_check_start: Callable[[str, str], None] | None = None,
     ) -> tuple[CapabilityDependencyCheck, ...]:
         checks = []
         for name, executable, setting in (
@@ -280,6 +287,8 @@ class VidXPApplication(ControlPlaneApplication):
                 "VIDXP_FFPROBE_EXECUTABLE",
             ),
         ):
+            if on_runtime_check_start is not None:
+                on_runtime_check_start("media", name)
             resolved = which(executable)
             checks.append(
                 CapabilityDependencyCheck(

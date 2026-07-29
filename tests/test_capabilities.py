@@ -389,6 +389,12 @@ class CapabilityTests(unittest.TestCase):
         self.assertIs(raised.exception.__cause__, failure)
 
     def test_external_runtime_check_errors_are_sanitized_with_provenance(self):
+        events = []
+
+        def fail_runtime_check():
+            events.append("inspect")
+            raise RuntimeError("token=do-not-leak")
+
         provenance = CapabilityProvenance(
             distribution="acme-capabilities",
             entry_point="ocr",
@@ -416,19 +422,21 @@ class CapabilityTests(unittest.TestCase):
                 runtime_checks=(
                     RuntimeCheck(
                         label="ocr runtime",
-                        check=Mock(
-                            side_effect=RuntimeError(
-                                "token=do-not-leak"
-                            )
-                        ),
+                        check=fail_runtime_check,
                     ),
                 ),
             ),
             provenance=provenance,
         )
 
-        check = CapabilityRegistry((plugin,)).dependency_checks(("ocr",))[0]
+        check = CapabilityRegistry((plugin,)).dependency_checks(
+            ("ocr",),
+            on_runtime_check_start=lambda capability, name: events.append(
+                (capability, name)
+            ),
+        )[0]
 
+        self.assertEqual(events, [("ocr", "ocr runtime"), "inspect"])
         self.assertEqual(check.error, "runtime check failed")
         self.assertNotIn("do-not-leak", check.model_dump_json())
         self.assertEqual(check.provenance, provenance)
