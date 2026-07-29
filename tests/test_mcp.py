@@ -191,6 +191,26 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             ["--repository", "library"],
         )
 
+    def test_stdio_check_performs_handshake_and_tool_probe(self):
+        output = io.StringIO()
+        with TemporaryDirectory() as directory:
+            with contextlib.redirect_stdout(output):
+                mcp_main(
+                    [
+                        "--check",
+                        "--data-dir",
+                        directory,
+                        "--device",
+                        "cpu",
+                    ]
+                )
+
+        rendered = output.getvalue()
+        self.assertIn("OK VidXP MCP", rendered)
+        self.assertIn("Index state: missing", rendered)
+        self.assertIn("Tools: 14", rendered)
+        self.assertIn("get_index_status", rendered)
+
     async def test_server_info_exposes_vidxp_branding(self):
         with TemporaryDirectory() as directory:
             server = create_mcp_server(

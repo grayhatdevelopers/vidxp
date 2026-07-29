@@ -172,8 +172,9 @@ registered metadata, and every ranked result identifies its source `media_id`.
 
 Each successful `vidxp index create` adds a new video to the active snapshot or
 replaces that video's existing generation; it does not discard the other
-indexed videos. `vidxp index status` lists active membership, and
-`vidxp index remove <media-id>` removes one item. Use separate named
+indexed videos. `vidxp index list` joins active membership to registered
+filenames and metadata, while `vidxp index status` shows the underlying snapshot
+state. `vidxp index remove <media-id>` removes one item. Use separate named
 repositories when you need separate searchable video collections.
 
 Index only selected capabilities or adjust the time-based scene sampling rate:
@@ -321,11 +322,19 @@ vidxp mcp-config
 ```
 
 `vidxp mcp-config` prints import-ready `mcpServers` JSON containing the resolved
-absolute `vidxp-mcp` executable path and `--repository default`. Copy and paste
-the whole object into LobeHub's **Import JSON config** action or another stdio
-MCP client. `vidxp-mcp --print-config` emits the same JSON, while
+absolute `vidxp-mcp` executable path and `--repository default`. Copy the whole
+object into a stdio MCP client's JSON configuration. `vidxp-mcp --print-config`
+emits the same JSON, while
 `vidxp-mcp --help` includes a ready-to-copy example alongside all server
 options.
+
+Verify the installed MCP adapter, selected repository, protocol handshake, tool
+discovery, and a read-only index-status tool call without leaving a server
+running:
+
+```bash
+vidxp-mcp --check --repository default
+```
 
 The stdio process owns its local repository/job lifecycle and exits cleanly when
 the client closes the transport.

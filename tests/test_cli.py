@@ -22,6 +22,7 @@ from vidxp.application_models import (
     IndexJobResult,
     IndexResult,
     IndexStatus,
+    IndexStatusSummary,
     Job,
     JobKind,
     JobQueue,
@@ -413,6 +414,53 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(json.loads(result.output)["state"], "missing")
+
+    def test_index_list_joins_active_ids_to_registered_metadata(self):
+        self.service.index_status.return_value = IndexStatus(
+            schema_version=1,
+            state="ready",
+            stage="status",
+            message="Index ready.",
+            summary=IndexStatusSummary(
+                index_schema_version=1,
+                snapshot_id=SNAPSHOT_ID,
+                media_count=1,
+                media_ids=(MEDIA_ID,),
+                modalities=("scene", "dialogue"),
+            ),
+        )
+        self.service.get_media.return_value = MediaAsset(
+            schema_version=1,
+            media_id=MEDIA_ID,
+            video_id=MEDIA_ID,
+            original_filename="video.mp4",
+            sha256="1" * 64,
+            byte_size=5,
+            detected_mime_type="video/mp4",
+            container="mp4",
+            duration_seconds=1,
+            streams=(
+                MediaStream(
+                    index=0,
+                    kind="video",
+                    codec="h264",
+                    width=1,
+                    height=1,
+                ),
+            ),
+            state=MediaState.ready,
+            created_at=datetime.now(timezone.utc),
+        )
+
+        result = self.invoke(["index", "list", "--json"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.service.get_media.assert_called_once_with(MEDIA_ID)
+        payload = json.loads(result.output)
+        self.assertEqual(payload["snapshot_id"], SNAPSHOT_ID)
+        self.assertEqual(payload["media_count"], 1)
+        self.assertEqual(payload["modalities"], ["scene", "dialogue"])
+        self.assertEqual(payload["items"][0]["original_filename"], "video.mp4")
 
     def test_doctor_and_prepare_use_shared_models(self):
         self.service.check_dependencies.return_value = DependencyCheckResult(

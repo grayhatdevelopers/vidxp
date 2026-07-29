@@ -147,10 +147,13 @@ vidxp mcp-config
 ```
 
 The second command prints a complete `mcpServers` JSON object with the resolved
-absolute executable path. Copy and paste that object into LobeHub's
-**Import JSON config** action or another stdio MCP client. To select a named
-collection, run `vidxp mcp-config --repository <name>`. The equivalent
-standalone commands are `vidxp-mcp --print-config` and `vidxp-mcp --help`.
+absolute executable path. Copy that object into a stdio MCP client's JSON
+configuration. To select a named collection, run
+`vidxp mcp-config --repository <name>`. The equivalent standalone commands are
+`vidxp-mcp --print-config` and `vidxp-mcp --help`.
+Run `vidxp-mcp --check --repository <name>` to perform a local protocol
+handshake, discover the tools, call the read-only index-status tool, print the
+resolved data/index paths, and exit.
 
 ## Verify providers and model readiness without downloading
 

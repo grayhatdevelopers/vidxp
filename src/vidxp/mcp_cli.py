@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import shutil
@@ -68,13 +69,33 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "COPY/PASTE MCP CLIENT CONFIG\n"
-            "Import this JSON into LobeHub or another stdio MCP client:\n\n"
+            "Import this JSON into any stdio MCP client:\n\n"
             f"{example}\n\n"
             "Run `vidxp-mcp --print-config` to print only the JSON. Add the "
             "same repository/data/device options to either command when you "
             "need non-default values."
         ),
     )
+
+
+async def _inspect_server(server: Any) -> dict[str, Any]:
+    from mcp.client import Client
+
+    async with Client(server) as client:
+        discovered = await client.list_tools()
+        status = await client.call_tool("get_index_status", {})
+        if status.is_error:
+            raise RuntimeError("The MCP index-status probe failed.")
+        server_info = client.server_info
+    return {
+        "server": server_info.title or server_info.name,
+        "version": server_info.version,
+        "tools": [tool.name for tool in discovered.tools],
+        "index_state": (status.structured_content or {}).get(
+            "state",
+            "unknown",
+        ),
+    }
 
 
 def main(arguments: Sequence[str] | None = None) -> None:
@@ -100,10 +121,19 @@ def main(arguments: Sequence[str] | None = None) -> None:
         "--device",
         help="Override the selected repository runtime device.",
     )
-    parser.add_argument(
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument(
         "--print-config",
         action="store_true",
         help="Print import-ready MCP client JSON and exit.",
+    )
+    actions.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Perform a local MCP handshake and tool probe, print the resolved "
+            "runtime paths, and exit."
+        ),
     )
     options = parser.parse_args(arguments)
     if options.print_config:
@@ -142,14 +172,27 @@ def main(arguments: Sequence[str] | None = None) -> None:
     )
     context = create_control_plane_application(local.settings)
     try:
-        create_mcp_server(
+        server = create_mcp_server(
             context,
             default_principal=Principal(
                 subject="local",
                 client_id="stdio",
                 scopes=frozenset({"*"}),
             ),
-        ).run("stdio")
+        )
+        if options.check:
+            result = asyncio.run(_inspect_server(server))
+            print(f"OK {result['server']} MCP {result['version']}")
+            print(f"Repository: {local.repository.name}")
+            print(f"Data: {context.settings.data_dir}")
+            print(f"Index: {context.settings.repository_root}")
+            print(f"Index state: {result['index_state']}")
+            print(
+                f"Tools: {len(result['tools'])} "
+                f"({', '.join(result['tools'])})"
+            )
+            return
+        server.run("stdio")
     finally:
         context.close()
         local.close()

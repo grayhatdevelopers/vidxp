@@ -3,8 +3,13 @@ from __future__ import annotations
 from typing import Annotated, Iterable
 
 import typer
+from rich.console import Console
+from rich.table import Table
 
-from vidxp.application_models import CreateIndexCommand, RemoveIndexCommand
+from vidxp.application_models import (
+    CreateIndexCommand,
+    RemoveIndexCommand,
+)
 from vidxp.cli_support import (
     CLIState,
     IndexProgress,
@@ -194,6 +199,70 @@ def index_status(
         state.service.index_status().model_dump(mode="json"),
         output_format=effective_output_format(state, json_output),
     )
+
+
+@app.command("list")
+def index_list(
+    ctx: typer.Context,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """List registered metadata for media in the active index snapshot."""
+
+    state = state_from_context(ctx)
+    status = state.service.index_status()
+    summary = status.summary
+    assets = (
+        ()
+        if summary is None
+        else tuple(
+            state.service.get_media(media_id)
+            for media_id in summary.media_ids
+        )
+    )
+    payload = {
+        "state": status.state,
+        "message": status.message,
+        "snapshot_id": None if summary is None else summary.snapshot_id,
+        "media_count": 0 if summary is None else summary.media_count,
+        "media_ids_truncated": (
+            False if summary is None else summary.media_ids_truncated
+        ),
+        "modalities": [] if summary is None else list(summary.modalities),
+        "items": [asset.model_dump(mode="json") for asset in assets],
+    }
+    if effective_output_format(state, json_output) == OutputFormat.json:
+        emit_json(payload)
+        return
+    if summary is None:
+        typer.echo(status.message)
+        return
+
+    table = Table(title="Active index media")
+    table.add_column("ID")
+    table.add_column("Filename")
+    table.add_column("Duration", justify="right")
+    table.add_column("Size", justify="right")
+    for asset in assets:
+        table.add_row(
+            asset.media_id,
+            asset.original_filename,
+            f"{asset.duration_seconds:.3f}s",
+            f"{asset.byte_size:,}",
+        )
+    Console().print(table)
+    typer.echo(
+        f"Snapshot {summary.snapshot_id}: {summary.media_count} media item(s); "
+        f"modalities: {', '.join(summary.modalities) or 'none'}."
+    )
+    if summary.media_ids_truncated:
+        typer.secho(
+            "The active snapshot is larger than this status page; some media "
+            "items are not shown.",
+            fg=typer.colors.YELLOW,
+        )
 
 
 @app.command("clear")
