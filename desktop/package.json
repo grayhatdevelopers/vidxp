@@ -1,0 +1,16 @@
+{
+  "name": "vidxp-desktop",
+  "private": true,
+  "version": "0.2.1-beta.1",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "sidecar:windows": "powershell -ExecutionPolicy Bypass -File scripts/fetch-uv.ps1",
+    "sidecar:unix": "bash scripts/fetch-uv.sh"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4"
+  }
+}

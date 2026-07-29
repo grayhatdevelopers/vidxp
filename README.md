@@ -23,7 +23,8 @@
     <li>From the command line</li>
     <li>Through its browser interface</li>
     <li>As an indexing and retrieval layer inside another application</li>
-    <li>Through the HTTP API or MCP, with a desktop interface on the roadmap</li>
+    <li>Through the HTTP API or MCP</li>
+    <li>Through the desktop bootstrap currently in release validation</li>
   </ul>
 
 <p align="center">

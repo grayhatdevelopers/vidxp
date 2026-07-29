@@ -42,6 +42,15 @@ class LocalWorkerReady(BaseModel):
     fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
+class LocalWorkerStopRequest(BaseModel):
+    """Repository-local request for the supervised worker to shut down."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    pid: int = Field(gt=0)
+    application_version: str = Field(min_length=1)
+
+
 def workflow_database_url(settings: VidXPSettings) -> str:
     if settings.database_url is not None:
         database_url = settings.database_url

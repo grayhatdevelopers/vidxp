@@ -1,0 +1,27 @@
+[package]
+name = "vidxp-desktop"
+version = "0.2.1-beta.1"
+description = "A thin desktop installer and supervisor for VidXP"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+
+[lib]
+name = "vidxp_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+serde_json = "1.0.151"
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+atomic-write-file = "0.3.0"
+hex = "0.4.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+tauri = { version = "2.11.5", features = [] }
+tauri-plugin-log = "2.9.0"
+tauri-plugin-shell = "2.3.5"
+tauri-plugin-single-instance = "2.4.3"
+wait-timeout = "0.2.1"

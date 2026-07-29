@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "desktop_version": "0.2.1-beta.1",
+  "package_name": "vidxp",
+  "package_version": "0.2.1b1",
+  "package_index": "https://pypi.org/simple",
+  "python_version": "3.14.6",
+  "uv_version": "0.12.0",
+  "always_install_extras": [
+    "frontend"
+  ],
+  "capabilities": {
+    "dialogue": {
+      "extra": "dialogue",
+      "modality": "dialogue",
+      "label": "Dialogue search"
+    },
+    "scene": {
+      "extra": "scene",
+      "modality": "scene",
+      "label": "Visual scene search"
+    },
+    "actor": {
+      "extra": "actor",
+      "modality": "actor",
+      "label": "Actor recognition"
+    }
+  },
+  "media_runtime": {
+    "strategy": "system",
+    "executables": [
+      "ffmpeg",
+      "ffprobe"
+    ],
+    "reason": "Bundled FFmpeg builds remain disabled until their target-specific codec licenses and provenance are recorded."
+  }
+}

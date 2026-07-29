@@ -1,8 +1,10 @@
+import json
 import unittest
 from pathlib import Path
 import tomllib
 
 from packaging.requirements import Requirement
+from packaging.version import Version
 
 from vidxp.capabilities.registry import create_capability_registry
 
@@ -180,6 +182,65 @@ class PackagingTests(unittest.TestCase):
             compose,
         )
         self.assertNotIn("ollama pull", compose.lower())
+
+    def test_desktop_manifest_matches_published_package_contract(self):
+        project = tomllib.loads(
+            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (ROOT / "desktop" / "runtime-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        package = json.loads(
+            (ROOT / "desktop" / "package.json").read_text(encoding="utf-8")
+        )
+        tauri = json.loads(
+            (
+                ROOT
+                / "desktop"
+                / "src-tauri"
+                / "tauri.conf.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(manifest["package_name"], project["project"]["name"])
+        self.assertEqual(
+            Version(manifest["package_version"]),
+            Version(project["project"]["version"]),
+        )
+        self.assertEqual(package["version"], manifest["desktop_version"])
+        self.assertEqual(tauri["version"], manifest["desktop_version"])
+        self.assertEqual(
+            Version(manifest["desktop_version"]),
+            Version(manifest["package_version"]),
+        )
+        self.assertEqual(manifest["python_version"], "3.14.6")
+        self.assertEqual(manifest["uv_version"], "0.12.0")
+        sidecars = json.loads(
+            (ROOT / "desktop" / "sidecars.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(sidecars["uv_version"], manifest["uv_version"])
+        self.assertEqual(
+            set(sidecars["targets"]),
+            {
+                "x86_64-pc-windows-msvc",
+                "aarch64-apple-darwin",
+                "x86_64-unknown-linux-gnu",
+            },
+        )
+        for target in sidecars["targets"].values():
+            self.assertRegex(target["sha256"], r"^[a-f0-9]{64}$")
+        self.assertEqual(manifest["always_install_extras"], ["frontend"])
+        dynamic_extras = project["tool"]["setuptools"]["dynamic"][
+            "optional-dependencies"
+        ]
+        for capability in manifest["capabilities"].values():
+            self.assertIn(capability["extra"], dynamic_extras)
+        self.assertEqual(
+            manifest["media_runtime"]["strategy"],
+            "system",
+        )
 
 
 if __name__ == "__main__":

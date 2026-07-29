@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -12,12 +11,14 @@ from time import monotonic, sleep
 from filelock import FileLock, Timeout
 from pydantic import ValidationError
 
+from vidxp.core.manifest import write_json_atomic
 from vidxp.infrastructure.local_files import durable_unlink
 from vidxp.settings import VidXPSettings
 from vidxp.workflow_runtime import (
     LOCAL_WORKER_BOOTSTRAP_ENV,
     LocalWorkerBootstrap,
     LocalWorkerReady,
+    LocalWorkerStopRequest,
     local_worker_bootstrap,
     local_executor_id,
     workflow_application_version,
@@ -60,6 +61,9 @@ class LocalWorkerSupervisor:
         ready_path = (
             self.layout.local_workflows / f"worker-{version}.ready"
         )
+        stop_path = (
+            self.layout.local_workflows / f"worker-{version}.stop"
+        )
         start_lock = FileLock(
             self.layout.local_workflows / f"worker-{version}-start.lock"
         )
@@ -73,6 +77,7 @@ class LocalWorkerSupervisor:
             ):
                 return
             durable_unlink(ready_path, missing_ok=True)
+            durable_unlink(stop_path, missing_ok=True)
 
             command = [
                 sys.executable,
@@ -86,6 +91,8 @@ class LocalWorkerSupervisor:
                 str(worker_lock_path.resolve()),
                 "--ready-file",
                 str(ready_path.resolve()),
+                "--stop-file",
+                str(stop_path.resolve()),
                 "--log-file",
                 str(self._worker_log(version).resolve()),
             ]
@@ -192,6 +199,9 @@ class LocalWorkerSupervisor:
         ready_path = (
             self.layout.local_workflows / f"worker-{version}.ready"
         )
+        stop_path = (
+            self.layout.local_workflows / f"worker-{version}.stop"
+        )
         try:
             worker_lock.acquire(timeout=0)
         except Timeout:
@@ -200,8 +210,14 @@ class LocalWorkerSupervisor:
                 raise RuntimeError(
                     "The running local worker has an invalid version identity."
                 )
-            os.kill(ready.pid, signal.SIGTERM)
-            deadline = monotonic() + 5
+            write_json_atomic(
+                stop_path,
+                LocalWorkerStopRequest(
+                    pid=ready.pid,
+                    application_version=version,
+                ).model_dump(mode="json"),
+            )
+            deadline = monotonic() + 35
             while monotonic() < deadline:
                 try:
                     worker_lock.acquire(timeout=0)
@@ -211,6 +227,7 @@ class LocalWorkerSupervisor:
                 else:
                     worker_lock.release()
                     durable_unlink(ready_path, missing_ok=True)
+                    durable_unlink(stop_path, missing_ok=True)
                     return True
             raise RuntimeError(
                 "The local background worker did not stop in time."
@@ -218,6 +235,7 @@ class LocalWorkerSupervisor:
         else:
             worker_lock.release()
             durable_unlink(ready_path, missing_ok=True)
+            durable_unlink(stop_path, missing_ok=True)
             return False
 
     @staticmethod

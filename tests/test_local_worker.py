@@ -5,6 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event
 from time import sleep
 from unittest.mock import Mock, patch
 
@@ -19,11 +20,12 @@ from vidxp.infrastructure.dbos_jobs import DBOSJobBackend
 from vidxp.infrastructure.local_worker import LocalWorkerSupervisor
 from vidxp.job_service import JobService
 from vidxp.settings import LocalExecutionSettings, VidXPSettings
-from vidxp.workflow_worker import _configure_logging
+from vidxp.workflow_worker import _configure_logging, run_worker
 from vidxp.workflow_runtime import (
     LOCAL_WORKER_BOOTSTRAP_ENV,
     LocalWorkerBootstrap,
     LocalWorkerReady,
+    LocalWorkerStopRequest,
     local_worker_bootstrap,
     local_executor_id,
     workflow_application_version,
@@ -318,15 +320,40 @@ class LocalWorkerSupervisorTests(unittest.TestCase):
                     return_value=worker_lock,
                 ),
                 patch(
-                    "vidxp.infrastructure.local_worker.os.kill"
-                ) as kill,
+                    "vidxp.infrastructure.local_worker.write_json_atomic"
+                ) as write_stop,
             ):
                 stopped = supervisor.stop()
 
         self.assertTrue(stopped)
-        kill.assert_called_once()
-        self.assertEqual(kill.call_args.args[0], 123)
+        write_stop.assert_called_once()
+        self.assertEqual(write_stop.call_args.args[1]["pid"], 123)
+        self.assertEqual(
+            write_stop.call_args.args[1]["application_version"],
+            workflow_application_version(),
+        )
         self.assertFalse(ready_path.exists())
+
+    def test_worker_destroys_dbos_after_stop_request(self):
+        stop_event = Event()
+        stop_event.set()
+
+        with (
+            patch("vidxp.workflow_worker.DBOS") as dbos,
+            patch("vidxp.workflow_worker.VidXPWorkerWorkflows"),
+            patch("vidxp.workflow_worker.create_application"),
+        ):
+            run_worker(
+                settings=VidXPSettings(runtime_backend="cpu"),
+                database_url="sqlite:///test.db",
+                executor_id="test",
+                role="cpu",
+                stop_event=stop_event,
+            )
+
+        dbos.destroy.assert_called_once_with(
+            workflow_completion_timeout_sec=30
+        )
 
     def test_worker_uses_live_rotating_log_handler(self):
         with TemporaryDirectory() as directory:
@@ -361,6 +388,7 @@ class LocalWorkerSupervisorTests(unittest.TestCase):
             database_url = workflow_database_url(settings)
             ready_path = settings.layout.local_workflows / "test.ready"
             lock_path = settings.layout.local_workflows / "test.lock"
+            stop_path = settings.layout.local_workflows / "test.stop"
             supervisor = LocalWorkerSupervisor(settings)
             bootstrap = local_worker_bootstrap(settings)
             bootstrap_path = supervisor._write_bootstrap(bootstrap)
@@ -383,6 +411,8 @@ class LocalWorkerSupervisorTests(unittest.TestCase):
                     str(lock_path),
                     "--ready-file",
                     str(ready_path),
+                    "--stop-file",
+                    str(stop_path),
                     "--log-file",
                     str(settings.layout.local_workflows / "test.log"),
                 ],
@@ -419,9 +449,15 @@ class LocalWorkerSupervisorTests(unittest.TestCase):
             finally:
                 if backend is not None:
                     backend.close()
-                process.terminate()
+                stop_path.write_text(
+                    LocalWorkerStopRequest(
+                        pid=process.pid,
+                        application_version=workflow_application_version(),
+                    ).model_dump_json(),
+                    encoding="utf-8",
+                )
                 try:
-                    process.wait(timeout=5)
+                    process.wait(timeout=35)
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)

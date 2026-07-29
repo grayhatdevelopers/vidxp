@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark light">
+    <title>VidXP Setup</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <p class="eyebrow">VIDXP DESKTOP</p>
+        <h1>Set up local video search.</h1>
+        <p class="lede">
+          Choose only the capabilities you need. VidXP installs into an isolated
+          application runtime and keeps your media and indexes in your user data.
+        </p>
+      </section>
+
+      <section class="panel" aria-labelledby="capability-title">
+        <h2 id="capability-title">Capabilities</h2>
+        <div id="capabilities" class="capabilities"></div>
+        <label class="prepare-option">
+          <input id="prepare-models" type="checkbox">
+          <span>
+            <strong>Prepare models now</strong>
+            <small>Downloads model assets after the package passes its checks.</small>
+          </span>
+        </label>
+      </section>
+
+      <section class="panel status-panel" aria-live="polite">
+        <div>
+          <p class="eyebrow">STATUS</p>
+          <p id="status">Checking the local runtime…</p>
+        </div>
+        <div class="actions">
+          <button id="install" type="button">Install selected</button>
+          <button id="launch" class="secondary" type="button" disabled>
+            Open VidXP
+          </button>
+        </div>
+      </section>
+
+      <p class="footnote">
+        The first setup needs internet access. FFmpeg and ffprobe must currently
+        be available on this machine; setup verifies both before activation.
+      </p>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from threading import Event
@@ -22,6 +23,7 @@ from vidxp.workflow_runtime import (
     LOCAL_WORKER_BOOTSTRAP_ENV,
     LocalWorkerBootstrap,
     LocalWorkerReady,
+    LocalWorkerStopRequest,
     local_worker_bootstrap,
     server_executor_id,
     workflow_application_version,
@@ -40,6 +42,7 @@ def _arguments(values: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ordinal", type=int, default=0)
     parser.add_argument("--lock-file", type=Path)
     parser.add_argument("--ready-file", type=Path)
+    parser.add_argument("--stop-file", type=Path)
     parser.add_argument("--log-file", type=Path)
     return parser.parse_args(values)
 
@@ -93,6 +96,8 @@ def run_worker(
     executor_id: str,
     role: str,
     ready: Callable[[], None] | None = None,
+    stop_event: Event | None = None,
+    stop_file: Path | None = None,
 ) -> None:
     config: DBOSConfig = {
         "name": APPLICATION_NAME,
@@ -106,23 +111,40 @@ def run_worker(
         ),
     }
     DBOS(config=config)
-
-    VidXPWorkerWorkflows(create_application(settings))
-    roles = ("cpu", "gpu") if role == "all" else (role,)
-    queue_names = [
-        QUEUE_NAMES[queue_role]
-        for queue_role in (JobQueue(value) for value in roles)
-    ]
-    DBOS.listen_queues(queue_names)
-    DBOS.launch()
-    for queue_name in queue_names:
-        DBOS.register_queue(
-            queue_name,
-            worker_concurrency=1,
-        )
-    if ready is not None:
-        ready()
-    Event().wait()
+    try:
+        VidXPWorkerWorkflows(create_application(settings))
+        roles = ("cpu", "gpu") if role == "all" else (role,)
+        queue_names = [
+            QUEUE_NAMES[queue_role]
+            for queue_role in (JobQueue(value) for value in roles)
+        ]
+        DBOS.listen_queues(queue_names)
+        active_stop_event = stop_event or Event()
+        DBOS.launch()
+        for queue_name in queue_names:
+            DBOS.register_queue(
+                queue_name,
+                worker_concurrency=1,
+            )
+        if ready is not None:
+            ready()
+        while not active_stop_event.wait(0.25):
+            if stop_file is None or not stop_file.is_file():
+                continue
+            try:
+                request = LocalWorkerStopRequest.model_validate_json(
+                    stop_file.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+            if (
+                request.pid == os.getpid()
+                and request.application_version
+                == workflow_application_version()
+            ):
+                break
+    finally:
+        DBOS.destroy(workflow_completion_timeout_sec=30)
 
 
 def main(arguments: Sequence[str] | None = None) -> None:
@@ -160,12 +182,18 @@ def main(arguments: Sequence[str] | None = None) -> None:
         )
 
     if options.lock_file is None:
-        run_worker(
-            settings=settings,
-            database_url=database_url,
-            executor_id=executor_id,
-            role=role,
-        )
+        stop_event = Event()
+        previous_handlers = _install_shutdown_handlers(stop_event)
+        try:
+            run_worker(
+                settings=settings,
+                database_url=database_url,
+                executor_id=executor_id,
+                role=role,
+                stop_event=stop_event,
+            )
+        finally:
+            _restore_shutdown_handlers(previous_handlers)
         return
 
     lock = FileLock(options.lock_file)
@@ -188,18 +216,56 @@ def main(arguments: Sequence[str] | None = None) -> None:
             ).model_dump(mode="json"),
         )
 
-    with lock:
-        try:
-            run_worker(
-                settings=settings,
-                database_url=database_url,
-                executor_id=executor_id,
-                role=role,
-                ready=mark_ready,
-            )
-        finally:
-            if ready_file is not None:
-                durable_unlink(ready_file, missing_ok=True)
+    stop_event = Event()
+    previous_handlers = _install_shutdown_handlers(stop_event)
+    try:
+        with lock:
+            try:
+                run_worker(
+                    settings=settings,
+                    database_url=database_url,
+                    executor_id=executor_id,
+                    role=role,
+                    ready=mark_ready,
+                    stop_event=stop_event,
+                    stop_file=options.stop_file,
+                )
+            finally:
+                if ready_file is not None:
+                    durable_unlink(ready_file, missing_ok=True)
+                if options.stop_file is not None:
+                    durable_unlink(options.stop_file, missing_ok=True)
+    finally:
+        _restore_shutdown_handlers(previous_handlers)
+
+
+def _install_shutdown_handlers(
+    stop_event: Event,
+) -> dict[signal.Signals, signal.Handlers]:
+    previous_handlers = {}
+
+    def request_shutdown(
+        _signal_number: int,
+        _frame: object,
+    ) -> None:
+        stop_event.set()
+
+    for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        shutdown_signal = getattr(signal, signal_name, None)
+        if shutdown_signal is None:
+            continue
+        previous_handlers[shutdown_signal] = signal.signal(
+            shutdown_signal,
+            request_shutdown,
+        )
+    return previous_handlers
+
+
+def _restore_shutdown_handlers(
+    previous_handlers: dict[signal.Signals, signal.Handlers],
+) -> None:
+    for shutdown_signal, previous_handler in previous_handlers.items():
+        signal.signal(shutdown_signal, previous_handler)
 
 
 if __name__ == "__main__":
