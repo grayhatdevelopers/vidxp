@@ -488,7 +488,12 @@ def _render_search_result(result):
                 if job.progress is not None:
                     _render_progress(job.progress.model_dump(mode="json"))
                 else:
-                    st.markdown(f"⏳ {label.title()} is queued.")
+                    action = (
+                        "Starting"
+                        if job.state == JobState.queued
+                        else "Running"
+                    )
+                    st.markdown(f"⏳ {action} {label}...")
                 return
             if job.state != JobState.succeeded or job.result is None:
                 _forget_job(SEARCH_JOB_QUERY_PARAM)
@@ -608,7 +613,20 @@ def _render_search_result(result):
         return
 
     timestamp = result["timestamp"]
-    st.success(f"Best {search_type} match: {timestamp:.3f} seconds")
+    result_label = (
+        "Closest sampled scene"
+        if search_type == "scene"
+        else "Closest supporting evidence"
+        if search_type == "natural-language"
+        else f"Closest {search_type} match"
+    )
+    st.success(f"{result_label}: {timestamp:.1f} seconds")
+    if search_type == "scene":
+        st.caption(
+            "Scene search ranks sampled frames by visual similarity. "
+            "It does not identify the first occurrence and is not reliable "
+            "for counting people."
+        )
     st.video(
         str(resource.path),
         start_time=timestamp,
@@ -726,36 +744,45 @@ def _search_controls(ready, uploaded_video, available_modalities):
         )
         st.caption(message)
 
-    type_column, query_column = st.columns(
-        [0.35, 0.65],
-        gap="small",
-        vertical_alignment="bottom",
-    )
-    with type_column:
-        search_type = st.selectbox(
-            "Search type",
-            ["natural-language", *available_modalities],
-            disabled=not ready,
+    with st.form(
+        "video_search",
+        clear_on_submit=False,
+        enter_to_submit=True,
+        border=False,
+    ):
+        type_column, query_column = st.columns(
+            [0.35, 0.65],
+            gap="small",
+            vertical_alignment="bottom",
         )
-    with query_column:
-        query = st.text_input(
-            (
-                "Actor cluster ID"
-                if search_type == "actor"
-                else "Question"
-                if search_type == "natural-language"
-                else "Search query"
-            ),
-            placeholder=(
-                "For example: 1"
-                if search_type == "actor"
-                else "For example: What happens after the taxi arrives?"
-                if search_type == "natural-language"
-                else "For example: Chef makes pizza and cuts it up."
-            ),
-            disabled=not ready,
+        with type_column:
+            search_type = st.selectbox(
+                "Search type",
+                ["natural-language", *available_modalities],
+                disabled=not ready,
+            )
+        with query_column:
+            query = st.text_input(
+                (
+                    "Actor cluster ID"
+                    if search_type == "actor"
+                    else "Question"
+                    if search_type == "natural-language"
+                    else "Search query"
+                ),
+                placeholder=(
+                    "For example: 1"
+                    if search_type == "actor"
+                    else "For example: What happens after the taxi arrives?"
+                    if search_type == "natural-language"
+                    else "For example: Chef makes pizza and cuts it up."
+                ),
+                disabled=not ready,
+            )
+        clicked = st.form_submit_button(
+            "Search",
+            disabled=not ready or not query.strip(),
         )
-    clicked = st.button("Search", disabled=not ready or not query.strip())
     return clicked, search_type, query
 
 

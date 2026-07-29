@@ -312,6 +312,47 @@ class FrontendTests(unittest.TestCase):
         self.assertIsNone(selected)
         selectbox.assert_not_called()
 
+    def test_search_controls_use_an_enter_submittable_form(self):
+        with (
+            patch.object(
+                frontend.st,
+                "form",
+                return_value=nullcontext(),
+            ) as form,
+            patch.object(
+                frontend.st,
+                "columns",
+                return_value=(nullcontext(), nullcontext()),
+            ),
+            patch.object(
+                frontend.st,
+                "selectbox",
+                return_value="scene",
+            ),
+            patch.object(
+                frontend.st,
+                "text_input",
+                return_value="three people at the counter",
+            ),
+            patch.object(
+                frontend.st,
+                "form_submit_button",
+                return_value=True,
+            ) as submit,
+            patch.object(frontend.st, "subheader"),
+        ):
+            clicked, search_type, query = frontend._search_controls(
+                True,
+                None,
+                ("scene",),
+            )
+
+        self.assertTrue(clicked)
+        self.assertEqual(search_type, "scene")
+        self.assertEqual(query, "three people at the counter")
+        self.assertTrue(form.call_args.kwargs["enter_to_submit"])
+        submit.assert_called_once_with("Search", disabled=False)
+
     def test_indexing_submits_selected_scene_sample_rate(self):
         jobs = Mock()
         jobs.submit_index.return_value = SimpleNamespace(job_id="job-1")
@@ -497,6 +538,59 @@ class FrontendTests(unittest.TestCase):
             },
         )
         rerun.assert_called_once_with()
+
+    def test_queued_search_is_presented_as_starting(self):
+        job = Mock(state=JobState.queued, progress=None)
+
+        with patch.object(frontend.st, "markdown") as markdown:
+            self._render_job(
+                job,
+                {
+                    "type": "scene",
+                    "query": "three people at the counter",
+                    "job_id": "job-1",
+                },
+            )
+
+        markdown.assert_called_once_with("⏳ Starting scene search...")
+
+    def test_scene_result_describes_similarity_and_limitations(self):
+        service = Mock()
+        service.open_media_content.return_value = SimpleNamespace(
+            path=Path("video.mp4"),
+        )
+        with (
+            patch.object(
+                frontend,
+                "_configured_service",
+                return_value=service,
+            ),
+            patch.object(frontend.st, "success") as success,
+            patch.object(frontend.st, "caption") as caption,
+            patch.object(frontend.st, "video") as video,
+        ):
+            frontend._render_search_result(
+                {
+                    "type": "scene",
+                    "query": "three people at the counter",
+                    "timestamp": 24.024,
+                    "media_id": MEDIA_ID,
+                }
+            )
+
+        success.assert_called_once_with(
+            "Closest sampled scene: 24.0 seconds"
+        )
+        caption.assert_called_once_with(
+            "Scene search ranks sampled frames by visual similarity. "
+            "It does not identify the first occurrence and is not reliable "
+            "for counting people."
+        )
+        video.assert_called_once_with(
+            "video.mp4",
+            start_time=24.024,
+            width="stretch",
+        )
 
     def test_actor_poll_persists_unavailable_job_error(self):
         session_state, rerun = self._render_job(None)
