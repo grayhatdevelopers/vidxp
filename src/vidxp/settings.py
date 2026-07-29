@@ -4,13 +4,14 @@ import os
 import re
 from enum import StrEnum
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from platformdirs import user_cache_path
 from pydantic import (
+    BaseModel,
+    ConfigDict,
     Field,
-    HttpUrl,
     SecretStr,
-    TypeAdapter,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -30,9 +31,6 @@ class HttpAuthMode(StrEnum):
     none = "none"
     static = "static"
     oidc = "oidc"
-
-
-_HTTP_URL = TypeAdapter(HttpUrl)
 
 
 class VidXPSettings(BaseSettings):
@@ -214,12 +212,37 @@ class VidXPSettings(BaseSettings):
             return None
         if value != value.strip():
             raise ValueError(f"{info.field_name} must not contain whitespace.")
-        parsed = _HTTP_URL.validate_python(value)
+        if "\\" in value or any(
+            character.isspace()
+            or ord(character) < 32
+            or ord(character) == 127
+            for character in value
+        ):
+            raise ValueError(
+                f"{info.field_name} contains an unsafe URL character."
+            )
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+            raise ValueError(f"{info.field_name} must be an HTTP URL.")
+        try:
+            parsed.port
+        except ValueError as exc:
+            raise ValueError(
+                f"{info.field_name} contains an invalid port."
+            ) from exc
         if parsed.username is not None or parsed.password is not None:
             raise ValueError(f"{info.field_name} must not contain credentials.")
-        if parsed.fragment is not None:
+        if "#" in value:
             raise ValueError(f"{info.field_name} must not contain a fragment.")
-        if info.field_name == "http_oidc_issuer" and parsed.query is not None:
+        if parsed.scheme != "https" and parsed.hostname.lower() not in {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        }:
+            raise ValueError(
+                f"{info.field_name} must use HTTPS outside loopback."
+            )
+        if info.field_name == "http_oidc_issuer" and "?" in value:
             raise ValueError("http_oidc_issuer must not contain a query.")
         return value
 
@@ -314,3 +337,52 @@ class VidXPSettings(BaseSettings):
     @property
     def layout(self) -> RepositoryLayout:
         return RepositoryLayout(root=self.repository_root.expanduser())
+
+
+class LocalExecutionSettings(BaseModel):
+    """Non-secret settings allowed to cross into local execution processes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    repository_root: Path
+    runtime_backend: str
+    model_cache: Path
+    allow_model_downloads: bool
+    max_loaded_models: int
+    max_concurrent_indexing: int
+    max_concurrent_inference: int
+    workflow_poll_interval_seconds: float
+    cpu_thread_budget: int
+    minimum_available_memory_mb: int
+    max_local_import_bytes: int
+    max_snippet_duration_seconds: float
+    trusted_local_import_roots: tuple[Path, ...]
+    ffprobe_executable: str
+    ffmpeg_executable: str
+    external_capabilities: bool
+    capability_allowlist: tuple[str, ...]
+
+    @classmethod
+    def from_settings(
+        cls,
+        settings: VidXPSettings,
+    ) -> "LocalExecutionSettings":
+        return cls(
+            **settings.model_dump(
+                include=set(cls.model_fields),
+                mode="python",
+            )
+        )
+
+    def application_settings(self) -> VidXPSettings:
+        defaults = VidXPSettings.model_construct().model_dump(mode="python")
+        defaults.update(self.model_dump(mode="python"))
+        defaults["mode"] = ApplicationMode.local
+        defaults["workflow_database_url"] = None
+        defaults["http_auth_mode"] = HttpAuthMode.none
+        defaults["http_static_bearer_token"] = None
+        defaults["http_oidc_issuer"] = None
+        defaults["http_oidc_audience"] = None
+        defaults["http_oidc_jwks_url"] = None
+        defaults["http_required_scopes"] = ()
+        return VidXPSettings(**defaults)

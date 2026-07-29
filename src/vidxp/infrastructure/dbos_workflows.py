@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
 from time import monotonic
@@ -35,6 +36,7 @@ from vidxp.workflow_contracts import (
 _ARTIFACT_REQUEST = TypeAdapter(
     ActorOverlayJobRequest | SnippetJobRequest
 )
+LOGGER = logging.getLogger(__name__)
 
 
 class _DBOSCancellationEvent:
@@ -89,7 +91,7 @@ def _execution() -> ExecutionContext:
     )
 
 
-def _publish_error(exc: BaseException) -> None:
+def _publish_error(exc: Exception) -> None:
     if isinstance(exc, ApplicationError):
         error = exc.detail
     else:
@@ -108,9 +110,20 @@ def _step_boundary(
         return operation()
     except IndexCancelledError:
         raise
-    except BaseException as exc:
+    except Exception as exc:
+        if isinstance(exc, ApplicationError):
+            LOGGER.warning(
+                "VidXP workflow %s failed with %s.",
+                DBOS.workflow_id,
+                exc.detail.code,
+            )
+        else:
+            LOGGER.exception(
+                "VidXP workflow %s failed unexpectedly.",
+                DBOS.workflow_id,
+            )
         _publish_error(exc)
-        raise RuntimeError("VidXP job execution failed.") from None
+        raise RuntimeError("VidXP job execution failed.") from exc
 
 
 @DBOS.dbos_class(class_name=WORKFLOW_CLASS_NAME)

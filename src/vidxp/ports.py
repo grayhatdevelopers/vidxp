@@ -347,6 +347,8 @@ class IndexBackend(Protocol):
 class JobBackend(Protocol):
     """Durable lifecycle operations owned by the workflow engine."""
 
+    def start(self) -> None: ...
+
     def submit(
         self,
         request: JobRequest,
@@ -369,5 +371,7 @@ class JobBackend(Protocol):
     ) -> Job | None: ...
 
     def health(self) -> None: ...
+
+    def stop_worker(self) -> bool: ...
 
     def close(self) -> None: ...

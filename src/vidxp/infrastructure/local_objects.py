@@ -5,6 +5,8 @@ from pathlib import Path
 
 from vidxp.core.manifest import sha256_file
 from vidxp.infrastructure.local_files import (
+    durable_replace,
+    durable_unlink,
     prepare_managed_destination,
     resolve_managed_file,
 )
@@ -38,23 +40,23 @@ class LocalObjectStore:
         try:
             if destination.exists():
                 if sha256_file(destination) == checksum:
-                    source.unlink()
+                    durable_unlink(source)
                 elif replace_corrupt:
-                    source.replace(destination)
+                    durable_replace(source, destination)
                     published = True
                 else:
                     raise FileExistsError(
                         "The managed object destination already exists."
                     )
             else:
-                source.replace(destination)
+                durable_replace(source, destination)
                 published = True
             resolved = destination.resolve(strict=True)
             byte_size = resolved.stat().st_size
             return resolved, checksum, byte_size
         except BaseException:
             if created and published:
-                destination.unlink(missing_ok=True)
+                durable_unlink(destination, missing_ok=True)
             raise
 
     def verify(
@@ -72,7 +74,7 @@ class LocalObjectStore:
         return path
 
     def delete(self, storage_key: str) -> None:
-        self.resolve(storage_key).unlink()
+        durable_unlink(self.resolve(storage_key))
 
     def resolve(self, storage_key: str) -> Path:
         return resolve_managed_file(self.root, storage_key)

@@ -7,8 +7,8 @@ from unittest.mock import Mock, patch
 from vidxp.core.contracts import IndexConfig, VideoSource
 from vidxp.core.manifest import (
     ManifestStore,
-    _sync_parent_directory,
     source_checksums,
+    sync_parent_directory,
     write_json_atomic,
 )
 from vidxp.capabilities.registry import create_capability_registry
@@ -27,7 +27,7 @@ class ManifestIdentityTests(unittest.TestCase):
             ),
             patch("vidxp.core.manifest.os.close") as close,
         ):
-            _sync_parent_directory(Path("repository"))
+            sync_parent_directory(Path("repository"))
 
         close.assert_called_once_with(17)
 

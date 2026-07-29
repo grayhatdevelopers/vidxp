@@ -21,7 +21,6 @@ from vidxp.api_routes.dependencies import context
 from vidxp.composition import HttpApplicationContext, create_http_application
 from vidxp.settings import VidXPSettings
 
-
 def create_app(
     settings: VidXPSettings | None = None,
     *,
@@ -35,6 +34,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         try:
+            active_context.jobs.start()
             yield
         finally:
             if owns_context:

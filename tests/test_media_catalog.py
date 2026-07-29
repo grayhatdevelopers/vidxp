@@ -22,6 +22,7 @@ from vidxp.infrastructure.local_media import (
     LocalMediaStore,
 )
 from vidxp.infrastructure.local_files import prepare_managed_destination
+from vidxp.infrastructure.local_objects import LocalObjectStore
 
 
 MEDIA_ID = "123456781234423481234567890abcde"
@@ -173,6 +174,65 @@ class LocalMediaStoreTests(unittest.TestCase):
                         root,
                         "objects/junction/video.mp4",
                     )
+
+    def test_destination_syncs_each_new_directory_entry(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "media"
+            with patch(
+                "vidxp.infrastructure.local_files.sync_parent_directory"
+            ) as sync:
+                prepare_managed_destination(
+                    root,
+                    "objects/aa/video.mp4",
+                )
+
+        self.assertEqual(
+            [call.args[0] for call in sync.call_args_list],
+            [
+                root.parent,
+                root,
+                root / "objects",
+            ],
+        )
+
+    def test_failed_publication_rollback_syncs_parent(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "staged.mp4"
+            source.write_bytes(b"video")
+            store = LocalObjectStore(root / "objects")
+            destination = store.root / "aa" / "video.mp4"
+            destination.parent.mkdir(parents=True)
+            original_resolve = Path.resolve
+
+            def resolve(path, *args, **kwargs):
+                if path == destination:
+                    raise OSError("post-publication validation failed")
+                return original_resolve(path, *args, **kwargs)
+
+            with (
+                patch.object(Path, "resolve", resolve),
+                patch(
+                    "vidxp.infrastructure.local_files."
+                    "sync_parent_directory"
+                ) as sync,
+                self.assertRaisesRegex(
+                    OSError,
+                    "post-publication validation failed",
+                ),
+            ):
+                store.publish(
+                    source,
+                    "aa/video.mp4",
+                    expected_sha256=None,
+                    replace_corrupt=False,
+                )
+
+            self.assertFalse(destination.exists())
+            self.assertEqual(
+                [call.args[0] for call in sync.call_args_list],
+                [destination.parent, root, destination.parent],
+            )
 
     def test_publication_rejects_symlinked_parent(self):
         with TemporaryDirectory() as directory:

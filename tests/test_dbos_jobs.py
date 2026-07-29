@@ -122,6 +122,15 @@ class DBOSJobIntegrationTests(unittest.TestCase):
         self.assertEqual(page.items[0].job_id, submitted.job_id)
         self.application.create_index.assert_called_once()
 
+    def test_health_requires_owned_executor_health(self):
+        health_check = Mock(side_effect=RuntimeError("worker unavailable"))
+        self.backend.health_check = health_check
+
+        with self.assertRaisesRegex(RuntimeError, "worker unavailable"):
+            self.backend.health()
+
+        health_check.assert_called_once_with()
+
     def test_submission_idempotency_replays_only_the_same_request(self):
         command = CreateIndexCommand(
             media_id=MEDIA_ID,

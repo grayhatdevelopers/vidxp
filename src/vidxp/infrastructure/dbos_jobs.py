@@ -124,13 +124,20 @@ class DBOSJobBackend:
         system_database_url: str,
         application_version: str,
         before_access: Callable[[], None] | None = None,
+        health_check: Callable[[], None] | None = None,
+        stop_executor: Callable[[], bool] | None = None,
     ) -> None:
         self.client = DBOSClient(system_database_url=system_database_url)
         self.application_version = application_version
         self.before_access = before_access
+        self.health_check = health_check
+        self.stop_executor = stop_executor
 
     def close(self) -> None:
         self.client.destroy()
+
+    def start(self) -> None:
+        self._prepare_access()
 
     def submit(
         self,
@@ -261,8 +268,16 @@ class DBOSJobBackend:
         return self.get(retried_id)
 
     def health(self) -> None:
-        self._prepare_access()
+        if self.health_check is not None:
+            self.health_check()
         self.client.list_workflows(limit=1, load_input=False, load_output=False)
+
+    def stop_worker(self) -> bool:
+        if self.stop_executor is None:
+            raise RuntimeError(
+                "This workflow backend does not own a local worker."
+            )
+        return self.stop_executor()
 
     def _prepare_access(self) -> None:
         if self.before_access is not None:

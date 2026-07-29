@@ -22,7 +22,7 @@ from vidxp.application_models import (
 from vidxp.composition import create_application, create_job_service
 from vidxp.index_state import IndexNotReadyError
 from vidxp.job_service import JobService
-from vidxp.settings import VidXPSettings
+from vidxp.settings import LocalExecutionSettings, VidXPSettings
 
 
 LOGGER = logging.getLogger(__name__)
@@ -50,7 +50,9 @@ def _settings_from_arguments(
     )
     if parsed.vidxp_settings_json is None:
         return VidXPSettings()
-    return VidXPSettings.model_validate_json(parsed.vidxp_settings_json)
+    return LocalExecutionSettings.model_validate_json(
+        parsed.vidxp_settings_json
+    ).application_settings()
 
 
 INDEX_REQUESTED_KEY = "_vidxp_index_requested"
@@ -579,7 +581,7 @@ def main(
         application_arguments = [
             "--",
             "--vidxp-settings-json",
-            settings.model_dump_json(),
+            LocalExecutionSettings.from_settings(settings).model_dump_json(),
         ]
     sys.argv = [
         "streamlit",

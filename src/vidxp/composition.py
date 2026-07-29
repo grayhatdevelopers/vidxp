@@ -131,14 +131,21 @@ def create_application(
 def create_job_service(settings: VidXPSettings) -> JobService:
     settings.layout.ensure_local_directories()
     before_access = None
+    health_check = None
+    stop_executor = None
     if settings.mode != ApplicationMode.server:
-        before_access = LocalWorkerSupervisor(settings).ensure_running
+        supervisor = LocalWorkerSupervisor(settings)
+        before_access = supervisor.ensure_running
+        health_check = supervisor.health
+        stop_executor = supervisor.stop
     return JobService(
         settings=settings,
         backend=DBOSJobBackend(
             system_database_url=workflow_database_url(settings),
             application_version=workflow_application_version(),
             before_access=before_access,
+            health_check=health_check,
+            stop_executor=stop_executor,
         ),
     )
 

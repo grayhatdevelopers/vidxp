@@ -219,6 +219,64 @@ class AuthenticationTests(unittest.TestCase):
             "https://issuer.example",
         )
 
+    def test_oidc_settings_preserve_uppercase_scheme_for_exact_issuer(self):
+        settings = VidXPSettings(
+            runtime_backend="cpu",
+            http_auth_mode="oidc",
+            http_oidc_issuer="HTTPS://issuer.example",
+            http_oidc_audience="https://api.example",
+            http_oidc_jwks_url="https://issuer.example/jwks",
+            http_required_scopes=("vidxp.read",),
+        )
+
+        self.assertEqual(
+            settings.http_oidc_issuer,
+            "HTTPS://issuer.example",
+        )
+
+    def test_oidc_rejects_empty_query_and_fragment_delimiters(self):
+        for field, value in (
+            ("http_oidc_issuer", "https://issuer.example?"),
+            ("http_oidc_issuer", "https://issuer.example#"),
+            ("http_oidc_jwks_url", "https://issuer.example/jwks#"),
+        ):
+            values = {
+                "runtime_backend": "cpu",
+                "http_auth_mode": "oidc",
+                "http_oidc_issuer": "https://issuer.example",
+                "http_oidc_audience": "https://api.example",
+                "http_oidc_jwks_url": "https://issuer.example/jwks",
+                "http_required_scopes": ("vidxp.read",),
+                field: value,
+            }
+            with self.subTest(field=field, value=value):
+                with self.assertRaises(ValueError):
+                    VidXPSettings(**values)
+
+    def test_oidc_rejects_cleartext_non_loopback_metadata(self):
+        with self.assertRaisesRegex(ValueError, "must use HTTPS"):
+            VidXPSettings(
+                runtime_backend="cpu",
+                http_auth_mode="oidc",
+                http_oidc_issuer="http://issuer.example",
+                http_oidc_audience="https://api.example",
+                http_oidc_jwks_url="http://issuer.example/jwks",
+                http_required_scopes=("vidxp.read",),
+            )
+
+    def test_oidc_rejects_url_parser_disagreement_characters(self):
+        with self.assertRaisesRegex(ValueError, "unsafe URL character"):
+            VidXPSettings(
+                runtime_backend="cpu",
+                http_auth_mode="oidc",
+                http_oidc_issuer="http://localhost",
+                http_oidc_audience="https://api.example",
+                http_oidc_jwks_url=(
+                    "http://localhost\\@evil.example/jwks"
+                ),
+                http_required_scopes=("vidxp.read",),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

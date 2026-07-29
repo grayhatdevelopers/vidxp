@@ -7,7 +7,7 @@ from vidxp import frontend
 from vidxp.application_models import DependencyCheckResult, IndexStatus
 from vidxp.capabilities.registry import create_capability_registry
 from vidxp.capabilities.schemas import SearchHit, SearchResult
-from vidxp.settings import VidXPSettings
+from vidxp.settings import LocalExecutionSettings, VidXPSettings
 
 
 MEDIA_ID = "123456781234423481234567890abcde"
@@ -58,7 +58,12 @@ class FrontendTests(unittest.TestCase):
                 capability_allowlist=("acme:ocr",),
             )
             settings = frontend._settings_from_arguments(
-                ("--vidxp-settings-json", expected.model_dump_json())
+                (
+                    "--vidxp-settings-json",
+                    LocalExecutionSettings.from_settings(
+                        expected
+                    ).model_dump_json(),
+                )
             )
             first = frontend._configured_service(settings)
             second = frontend._configured_service(settings)

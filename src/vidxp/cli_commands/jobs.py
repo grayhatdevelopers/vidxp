@@ -94,3 +94,12 @@ def retry_job(
 
     state = state_from_context(ctx)
     emit_json(state.jobs.retry(job_id).model_dump(mode="json"))
+
+
+@app.command("stop-worker")
+def stop_worker(ctx: typer.Context) -> None:
+    """Stop the detached local worker; durable jobs remain recoverable."""
+
+    state = state_from_context(ctx)
+    stopped = state.jobs.stop_worker()
+    emit_json({"stopped": stopped})

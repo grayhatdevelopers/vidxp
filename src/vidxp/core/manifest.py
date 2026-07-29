@@ -70,13 +70,13 @@ def write_json_atomic(path: Path, payload: Any) -> None:
                     raise
                 time.sleep(0.05 * (attempt + 1))
 
-        _sync_parent_directory(path.parent)
+        sync_parent_directory(path.parent)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
 
 
-def _sync_parent_directory(path: Path) -> None:
+def sync_parent_directory(path: Path) -> None:
     if os.name == "nt":
         return
     descriptor: int | None = None

@@ -74,6 +74,10 @@ class JobService:
         self.backend = backend
 
     @job_boundary
+    def start(self) -> None:
+        self.backend.start()
+
+    @job_boundary
     def submit_index(
         self,
         command: CreateIndexCommand,
@@ -240,6 +244,10 @@ class JobService:
             ready=True,
             message="The durable workflow database is available.",
         )
+
+    @job_boundary
+    def stop_worker(self) -> bool:
+        return self.backend.stop_worker()
 
     def close(self) -> None:
         self.backend.close()

@@ -643,6 +643,22 @@ class ApiTests(unittest.TestCase):
 
         owned.jobs.close.assert_called_once_with()
 
+    def test_local_worker_startup_failure_fails_api_startup(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.jobs.start.side_effect = RuntimeError(
+                "transient worker failure"
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "transient worker failure",
+            ):
+                with TestClient(create_app(context=context)):
+                    pass
+
+        context.jobs.start.assert_called_once_with()
+
     def test_http_composition_does_not_construct_model_runtime(self):
         with TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             settings = VidXPSettings(
