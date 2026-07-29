@@ -73,7 +73,69 @@ def _request_key(payload: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-class ArtifactService:
+class ArtifactQueryService:
+    """Read-only artifact boundary shared by worker and control-plane profiles."""
+
+    def __init__(
+        self,
+        *,
+        catalog: ArtifactCatalogPort,
+        store: ArtifactStorePort,
+    ) -> None:
+        self.catalog = catalog
+        self.store = store
+
+    def get(self, artifact_id: str) -> Artifact:
+        return artifact_result(self.require_record(artifact_id))
+
+    def require_record(self, artifact_id: str) -> ArtifactRecord:
+        record = self.catalog.get_artifact(artifact_id)
+        if record is None:
+            raise ArtifactUnavailableError("The artifact is unavailable.")
+        self._require_ready(record)
+        return record
+
+    @staticmethod
+    def _require_ready(record: ArtifactRecord) -> None:
+        if (
+            record.state != ArtifactState.ready
+            or (
+                record.expires_at is not None
+                and record.expires_at <= utc_now()
+            )
+        ):
+            raise ArtifactUnavailableError("The artifact is unavailable.")
+
+    def content(self, artifact_id: str) -> LocalFileResource:
+        record = self.require_record(artifact_id)
+        path = self._verified_content(record)
+        suffix = ".mp4" if record.mime_type == "video/mp4" else ".mkv"
+        return LocalFileResource(
+            path=path,
+            filename=f"{record.kind.value}-{record.artifact_id}{suffix}",
+            mime_type=record.mime_type,
+            byte_size=record.byte_size,
+            etag=record.sha256,
+        )
+
+    def _verified_content(self, record: ArtifactRecord) -> Path:
+        try:
+            return self.store.verify(
+                record.storage_key,
+                sha256=record.sha256,
+                byte_size=record.byte_size,
+            )
+        except (FileNotFoundError, PermissionError) as exc:
+            raise ArtifactUnavailableError(
+                "The artifact content is unavailable."
+            ) from exc
+        except RuntimeError as exc:
+            raise ArtifactIntegrityError(
+                "The artifact failed its integrity check."
+            ) from exc
+
+
+class ArtifactService(ArtifactQueryService):
     def __init__(
         self,
         *,
@@ -85,8 +147,7 @@ class ArtifactService:
         snippet_renderer: SnippetRendererPort,
         max_snippet_duration_seconds: float,
     ) -> None:
-        self.catalog = catalog
-        self.store = store
+        super().__init__(catalog=catalog, store=store)
         self.media = media
         self.probe = probe
         self.actor_renderer = actor_renderer
@@ -315,52 +376,3 @@ class ArtifactService:
             self.store.delete(storage_key)
         except OSError:
             pass
-
-    def get(self, artifact_id: str) -> Artifact:
-        return artifact_result(self.require_record(artifact_id))
-
-    def require_record(self, artifact_id: str) -> ArtifactRecord:
-        record = self.catalog.get_artifact(artifact_id)
-        if record is None:
-            raise ArtifactUnavailableError("The artifact is unavailable.")
-        self._require_ready(record)
-        return record
-
-    @staticmethod
-    def _require_ready(record: ArtifactRecord) -> None:
-        if (
-            record.state != ArtifactState.ready
-            or (
-                record.expires_at is not None
-                and record.expires_at <= utc_now()
-            )
-        ):
-            raise ArtifactUnavailableError("The artifact is unavailable.")
-
-    def content(self, artifact_id: str) -> LocalFileResource:
-        record = self.require_record(artifact_id)
-        path = self._verified_content(record)
-        suffix = ".mp4" if record.mime_type == "video/mp4" else ".mkv"
-        return LocalFileResource(
-            path=path,
-            filename=f"{record.kind.value}-{record.artifact_id}{suffix}",
-            mime_type=record.mime_type,
-            byte_size=record.byte_size,
-            etag=record.sha256,
-        )
-
-    def _verified_content(self, record: ArtifactRecord) -> Path:
-        try:
-            return self.store.verify(
-                record.storage_key,
-                sha256=record.sha256,
-                byte_size=record.byte_size,
-            )
-        except (FileNotFoundError, PermissionError) as exc:
-            raise ArtifactUnavailableError(
-                "The artifact content is unavailable."
-            ) from exc
-        except RuntimeError as exc:
-            raise ArtifactIntegrityError(
-                "The artifact failed its integrity check."
-            ) from exc

@@ -30,7 +30,10 @@ from vidxp.application_models import (
     PrepareModelsResult,
 )
 from vidxp.core.identifiers import JobId
-from vidxp.ports import InvalidJobBackendRequestError
+from vidxp.ports import (
+    InvalidJobBackendRequestError,
+    JobIdempotencyConflictError,
+)
 from vidxp.workflow_contracts import (
     ERROR_EVENT,
     PROGRESS_EVENT,
@@ -44,6 +47,7 @@ from vidxp.workflow_contracts import (
 
 
 _JOB_ID_ADAPTER = TypeAdapter(JobId)
+_JOB_REQUEST_ADAPTER = TypeAdapter(JobRequest)
 _LIST_SCOPE = "vidxp:jobs"
 _STATUS_STATES = {
     "ENQUEUED": JobState.queued,
@@ -137,6 +141,10 @@ class DBOSJobBackend:
     ) -> Job:
         self._prepare_access()
         identifier = _job_id(job_id or uuid4().hex)
+        if job_id is not None:
+            existing = self._status(identifier, load_input=True)
+            if existing is not None:
+                return self._idempotent_job(existing, request)
         options: EnqueueOptions = {
             "workflow_name": WORKFLOW_NAMES[request.kind],
             "queue_name": QUEUE_NAMES[queue],
@@ -147,25 +155,46 @@ class DBOSJobBackend:
             "instance_name": WORKFLOW_INSTANCE_NAME,
         }
         self.client.enqueue(options, request.model_dump(mode="json"))
-        job = self.get(identifier)
-        if job is None:
+        status = self._status(identifier, load_input=True)
+        if status is None:
             raise RuntimeError("DBOS did not persist the submitted workflow.")
-        return job
+        return self._idempotent_job(status, request)
 
     def get(self, job_id: str) -> Job | None:
         self._prepare_access()
         identifier = _job_id(job_id)
+        status = self._status(identifier)
+        if status is None or status.name not in WORKFLOW_KINDS:
+            return None
+        return self._job(status)
+
+    def _status(
+        self,
+        identifier: str,
+        *,
+        load_input: bool = False,
+    ) -> Any | None:
         statuses = self.client.list_workflows(
             workflow_ids=[identifier],
             limit=1,
-            load_input=False,
+            load_input=load_input,
             load_output=True,
         )
-        if not statuses:
-            return None
-        status = statuses[0]
-        if status.name not in WORKFLOW_KINDS:
-            return None
+        return statuses[0] if statuses else None
+
+    def _idempotent_job(self, status: Any, request: JobRequest) -> Job:
+        try:
+            stored = _JOB_REQUEST_ADAPTER.validate_python(
+                status.input["args"][0]
+            )
+        except (KeyError, IndexError, TypeError, ValidationError) as exc:
+            raise JobIdempotencyConflictError from exc
+        if (
+            status.name not in WORKFLOW_KINDS
+            or WORKFLOW_KINDS[status.name] != request.kind
+            or stored != request
+        ):
+            raise JobIdempotencyConflictError
         return self._job(status)
 
     def list(self, command: ListJobsCommand) -> JobPage:
@@ -197,11 +226,31 @@ class DBOSJobBackend:
         self.client.cancel_workflow(current.job_id)
         return self.get(current.job_id)
 
-    def retry(self, job_id: str) -> Job | None:
+    def retry(
+        self,
+        job_id: str,
+        *,
+        retry_id: str | None = None,
+    ) -> Job | None:
         self._prepare_access()
         current = self.get(job_id)
         if current is None:
             return None
+        if retry_id is not None:
+            status = self._status(current.job_id, load_input=True)
+            if status is None:
+                return None
+            try:
+                request = _JOB_REQUEST_ADAPTER.validate_python(
+                    status.input["args"][0]
+                )
+            except (KeyError, IndexError, TypeError, ValidationError) as exc:
+                raise InvalidJobBackendRequestError from exc
+            return self.submit(
+                request,
+                queue=current.queue,
+                job_id=retry_id,
+            )
         handle = self.client.fork_workflow(
             current.job_id,
             1,
@@ -210,6 +259,10 @@ class DBOSJobBackend:
         )
         retried_id = handle.get_workflow_id()
         return self.get(retried_id)
+
+    def health(self) -> None:
+        self._prepare_access()
+        self.client.list_workflows(limit=1, load_input=False, load_output=False)
 
     def _prepare_access(self) -> None:
         if self.before_access is not None:

@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
-from functools import wraps
-from typing import Any, Callable, Iterator, Mapping, cast
+from typing import Any, Iterator, Mapping, cast
 
-from pydantic import BaseModel, JsonValue, ValidationError
+from pydantic import BaseModel
 
+from vidxp.application_boundary import application_boundary
 from vidxp.application_models import (
     ApplicationError,
     Artifact,
+    CapabilityInfo,
+    ComponentReadiness,
     CreateIndexCommand,
     CreateActorOverlayCommand,
     CreateSnippetCommand,
@@ -28,13 +30,13 @@ from vidxp.application_models import (
     PrepareModelsResult,
     RemoveIndexCommand,
     ResourceNotFoundError,
+    RuntimeReadiness,
     SearchCommand,
 )
 from vidxp.capabilities.actor.schemas import (
     ActorClustersOutput,
     ActorDetectionsOutput,
 )
-from vidxp.capabilities.actor.results import ActorClusterNotFoundError
 from vidxp.capabilities.contracts import (
     CapabilityDependencyError,
     CapabilityContext,
@@ -42,182 +44,29 @@ from vidxp.capabilities.contracts import (
     PreparationContext,
 )
 from vidxp.capabilities.registry import CapabilityRegistry
+from vidxp.capability_service import CapabilityService
 from vidxp.capabilities.schemas import SearchResult
 from vidxp.core.contracts import (
-    IndexCancelledError,
     IndexConfig,
-    IndexSchemaError,
-)
-from vidxp.core.artifacts import (
-    ArtifactIntegrityError,
-    ArtifactRenderError,
-    ArtifactRendererUnavailableError,
 )
 from vidxp.execution import ExecutionContext, execution_context
 from vidxp.index_state import (
     INDEX_STATUS_SCHEMA,
-    IndexingInProgressError,
-    IndexNotReadyError,
 )
-from vidxp.ports import IndexBackend, ModelRuntimePort, ResourceLimitError
+from vidxp.ports import IndexBackend, ModelRuntimePort
 from vidxp.ports import LocalFileResource
 from vidxp.model_contracts import ModelArtifactUnavailableError
 from vidxp.repository_layout import RepositoryLayout
 from vidxp.settings import VidXPSettings
 from vidxp.artifact_service import (
-    ArtifactRequestError,
     ArtifactService,
-    ArtifactUnavailableError,
-    InvalidArtifactError,
 )
 from vidxp.core.media import (
-    InvalidMediaError,
-    MediaImportLimitError,
-    MediaProbeUnavailableError,
-    MediaStoreIntegrityError,
-    MediaUnavailableError,
+    QuarantinedMedia,
 )
 from vidxp.media_service import (
-    MediaImportNotAllowedError,
     MediaService,
 )
-
-
-def _validation_details(
-    exc: ValidationError,
-) -> list[dict[str, JsonValue]]:
-    return [
-        {
-            "type": item["type"],
-            "location": [str(part) for part in item["loc"]],
-            "message": item["msg"],
-        }
-        for item in exc.errors(
-            include_url=False,
-            include_context=False,
-            include_input=False,
-        )
-    ]
-
-
-def application_boundary(handler: Callable) -> Callable:
-    """Translate expected domain failures once for every transport."""
-
-    @wraps(handler)
-    def wrapped(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return handler(*args, **kwargs)
-        except ApplicationError:
-            raise
-        except ActorClusterNotFoundError as exc:
-            raise ApplicationError(
-                "actor_cluster_not_found",
-                ErrorCategory.not_found,
-                "The requested actor cluster was not found.",
-            ) from exc
-        except IndexingInProgressError as exc:
-            raise ApplicationError(
-                "indexing_in_progress",
-                ErrorCategory.conflict,
-                "An indexing operation is already in progress.",
-                retryable=True,
-            ) from exc
-        except IndexNotReadyError as exc:
-            raise ApplicationError(
-                "index_not_ready",
-                ErrorCategory.conflict,
-                "The index is not ready.",
-                retryable=True,
-            ) from exc
-        except IndexSchemaError as exc:
-            raise ApplicationError(
-                "index_schema_incompatible",
-                ErrorCategory.conflict,
-                "The index schema is incompatible with this version.",
-            ) from exc
-        except IndexCancelledError as exc:
-            raise ApplicationError(
-                "operation_cancelled",
-                ErrorCategory.cancelled,
-                "The operation was cancelled.",
-            ) from exc
-        except ResourceLimitError as exc:
-            raise ApplicationError(
-                "resource_limit",
-                ErrorCategory.resource_limit,
-                "The worker does not currently have enough host capacity.",
-                retryable=True,
-            ) from exc
-        except ValidationError as exc:
-            raise InvalidRequestError(
-                errors=_validation_details(exc),
-            ) from exc
-        except CapabilityRequestError as exc:
-            raise InvalidRequestError() from exc
-        except InvalidMediaError as exc:
-            raise ApplicationError(
-                "media_invalid",
-                ErrorCategory.validation,
-                "The selected file is not a valid supported video.",
-            ) from exc
-        except MediaImportLimitError as exc:
-            raise ApplicationError(
-                "media_too_large",
-                ErrorCategory.resource_limit,
-                "The selected media exceeds the configured import limit.",
-            ) from exc
-        except MediaProbeUnavailableError as exc:
-            raise ApplicationError(
-                "media_probe_unavailable",
-                ErrorCategory.unavailable,
-                "The media probe dependency is unavailable.",
-                retryable=True,
-            ) from exc
-        except MediaImportNotAllowedError as exc:
-            raise ApplicationError(
-                "media_import_forbidden",
-                ErrorCategory.authorization,
-                "The selected local media cannot be imported.",
-            ) from exc
-        except MediaStoreIntegrityError as exc:
-            raise ApplicationError(
-                "media_integrity_failed",
-                ErrorCategory.conflict,
-                "The media changed or failed an integrity check.",
-            ) from exc
-        except MediaUnavailableError as exc:
-            raise ResourceNotFoundError("media") from exc
-        except ArtifactUnavailableError as exc:
-            raise ResourceNotFoundError("artifact") from exc
-        except ArtifactIntegrityError as exc:
-            raise ApplicationError(
-                "artifact_integrity_failed",
-                ErrorCategory.conflict,
-                "The artifact failed an integrity check.",
-            ) from exc
-        except ArtifactRendererUnavailableError as exc:
-            raise ApplicationError(
-                "artifact_renderer_unavailable",
-                ErrorCategory.unavailable,
-                "The configured artifact renderer is unavailable.",
-                retryable=True,
-            ) from exc
-        except ArtifactRenderError as exc:
-            raise ApplicationError(
-                "artifact_render_failed",
-                ErrorCategory.internal,
-                "The requested artifact could not be rendered.",
-            ) from exc
-        except ArtifactRequestError as exc:
-            raise InvalidRequestError() from exc
-        except InvalidArtifactError as exc:
-            raise ApplicationError(
-                "artifact_render_invalid",
-                ErrorCategory.internal,
-                "The generated artifact failed media validation.",
-            ) from exc
-
-    return wrapped
 
 
 class VidXPApplication:
@@ -237,6 +86,7 @@ class VidXPApplication:
         self.settings = settings
         self.layout = layout
         self.registry = registry
+        self.capabilities = CapabilityService(registry)
         self.runtime = runtime
         self.index_backend = index_backend
         self.media_service = media_service
@@ -302,6 +152,88 @@ class VidXPApplication:
     def import_media(self, command: ImportMediaCommand) -> MediaAsset:
         self.layout.ensure_local_directories()
         return self.media_service.import_local(command)
+
+    @application_boundary
+    def import_uploaded_media(
+        self,
+        *,
+        staged_path: Path,
+        original_filename: str,
+        declared_mime_type: str | None,
+    ) -> MediaAsset:
+        self.layout.ensure_local_directories()
+        return self.media_service.import_quarantined(
+            QuarantinedMedia(
+                path=staged_path,
+                original_filename=original_filename,
+                declared_mime_type=declared_mime_type,
+            )
+        )
+
+    @application_boundary
+    def list_capabilities(self) -> tuple[CapabilityInfo, ...]:
+        return self.capabilities.list()
+
+    @application_boundary
+    def get_capability(self, name: str) -> CapabilityInfo:
+        try:
+            return self.capabilities.get(name)
+        except CapabilityRequestError as exc:
+            raise ResourceNotFoundError("capability") from exc
+
+    @application_boundary
+    def control_plane_readiness(self) -> tuple[ComponentReadiness, ...]:
+        components: list[ComponentReadiness] = []
+        try:
+            self.media_service.list(ListMediaCommand(page_size=1))
+        except Exception:
+            components.append(
+                ComponentReadiness(
+                    name="catalog",
+                    ready=False,
+                    message="The media catalog is unavailable.",
+                )
+            )
+        else:
+            components.append(
+                ComponentReadiness(
+                    name="catalog",
+                    ready=True,
+                    message="The media catalog is available.",
+                )
+            )
+        try:
+            self.index_status()
+        except ApplicationError:
+            components.append(
+                ComponentReadiness(
+                    name="index",
+                    ready=False,
+                    message="The index catalog is unavailable.",
+                )
+            )
+        else:
+            components.append(
+                ComponentReadiness(
+                    name="index",
+                    ready=True,
+                    message="The index catalog is available.",
+                )
+            )
+        return tuple(components)
+
+    @application_boundary
+    def runtime_readiness(self) -> RuntimeReadiness:
+        components = self.control_plane_readiness()
+        dependencies = self.check_dependencies(
+            DependencyCheckCommand(modalities=self.registry.names())
+        )
+        return RuntimeReadiness(
+            ready=all(component.ready for component in components),
+            runtime=self.runtime.backends,
+            components=components,
+            dependencies=dependencies,
+        )
 
     @application_boundary
     def get_media(self, media_id: str) -> MediaAsset:

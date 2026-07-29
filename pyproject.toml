@@ -47,6 +47,7 @@ dependencies = [
 
 [project.scripts]
 vidxp = "vidxp.cli:main"
+vidxp-api = "vidxp.api_cli:main"
 vidxp-worker = "vidxp.workflow_worker:main"
 
 [project.urls]
@@ -95,6 +96,7 @@ local-worker = { file = [
   "src/vidxp/capabilities/actor/requirements.txt",
 ] }
 server = { file = ["src/vidxp/requirements/server.txt"] }
+test = { file = ["src/vidxp/requirements/test.txt"] }
 frontend = { file = ["src/vidxp/requirements/frontend.txt"] }
 benchmarks = { file = ["src/vidxp/benchmarks/requirements.txt"] }
 

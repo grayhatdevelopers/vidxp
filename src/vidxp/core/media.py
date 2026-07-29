@@ -109,6 +109,19 @@ class StagedMedia(_MediaModel):
         return validate_storage_key(value)
 
 
+class QuarantinedMedia(_MediaModel):
+    """Adapter-staged media accepted by the shared ingestion boundary."""
+
+    path: Path
+    original_filename: str = Field(min_length=1, max_length=255)
+    declared_mime_type: MimeType | None = None
+
+    @field_validator("original_filename")
+    @classmethod
+    def _filename_only(cls, value: str) -> str:
+        return validate_display_filename(value)
+
+
 class MediaRecord(_MediaModel):
     """Authoritative internal catalog entry; storage_key is never projected."""
 
@@ -162,3 +175,16 @@ def validate_display_filename(value: str) -> str:
             "original_filename must be a basename without control characters"
         )
     return value
+
+
+def safe_media_suffix(path: Path) -> str:
+    """Return a bounded suffix suitable for temporary media staging."""
+
+    suffix = path.suffix.lower()
+    if (
+        len(suffix) <= 10
+        and suffix.startswith(".")
+        and suffix[1:].isalnum()
+    ):
+        return suffix
+    return ".bin"

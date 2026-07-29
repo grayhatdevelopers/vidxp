@@ -7,6 +7,7 @@ from typing import Any, Callable
 from vidxp.application_models import (
     ActorOverlayJobRequest,
     ApplicationError,
+    ComponentReadiness,
     CreateActorOverlayCommand,
     CreateIndexCommand,
     CreateSnippetCommand,
@@ -24,7 +25,11 @@ from vidxp.application_models import (
     ResourceNotFoundError,
     SnippetJobRequest,
 )
-from vidxp.ports import InvalidJobBackendRequestError, JobBackend
+from vidxp.ports import (
+    InvalidJobBackendRequestError,
+    JobBackend,
+    JobIdempotencyConflictError,
+)
 from vidxp.settings import VidXPSettings
 
 
@@ -39,6 +44,12 @@ def job_boundary(handler: Callable) -> Callable:
             raise
         except InvalidJobBackendRequestError as exc:
             raise InvalidRequestError() from exc
+        except JobIdempotencyConflictError as exc:
+            raise ApplicationError(
+                "idempotency_key_reused",
+                ErrorCategory.validation,
+                "The idempotency key was already used for another request.",
+            ) from exc
         except Exception as exc:
             raise ApplicationError(
                 "job_backend_unavailable",
@@ -66,40 +77,52 @@ class JobService:
     def submit_index(
         self,
         command: CreateIndexCommand,
+        *,
+        job_id: str | None = None,
     ) -> Job:
         return self.backend.submit(
             IndexJobRequest(command=command),
             queue=self._model_queue(),
+            job_id=job_id,
         )
 
     @job_boundary
     def submit_snippet(
         self,
         command: CreateSnippetCommand,
+        *,
+        job_id: str | None = None,
     ) -> Job:
         return self.backend.submit(
             SnippetJobRequest(command=command),
             queue=JobQueue.cpu,
+            job_id=job_id,
         )
 
     @job_boundary
     def submit_actor_overlay(
         self,
         command: CreateActorOverlayCommand,
+        *,
+        job_id: str | None = None,
     ) -> Job:
         return self.backend.submit(
             ActorOverlayJobRequest(command=command),
             queue=JobQueue.cpu,
+            job_id=job_id,
         )
 
     @job_boundary
     def submit_prepare_models(
         self,
         command: PrepareModelsCommand,
+        *,
+        job_id: str | None = None,
     ) -> Job:
         return self.backend.submit(
             PrepareModelsJobRequest(command=command),
             queue=self._model_queue(),
+            job_id=job_id,
         )
 
     @job_boundary
@@ -129,7 +152,12 @@ class JobService:
         return cancelled
 
     @job_boundary
-    def retry(self, job_id: str) -> Job:
+    def retry(
+        self,
+        job_id: str,
+        *,
+        retry_id: str | None = None,
+    ) -> Job:
         current = self.get(job_id)
         if current.state not in {
             JobState.failed,
@@ -141,7 +169,7 @@ class JobService:
                 ErrorCategory.conflict,
                 "Only failed or cancelled jobs can be retried.",
             )
-        retried = self.backend.retry(job_id)
+        retried = self.backend.retry(job_id, retry_id=retry_id)
         if retried is None:
             raise ResourceNotFoundError("job")
         return retried
@@ -202,6 +230,15 @@ class JobService:
             JobQueue.gpu
             if self.settings.runtime_backend.startswith("cuda")
             else JobQueue.cpu
+        )
+
+    @job_boundary
+    def readiness(self) -> ComponentReadiness:
+        self.backend.health()
+        return ComponentReadiness(
+            name="workflow",
+            ready=True,
+            message="The durable workflow database is available.",
         )
 
     def close(self) -> None:

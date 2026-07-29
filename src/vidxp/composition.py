@@ -7,7 +7,12 @@ from pydantic import ValidationError
 
 from vidxp.application import VidXPApplication
 from vidxp.application_models import ApplicationError, ErrorCategory
+from vidxp.artifact_service import ArtifactQueryService, ArtifactService
+from vidxp.authentication import Authenticator, create_authenticator
+from vidxp.authorization import AuthorizationPolicy
+from vidxp.capability_service import CapabilityService
 from vidxp.capabilities.registry import create_capability_registry
+from vidxp.control_plane import ControlPlaneApplication
 from vidxp.infrastructure.local_index import (
     LOCAL_INDEX_RUNTIME_CHECKS,
     LocalIndexBackend,
@@ -19,11 +24,12 @@ from vidxp.infrastructure.local_artifacts import (
 )
 from vidxp.infrastructure.local_catalog import LocalCatalog
 from vidxp.infrastructure.local_media import FFprobeMediaProbe, LocalMediaStore
+from vidxp.infrastructure.local_snapshots import LocalSnapshotRepository
 from vidxp.infrastructure.dbos_jobs import DBOSJobBackend
 from vidxp.infrastructure.local_worker import LocalWorkerSupervisor
-from vidxp.artifact_service import ArtifactService
 from vidxp.job_service import JobService
 from vidxp.media_service import MediaService
+from vidxp.readiness_service import ReadinessService
 from vidxp.runtime import ModelRuntime, RuntimeBackendUnavailableError
 from vidxp.repositories import (
     RepositoryConfig,
@@ -44,6 +50,19 @@ class LocalApplicationContext:
     jobs: JobService
     repositories: RepositoryRegistry
     repository: RepositoryConfig
+
+
+@dataclass(frozen=True)
+class HttpApplicationContext:
+    application: ControlPlaneApplication
+    jobs: JobService
+    readiness: ReadinessService
+    authenticator: Authenticator
+    authorization: AuthorizationPolicy
+    settings: VidXPSettings
+
+    def close(self) -> None:
+        self.jobs.close()
 
 
 def settings_for_repository(repository: RepositoryConfig) -> VidXPSettings:
@@ -121,6 +140,53 @@ def create_job_service(settings: VidXPSettings) -> JobService:
             application_version=workflow_application_version(),
             before_access=before_access,
         ),
+    )
+
+
+def create_http_application(
+    settings: VidXPSettings | None = None,
+) -> HttpApplicationContext:
+    active_settings = settings or VidXPSettings()
+    active_settings.validate_http_server()
+    active_settings.layout.ensure_local_directories()
+    registry = create_capability_registry(
+        external=active_settings.external_capabilities,
+        allowlist=active_settings.capability_allowlist,
+        platform_runtime_checks=LOCAL_INDEX_RUNTIME_CHECKS,
+    )
+    catalog = LocalCatalog(active_settings.layout.catalog)
+    media = MediaService(
+        settings=active_settings,
+        catalog=catalog,
+        store=LocalMediaStore(
+            active_settings.layout.media,
+            max_bytes=active_settings.max_local_import_bytes,
+        ),
+        probe=FFprobeMediaProbe(active_settings.ffprobe_executable),
+    )
+    application = ControlPlaneApplication(
+        layout=active_settings.layout,
+        capabilities=CapabilityService(registry),
+        media=media,
+        artifacts=ArtifactQueryService(
+            catalog=catalog,
+            store=LocalArtifactStore(active_settings.layout.artifacts),
+        ),
+        index=LocalSnapshotRepository(active_settings.layout.indexes),
+    )
+    jobs = create_job_service(active_settings)
+    authenticator = create_authenticator(active_settings)
+    return HttpApplicationContext(
+        application=application,
+        jobs=jobs,
+        readiness=ReadinessService(
+            application=application,
+            jobs=jobs,
+            authenticator=authenticator,
+        ),
+        authenticator=authenticator,
+        authorization=AuthorizationPolicy(),
+        settings=active_settings,
     )
 
 

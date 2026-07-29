@@ -15,6 +15,7 @@ from vidxp.application_models import (
 from vidxp.core.media import (
     MediaRecord,
     MediaState,
+    QuarantinedMedia,
     StagedMedia,
     MediaUnavailableError,
     utc_now,
@@ -30,6 +31,10 @@ from vidxp.settings import ApplicationMode, VidXPSettings
 
 class MediaImportNotAllowedError(PermissionError):
     """Raised when a local path is outside the local import policy."""
+
+
+class MediaIdempotencyConflictError(FileExistsError):
+    """Raised when an import key is reused for different media content."""
 
 
 def media_asset(record: MediaRecord) -> MediaAsset:
@@ -70,17 +75,108 @@ class MediaService:
                 "Local path imports are available only in local mode."
             )
         source = self._resolve_import_source(command.path)
+        return self._import(
+            source,
+            original_filename=command.original_filename or source.name,
+            declared_mime_type=command.declared_mime_type,
+        )
+
+    def import_quarantined(
+        self,
+        media: QuarantinedMedia,
+        *,
+        request_key: str | None = None,
+    ) -> MediaAsset:
+        try:
+            source = media.path.resolve(strict=True)
+        except (FileNotFoundError, OSError) as exc:
+            raise MediaUnavailableError(
+                "The quarantined media source is unavailable."
+            ) from exc
+        if not source.is_file():
+            raise MediaUnavailableError(
+                "The quarantined media source is not a file."
+            )
+        return self._import(
+            source,
+            original_filename=media.original_filename,
+            declared_mime_type=media.declared_mime_type,
+            request_key=request_key,
+        )
+
+    def _import(
+        self,
+        source: Path,
+        *,
+        original_filename: str,
+        declared_mime_type: str | None,
+        request_key: str | None = None,
+    ) -> MediaAsset:
         staged = self.store.stage_local(source)
         try:
             with self.store.publication_lock(staged.sha256):
-                return self._publish_import(command, source, staged)
+                if request_key is not None:
+                    request_fingerprint = self._import_fingerprint(
+                        staged,
+                        original_filename=original_filename,
+                        declared_mime_type=declared_mime_type,
+                    )
+                    try:
+                        completed = self.catalog.reserve_media_import(
+                            request_key,
+                            request_fingerprint,
+                        )
+                    except FileExistsError as exc:
+                        raise MediaIdempotencyConflictError from exc
+                    if completed is not None:
+                        return media_asset(completed)
+                result = self._publish_import(
+                    original_filename=original_filename,
+                    declared_mime_type=declared_mime_type,
+                    staged=staged,
+                )
+                if request_key is not None:
+                    record = self.catalog.get_media(result.media_id)
+                    if record is None:
+                        raise RuntimeError(
+                            "The imported media record is unavailable."
+                        )
+                    try:
+                        self.catalog.complete_media_import(
+                            request_key,
+                            request_fingerprint,
+                            record,
+                        )
+                    except FileExistsError as exc:
+                        raise MediaIdempotencyConflictError from exc
+                return result
         finally:
             self.store.discard(staged)
 
+    @staticmethod
+    def _import_fingerprint(
+        staged: StagedMedia,
+        *,
+        original_filename: str,
+        declared_mime_type: str | None,
+    ) -> str:
+        payload = json.dumps(
+            {
+                "version": 1,
+                "sha256": staged.sha256,
+                "original_filename": original_filename,
+                "declared_mime_type": declared_mime_type,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        return hashlib.sha256(payload).hexdigest()
+
     def _publish_import(
         self,
-        command: ImportMediaCommand,
-        source: Path,
+        *,
+        original_filename: str,
+        declared_mime_type: str | None,
         staged: StagedMedia,
     ) -> MediaAsset:
         if existing := self.catalog.get_media_by_checksum(staged.sha256):
@@ -97,9 +193,9 @@ class MediaService:
             media_id=media_id,
             video_id=media_id,
             sha256=stored.sha256,
-            original_filename=command.original_filename or source.name,
+            original_filename=original_filename,
             byte_size=stored.byte_size,
-            declared_mime_type=command.declared_mime_type,
+            declared_mime_type=declared_mime_type,
             detected_mime_type=probe.detected_mime_type,
             container=probe.container,
             duration_seconds=probe.duration_seconds,

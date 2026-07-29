@@ -52,14 +52,3 @@ def prepare_managed_destination(root: Path, storage_key: str) -> Path:
         if destination.is_symlink() or is_junction() or not destination.is_file():
             raise PermissionError("Managed storage links are not permitted.")
     return destination
-
-
-def safe_media_suffix(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if (
-        len(suffix) <= 10
-        and suffix.startswith(".")
-        and suffix[1:].isalnum()
-    ):
-        return suffix
-    return ".bin"

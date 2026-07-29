@@ -47,6 +47,10 @@ class InvalidJobBackendRequestError(ValueError):
     """Raised when a durable job identifier or cursor is malformed."""
 
 
+class JobIdempotencyConflictError(RuntimeError):
+    """Raised when one workflow ID is reused for a different request."""
+
+
 class LocalFileResource:
     """Authorized local delivery handle; never serialize this object."""
 
@@ -84,6 +88,19 @@ class MediaCatalogPort(Protocol):
     ) -> tuple[MediaRecord, ...]: ...
 
     def count_media(self) -> int: ...
+
+    def reserve_media_import(
+        self,
+        request_key: str,
+        request_fingerprint: str,
+    ) -> MediaRecord | None: ...
+
+    def complete_media_import(
+        self,
+        request_key: str,
+        request_fingerprint: str,
+        record: MediaRecord,
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -344,6 +361,13 @@ class JobBackend(Protocol):
 
     def cancel(self, job_id: str) -> Job | None: ...
 
-    def retry(self, job_id: str) -> Job | None: ...
+    def retry(
+        self,
+        job_id: str,
+        *,
+        retry_id: str | None = None,
+    ) -> Job | None: ...
+
+    def health(self) -> None: ...
 
     def close(self) -> None: ...

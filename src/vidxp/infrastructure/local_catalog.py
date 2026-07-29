@@ -9,7 +9,7 @@ from vidxp.core.artifacts import ArtifactRecord, ArtifactState
 from vidxp.core.media import MediaRecord, utc_now
 
 
-CATALOG_SCHEMA_VERSION = 1
+CATALOG_SCHEMA_VERSION = 2
 
 
 class LocalCatalog:
@@ -64,6 +64,12 @@ class LocalCatalog:
                     artifact_id TEXT NOT NULL UNIQUE,
                     FOREIGN KEY(artifact_id) REFERENCES artifacts(artifact_id)
                 );
+                CREATE TABLE IF NOT EXISTS media_import_requests (
+                    request_key TEXT PRIMARY KEY,
+                    request_fingerprint TEXT NOT NULL,
+                    media_id TEXT,
+                    FOREIGN KEY(media_id) REFERENCES media(media_id)
+                );
                 """
             )
             row = connection.execute(
@@ -73,6 +79,11 @@ class LocalCatalog:
                 connection.execute(
                     "INSERT OR IGNORE INTO catalog_metadata"
                     "(schema_version) VALUES (?)",
+                    (CATALOG_SCHEMA_VERSION,),
+                )
+            elif row[0] == 1:
+                connection.execute(
+                    "UPDATE catalog_metadata SET schema_version = ?",
                     (CATALOG_SCHEMA_VERSION,),
                 )
             elif row[0] != CATALOG_SCHEMA_VERSION:
@@ -153,6 +164,82 @@ class LocalCatalog:
         with self._session() as connection:
             row = connection.execute("SELECT COUNT(*) FROM media").fetchone()
         return int(row[0])
+
+    def reserve_media_import(
+        self,
+        request_key: str,
+        request_fingerprint: str,
+    ) -> MediaRecord | None:
+        with self._session() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT request_fingerprint, media_id
+                FROM media_import_requests
+                WHERE request_key = ?
+                """,
+                (request_key,),
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    """
+                    INSERT INTO media_import_requests(
+                        request_key, request_fingerprint
+                    )
+                    VALUES (?, ?)
+                    """,
+                    (request_key, request_fingerprint),
+                )
+                return None
+            stored_fingerprint, media_id = row
+            if stored_fingerprint != request_fingerprint:
+                raise FileExistsError(
+                    "The media import key is bound to different content."
+                )
+            if media_id is None:
+                return None
+            media = connection.execute(
+                "SELECT payload FROM media WHERE media_id = ?",
+                (media_id,),
+            ).fetchone()
+            if media is None:
+                raise RuntimeError(
+                    "A completed media import references missing media."
+                )
+            return MediaRecord.model_validate_json(media[0])
+
+    def complete_media_import(
+        self,
+        request_key: str,
+        request_fingerprint: str,
+        record: MediaRecord,
+    ) -> None:
+        with self._session() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT request_fingerprint, media_id
+                FROM media_import_requests
+                WHERE request_key = ?
+                """,
+                (request_key,),
+            ).fetchone()
+            if row is None or row[0] != request_fingerprint:
+                raise FileExistsError(
+                    "The media import reservation does not match the content."
+                )
+            if row[1] is not None and row[1] != record.media_id:
+                raise FileExistsError(
+                    "The media import key is already completed."
+                )
+            connection.execute(
+                """
+                UPDATE media_import_requests
+                SET media_id = ?
+                WHERE request_key = ?
+                """,
+                (record.media_id, request_key),
+            )
 
     def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
         with self._session() as connection:

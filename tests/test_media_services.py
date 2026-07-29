@@ -21,6 +21,7 @@ from vidxp.core.artifacts import ArtifactState
 from vidxp.core.contracts import CancellationToken, IndexCancelledError
 from vidxp.core.media import (
     MediaProbe,
+    QuarantinedMedia,
     MediaRecord,
     MediaState,
     MediaStream,
@@ -32,8 +33,12 @@ from vidxp.infrastructure.local_artifacts import (
     FFmpegSnippetRenderer,
     LocalArtifactStore,
 )
+from vidxp.infrastructure.local_catalog import LocalCatalog
 from vidxp.infrastructure.local_media import InvalidMediaError
-from vidxp.media_service import MediaService
+from vidxp.media_service import (
+    MediaIdempotencyConflictError,
+    MediaService,
+)
 from vidxp.ports import LocalFileResource
 from vidxp.settings import VidXPSettings
 
@@ -154,6 +159,170 @@ class MediaServiceTests(unittest.TestCase):
         store.publish.assert_not_called()
         catalog.put_media.assert_not_called()
         store.discard.assert_called_once_with(staged)
+
+    def test_quarantined_import_reuses_the_same_ingestion_pipeline(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "upload.mp4"
+            source.write_bytes(b"video")
+            service, catalog, store, probe = self.service(root)
+            staged = StagedMedia(
+                sha256="1" * 64,
+                byte_size=5,
+                storage_key="objects/11/video.mp4",
+                path=root / "staged.tmp",
+            )
+            stored = StoredMedia(
+                sha256=staged.sha256,
+                byte_size=5,
+                storage_key=staged.storage_key,
+                local_path=root / "managed.mp4",
+            )
+            store.stage_local.return_value = staged
+            store.publish.return_value = stored
+            probe.probe.return_value = MediaProbe(
+                detected_mime_type="video/mp4",
+                container="mp4",
+                duration_seconds=2,
+                streams=(
+                    MediaStream(
+                        index=0,
+                        kind="video",
+                        codec="h264",
+                        width=1,
+                        height=1,
+                    ),
+                ),
+            )
+            catalog.get_media_by_checksum.return_value = None
+            catalog.put_media.side_effect = lambda item: item
+            with patch("vidxp.media_service.uuid4") as identifier:
+                identifier.return_value.hex = MEDIA_ID
+                result = service.import_quarantined(
+                    QuarantinedMedia(
+                        path=source,
+                        original_filename="client-name.mp4",
+                        declared_mime_type="video/mp4",
+                    )
+                )
+
+        self.assertEqual(result.original_filename, "client-name.mp4")
+        store.stage_local.assert_called_once_with(source.resolve())
+        probe.probe.assert_called_once_with(staged.path)
+        store.publish.assert_called_once_with(staged)
+        store.discard.assert_called_once_with(staged)
+
+    def test_quarantined_import_completes_durable_idempotency_record(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "upload.mp4"
+            source.write_bytes(b"video")
+            service, catalog, store, probe = self.service(root)
+            staged = StagedMedia(
+                sha256="1" * 64,
+                byte_size=5,
+                storage_key="objects/11/video.mp4",
+                path=root / "staged.tmp",
+            )
+            stored = StoredMedia(
+                sha256=staged.sha256,
+                byte_size=5,
+                storage_key=staged.storage_key,
+                local_path=root / "managed.mp4",
+            )
+            store.stage_local.return_value = staged
+            store.publish.return_value = stored
+            probe.probe.return_value = MediaProbe(
+                detected_mime_type="video/mp4",
+                container="mp4",
+                duration_seconds=2,
+                streams=(
+                    MediaStream(
+                        index=0,
+                        kind="video",
+                        codec="h264",
+                        width=1,
+                        height=1,
+                    ),
+                ),
+            )
+            catalog.reserve_media_import.return_value = None
+            catalog.get_media_by_checksum.return_value = None
+            imported = record()
+            catalog.put_media.return_value = imported
+            catalog.get_media.return_value = imported
+
+            result = service.import_quarantined(
+                QuarantinedMedia(
+                    path=source,
+                    original_filename="upload.mp4",
+                ),
+                request_key="request-key",
+            )
+
+        self.assertEqual(result.media_id, MEDIA_ID)
+        fingerprint = catalog.reserve_media_import.call_args.args[1]
+        self.assertEqual(len(fingerprint), 64)
+        catalog.complete_media_import.assert_called_once_with(
+            "request-key",
+            fingerprint,
+            imported,
+        )
+
+    def test_quarantined_import_rejects_reused_key_for_other_content(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "upload.mp4"
+            source.write_bytes(b"video")
+            service, catalog, store, _probe = self.service(root)
+            staged = StagedMedia(
+                sha256="2" * 64,
+                byte_size=5,
+                storage_key="objects/22/video.mp4",
+                path=root / "staged.tmp",
+            )
+            store.stage_local.return_value = staged
+            catalog.reserve_media_import.side_effect = FileExistsError
+
+            with self.assertRaises(MediaIdempotencyConflictError):
+                service.import_quarantined(
+                    QuarantinedMedia(
+                        path=source,
+                        original_filename="upload.mp4",
+                    ),
+                    request_key="request-key",
+                )
+
+        store.publish.assert_not_called()
+
+    def test_local_catalog_persists_media_import_idempotency(self):
+        with TemporaryDirectory() as directory:
+            catalog = LocalCatalog(Path(directory) / "catalog.sqlite3")
+            item = record()
+            catalog.put_media(item)
+
+            self.assertIsNone(
+                catalog.reserve_media_import(
+                    "request-key",
+                    "f" * 64,
+                )
+            )
+            catalog.complete_media_import(
+                "request-key",
+                "f" * 64,
+                item,
+            )
+            replay = catalog.reserve_media_import(
+                "request-key",
+                "f" * 64,
+            )
+
+            self.assertEqual(replay, item)
+            with self.assertRaises(FileExistsError):
+                catalog.reserve_media_import(
+                    "request-key",
+                    "e" * 64,
+                )
 
     def test_existing_checksum_is_reused_without_reprobe(self):
         with TemporaryDirectory() as directory:

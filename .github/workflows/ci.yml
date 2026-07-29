@@ -93,6 +93,8 @@ jobs:
             --extra all \
             --extra frontend \
             --extra benchmarks \
+            --extra server \
+            --extra test \
             --no-dev
 
       - name: Lint

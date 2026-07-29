@@ -23,7 +23,7 @@
     <li>From the command line</li>
     <li>Through its browser interface</li>
     <li>As an indexing and retrieval layer inside another application</li>
-    <li>Through API, MCP, and desktop interfaces as those roadmap phases land</li>
+    <li>Through the HTTP API, with MCP and desktop interfaces on the roadmap</li>
   </ul>
 
 <p align="center">
@@ -74,7 +74,7 @@ Some ideas on how to use VidXP:
 | Dialogue search | Transcription, word alignment, semantic phrase indexing | Matching video time |
 | Scene search | Text search over sampled video frames | Matching frame and time |
 | Actor grouping | Within-video face detection and clustering | Clustered detections and highlighted output video |
-| Interfaces | Typer CLI, Streamlit browser interface, Python API | Interactive or programmatic use |
+| Interfaces | Typer CLI, Streamlit browser interface, Python and HTTP APIs | Interactive or programmatic use |
 | Index management | Saved progress, ready/failed state, cancellation, isolated programmatic runs | Traceable and reusable indexes |
 
 ## Quick start
@@ -186,6 +186,67 @@ and remains active until stopped.
 The interface can upload a video, start or cancel indexing, restore saved
 progress after a page reload, and search the capabilities available in the
 completed index.
+
+## HTTP API
+
+Install the server profile and run the app factory:
+
+```bash
+uv sync --frozen --extra server
+uv run vidxp-api
+```
+
+The local default binds to `127.0.0.1:8000` without network authentication.
+Its OpenAPI document and interactive reference are available at
+`/openapi.json` and `/docs`.
+
+The API process is a model-free control plane. Under `/api/v1`, it exposes
+bounded media import and delivery, capability metadata, index status, durable
+job submission and control, artifact delivery, and authenticated readiness.
+Indexing and other model work execute only through DBOS workers. Synchronous
+search is intentionally not mounted in this phase because it would perform
+model work in the API process; the remote query boundary is added with the
+search/MCP phases.
+
+Large resumable uploads remain assigned to the deployment profile's `tusd`
+service. The compatibility endpoint accepts at most 256 MiB. Media imports,
+job creation, and job retries require an opaque `Idempotency-Key`; keys are
+scoped to the repository, authenticated subject, and operation.
+
+```bash
+curl -F "upload=@samplevideo.mp4" \
+  -H "Idempotency-Key: import-samplevideo-2026-07-28" \
+  http://127.0.0.1:8000/api/v1/media
+curl -X POST http://127.0.0.1:8000/api/v1/jobs/index \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: 12345678-1234-4234-8123-123456789abc" \
+  -d '{"media_id":"<media-id>","modalities":["scene"]}'
+```
+
+Non-loopback and server-mode deployments must configure static bearer or OIDC
+authentication. Static mode requires a token of at least 32 characters. OIDC
+mode validates a fixed issuer, audience, asymmetric algorithm allowlist, JWKS
+URL, token lifetime, subject, and configured baseline scopes through PyJWT.
+Routes then enforce repository-wide `vidxp.read`, `vidxp.write`, or
+`vidxp.admin` authorization. These are shared-repository permissions, not
+per-media ownership rules.
+
+```text
+VIDXP_MODE=server
+VIDXP_RUNTIME_BACKEND=cpu
+VIDXP_WORKFLOW_DATABASE_URL=postgresql://...
+VIDXP_HTTP_BIND_HOST=0.0.0.0
+VIDXP_HTTP_AUTH_MODE=static
+VIDXP_HTTP_STATIC_BEARER_TOKEN=<random-secret-of-at-least-32-characters>
+VIDXP_HTTP_TRUSTED_HOSTS=["api.example.com"]
+```
+
+Use `Authorization: Bearer <token>` for every route except `/health` and
+`/ready`. Configure `VIDXP_HTTP_ALLOWED_ORIGINS` only for browser origins that
+must call `/api/*`; that CORS policy does not apply to the reserved MCP
+namespace. Authenticated profiles do not publish `/docs` or `/openapi.json`;
+generate or expose API documentation separately when operating a remote
+deployment.
 
 ## Container
 

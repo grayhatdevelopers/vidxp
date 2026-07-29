@@ -6,7 +6,15 @@ from enum import StrEnum
 from pathlib import Path
 
 from platformdirs import user_cache_path
-from pydantic import Field, field_validator, model_validator
+from pydantic import (
+    Field,
+    HttpUrl,
+    SecretStr,
+    TypeAdapter,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from vidxp.repository_layout import RepositoryLayout
@@ -16,6 +24,15 @@ class ApplicationMode(StrEnum):
     local = "local"
     remote = "remote"
     server = "server"
+
+
+class HttpAuthMode(StrEnum):
+    none = "none"
+    static = "static"
+    oidc = "oidc"
+
+
+_HTTP_URL = TypeAdapter(HttpUrl)
 
 
 class VidXPSettings(BaseSettings):
@@ -57,6 +74,44 @@ class VidXPSettings(BaseSettings):
         gt=0,
         le=3600,
     )
+    http_bind_host: str = Field(default="127.0.0.1", min_length=1)
+    http_port: int = Field(default=8000, gt=0, le=65535)
+    http_auth_mode: HttpAuthMode = HttpAuthMode.none
+    http_static_bearer_token: SecretStr | None = None
+    http_oidc_issuer: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2048,
+    )
+    http_oidc_audience: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=512,
+    )
+    http_oidc_jwks_url: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2048,
+    )
+    http_oidc_algorithms: tuple[str, ...] = ("RS256",)
+    http_required_scopes: tuple[str, ...] = ()
+    http_trusted_hosts: tuple[str, ...] = (
+        "127.0.0.1",
+        "::1",
+        "localhost",
+        "testserver",
+    )
+    http_allowed_origins: tuple[str, ...] = ()
+    http_max_json_body_bytes: int = Field(
+        default=4 * 1024 * 1024,
+        gt=0,
+        le=16 * 1024 * 1024,
+    )
+    http_max_small_upload_bytes: int = Field(
+        default=256 * 1024 * 1024,
+        gt=0,
+        le=256 * 1024 * 1024,
+    )
     trusted_local_import_roots: tuple[Path, ...] = ()
     ffprobe_executable: str = Field(default="ffprobe", min_length=1)
     ffmpeg_executable: str = Field(default="ffmpeg", min_length=1)
@@ -93,6 +148,81 @@ class VidXPSettings(BaseSettings):
             )
         return cleaned
 
+    @field_validator(
+        "http_required_scopes",
+        "http_trusted_hosts",
+        "http_allowed_origins",
+    )
+    @classmethod
+    def _clean_http_lists(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(value.strip() for value in values if value.strip())
+        )
+
+    @field_validator("http_trusted_hosts")
+    @classmethod
+    def _validate_trusted_hosts(
+        cls,
+        values: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        normalized = tuple(value.lower() for value in values)
+        for value in normalized:
+            if (
+                "*" in value[1:]
+                or (
+                    value.startswith("*")
+                    and value != "*"
+                    and not value.startswith("*.")
+                )
+            ):
+                raise ValueError(
+                    "Trusted-host wildcards must use *.example.com."
+                )
+        return normalized
+
+    @field_validator("http_oidc_algorithms")
+    @classmethod
+    def _validate_oidc_algorithms(
+        cls,
+        values: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        allowed = {
+            "RS256",
+            "RS384",
+            "RS512",
+            "ES256",
+            "ES384",
+            "ES512",
+            "EdDSA",
+        }
+        cleaned = tuple(dict.fromkeys(values))
+        if not cleaned or any(value not in allowed for value in cleaned):
+            raise ValueError(
+                "http_oidc_algorithms must contain supported asymmetric "
+                "signature algorithms."
+            )
+        return cleaned
+
+    @field_validator("http_oidc_issuer", "http_oidc_jwks_url")
+    @classmethod
+    def _validate_oidc_url(
+        cls,
+        value: str | None,
+        info: ValidationInfo,
+    ) -> str | None:
+        if value is None:
+            return None
+        if value != value.strip():
+            raise ValueError(f"{info.field_name} must not contain whitespace.")
+        parsed = _HTTP_URL.validate_python(value)
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError(f"{info.field_name} must not contain credentials.")
+        if parsed.fragment is not None:
+            raise ValueError(f"{info.field_name} must not contain a fragment.")
+        if info.field_name == "http_oidc_issuer" and parsed.query is not None:
+            raise ValueError("http_oidc_issuer must not contain a query.")
+        return value
+
     @field_validator("trusted_local_import_roots")
     @classmethod
     def _clean_import_roots(
@@ -112,7 +242,74 @@ class VidXPSettings(BaseSettings):
             raise ValueError(
                 "Server mode requires an explicit cpu or cuda runtime backend."
             )
+        if self.http_auth_mode == HttpAuthMode.static:
+            if self.http_static_bearer_token is None or len(
+                self.http_static_bearer_token.get_secret_value()
+            ) < 32:
+                raise ValueError(
+                    "Static HTTP authentication requires a bearer token of "
+                    "at least 32 characters."
+                )
+            if any(
+                value is not None
+                for value in (
+                    self.http_oidc_issuer,
+                    self.http_oidc_audience,
+                    self.http_oidc_jwks_url,
+                )
+            ):
+                raise ValueError(
+                    "Static HTTP authentication cannot include OIDC settings."
+                )
+        elif self.http_auth_mode == HttpAuthMode.oidc:
+            if (
+                self.http_oidc_issuer is None
+                or self.http_oidc_audience is None
+                or self.http_oidc_jwks_url is None
+            ):
+                raise ValueError(
+                    "OIDC HTTP authentication requires issuer, audience, "
+                    "and JWKS URL settings."
+                )
+            if self.http_static_bearer_token is not None:
+                raise ValueError(
+                    "OIDC HTTP authentication cannot include a static token."
+                )
+            if not self.http_required_scopes:
+                raise ValueError(
+                    "OIDC HTTP authentication requires at least one scope."
+                )
+        elif self.http_static_bearer_token is not None or any(
+            value is not None
+            for value in (
+                self.http_oidc_issuer,
+                self.http_oidc_audience,
+                self.http_oidc_jwks_url,
+            )
+        ):
+            raise ValueError(
+                "HTTP credentials require an explicit authentication mode."
+            )
         return self
+
+    def validate_http_server(self) -> None:
+        if (
+            self.mode == ApplicationMode.server
+            and self.http_auth_mode == HttpAuthMode.none
+        ):
+            raise ValueError(
+                "Server-mode HTTP requires static bearer or OIDC "
+                "authentication."
+            )
+        if (
+            self.http_auth_mode == HttpAuthMode.none
+            and self.http_bind_host not in {"127.0.0.1", "::1", "localhost"}
+        ):
+            raise ValueError(
+                "Unauthenticated HTTP may bind only to a loopback address."
+            )
+        if not self.http_trusted_hosts:
+            raise ValueError("At least one trusted HTTP host is required.")
 
     @property
     def layout(self) -> RepositoryLayout:

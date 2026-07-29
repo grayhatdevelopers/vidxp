@@ -26,6 +26,7 @@ from vidxp.workflow_contracts import QUEUE_NAMES
 MEDIA_ID = "123456781234423481234567890abcde"
 GENERATION_ID = "223456781234423481234567890abcde"
 SNAPSHOT_ID = "323456781234423481234567890abcde"
+IDEMPOTENCY_KEY = "423456781234423481234567890abcde"
 
 
 class DBOSJobIntegrationTests(unittest.TestCase):
@@ -121,6 +122,32 @@ class DBOSJobIntegrationTests(unittest.TestCase):
         self.assertEqual(page.items[0].job_id, submitted.job_id)
         self.application.create_index.assert_called_once()
 
+    def test_submission_idempotency_replays_only_the_same_request(self):
+        command = CreateIndexCommand(
+            media_id=MEDIA_ID,
+            modalities=("scene",),
+        )
+
+        first = self.jobs.submit_index(command, job_id=IDEMPOTENCY_KEY)
+        second = self.jobs.submit_index(command, job_id=IDEMPOTENCY_KEY)
+        completed = self.jobs.wait(first.job_id)
+
+        self.assertEqual(first.job_id, IDEMPOTENCY_KEY)
+        self.assertEqual(second.job_id, IDEMPOTENCY_KEY)
+        self.assertEqual(completed.state, JobState.succeeded)
+        self.application.create_index.assert_called_once()
+
+        with self.assertRaises(ApplicationError) as caught:
+            self.jobs.submit_index(
+                command.model_copy(update={"frame_stride": 2}),
+                job_id=IDEMPOTENCY_KEY,
+            )
+        self.assertEqual(caught.exception.code, "idempotency_key_reused")
+        self.assertEqual(
+            caught.exception.category,
+            ErrorCategory.validation,
+        )
+
     def test_cancellation_reaches_the_running_application_operation(self):
         started = Event()
         stopped = Event()
@@ -148,7 +175,7 @@ class DBOSJobIntegrationTests(unittest.TestCase):
         self.assertEqual(cancelled.state, JobState.cancelled)
         self.assertTrue(stopped.wait(timeout=5))
 
-    def test_failed_job_retries_as_a_new_typed_execution(self):
+    def test_failed_job_retries_idempotently_as_new_typed_execution(self):
         attempts = 0
 
         def create_index(command, *, execution):
@@ -193,10 +220,19 @@ class DBOSJobIntegrationTests(unittest.TestCase):
             "temporary indexing dependency",
             repr(failed_step["error"]).lower(),
         )
-        retried = self.jobs.retry(failed.job_id)
+        retried = self.jobs.retry(
+            failed.job_id,
+            retry_id=IDEMPOTENCY_KEY,
+        )
+        replayed = self.jobs.retry(
+            failed.job_id,
+            retry_id=IDEMPOTENCY_KEY,
+        )
         completed = self.jobs.wait(retried.job_id)
 
         self.assertNotEqual(retried.job_id, failed.job_id)
+        self.assertEqual(retried.job_id, IDEMPOTENCY_KEY)
+        self.assertEqual(replayed.job_id, IDEMPOTENCY_KEY)
         self.assertEqual(completed.state, JobState.succeeded)
         self.assertEqual(completed.queue, JobQueue.cpu)
         self.assertEqual(

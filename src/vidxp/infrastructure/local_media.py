@@ -19,12 +19,12 @@ from vidxp.core.media import (
     MediaImportLimitError,
     MediaStream,
     MediaStoreIntegrityError,
+    safe_media_suffix,
     StagedMedia,
     StoredMedia,
 )
 from vidxp.infrastructure.local_files import (
     prepare_managed_destination,
-    safe_media_suffix,
 )
 from vidxp.infrastructure.local_objects import LocalObjectStore
 

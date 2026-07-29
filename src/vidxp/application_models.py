@@ -65,6 +65,12 @@ class RuntimeProfile(ApplicationModel):
     cuda_available: bool = False
 
 
+class Principal(ApplicationModel):
+    subject: str = Field(min_length=1, max_length=255)
+    client_id: str | None = Field(default=None, min_length=1, max_length=255)
+    scopes: frozenset[str] = Field(default_factory=frozenset)
+
+
 class ErrorCategory(StrEnum):
     validation = "validation"
     authentication = "authentication"
@@ -207,6 +213,36 @@ class CapabilityDependencyCheck(ApplicationModel):
     installed_version: str | None = None
     ok: bool
     error: str | None = None
+
+
+class CapabilityOperationInfo(ApplicationModel):
+    name: str = Field(min_length=1)
+    requires_index: bool
+    input_schema: dict[str, JsonValue]
+    output_schema: dict[str, JsonValue]
+
+
+class CapabilityInfo(ApplicationModel):
+    name: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    install_extra: str = Field(min_length=1)
+    supports_indexing: bool
+    prepares_models: bool
+    operations: tuple[CapabilityOperationInfo, ...] = ()
+    provenance: CapabilityProvenance | None = None
+
+
+class ComponentReadiness(ApplicationModel):
+    name: str = Field(min_length=1)
+    ready: bool
+    message: str = Field(min_length=1)
+
+
+class RuntimeReadiness(ApplicationModel):
+    ready: bool
+    runtime: RuntimeProfile | None
+    components: tuple[ComponentReadiness, ...]
+    dependencies: DependencyCheckResult | None
 
 
 class ImportMediaCommand(ApplicationModel):

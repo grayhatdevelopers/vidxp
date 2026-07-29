@@ -73,10 +73,7 @@ class PackagingTests(unittest.TestCase):
         }
         self.assertEqual(
             chroma_contracts,
-            {
-                "src/vidxp/requirements/server.txt",
-                "src/vidxp/requirements/storage.txt",
-            },
+            {"src/vidxp/requirements/storage.txt"},
         )
         self.assertNotIn("benchmarks/requirements.txt", all_block)
         self.assertNotIn("requirements/frontend.txt", all_block)
@@ -112,8 +109,8 @@ class PackagingTests(unittest.TestCase):
         server = (
             ROOT / "src" / "vidxp" / "requirements" / "server.txt"
         ).read_text(encoding="utf-8")
-        self.assertIn("chromadb", server)
         for distribution in (
+            "chromadb",
             "faster-whisper",
             "opencv-python-headless",
             "sentence-transformers",
@@ -121,6 +118,22 @@ class PackagingTests(unittest.TestCase):
             "transformers",
         ):
             self.assertNotIn(distribution, server)
+        for requirement in (
+            "asgi-correlation-id>=5.0.1,<6",
+            "fastapi>=0.140.13,<0.141",
+            "pyjwt[crypto]>=2.13,<3",
+            "python-multipart>=0.0.32,<0.1",
+            "uvicorn[standard]>=0.51,<0.52",
+        ):
+            self.assertIn(requirement, server)
+        self.assertNotIn("fastapi-mcp", server)
+        self.assertNotIn("\nmcp", server)
+        self.assertNotIn("httpx2", server)
+        test_requirements = (
+            ROOT / "src" / "vidxp" / "requirements" / "test.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("httpx>=0.28.1,<0.29", test_requirements)
+        self.assertNotIn("httpx2", test_requirements)
 
 
 if __name__ == "__main__":
