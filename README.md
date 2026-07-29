@@ -125,10 +125,17 @@ vidxp prepare
 ```
 
 `doctor` does not download anything. It reports missing model artifacts and
-exits unsuccessfully until the selected capabilities are prepared. Indexing,
-API jobs, and MCP tools do not turn a first request into an implicit model
-download; model downloads happen only through `prepare` or the model-preparation
-job.
+their pinned sizes, then exits unsuccessfully until the selected capabilities
+are prepared. `prepare` shows the missing models, maximum additional
+download/cache space, and cache location before requiring confirmation
+(`--yes` for non-interactive use). Indexing, API jobs, and MCP tools do not turn
+a first request into an implicit model download; model downloads happen only
+through `prepare` or the model-preparation job.
+
+Local commands do not store data in the directory where they were launched.
+The CLI, browser UI, local MCP process, and locally launched server use the
+operating system's per-user VidXP data directory. See
+[Models and local data](#models-and-local-data) for the layout and overrides.
 
 ## Index and search
 
@@ -381,17 +388,42 @@ VidXP is an evolving beta. We'd love to hear your feedback and where you'd like 
 | Actor detection | OpenCV Zoo YuNet |
 | Actor recognition | OpenCV Zoo SFace |
 
-VidXP maintains the standard local CLI/UI repository in `chroma_data/`. Each
-local import is streamed into managed storage, validated with `ffprobe`, and
-published through the repository catalog before it can be indexed. Each successful
-indexing run creates an immutable generation and atomically publishes a multi-media
-snapshot. Actor overlay videos are immutable cataloged artifacts. Re-indexing
-replaces only that media item's active generation; removing or clearing media
-publishes a new snapshot without deleting retained generations or media. Failed
-and cancelled runs do not replace the active snapshot. Model caches normally live
-outside this directory and outside the virtual environment. Provider revisions
-and weight checksums are pinned in capability specs and recorded in each generation
-manifest.
+Local installs use the operating system's per-user VidXP data directory,
+independent of the shell's current directory and the Python virtual environment:
+
+```text
+VidXP/
+  repositories/
+    default/
+  models/
+```
+
+On Windows the default root is `%LOCALAPPDATA%\VidXP`; on macOS it is
+`~/Library/Application Support/VidXP`; and on Linux it is
+`${XDG_DATA_HOME:-~/.local/share}/VidXP`. Named-repository configuration is a
+small separate file in the operating system's standard user configuration
+directory (for example, `%APPDATA%\VidXP\repositories.json` on Windows).
+
+Use the global `--data-dir` option for a `vidxp` invocation, or set
+`VIDXP_DATA_DIR` for the CLI, browser UI, local MCP, and locally launched server:
+
+```bash
+vidxp --data-dir /path/to/vidxp-data ui
+```
+
+`VIDXP_INDEX_DIR` and `VIDXP_MODEL_CACHE` remain advanced overrides for those
+individual locations. Docker and Compose use their explicitly configured
+volumes instead of the host's per-user directory.
+
+Each local import is streamed into managed repository storage, validated with
+`ffprobe`, and published through the repository catalog before it can be
+indexed. Each successful indexing run creates an immutable generation and
+atomically publishes a multi-media snapshot. Actor overlay videos are immutable
+cataloged artifacts. Re-indexing replaces only that media item's active
+generation; removing or clearing media publishes a new snapshot without
+deleting retained generations or media. Failed and cancelled runs do not
+replace the active snapshot. Provider revisions and weight checksums are pinned
+in capability specs and recorded in each generation manifest.
 
 ## Documentation and project links
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import Sequence
 
 from vidxp.application_models import Principal
@@ -18,6 +19,11 @@ def main(arguments: Sequence[str] | None = None) -> None:
     parser.add_argument("--registry")
     parser.add_argument("--repository")
     parser.add_argument("--index-directory")
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Store VidXP models and the default repository here.",
+    )
     parser.add_argument("--device")
     options = parser.parse_args(arguments)
 
@@ -25,6 +31,7 @@ def main(arguments: Sequence[str] | None = None) -> None:
         registry_path=options.registry,
         repository_name=options.repository,
         index_directory=options.index_directory,
+        data_directory=options.data_dir,
         device=options.device,
     )
     context = create_control_plane_application(local.settings)

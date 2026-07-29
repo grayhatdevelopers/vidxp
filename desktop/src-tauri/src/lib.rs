@@ -146,7 +146,7 @@ fn desktop_paths(app: &AppHandle) -> Result<DesktopPaths, String> {
         runtimes: data.join("runtimes"),
         python: data.join("python"),
         active_runtime: data.join("active-runtime.json"),
-        models: cache.join("models"),
+        models: data.join("models"),
         data,
         cache,
     })
@@ -284,6 +284,10 @@ fn clean_environment(paths: &DesktopPaths) -> Vec<(String, String)> {
         })
         .collect();
     environment.extend([
+        (
+            "VIDXP_DATA_DIR".into(),
+            paths.data.to_string_lossy().into_owned(),
+        ),
         (
             "VIDXP_MODEL_CACHE".into(),
             paths.models.to_string_lossy().into_owned(),

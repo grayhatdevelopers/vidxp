@@ -33,8 +33,10 @@ does not change merely because the same run is relocated to another output or
 storage directory. Checkpoint filenames are hashes of video IDs, so official IDs
 cannot accidentally become platform-specific paths.
 
-The CLI and Streamlit interface use `chroma_data/` as their local run. Indexes
-created with an older schema must be rebuilt; VidXP does not invent missing end
+The CLI and Streamlit interface use `repositories/default/` beneath the
+operating system's per-user VidXP data root. This local application repository
+is separate from the explicit `benchmark_runs/` output above. Indexes created
+with an older schema must be rebuilt; VidXP does not invent missing end
 timestamps, video IDs, or source IDs.
 
 ## Indexing API

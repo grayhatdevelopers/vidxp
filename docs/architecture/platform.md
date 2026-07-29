@@ -99,6 +99,7 @@ Use one immutable `VidXPSettings` model built with `pydantic-settings`.
 
 It owns:
 
+- the per-user application data root
 - repository root and active local repository selection
 - trusted local import roots
 - upload limits and retention
@@ -239,7 +240,24 @@ remain outside the Pydantic success schema.
 
 ## 8. Repository layout
 
-One `RepositoryLayout` defines all persistent paths:
+Native local interfaces share an operating-system per-user application data
+root rather than deriving storage from the process working directory:
+
+```text
+VidXP/
+  repositories/
+    default/
+      ...
+  models/
+```
+
+The CLI's global `--data-dir` option and `VIDXP_DATA_DIR` replace this root.
+`VIDXP_INDEX_DIR` and `VIDXP_MODEL_CACHE` remain narrower advanced overrides.
+Named-repository configuration uses the operating system's standard roaming
+user-configuration directory. Container deployments do not inherit these host
+defaults; Compose supplies explicit repository and model-cache volumes.
+
+Within a repository, one `RepositoryLayout` defines all persistent paths:
 
 ```text
 repository/
@@ -259,8 +277,9 @@ repository/
   local-workflows/
 ```
 
-Deployment-wide model caches do not live inside repositories unless explicit
-isolation is requested.
+Model caches do not live inside repositories. For native local operation they
+are a sibling under the shared application data root; server deployments mount
+their cache explicitly.
 
 Remote API/MCP responses never expose these internal paths.
 
@@ -515,7 +534,10 @@ Model downloads are explicit preparation jobs. Doctor/readiness checks inspect
 the pinned cache without constructing models or downloading, and ordinary
 indexing or query work fails fast with `model_unavailable` when required
 artifacts are absent. Preparation publishes byte progress and model-loading
-stages through the shared durable job contract.
+stages through the shared durable job contract. Pinned snapshot and artifact
+byte sizes are part of the model contract. Interactive preparation displays
+the missing-model sizes, maximum additional cache space, and cache path before
+requiring confirmation.
 
 The scheduler bounds concurrent model work. Local execution does not reject work
 based on a fixed free-RAM threshold; allocation failures come from the runtime
@@ -966,9 +988,9 @@ It loses:
 - hardcoded capability branching
 - model/storage access
 
-The desktop application uses the same application commands and a local DBOS SQLite
-workflow store, but heavy jobs run in a supervised separate worker process. It
-chooses a platform app-data repository root, manages client/worker lifecycle,
+The desktop application uses the same application commands, per-user data-root
+layout, and a local DBOS SQLite workflow store, but heavy jobs run in a
+supervised separate worker process. It manages client/worker lifecycle,
 displays model preparation progress, and detaches from durable work or requests
 cooperative cancellation during shutdown. Closing the UI never waits on an
 uncancellable model thread inside the UI process.

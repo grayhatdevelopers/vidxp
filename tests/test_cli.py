@@ -61,7 +61,13 @@ class CliTests(unittest.TestCase):
         ).list()
         self.service.index_directory = Path("repo/indexes")
         self.service.layout.root = Path("repo")
+        self.service.model_cache = Path("model-cache")
         self.service.runtime.backends.requested = "cpu"
+        self.service.model_readiness.return_value = DependencyCheckResult(
+            ok=True,
+            modalities=(),
+            checks=(),
+        )
         self.jobs = Mock()
         self.registry = Mock(spec=RepositoryRegistry)
         self.registry.path = Path("repositories.json")
@@ -82,8 +88,27 @@ class CliTests(unittest.TestCase):
                 repositories=self.registry,
                 repository=self.repository,
             ),
-        ):
-            return self.runner.invoke(cli.app, arguments)
+        ) as create_local_application:
+            result = self.runner.invoke(cli.app, arguments)
+        self.create_local_application = create_local_application
+        return result
+
+    def test_data_directory_is_forwarded_to_local_composition(self):
+        result = self.invoke(
+            [
+                "--data-dir",
+                "custom-data",
+                "repositories",
+                "show",
+                "--json",
+            ]
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(
+            self.create_local_application.call_args.kwargs["data_directory"],
+            Path("custom-data"),
+        )
 
     def test_grouped_commands_are_exposed(self):
         result = self.invoke(["--help"])
@@ -106,9 +131,23 @@ class CliTests(unittest.TestCase):
             startup_command(["media", "import", "video.mp4"]),
             "media import",
         )
+        self.assertEqual(
+            startup_command(["--data-dir", "custom-data", "ui"]),
+            "ui",
+        )
         self.assertIsNone(startup_command(["doctor", "--json"]))
         self.assertIsNone(startup_command(["--quiet", "prepare"]))
         self.assertIsNone(startup_command(["repositories", "list"]))
+
+    def test_ui_shutdown_stops_its_local_worker(self):
+        with patch(
+            "vidxp.frontend.main",
+            side_effect=SystemExit(0),
+        ):
+            result = self.invoke(["ui"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.jobs.stop_worker.assert_called_once_with()
 
     def test_snippet_rejects_an_inverted_time_range_before_submission(self):
         result = self.invoke(
@@ -386,6 +425,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(command.modalities, ("dialogue", "scene"))
 
     def test_prepare_announces_start_and_subscribes_to_job_progress(self):
+        self.service.model_readiness.return_value = DependencyCheckResult(
+            ok=False,
+            modalities=("scene",),
+            checks=(
+                CapabilityDependencyCheck(
+                    capability="scene",
+                    kind=DependencyKind.model,
+                    name="google/siglip2-base-patch16-224",
+                    download_size_bytes=1_539_458_338,
+                    ok=False,
+                    error="model artifacts are not prepared",
+                ),
+            ),
+        )
         prepared = PrepareModelsResult(
             prepared=("scene-model",),
             modalities=("scene",),
@@ -409,14 +462,43 @@ class CliTests(unittest.TestCase):
             result=PrepareModelsJobResult(result=prepared),
         )
 
-        result = self.invoke(["prepare", "--modalities", "scene"])
+        result = self.invoke(
+            ["prepare", "--modalities", "scene", "--yes"]
+        )
 
         self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("1.43 GiB", result.output)
         self.assertRegex(
             result.output,
             r"\[\d{2}:\d{2}:\d{2}\] Starting model preparation for scene\.",
         )
         self.assertTrue(callable(self.jobs.wait.call_args.kwargs["progress"]))
+
+    def test_prepare_discloses_size_and_requires_confirmation(self):
+        self.service.model_readiness.return_value = DependencyCheckResult(
+            ok=False,
+            modalities=("scene",),
+            checks=(
+                CapabilityDependencyCheck(
+                    capability="scene",
+                    kind=DependencyKind.model,
+                    name="google/siglip2-base-patch16-224",
+                    download_size_bytes=1_539_458_338,
+                    ok=False,
+                    error="model artifacts are not prepared",
+                ),
+            ),
+        )
+
+        declined = self.invoke(
+            ["prepare", "--modalities", "scene"],
+        )
+
+        self.assertNotEqual(declined.exit_code, 0)
+        self.assertIn("1.43 GiB", declined.output)
+        self.assertIn("Model cache: model-cache", declined.output)
+        self.assertIn("Download these models?", declined.output)
+        self.jobs.submit_prepare_models.assert_not_called()
 
     def test_doctor_streams_timestamped_runtime_check_progress(self):
         def check_dependencies(
@@ -526,6 +608,7 @@ class CliTests(unittest.TestCase):
                     capability="scene",
                     kind=DependencyKind.model,
                     name="google/siglip2-base-patch16-224",
+                    download_size_bytes=1_539_458_338,
                     ok=False,
                     error="model artifacts are not prepared",
                 ),
@@ -539,6 +622,7 @@ class CliTests(unittest.TestCase):
             "vidxp prepare --modalities scene",
             result.output,
         )
+        self.assertIn("1.43 GiB", result.output)
         self.assertNotIn("pip install", result.output)
 
     def test_invalid_capability_is_a_cli_parameter_error(self):

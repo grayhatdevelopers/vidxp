@@ -6,7 +6,6 @@ from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from platformdirs import user_cache_path
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -18,6 +17,11 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from vidxp.app_paths import (
+    default_data_directory,
+    default_model_directory,
+    default_repository_directory,
+)
 from vidxp.repository_layout import RepositoryLayout
 
 
@@ -42,10 +46,13 @@ class VidXPSettings(BaseSettings):
     )
 
     mode: ApplicationMode = ApplicationMode.local
-    repository_root: Path = Path("chroma_data")
+    data_dir: Path = Field(default_factory=default_data_directory)
+    repository_root: Path = Field(
+        default_factory=default_repository_directory
+    )
     runtime_backend: str = "auto"
     model_cache: Path = Field(
-        default_factory=lambda: user_cache_path("vidxp") / "models"
+        default_factory=default_model_directory
     )
     allow_model_downloads: bool = True
     max_loaded_models: int = Field(default=3, gt=0, le=16)
@@ -172,6 +179,26 @@ class VidXPSettings(BaseSettings):
     ffmpeg_executable: str = Field(default="ffmpeg", min_length=1)
     external_capabilities: bool = False
     capability_allowlist: tuple[str, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_storage_paths(cls, value):
+        if not isinstance(value, dict):
+            return value
+        configured = dict(value)
+        data_directory = Path(
+            configured.get("data_dir") or default_data_directory()
+        ).expanduser()
+        configured.setdefault("data_dir", data_directory)
+        configured.setdefault(
+            "repository_root",
+            default_repository_directory(data_directory),
+        )
+        configured.setdefault(
+            "model_cache",
+            default_model_directory(data_directory),
+        )
+        return configured
 
     @field_validator("slm_base_url", "slm_model", mode="before")
     @classmethod
@@ -589,6 +616,7 @@ class LocalExecutionSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    data_dir: Path
     repository_root: Path
     runtime_backend: str
     model_cache: Path

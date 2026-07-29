@@ -15,9 +15,8 @@ Thanks for contributing to VidXP (Video eXPlain).
 | `src/vidxp/benchmarks/` | Benchmark-specific loaders, prediction adapters, and evaluator calls |
 | `pyproject.toml` | Package metadata and Python dependencies |
 | `docs/` | Installation-linked guidance, benchmark research, and contribution notes |
-| `chroma_data/` | Local repository with immutable index generations and snapshots (generated; do not commit) |
 | `benchmark_runs/` | Isolated programmatic and benchmark runs (generated; do not commit) |
-| Model caches | Managed by the shared model runtime outside the repository |
+| Per-user VidXP data root | Generated local repository and prepared models; outside the checkout by default |
 
 The full local CLI/UI index uses up to three collections:
 `dialogue`, `scene`, and `actor`. Runs containing
@@ -42,9 +41,12 @@ vidxp doctor
 CLI: `vidxp --help`  
 UI: `vidxp ui`
 
-Models default to CPU and download into their libraries' standard caches on
-first use. If a model identifier changes, update the setup documentation and
-record the exact identifier in benchmark results.
+Models default to CPU and are downloaded only by explicit `vidxp prepare` work.
+The default repository and model directory are siblings beneath the operating
+system's per-user VidXP data root. For deliberately checkout-local development,
+pass `--data-dir ./.vidxp` before the command. If a model identifier changes,
+update the setup documentation and record the exact identifier in benchmark
+results.
 
 ## Where to put work
 
@@ -62,7 +64,7 @@ record the exact identifier in benchmark results.
 - Product direction: the roadmap in the main [README](../README.md).
 
 Prefer small, focused pull requests. If you change how embeddings or metadata
-are stored, state whether an existing `chroma_data` index must be rebuilt.
+are stored, state whether an existing VidXP repository must be rebuilt.
 
 ## Before you open a PR
 

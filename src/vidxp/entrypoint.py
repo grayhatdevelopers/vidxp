@@ -30,6 +30,7 @@ def startup_command(arguments: list[str]) -> str | None:
         "-r",
         "--config",
         "--index-dir",
+        "--data-dir",
         "--device",
         "--format",
     }

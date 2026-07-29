@@ -11,6 +11,25 @@ does not contain a second VidXP implementation:
 - the existing DBOS worker remains the durable execution boundary; and
 - closing the desktop process stops both Streamlit and the repository worker.
 
+The desktop uses the operating system-provided app-local-data root rather than
+the installation directory or current working directory. Its relevant layout
+matches other local installs:
+
+```text
+app-local-data/
+  repositories/
+    default/
+  models/
+  runtimes/
+  python/
+  active-runtime.json
+```
+
+The last three entries are desktop bootstrap state. The desktop's uv download
+cache uses the operating system-provided app-cache directory. Docker and
+Compose storage remains explicitly volume-backed and does not inherit this
+desktop layout.
+
 The first release is an online bootstrap. It bundles `uv`, installs the exact
 Python and VidXP versions in `desktop/runtime-manifest.json`, and activates a new
 runtime only after `vidxp doctor` passes. A failed setup never replaces the

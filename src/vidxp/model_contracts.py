@@ -39,6 +39,7 @@ class ModelSpec:
     provider: str
     model_id: str
     revision: str
+    download_size_bytes: int
     weights_file: str
     weights_sha256: str
     license: str
@@ -47,6 +48,8 @@ class ModelSpec:
     def __post_init__(self) -> None:
         if not _IMMUTABLE_REVISION.fullmatch(self.revision):
             raise ValueError("Model revisions must be immutable commit hashes.")
+        if self.download_size_bytes <= 0:
+            raise ValueError("Model download sizes must be positive.")
         if not _SHA256.fullmatch(self.weights_sha256):
             raise ValueError("Model weight checksums must be SHA-256 hashes.")
 
@@ -64,6 +67,7 @@ class ModelSpec:
             "provider": self.provider,
             "model": self.model_id,
             "revision": self.revision,
+            "download_size_bytes": self.download_size_bytes,
             "weights": {
                 "file": self.weights_file,
                 "sha256": self.weights_sha256,
@@ -82,6 +86,7 @@ class ArtifactSpec:
     provider: str
     model_id: str
     revision: str
+    download_size_bytes: int
     url: str
     filename: str
     sha256: str
@@ -91,6 +96,8 @@ class ArtifactSpec:
     def __post_init__(self) -> None:
         if not _IMMUTABLE_REVISION.fullmatch(self.revision):
             raise ValueError("Artifact revisions must be immutable commit hashes.")
+        if self.download_size_bytes <= 0:
+            raise ValueError("Artifact download sizes must be positive.")
         if not _SHA256.fullmatch(self.sha256):
             raise ValueError("Artifact checksums must be SHA-256 hashes.")
         if not self.url.startswith("https://"):
@@ -110,6 +117,7 @@ class ArtifactSpec:
             "provider": self.provider,
             "model": self.model_id,
             "revision": self.revision,
+            "download_size_bytes": self.download_size_bytes,
             "artifact": {
                 "file": self.filename,
                 "sha256": self.sha256,

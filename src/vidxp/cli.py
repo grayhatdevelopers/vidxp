@@ -87,6 +87,17 @@ def app_options(
             help="Override the selected repository index directory.",
         ),
     ] = None,
+    data_directory: Annotated[
+        Path | None,
+        typer.Option(
+            "--data-dir",
+            file_okay=False,
+            help=(
+                "Store VidXP models and the default repository beneath this "
+                "directory."
+            ),
+        ),
+    ] = None,
     device: Annotated[
         str | None,
         typer.Option(
@@ -111,6 +122,7 @@ def app_options(
         registry_path=config_file,
         repository_name=repository_name,
         index_directory=index_directory,
+        data_directory=data_directory,
         device=device,
     )
     ctx.call_on_close(local.close)

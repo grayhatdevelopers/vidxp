@@ -164,6 +164,7 @@ class CapabilityRegistry:
                     capability=name,
                     kind=DependencyKind.model,
                     name=spec.model_id,
+                    download_size_bytes=spec.download_size_bytes,
                     ok=cached,
                     error=(
                         None

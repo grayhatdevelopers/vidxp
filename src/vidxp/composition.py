@@ -112,9 +112,15 @@ class ControlPlaneContext:
     uploads: RemoteUploadService | None = None
 
     def close(self) -> None:
-        self.jobs.close()
-        if self.catalog is not None:
-            self.catalog.close()
+        try:
+            if self.settings.mode != ApplicationMode.server:
+                self.jobs.stop_worker()
+        finally:
+            try:
+                self.jobs.close()
+            finally:
+                if self.catalog is not None:
+                    self.catalog.close()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -216,11 +222,17 @@ def _create_control_plane_components(
     )
 
 
-def settings_for_repository(repository: RepositoryConfig) -> VidXPSettings:
+def settings_for_repository(
+    repository: RepositoryConfig,
+    *,
+    data_directory: str | Path | None = None,
+) -> VidXPSettings:
     values = {
         "mode": ApplicationMode.local,
         "repository_root": repository.index_directory,
     }
+    if data_directory is not None:
+        values["data_dir"] = Path(data_directory)
     if repository.device is not None:
         values["runtime_backend"] = repository.device
     return VidXPSettings(**values)
@@ -458,6 +470,7 @@ def create_local_application(
     registry_path: str | Path | None = None,
     repository_name: str | None = None,
     index_directory: str | Path | None = None,
+    data_directory: str | Path | None = None,
     device: str | None = None,
 ) -> LocalApplicationContext:
     try:
@@ -465,9 +478,13 @@ def create_local_application(
             registry_path=registry_path,
             name=repository_name,
             index_directory=index_directory,
+            data_directory=data_directory,
             device=device,
         )
-        settings = settings_for_repository(repository)
+        settings = settings_for_repository(
+            repository,
+            data_directory=data_directory,
+        )
     except (RepositoryConfigError, ValidationError) as exc:
         raise ApplicationError(
             "configuration_invalid",

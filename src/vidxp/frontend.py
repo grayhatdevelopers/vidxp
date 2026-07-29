@@ -9,6 +9,7 @@ from typing import Sequence
 
 import streamlit as st
 
+from vidxp.app_paths import available_storage_bytes
 from vidxp.application import VidXPApplication
 from vidxp.application_models import (
     ApplicationError,
@@ -63,6 +64,7 @@ INDEX_REQUESTED_KEY = "_vidxp_index_requested"
 INDEX_ERROR_KEY = "_vidxp_index_error"
 INDEX_JOB_ID_KEY = "_vidxp_index_job_id"
 PREPARE_JOB_ID_KEY = "_vidxp_prepare_job_id"
+PREPARE_CANCEL_REQUESTED_KEY = "_vidxp_prepare_cancel_requested"
 SEARCH_RESULT_KEY = "_vidxp_search_result"
 CANCEL_REQUESTED_KEY = "_vidxp_cancel_requested"
 MEDIA_ID_KEY = "_vidxp_media_id"
@@ -79,6 +81,14 @@ SCENE_DETAIL_LABELS = {
     1.0: "Balanced — every second",
     2.0: "Detailed — twice per second",
 }
+
+
+def _format_bytes(size: int) -> str:
+    gib = 1024**3
+    mib = 1024**2
+    if size >= gib:
+        return f"{size / gib:.2f} GiB"
+    return f"{size / mib:.1f} MiB"
 
 
 def _remember_job(
@@ -153,11 +163,7 @@ def _render_progress(event):
     current, total = event.get("current"), event.get("total")
     if current is not None and total:
         if event.get("stage") == "downloading_model":
-            gib = 1024**3
-            mib = 1024**2
-            unit = gib if total >= gib else mib
-            suffix = "GiB" if unit == gib else "MiB"
-            text = f"{current / unit:.1f} of {total / unit:.1f} {suffix}"
+            text = f"{_format_bytes(current)} of {_format_bytes(total)}"
         else:
             text = f"{current:,} of {total:,}"
         st.progress(
@@ -234,6 +240,13 @@ def _request_cancellation():
         st.session_state[INDEX_ERROR_KEY] = (
             "This indexing process cannot be cancelled from the current UI."
         )
+
+
+def _request_prepare_cancellation():
+    job_id = st.session_state.get(PREPARE_JOB_ID_KEY)
+    if job_id is not None:
+        _configured_jobs().cancel(job_id)
+        st.session_state[PREPARE_CANCEL_REQUESTED_KEY] = True
 
 
 def _available_index_modalities() -> tuple[str, ...]:
@@ -823,6 +836,8 @@ def run():
             )
         )
     )
+    if not preparing:
+        st.session_state.pop(PREPARE_CANCEL_REQUESTED_KEY, None)
     if not active:
         st.session_state.pop(CANCEL_REQUESTED_KEY, None)
     requested = st.session_state.get(INDEX_REQUESTED_KEY, False)
@@ -883,14 +898,28 @@ def run():
             if selected_modalities
             else None
         )
-        missing_models = (
+        missing_checks = (
             tuple(
-                check.name
+                check
                 for check in model_readiness.checks
                 if not check.ok
             )
             if model_readiness is not None
             else ()
+        )
+        missing_models = tuple(check.name for check in missing_checks)
+        required_download_bytes = sum(
+            check.download_size_bytes or 0
+            for check in missing_checks
+        )
+        model_cache_free_bytes = (
+            available_storage_bytes(service.model_cache)
+            if missing_checks
+            else None
+        )
+        insufficient_model_space = (
+            model_cache_free_bytes is not None
+            and model_cache_free_bytes < required_download_bytes
         )
         if not installed_modalities:
             st.warning(
@@ -899,14 +928,43 @@ def run():
             )
         if missing_models and not preparing:
             st.warning(
-                "Model artifacts are not prepared: "
-                + ", ".join(missing_models)
-                + "."
+                "The following model artifacts must be downloaded:"
+            )
+            for check in missing_checks:
+                st.caption(
+                    f"• {check.name} — "
+                    f"{_format_bytes(check.download_size_bytes or 0)}"
+                )
+            st.caption(
+                "Maximum additional download and cache space: "
+                f"{_format_bytes(required_download_bytes)}"
+            )
+            st.caption(f"Model cache: {service.model_cache}")
+            if model_cache_free_bytes is not None:
+                st.caption(
+                    "Free space at model cache: "
+                    f"{_format_bytes(model_cache_free_bytes)}"
+                )
+            if insufficient_model_space:
+                st.error(
+                    "There is not enough free space for these model "
+                    "downloads. Free space at the displayed location or "
+                    "restart VidXP with a different global --data-dir."
+                )
+            confirmed = st.checkbox(
+                "I want to download these models and use this cache space.",
+                key=(
+                    "_vidxp_confirm_models_"
+                    + "_".join(selected_modalities)
+                ),
+                disabled=insufficient_model_space,
             )
             if st.button(
-                "Prepare selected models",
-                disabled=busy,
-                help="Download and validate these models before indexing.",
+                "Download models",
+                type="primary",
+                disabled=busy
+                or insufficient_model_space
+                or not confirmed,
             ):
                 preparation = jobs.submit_prepare_models(
                     PrepareModelsCommand(modalities=selected_modalities)
@@ -917,6 +975,17 @@ def run():
                     query_param=PREPARE_JOB_QUERY_PARAM,
                 )
                 st.rerun()
+        if preparing:
+            st.button(
+                "Cancel model preparation",
+                on_click=_request_prepare_cancellation,
+                disabled=st.session_state.get(
+                    PREPARE_CANCEL_REQUESTED_KEY,
+                    False,
+                ),
+            )
+            if st.session_state.get(PREPARE_CANCEL_REQUESTED_KEY, False):
+                st.caption("Cancellation requested.")
         if preparing:
 
             @st.fragment(run_every="1s")

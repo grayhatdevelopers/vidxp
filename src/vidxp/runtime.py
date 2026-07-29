@@ -168,13 +168,17 @@ class ModelRuntime:
         cache: Path,
         progress: Callable[[dict[str, Any]], None] | None,
     ) -> Path:
-        from huggingface_hub import snapshot_download
+        from huggingface_hub import constants, snapshot_download
         from tqdm.auto import tqdm
 
+        # Xet can remain parked at zero bytes without surfacing an error.
+        # The regular HTTP path has bounded read timeouts and reports bytes
+        # through tqdm, which is required for durable preparation progress.
+        constants.HF_HUB_DISABLE_XET = True
         state_lock = Lock()
         state: dict[str, Any] = {
-            "current": None,
-            "total": None,
+            "current": 0,
+            "total": spec.download_size_bytes,
             "message": f"Connecting to download {spec.model_id}.",
         }
 

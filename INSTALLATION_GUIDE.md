@@ -98,6 +98,37 @@ source .venv/bin/activate
 uv pip install --torch-backend cpu "vidxp[local-worker,frontend]"
 ```
 
+## Local data location
+
+Local installs do not use the directory where `vidxp` was launched as their
+storage root. The CLI, browser UI, local MCP process, and locally launched
+server use the operating system's per-user VidXP data directory:
+
+| Platform | Default data root |
+|---|---|
+| Windows | `%LOCALAPPDATA%\VidXP` |
+| macOS | `~/Library/Application Support/VidXP` |
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/VidXP` |
+
+The default repository is under `repositories/default/` and prepared models are
+under `models/` within that root. Named-repository configuration stays in the
+operating system's standard user configuration directory, such as
+`%APPDATA%\VidXP\repositories.json` on Windows. None of these paths are inside
+the package environment or source checkout unless explicitly requested.
+
+Use the global option when invoking the `vidxp` command:
+
+```bash
+vidxp --data-dir /path/to/vidxp-data doctor
+vidxp --data-dir /path/to/vidxp-data ui
+```
+
+Set `VIDXP_DATA_DIR` instead when every local entry point, including
+`vidxp-api` or `vidxp-mcp`, should use the same alternate root.
+`VIDXP_INDEX_DIR` and `VIDXP_MODEL_CACHE` remain advanced per-location
+overrides. Docker and Compose are separate deployment profiles and use their
+explicitly configured volumes.
+
 ## Verify providers and model readiness without downloading
 
 ```bash
@@ -137,17 +168,23 @@ vidxp prepare
 
 Indexing, API jobs, and MCP tools never download missing models implicitly.
 Preparation is a durable job and reports download bytes plus model-loading
-stages through CLI output or normal job polling.
+stages through CLI output or normal job polling. The CLI and UI show every
+missing model's pinned size, the maximum additional cache space, and the cache
+location before requiring confirmation. Non-interactive CLI preparation
+requires `--yes`.
 
 Prepare a subset when disk or network capacity is limited:
 
 ```bash
 vidxp prepare --modalities scene
 vidxp prepare --modalities dialogue,actor
+vidxp prepare --modalities scene --yes  # non-interactive confirmation
 ```
 
-Set `VIDXP_MODEL_CACHE` to choose the cache directory. Set
-`VIDXP_ALLOW_MODEL_DOWNLOADS=false` for an offline worker after preparation.
+Prepared models normally use the `models/` directory beneath the VidXP data
+root described above. Set `VIDXP_MODEL_CACHE` only to override that one
+location. Set `VIDXP_ALLOW_MODEL_DOWNLOADS=false` for an offline worker after
+preparation.
 
 ## First indexing run
 

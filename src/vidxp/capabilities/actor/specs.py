@@ -12,6 +12,7 @@ YUNET_MODEL = ArtifactSpec(
     provider="opencv-zoo",
     model_id="yunet",
     revision=OPENCV_ZOO_REVISION,
+    download_size_bytes=229_738,
     url=f"{_MODEL_ROOT}/face_detection_yunet/"
     "face_detection_yunet_2026may.onnx",
     filename="face_detection_yunet_2026may.onnx",
@@ -25,6 +26,7 @@ SFACE_MODEL = ArtifactSpec(
     provider="opencv-zoo",
     model_id="sface",
     revision=OPENCV_ZOO_REVISION,
+    download_size_bytes=38_696_353,
     url=f"{_MODEL_ROOT}/face_recognition_sface/"
     "face_recognition_sface_2021dec.onnx",
     filename="face_recognition_sface_2021dec.onnx",

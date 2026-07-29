@@ -38,6 +38,10 @@ class UploadedVideo:
 
 
 class FrontendTests(unittest.TestCase):
+    def test_model_download_sizes_are_human_readable(self):
+        self.assertEqual(frontend._format_bytes(1_539_458_338), "1.43 GiB")
+        self.assertEqual(frontend._format_bytes(38_926_091), "37.1 MiB")
+
     def test_durable_job_ids_restore_from_query_parameters(self):
         session_state = {}
         query_params = {

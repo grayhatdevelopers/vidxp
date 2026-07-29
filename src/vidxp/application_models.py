@@ -242,6 +242,7 @@ class CapabilityDependencyCheck(ApplicationModel):
     name: str = Field(min_length=1)
     requirement: str | None = None
     installed_version: str | None = None
+    download_size_bytes: int | None = Field(default=None, ge=1)
     ok: bool
     error: str | None = None
 

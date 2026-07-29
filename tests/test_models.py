@@ -170,10 +170,21 @@ class ModelTests(unittest.TestCase):
             )
 
         self.assertEqual(
-            [(check.name, check.ok) for check in checks],
             [
-                (YUNET_MODEL.model_id, True),
-                (SFACE_MODEL.model_id, False),
+                (check.name, check.download_size_bytes, check.ok)
+                for check in checks
+            ],
+            [
+                (
+                    YUNET_MODEL.model_id,
+                    YUNET_MODEL.download_size_bytes,
+                    True,
+                ),
+                (
+                    SFACE_MODEL.model_id,
+                    SFACE_MODEL.download_size_bytes,
+                    False,
+                ),
             ],
         )
 
@@ -198,11 +209,17 @@ class ModelTests(unittest.TestCase):
             with patch(
                 "huggingface_hub.snapshot_download",
                 side_effect=download,
+            ), patch(
+                "huggingface_hub.constants.HF_HUB_DISABLE_XET",
+                False,
             ):
                 resolved = ModelRuntime._download_snapshot(
                     FASTER_WHISPER_MODEL,
                     cache=Path(directory),
                     progress=events.append,
+                )
+                self.assertTrue(
+                    __import__("huggingface_hub").constants.HF_HUB_DISABLE_XET
                 )
 
         self.assertEqual(resolved, snapshot)

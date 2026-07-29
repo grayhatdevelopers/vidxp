@@ -162,6 +162,15 @@ class ApiTests(unittest.TestCase):
     def auth() -> dict[str, str]:
         return {"Authorization": f"Bearer {TOKEN}"}
 
+    def test_local_http_context_stops_worker_when_closed(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+
+            context.close()
+
+        context.jobs.stop_worker.assert_called_once_with()
+        context.jobs.close.assert_called_once_with()
+
     def test_health_and_minimal_readiness_are_public(self):
         with TemporaryDirectory() as directory:
             context = self.context(
