@@ -5,6 +5,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
+from streamlit.testing.v1 import AppTest
+
 from vidxp import frontend
 from vidxp.application_models import (
     ApplicationError,
@@ -312,46 +314,47 @@ class FrontendTests(unittest.TestCase):
         self.assertIsNone(selected)
         selectbox.assert_not_called()
 
-    def test_search_controls_use_an_enter_submittable_form(self):
-        with (
-            patch.object(
-                frontend.st,
-                "form",
-                return_value=nullcontext(),
-            ) as form,
-            patch.object(
-                frontend.st,
-                "columns",
-                return_value=(nullcontext(), nullcontext()),
-            ),
-            patch.object(
-                frontend.st,
-                "selectbox",
-                return_value="scene",
-            ),
-            patch.object(
-                frontend.st,
-                "text_input",
-                return_value="three people at the counter",
-            ),
-            patch.object(
-                frontend.st,
-                "form_submit_button",
-                return_value=True,
-            ) as submit,
-            patch.object(frontend.st, "subheader"),
-        ):
-            clicked, search_type, query = frontend._search_controls(
-                True,
-                None,
-                ("scene",),
-            )
+    def test_search_form_submits_its_first_query(self):
+        app = AppTest.from_string(
+            """
+import streamlit as st
+from vidxp.frontend import _search_controls
 
-        self.assertTrue(clicked)
-        self.assertEqual(search_type, "scene")
-        self.assertEqual(query, "three people at the counter")
-        self.assertTrue(form.call_args.kwargs["enter_to_submit"])
-        submit.assert_called_once_with("Search", disabled=False)
+clicked, search_type, query = _search_controls(
+    True,
+    None,
+    ("scene",),
+)
+if clicked:
+    st.write(f"SUBMITTED:{search_type}:{query}")
+"""
+        ).run()
+
+        self.assertFalse(app.button[0].disabled)
+        app.selectbox[0].select("scene")
+        app.text_input[0].input("man in gray pants")
+        app.button[0].click()
+        app.run()
+
+        self.assertEqual(
+            tuple(item.value for item in app.markdown),
+            ("SUBMITTED:scene:man in gray pants",),
+        )
+
+    def test_search_form_rejects_an_empty_query_after_submission(self):
+        app = AppTest.from_string(
+            """
+from vidxp.frontend import _search_controls
+
+clicked, _, _ = _search_controls(True, None, ("scene",))
+"""
+        ).run()
+
+        app.button[0].click()
+        app.run()
+
+        self.assertFalse(app.button[0].disabled)
+        self.assertEqual(app.warning[0].value, "Enter a search query.")
 
     def test_indexing_submits_selected_scene_sample_rate(self):
         jobs = Mock()

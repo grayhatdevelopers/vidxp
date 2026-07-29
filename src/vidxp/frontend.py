@@ -778,11 +778,15 @@ def _search_controls(ready, uploaded_video, available_modalities):
                     else "For example: Chef makes pizza and cuts it up."
                 ),
                 disabled=not ready,
+                key="video_search_query",
             )
         clicked = st.form_submit_button(
             "Search",
-            disabled=not ready or not query.strip(),
+            disabled=not ready,
         )
+    if clicked and not query.strip():
+        st.warning("Enter a search query.")
+        clicked = False
     return clicked, search_type, query
 
 
