@@ -480,6 +480,7 @@ class CliTests(unittest.TestCase):
             r"\[\d{2}:\d{2}:\d{2}\] Checking \[scene\] Torch import\.\.\.",
         )
         self.assertIn("OK (1.2s)", result.output)
+        self.assertIn("OK (version 2.13.0, 0.0s)", result.output)
         self.assertEqual(result.output.count("package torch"), 1)
 
     def test_doctor_prints_install_remedy_for_python_failures(self):

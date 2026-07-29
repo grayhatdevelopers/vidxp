@@ -70,7 +70,7 @@ def doctor(
     ) -> None:
         if check.ok:
             detail = (
-                f"version {check.installed_version}"
+                f"version {check.installed_version}, {elapsed_seconds:.1f}s"
                 if check.kind == DependencyKind.distribution
                 else f"{elapsed_seconds:.1f}s"
             )
