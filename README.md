@@ -81,9 +81,21 @@ Some ideas on how to use VidXP:
 ## Quick start
 
 VidXP supports Python 3.11 through 3.14. Media operations require the
-`ffmpeg` and `ffprobe` executables on `PATH`; Python wheels intentionally do
-not install operating-system packages. `vidxp doctor` reports either missing
-executable before media work begins. See the
+`ffmpeg` and `ffprobe` executables plus the `libx264` and `aac` encoders.
+Python wheels intentionally do not install operating-system packages. Run the
+guided initialization once before local media work:
+
+```bash
+uv tool install vidxp
+vidxp init
+```
+
+For a disposable CLI environment, use `uvx vidxp init`. The command verifies
+the executables/codecs, shows the exact supported package-manager command when
+installation is needed, asks before running it in an interactive terminal, and
+persists the verified absolute executable paths in VidXP's per-user
+configuration. It never installs without confirmation or an explicit `--yes`.
+`vidxp doctor` remains read-only. See the
 [installation guide](INSTALLATION_GUIDE.md) for platform-specific
 local-worker installation, model preparation, and troubleshooting.
 
@@ -100,6 +112,7 @@ index on Linux and Windows:
 
 ```bash
 uv sync --frozen --extra local-worker --extra frontend
+uv run vidxp init
 uv run vidxp doctor
 ```
 
@@ -120,17 +133,21 @@ models:
 
 ```bash
 vidxp --version
+vidxp init
 vidxp doctor
 vidxp prepare
 ```
 
-`doctor` does not download anything. It reports missing model artifacts and
+`init` is the guided system-dependency setup command. `doctor` never installs
+or downloads anything. It reports missing model artifacts and
 their pinned sizes, then exits unsuccessfully until the selected capabilities
 are prepared. `prepare` shows the missing models, maximum additional
 download/cache space, and cache location before requiring confirmation
 (`--yes` for non-interactive use). Indexing, API jobs, and MCP tools do not turn
 a first request into an implicit model download; model downloads happen only
-through `prepare` or the model-preparation job.
+through `prepare` or the model-preparation job. If FFmpeg is unavailable, local
+media commands stop with an actionable `Run vidxp init` error; API and MCP
+errors carry the same remediation.
 
 Local commands do not store data in the directory where they were launched.
 The CLI, browser UI, local MCP process, and locally launched server use the

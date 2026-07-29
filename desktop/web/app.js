@@ -55,6 +55,41 @@ async function refreshStatus() {
     : status.detail;
 }
 
+async function ensureMediaRuntime() {
+  let status = await invoke("media_runtime_status");
+  if (status.ready) {
+    return status;
+  }
+  const errors = status.errors.join(" ");
+  if (!status.install_command) {
+    throw new Error(
+      `${errors} Install FFmpeg and ffprobe, then click Install selected again.`,
+    );
+  }
+  if (!status.automatic_install) {
+    throw new Error(
+      `${errors} Run this command in a system terminal, then retry: ${status.install_command}`,
+    );
+  }
+  const approved = window.confirm(
+    [
+      "FFmpeg and ffprobe are required before VidXP can be installed.",
+      "",
+      `Install through ${status.package_manager}?`,
+      `Command: ${status.install_command}`,
+    ].join("\n"),
+  );
+  if (!approved) {
+    throw new Error("FFmpeg installation was cancelled; VidXP was not installed.");
+  }
+  statusNode.textContent = `Installing FFmpeg through ${status.package_manager}…`;
+  status = await invoke("install_media_runtime");
+  if (!status.ready) {
+    throw new Error(status.errors.join(" "));
+  }
+  return status;
+}
+
 installButton.addEventListener("click", async () => {
   const capabilities = selectedCapabilities();
   if (capabilities.length === 0) {
@@ -63,10 +98,12 @@ installButton.addEventListener("click", async () => {
   }
 
   setBusy(true);
-  statusNode.textContent = prepareModels.checked
-    ? "Installing and preparing models. Large downloads can take a while…"
-    : "Installing an isolated VidXP runtime…";
   try {
+    statusNode.textContent = "Checking FFmpeg and required codecs…";
+    await ensureMediaRuntime();
+    statusNode.textContent = prepareModels.checked
+      ? "Installing VidXP, then preparing models. Large downloads can take a while…"
+      : "Installing an isolated VidXP runtime…";
     const result = await invoke("install_runtime", {
       request: {
         capabilities,

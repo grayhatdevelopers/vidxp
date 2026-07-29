@@ -32,6 +32,6 @@
       "ffmpeg",
       "ffprobe"
     ],
-    "reason": "Bundled FFmpeg builds remain disabled until their target-specific codec licenses and provenance are recorded."
+    "reason": "First-run setup verifies the system FFmpeg runtime and offers a consented package-manager command; bundling remains disabled until target-specific codec licenses and provenance are recorded."
   }
 }

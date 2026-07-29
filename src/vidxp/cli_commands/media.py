@@ -13,6 +13,7 @@ from vidxp.cli_support import (
     effective_output_format,
     emit_json,
     emit_progress,
+    require_media_runtime,
     state_from_context,
 )
 
@@ -40,6 +41,7 @@ def import_media(
 ) -> None:
     """Validate and register a local video, returning its stable media ID."""
 
+    require_media_runtime()
     state = state_from_context(ctx)
     output_format = effective_output_format(state, json_output)
     if not state.quiet and output_format == OutputFormat.rich:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -21,7 +23,15 @@ from vidxp.cli_support import (
     emit_progress,
     parse_capability_options,
     parse_modalities,
+    require_media_runtime,
     state_from_context,
+)
+from vidxp.media_runtime import (
+    MediaRuntimeStatus,
+    inspect_media_runtime,
+    install_media_runtime,
+    media_runtime_config_path,
+    save_media_runtime_configuration,
 )
 
 
@@ -31,6 +41,142 @@ def _format_bytes(size: int) -> str:
     if size >= gib:
         return f"{size / gib:.2f} GiB"
     return f"{size / mib:.1f} MiB"
+
+
+def _media_runtime_payload(status: MediaRuntimeStatus) -> dict:
+    payload = status.model_dump(mode="json")
+    if status.install_plan is not None:
+        payload["install_command"] = status.install_plan.display_command
+    else:
+        payload["install_command"] = None
+    return payload
+
+
+def initialize(
+    ctx: typer.Context,
+    ffmpeg: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            dir_okay=False,
+            resolve_path=True,
+            help="Use this FFmpeg executable instead of searching PATH.",
+        ),
+    ] = None,
+    ffprobe: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            dir_okay=False,
+            resolve_path=True,
+            help="Use this ffprobe executable instead of searching PATH.",
+        ),
+    ] = None,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            help="Confirm the displayed system package-manager command.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Verify and save the system FFmpeg runtime used by VidXP."""
+
+    root_format = ctx.find_root().params.get(
+        "output_format",
+        OutputFormat.rich,
+    )
+    output_format = (
+        OutputFormat.json
+        if json_output or root_format == OutputFormat.json
+        else OutputFormat.rich
+    )
+    status = inspect_media_runtime(ffmpeg=ffmpeg, ffprobe=ffprobe)
+    if not status.ready:
+        payload = _media_runtime_payload(status)
+        if output_format == OutputFormat.rich:
+            typer.secho(
+                "FFmpeg and ffprobe are not ready.",
+                fg=typer.colors.YELLOW,
+                bold=True,
+            )
+            for error in status.errors:
+                typer.echo(f"  {error}")
+            if status.install_plan is not None:
+                typer.echo(
+                    f"Package manager: {status.install_plan.manager}"
+                )
+                typer.secho(
+                    f"Command: {status.install_plan.display_command}",
+                    fg=typer.colors.YELLOW,
+                )
+        plan = status.install_plan
+        if plan is None or not plan.automatic:
+            if output_format == OutputFormat.json:
+                emit_json(payload)
+            elif plan is None:
+                typer.echo(
+                    "Install FFmpeg and ffprobe with your operating-system "
+                    "package manager, or pass explicit --ffmpeg and "
+                    "--ffprobe paths, then rerun `vidxp init`."
+                )
+            else:
+                typer.echo(
+                    "Install FFmpeg with the command above, or pass explicit "
+                    "--ffmpeg and --ffprobe paths, then rerun `vidxp init`."
+                )
+            raise typer.Exit(1)
+        interactive = sys.stdin.isatty() and sys.stdout.isatty()
+        if not yes:
+            if not interactive:
+                if output_format == OutputFormat.json:
+                    emit_json(payload)
+                else:
+                    typer.echo(
+                        "No installation was started. Rerun interactively or "
+                        "pass --yes after reviewing the command."
+                    )
+                raise typer.Exit(1)
+            typer.confirm(
+                f"Install through {plan.manager} using the displayed command?",
+                abort=True,
+            )
+        if output_format == OutputFormat.rich:
+            emit_progress(f"Installing FFmpeg through {plan.manager}...")
+        install_media_runtime(
+            plan,
+            output_to_stderr=output_format == OutputFormat.json,
+        )
+        status = inspect_media_runtime(ffmpeg=ffmpeg, ffprobe=ffprobe)
+        if not status.ready:
+            if output_format == OutputFormat.json:
+                emit_json(_media_runtime_payload(status))
+            else:
+                for error in status.errors:
+                    typer.secho(error, fg=typer.colors.RED)
+            raise typer.Exit(1)
+
+    configuration = save_media_runtime_configuration(status)
+    payload = {
+        **_media_runtime_payload(status),
+        "initialized": True,
+        "configuration": str(media_runtime_config_path()),
+    }
+    if output_format == OutputFormat.json:
+        emit_json(payload)
+    else:
+        typer.secho(
+            "VidXP media runtime is initialized.",
+            fg=typer.colors.GREEN,
+            bold=True,
+        )
+        typer.echo(f"FFmpeg: {configuration.ffmpeg_executable}")
+        typer.echo(f"ffprobe: {configuration.ffprobe_executable}")
 
 
 def doctor(
@@ -160,6 +306,16 @@ def doctor(
                     + " ".join(external_distributions),
                     fg=typer.colors.YELLOW,
                 )
+        media_failures = tuple(
+            check
+            for check in result.checks
+            if not check.ok and check.capability == "media"
+        )
+        if media_failures:
+            typer.secho(
+                "REMEDY: Run `vidxp init` to verify and configure FFmpeg.",
+                fg=typer.colors.YELLOW,
+            )
         missing_model_checks = tuple(
             check
             for check in result.checks
@@ -361,6 +517,7 @@ def ui(
 ) -> None:
     """Launch Streamlit with the selected repository configuration."""
 
+    require_media_runtime()
     state = state_from_context(ctx)
     show_progress = (
         not state.quiet and state.output_format == OutputFormat.rich

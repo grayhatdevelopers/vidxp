@@ -78,6 +78,22 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.repository_root, repository_root)
         self.assertEqual(settings.model_cache, model_cache)
 
+    def test_saved_media_runtime_paths_become_settings_defaults(self):
+        ffmpeg = Path("tools/ffmpeg").resolve()
+        ffprobe = Path("tools/ffprobe").resolve()
+
+        def executable(name):
+            return str(ffmpeg if name == "ffmpeg" else ffprobe)
+
+        with patch(
+            "vidxp.settings.default_media_executable",
+            side_effect=executable,
+        ):
+            settings = VidXPSettings()
+
+        self.assertEqual(settings.ffmpeg_executable, str(ffmpeg))
+        self.assertEqual(settings.ffprobe_executable, str(ffprobe))
+
     def test_local_execution_settings_preserve_the_data_directory(self):
         with TemporaryDirectory() as directory:
             expected = VidXPSettings(data_dir=Path(directory) / "data")

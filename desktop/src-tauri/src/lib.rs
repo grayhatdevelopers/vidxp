@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
+    env, fs,
     io::Write,
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
@@ -72,6 +72,29 @@ struct RuntimeStatus {
     package_version: String,
     capabilities: Vec<String>,
     detail: String,
+}
+
+#[derive(Clone, Serialize)]
+struct MediaRuntimeStatus {
+    ready: bool,
+    ffmpeg_executable: Option<String>,
+    ffprobe_executable: Option<String>,
+    required_encoders: Vec<String>,
+    errors: Vec<String>,
+    package_manager: Option<String>,
+    install_command: Option<String>,
+    automatic_install: bool,
+}
+
+struct VerifiedMediaRuntime {
+    ffmpeg: PathBuf,
+    ffprobe: PathBuf,
+}
+
+struct SystemInstallPlan {
+    manager: String,
+    command: Vec<String>,
+    automatic: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -264,6 +287,221 @@ fn executable(runtime: &Path, name: &str) -> PathBuf {
     } else {
         runtime.join("bin").join(name)
     }
+}
+
+fn executable_candidates(name: &str) -> Vec<PathBuf> {
+    let requested = PathBuf::from(name);
+    if requested.is_absolute() || requested.components().count() > 1 {
+        return vec![requested];
+    }
+    let mut directories = env::var_os("PATH")
+        .map(|value| env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    if cfg!(windows)
+        && let Some(local) = env::var_os("LOCALAPPDATA")
+    {
+        directories.push(
+            PathBuf::from(local)
+                .join("Microsoft")
+                .join("WinGet")
+                .join("Links"),
+        );
+    }
+    if cfg!(target_os = "macos") {
+        directories.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]);
+    } else if !cfg!(windows) {
+        directories.extend([
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/snap/bin"),
+        ]);
+    }
+    directories
+        .into_iter()
+        .flat_map(|directory| {
+            let plain = directory.join(name);
+            if cfg!(windows) && plain.extension().is_none() {
+                vec![plain.with_extension("exe"), plain]
+            } else {
+                vec![plain]
+            }
+        })
+        .collect()
+}
+
+fn resolve_system_executable(name: &str) -> Option<PathBuf> {
+    executable_candidates(name)
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .and_then(|candidate| fs::canonicalize(&candidate).ok().or(Some(candidate)))
+}
+
+fn combined_output(output: &Output) -> String {
+    format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn required_encoder_missing(output: &str, encoder: &str) -> bool {
+    !output
+        .lines()
+        .flat_map(|line| line.split_whitespace())
+        .any(|token| token == encoder)
+}
+
+fn system_install_plan() -> Option<SystemInstallPlan> {
+    if cfg!(windows) {
+        resolve_system_executable("winget")?;
+        return Some(SystemInstallPlan {
+            manager: "Windows Package Manager".into(),
+            command: vec![
+                "winget".into(),
+                "install".into(),
+                "--id".into(),
+                "Gyan.FFmpeg".into(),
+                "--exact".into(),
+                "--source".into(),
+                "winget".into(),
+                "--accept-package-agreements".into(),
+                "--accept-source-agreements".into(),
+            ],
+            automatic: true,
+        });
+    }
+    if cfg!(target_os = "macos") {
+        let brew = resolve_system_executable("brew")?;
+        return Some(SystemInstallPlan {
+            manager: "Homebrew".into(),
+            command: vec![
+                brew.to_string_lossy().into_owned(),
+                "install".into(),
+                "ffmpeg".into(),
+            ],
+            automatic: true,
+        });
+    }
+    if resolve_system_executable("apt-get").is_some() {
+        return Some(SystemInstallPlan {
+            manager: "APT".into(),
+            command: vec![
+                "sudo".into(),
+                "apt-get".into(),
+                "install".into(),
+                "ffmpeg".into(),
+            ],
+            automatic: false,
+        });
+    }
+    if resolve_system_executable("dnf").is_some() {
+        return Some(SystemInstallPlan {
+            manager: "DNF".into(),
+            command: vec![
+                "sudo".into(),
+                "dnf".into(),
+                "install".into(),
+                "ffmpeg".into(),
+            ],
+            automatic: false,
+        });
+    }
+    None
+}
+
+fn display_command(arguments: &[String]) -> String {
+    arguments
+        .iter()
+        .map(|argument| {
+            if argument.contains(char::is_whitespace) {
+                format!("\"{}\"", argument.replace('"', "\\\""))
+            } else {
+                argument.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn inspect_media_runtime() -> MediaRuntimeStatus {
+    let ffmpeg = resolve_system_executable("ffmpeg");
+    let ffprobe = resolve_system_executable("ffprobe");
+    let mut errors = Vec::new();
+    if let Some(path) = &ffmpeg {
+        let mut version_command = Command::new(path);
+        version_command.arg("-version");
+        let version = checked_output(version_command, "FFmpeg version check");
+        if let Err(error) = version {
+            errors.push(error);
+        } else {
+            let mut encoder_command = Command::new(path);
+            encoder_command.args(["-hide_banner", "-encoders"]);
+            match checked_output(encoder_command, "FFmpeg encoder check") {
+                Ok(output) => {
+                    let encoders = combined_output(&output);
+                    for required in ["libx264", "aac"] {
+                        if required_encoder_missing(&encoders, required) {
+                            errors.push(format!(
+                                "FFmpeg is missing the required {required} encoder."
+                            ));
+                        }
+                    }
+                }
+                Err(error) => errors.push(error),
+            }
+        }
+    } else {
+        errors.push("FFmpeg was not found.".into());
+    }
+    if let Some(path) = &ffprobe {
+        let mut probe_command = Command::new(path);
+        probe_command.arg("-version");
+        if let Err(error) = checked_output(probe_command, "ffprobe version check") {
+            errors.push(error);
+        }
+    } else {
+        errors.push("ffprobe was not found.".into());
+    }
+    let plan = if errors.is_empty() {
+        None
+    } else {
+        system_install_plan()
+    };
+    MediaRuntimeStatus {
+        ready: errors.is_empty(),
+        ffmpeg_executable: ffmpeg.map(|path| path.to_string_lossy().into_owned()),
+        ffprobe_executable: ffprobe.map(|path| path.to_string_lossy().into_owned()),
+        required_encoders: vec!["libx264".into(), "aac".into()],
+        errors,
+        package_manager: plan.as_ref().map(|plan| plan.manager.clone()),
+        install_command: plan.as_ref().map(|plan| display_command(&plan.command)),
+        automatic_install: plan.is_some_and(|plan| plan.automatic),
+    }
+}
+
+fn verified_media_runtime() -> Result<VerifiedMediaRuntime, String> {
+    let status = inspect_media_runtime();
+    if !status.ready {
+        return Err(format!(
+            "{} Run the guided FFmpeg setup, then retry.",
+            status.errors.join(" ")
+        ));
+    }
+    Ok(VerifiedMediaRuntime {
+        ffmpeg: PathBuf::from(
+            status
+                .ffmpeg_executable
+                .ok_or("FFmpeg did not resolve to an absolute path.")?,
+        ),
+        ffprobe: PathBuf::from(
+            status
+                .ffprobe_executable
+                .ok_or("ffprobe did not resolve to an absolute path.")?,
+        ),
+    })
 }
 
 fn clean_environment(paths: &DesktopPaths) -> Vec<(String, String)> {
@@ -478,9 +716,68 @@ fn runtime_manifest() -> Result<RuntimeManifest, String> {
 }
 
 #[tauri::command]
+fn media_runtime_status() -> MediaRuntimeStatus {
+    inspect_media_runtime()
+}
+
+#[tauri::command]
+async fn install_media_runtime(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<MediaRuntimeStatus, String> {
+    let current = inspect_media_runtime();
+    if current.ready {
+        return Ok(current);
+    }
+    if state
+        .operation_active
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err("Another install or model-preparation operation is active.".into());
+    }
+    let _operation_guard = OperationGuard {
+        active: &state.operation_active,
+    };
+    let plan = system_install_plan().ok_or("No supported system package manager was found.")?;
+    if !plan.automatic {
+        return Err(format!(
+            "Run this command in a system terminal, then retry: {}",
+            display_command(&plan.command)
+        ));
+    }
+    let command = app
+        .shell()
+        .command(plan.command[0].clone())
+        .args(&plan.command[1..]);
+    supervised_output(
+        &state,
+        command,
+        &format!("{} FFmpeg installation", plan.manager),
+    )
+    .await?;
+    let status = inspect_media_runtime();
+    if !status.ready {
+        return Err(format!(
+            "FFmpeg installation finished but verification failed: {}",
+            status.errors.join(" ")
+        ));
+    }
+    Ok(status)
+}
+
+#[tauri::command]
 fn runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
     let manifest = manifest()?;
     let paths = desktop_paths(&app)?;
+    if let Err(detail) = verified_media_runtime() {
+        return Ok(RuntimeStatus {
+            ready: false,
+            package_version: manifest.package_version,
+            capabilities: Vec::new(),
+            detail,
+        });
+    }
     let active = match active_runtime(&paths) {
         Ok(active) => active,
         Err(detail) => {
@@ -538,6 +835,7 @@ async fn install_runtime(
     };
     let manifest = manifest()?;
     let capabilities = selected_capabilities(&manifest, &request.capabilities)?;
+    let media_runtime = verified_media_runtime()?;
     let paths = desktop_paths(&app)?;
     for directory in [
         &paths.data,
@@ -605,6 +903,23 @@ async fn install_runtime(
                 !cfg!(target_os = "macos"),
             ),
             "VidXP package installation",
+        )
+        .await?;
+
+        run_vidxp_supervised(
+            &app,
+            &state,
+            &staging,
+            &paths,
+            &[
+                "init".into(),
+                "--json".into(),
+                "--ffmpeg".into(),
+                media_runtime.ffmpeg.to_string_lossy().into_owned(),
+                "--ffprobe".into(),
+                media_runtime.ffprobe.to_string_lossy().into_owned(),
+            ],
+            "FFmpeg configuration",
         )
         .await?;
 
@@ -797,6 +1112,8 @@ pub fn run() {
         .manage(DesktopState::default())
         .invoke_handler(tauri::generate_handler![
             runtime_manifest,
+            media_runtime_status,
+            install_media_runtime,
             runtime_status,
             install_runtime,
             launch_ui
@@ -826,8 +1143,9 @@ pub fn run() {
 mod tests {
     use super::{
         base_package_specification, capability_command_arguments,
-        dependency_installation_arguments, manifest, package_acquisition_arguments, package_index,
-        package_specification, selected_capabilities,
+        dependency_installation_arguments, display_command, manifest,
+        package_acquisition_arguments, package_index, package_specification,
+        required_encoder_missing, selected_capabilities,
     };
     use std::path::Path;
 
@@ -891,6 +1209,28 @@ mod tests {
         assert_eq!(
             capability_command_arguments(&manifest, "doctor", &["dialogue".into(), "scene".into()]),
             ["doctor", "--json", "--modalities", "dialogue,scene"]
+        );
+    }
+
+    #[test]
+    fn ffmpeg_encoder_check_matches_complete_encoder_names() {
+        let encoders = " V....D libx264 H.264\n A....D aac AAC";
+
+        assert!(!required_encoder_missing(encoders, "libx264"));
+        assert!(!required_encoder_missing(encoders, "aac"));
+        assert!(required_encoder_missing(encoders, "libx265"));
+    }
+
+    #[test]
+    fn package_manager_command_is_presented_as_copyable_text() {
+        assert_eq!(
+            display_command(&[
+                "winget".into(),
+                "install".into(),
+                "--id".into(),
+                "Gyan.FFmpeg".into(),
+            ]),
+            "winget install --id Gyan.FFmpeg"
         );
     }
 }

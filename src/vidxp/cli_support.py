@@ -17,7 +17,13 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from vidxp.application_models import FusedSearchResult, QueryAnswer
+from vidxp.application_models import (
+    ApplicationError,
+    ErrorCategory,
+    FusedSearchResult,
+    QueryAnswer,
+)
+from vidxp.media_runtime import media_runtime_is_initialized
 from vidxp.repositories import RepositoryConfig, RepositoryRegistry
 from typing import TYPE_CHECKING
 
@@ -59,6 +65,21 @@ def state_from_context(ctx: typer.Context) -> CLIState:
     if not isinstance(state, CLIState):
         raise RuntimeError("VidXP CLI state was not initialized.")
     return state
+
+
+def require_media_runtime() -> None:
+    if media_runtime_is_initialized():
+        return
+    raise ApplicationError(
+        "media_runtime_uninitialized",
+        ErrorCategory.unavailable,
+        "FFmpeg and ffprobe are not initialized for local media work. "
+        "Run `vidxp init`, then retry this command.",
+        details={
+            "remediation": "vidxp init",
+            "install_hint": "Run vidxp init",
+        },
+    )
 
 
 def effective_output_format(

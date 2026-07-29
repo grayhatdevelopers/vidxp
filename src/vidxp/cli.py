@@ -18,7 +18,7 @@ from vidxp.cli_commands.mcp import mcp_config
 from vidxp.cli_commands.media import app as media_app
 from vidxp.cli_commands.artifacts import app as artifacts_app
 from vidxp.cli_commands.repositories import app as repositories_app
-from vidxp.cli_commands.runtime import doctor, prepare, ui
+from vidxp.cli_commands.runtime import doctor, initialize, prepare, ui
 from vidxp.cli_commands.search import search
 from vidxp.cli_commands.query import query
 from vidxp.cli_support import CLIState, OutputFormat
@@ -42,6 +42,7 @@ app.add_typer(actor_app, name="actors")
 
 app.add_typer(benchmark_app, name="benchmark")
 app.command()(doctor)
+app.command("init")(initialize)
 app.command()(prepare)
 app.command()(ui)
 
@@ -120,7 +121,7 @@ def app_options(
         typer.Option("--quiet", "-q", help="Suppress progress output."),
     ] = False,
 ) -> None:
-    if ctx.invoked_subcommand == "mcp-config":
+    if ctx.invoked_subcommand in {"init", "mcp-config"}:
         return
     local = create_local_application(
         registry_path=config_file,

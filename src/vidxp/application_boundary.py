@@ -130,7 +130,9 @@ def application_boundary(handler: Callable) -> Callable:
             raise ApplicationError(
                 "media_probe_unavailable",
                 ErrorCategory.unavailable,
-                "The media probe dependency is unavailable.",
+                "The media probe dependency is unavailable. "
+                "For a local installation, run `vidxp init` and retry.",
+                details={"remediation": "vidxp init"},
                 retryable=True,
             ) from exc
         except MediaImportNotAllowedError as exc:
@@ -165,7 +167,9 @@ def application_boundary(handler: Callable) -> Callable:
             raise ApplicationError(
                 "artifact_renderer_unavailable",
                 ErrorCategory.unavailable,
-                "The configured artifact renderer is unavailable.",
+                "The configured artifact renderer is unavailable. "
+                "For a local installation, run `vidxp init` and retry.",
+                details={"remediation": "vidxp init"},
                 retryable=True,
             ) from exc
         except ArtifactRenderError as exc:

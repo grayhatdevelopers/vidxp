@@ -11,6 +11,11 @@ from typer.testing import CliRunner
 from vidxp import cli
 from vidxp.entrypoint import startup_command
 from vidxp.composition import LocalApplicationContext, settings_for_repository
+from vidxp.media_runtime import (
+    MediaRuntimeConfiguration,
+    MediaRuntimeStatus,
+    SystemInstallPlan,
+)
 from vidxp.settings import ApplicationMode
 from vidxp.application_models import (
     Artifact,
@@ -84,17 +89,23 @@ class CliTests(unittest.TestCase):
             configured=False,
         )
 
-    def invoke(self, arguments):
-        with patch.object(
-            cli,
-            "create_local_application",
-            return_value=LocalApplicationContext(
-                application=self.service,
-                jobs=self.jobs,
-                repositories=self.registry,
-                repository=self.repository,
+    def invoke(self, arguments, *, media_runtime_initialized=True):
+        with (
+            patch.object(
+                cli,
+                "create_local_application",
+                return_value=LocalApplicationContext(
+                    application=self.service,
+                    jobs=self.jobs,
+                    repositories=self.registry,
+                    repository=self.repository,
+                ),
+            ) as create_local_application,
+            patch(
+                "vidxp.cli_support.media_runtime_is_initialized",
+                return_value=media_runtime_initialized,
             ),
-        ) as create_local_application:
+        ):
             result = self.runner.invoke(cli.app, arguments)
         self.create_local_application = create_local_application
         return result
@@ -126,6 +137,7 @@ class CliTests(unittest.TestCase):
             "search",
             "actors",
             "artifacts",
+            "init",
             "doctor",
             "prepare",
             "mcp-config",
@@ -146,6 +158,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(server["args"], ["--repository", "default"])
 
     def test_startup_notice_targets_long_interactive_commands(self):
+        self.assertEqual(startup_command(["init"]), "init")
         self.assertEqual(startup_command(["doctor"]), "doctor")
         self.assertEqual(
             startup_command(["media", "import", "video.mp4"]),
@@ -158,6 +171,134 @@ class CliTests(unittest.TestCase):
         self.assertIsNone(startup_command(["doctor", "--json"]))
         self.assertIsNone(startup_command(["--quiet", "prepare"]))
         self.assertIsNone(startup_command(["repositories", "list"]))
+
+    def test_init_saves_verified_paths_without_opening_a_repository(self):
+        ffmpeg = Path("tools/ffmpeg.exe").resolve()
+        ffprobe = Path("tools/ffprobe.exe").resolve()
+        status = MediaRuntimeStatus(
+            ready=True,
+            initialized=False,
+            ffmpeg_executable=ffmpeg,
+            ffprobe_executable=ffprobe,
+        )
+        configuration = MediaRuntimeConfiguration(
+            ffmpeg_executable=ffmpeg,
+            ffprobe_executable=ffprobe,
+        )
+        with (
+            patch(
+                "vidxp.cli_commands.runtime.inspect_media_runtime",
+                return_value=status,
+            ),
+            patch(
+                "vidxp.cli_commands.runtime.save_media_runtime_configuration",
+                return_value=configuration,
+            ) as save,
+            patch(
+                "vidxp.cli_commands.runtime.media_runtime_config_path",
+                return_value=Path("config/media-runtime.json").resolve(),
+            ),
+        ):
+            result = self.invoke(["init", "--json"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        payload = json.loads(result.output)
+        self.assertTrue(payload["ready"])
+        self.assertTrue(payload["initialized"])
+        save.assert_called_once_with(status)
+        self.create_local_application.assert_not_called()
+
+    def test_noninteractive_init_reports_command_without_installing(self):
+        plan = SystemInstallPlan(
+            manager="Windows Package Manager",
+            command=(
+                "winget",
+                "install",
+                "--id",
+                "Gyan.FFmpeg",
+                "--exact",
+            ),
+            automatic=True,
+        )
+        status = MediaRuntimeStatus(
+            ready=False,
+            initialized=False,
+            errors=("FFmpeg was not found.",),
+            install_plan=plan,
+        )
+        with (
+            patch(
+                "vidxp.cli_commands.runtime.inspect_media_runtime",
+                return_value=status,
+            ),
+            patch(
+                "vidxp.cli_commands.runtime.install_media_runtime",
+            ) as install,
+        ):
+            result = self.invoke(["init", "--json"])
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        payload = json.loads(result.output)
+        self.assertFalse(payload["ready"])
+        self.assertIn("Gyan.FFmpeg", payload["install_command"])
+        install.assert_not_called()
+        self.create_local_application.assert_not_called()
+
+    def test_yes_explicitly_runs_the_displayed_installer_and_verifies(self):
+        plan = SystemInstallPlan(
+            manager="Windows Package Manager",
+            command=("winget", "install", "--id", "Gyan.FFmpeg"),
+            automatic=True,
+        )
+        missing = MediaRuntimeStatus(
+            ready=False,
+            initialized=False,
+            errors=("FFmpeg was not found.",),
+            install_plan=plan,
+        )
+        ready = MediaRuntimeStatus(
+            ready=True,
+            initialized=False,
+            ffmpeg_executable=Path("tools/ffmpeg.exe").resolve(),
+            ffprobe_executable=Path("tools/ffprobe.exe").resolve(),
+        )
+        configuration = MediaRuntimeConfiguration(
+            ffmpeg_executable=ready.ffmpeg_executable,
+            ffprobe_executable=ready.ffprobe_executable,
+        )
+        with (
+            patch(
+                "vidxp.cli_commands.runtime.inspect_media_runtime",
+                side_effect=(missing, ready),
+            ),
+            patch(
+                "vidxp.cli_commands.runtime.install_media_runtime",
+            ) as install,
+            patch(
+                "vidxp.cli_commands.runtime.save_media_runtime_configuration",
+                return_value=configuration,
+            ),
+        ):
+            result = self.invoke(["init", "--yes", "--json"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(json.loads(result.output)["ready"])
+        install.assert_called_once_with(plan, output_to_stderr=True)
+        self.create_local_application.assert_not_called()
+
+    def test_first_media_command_points_to_init_when_uninitialized(self):
+        with TemporaryDirectory() as directory:
+            video = Path(directory) / "video.mp4"
+            video.write_bytes(b"video")
+            result = self.invoke(
+                ["media", "import", str(video)],
+                media_runtime_initialized=False,
+            )
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertEqual(result.exception.code, "media_runtime_uninitialized")
+        self.assertIn("vidxp init", str(result.exception))
+        self.service.import_media.assert_not_called()
 
     def test_ui_shutdown_stops_its_local_worker(self):
         with patch(

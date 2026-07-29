@@ -52,6 +52,7 @@ def startup_command(arguments: list[str]) -> str | None:
     if path and path[0] in {
         "benchmark",
         "doctor",
+        "init",
         "prepare",
         "query",
         "search",

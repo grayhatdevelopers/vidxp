@@ -22,6 +22,7 @@ from vidxp.app_paths import (
     default_model_directory,
     default_repository_directory,
 )
+from vidxp.media_runtime import default_media_executable
 from vidxp.repository_layout import RepositoryLayout
 
 
@@ -175,8 +176,14 @@ class VidXPSettings(BaseSettings):
     slm_timeout_seconds: float = Field(default=60, gt=0, le=600)
     slm_output_retries: int = Field(default=1, ge=0, le=3)
     trusted_local_import_roots: tuple[Path, ...] = ()
-    ffprobe_executable: str = Field(default="ffprobe", min_length=1)
-    ffmpeg_executable: str = Field(default="ffmpeg", min_length=1)
+    ffprobe_executable: str = Field(
+        default_factory=lambda: default_media_executable("ffprobe"),
+        min_length=1,
+    )
+    ffmpeg_executable: str = Field(
+        default_factory=lambda: default_media_executable("ffmpeg"),
+        min_length=1,
+    )
     external_capabilities: bool = False
     capability_allowlist: tuple[str, ...] = ()
 

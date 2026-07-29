@@ -18,6 +18,7 @@ from vidxp.cli_support import (
     emit_job_progress,
     emit_json,
     emit_progress,
+    require_media_runtime,
     state_from_context,
 )
 
@@ -63,6 +64,7 @@ def create_snippet(
             "The snippet end must be greater than its start.",
             param_hint="end_seconds",
         )
+    require_media_runtime()
     state = state_from_context(ctx)
     output_format = effective_output_format(state, json_output)
     show_progress = (

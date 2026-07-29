@@ -10,8 +10,8 @@ dependencies are never installed accidentally.
 - Apple Silicon macOS 14 or newer
 - Linux x86-64
 - Windows x86-64
-- FFmpeg and ffprobe on `PATH` for video/audio processing. VidXP wheels do not
-  install or modify operating-system packages.
+- FFmpeg, ffprobe, and the `libx264`/`aac` encoders for video/audio processing.
+  VidXP wheels do not install or modify operating-system packages.
 
 The actor capability uses OpenCV YuNet and SFace. It does not use `dlib`, CMake,
 or a local C++ compiler.
@@ -22,16 +22,34 @@ complete.
 
 ## Install the lightweight CLI
 
-Use pipx to expose `vidxp` on `PATH` while keeping its dependencies isolated:
+Use uv to expose `vidxp` on `PATH` while keeping its dependencies isolated:
 
 ```bash
-pipx install vidxp
+uv tool install vidxp
 vidxp --version
+vidxp init
 ```
 
 This base install intentionally excludes Chroma, Torch, model providers,
 Streamlit, and model weights. It is the correct foundation for a future remote
 API client and for commands that do not execute local indexing.
+
+`vidxp init` is independent of the local-worker stack. It checks FFmpeg and
+ffprobe, verifies the required codecs, and stores their resolved absolute paths
+in VidXP's per-user configuration. If they are missing, an interactive Windows
+or macOS terminal can approve the exact displayed package-manager command.
+Linux prints the applicable command for the user to run because elevation
+belongs to the system terminal. Non-interactive input never prompts or installs
+unless the caller explicitly supplies `--yes`.
+
+To run only this setup without keeping a tool environment:
+
+```bash
+uvx vidxp init
+```
+
+`pipx install vidxp` remains supported if pipx is preferred; run `vidxp init`
+afterward in the same way.
 
 ## Install a published local worker
 
@@ -45,6 +63,7 @@ stack:
 
 ```bash
 pipx install "vidxp[local-worker,frontend]"
+vidxp init
 ```
 
 ### Linux and Windows
@@ -56,6 +75,7 @@ Torch wheel into the pipx environment first, then install VidXP's local extras:
 pipx install vidxp
 pipx runpip vidxp install "torch==2.13.0+cpu" --index-url https://download.pytorch.org/whl/cpu
 pipx runpip vidxp install "vidxp[local-worker,frontend]"
+vidxp init
 ```
 
 The final command accepts the already installed `2.13.0+cpu` build because it
@@ -74,6 +94,7 @@ uses PyPI's native wheel on macOS, and never uses `extra-index-url` mixing:
 
 ```bash
 uv sync --frozen --extra local-worker --extra frontend
+uv run vidxp init
 uv run vidxp doctor
 ```
 
@@ -277,10 +298,16 @@ the [Coolify deployment](docs/deployment/coolify.md).
 
 ### FFmpeg is not found
 
-Run `vidxp doctor`; it checks both executables without downloading or changing
-the machine. If either check fails, run `ffmpeg -version` and `ffprobe -version`
-in the same terminal, install FFmpeg with the operating-system package manager
-or add its executable directory to `PATH`, then rerun the doctor command.
+Run `vidxp init`. It checks both executables and the required `libx264` and
+`aac` encoders, then displays the exact supported package-manager command if
+anything is missing. It asks before running supported package managers and
+persists verified absolute executable paths for later CLI, UI, API, and MCP
+processes.
+
+`vidxp doctor` is always read-only. It reports the failure and points back to
+`vidxp init`; it never installs or changes system packages. CI and container
+images should install FFmpeg in their image definition, then run
+`vidxp init --json --ffmpeg /absolute/path --ffprobe /absolute/path`.
 
 ### Linux pulls CUDA or NVIDIA packages
 

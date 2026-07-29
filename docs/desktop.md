@@ -30,10 +30,16 @@ cache uses the operating system-provided app-cache directory. Docker and
 Compose storage remains explicitly volume-backed and does not inherit this
 desktop layout.
 
-The first release is an online bootstrap. It bundles `uv`, installs the exact
-Python and VidXP versions in `desktop/runtime-manifest.json`, and activates a new
-runtime only after `vidxp doctor` passes. A failed setup never replaces the
-previous active runtime.
+The first release is an online bootstrap. It bundles `uv` and performs a
+system-media preflight before creating Python or downloading VidXP. If FFmpeg
+is missing on Windows or macOS, setup shows the exact approved package-manager
+command and asks before running it. Linux shows the applicable terminal command
+without trying to automate elevation. Setup verifies ffmpeg, ffprobe,
+`libx264`, and `aac`, then installs the exact Python and VidXP versions in
+`desktop/runtime-manifest.json`, persists the verified absolute executable
+paths through `vidxp init`, runs the full `vidxp doctor`, and only then activates
+the new runtime. A failed or cancelled setup never replaces the previous active
+runtime.
 
 ## Build locally
 
@@ -79,9 +85,10 @@ the selected modalities. Setup subprocesses are owned by the Tauri supervisor;
 closing the app cancels the active process and stops a preparation worker before
 exit. No model is bundled in the installer.
 
-`vidxp doctor` validates FFmpeg and ffprobe as system dependencies before
-activating the staged runtime. The Python package and desktop bootstrap do not
-install OS packages. Target binaries will not be bundled until the exact build
+The native NSIS, DMG, and AppImage packages themselves never install FFmpeg or
+run a package manager. That consented action belongs to first-run setup, where
+errors and retries are visible. `vidxp doctor` remains a read-only validation
+gate. Target FFmpeg binaries will not be bundled until their exact build
 provenance, enabled codecs, and redistribution licenses are recorded. This is
 an explicit packaging gate, not a silent download from an unaudited third
 party.
