@@ -55,6 +55,7 @@ vidxp-hooks = "vidxp.hook_cli:main"
 vidxp-mcp = "vidxp.mcp_cli:main"
 
 [project.urls]
+Homepage = "https://github.com/grayhatdevelopers/vidxp"
 Repository = "https://github.com/grayhatdevelopers/vidxp"
 Issues = "https://github.com/grayhatdevelopers/vidxp/issues"
 

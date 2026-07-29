@@ -16,7 +16,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.server.transport_security import TransportSecurityMiddleware
 from mcp.shared.exceptions import MCPError
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ToolAnnotations
+from mcp.types import Icon, ToolAnnotations
 from pydantic import Field
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -49,6 +49,12 @@ from vidxp.authentication import (
     create_authenticator,
 )
 from vidxp.authorization import RepositoryPermission
+from vidxp.branding import (
+    ICON_MIME_TYPE,
+    ICON_SIZE,
+    PROJECT_URL,
+    icon_data_uri,
+)
 from vidxp.composition import ControlPlaneContext, HttpApplicationContext
 from vidxp.idempotency import IdempotencyKey, scoped_job_id
 from vidxp.settings import HttpAuthMode
@@ -328,6 +334,14 @@ def create_mcp_server(
         name="vidxp",
         title="VidXP",
         description="Index and search registered video media.",
+        website_url=PROJECT_URL,
+        icons=[
+            Icon(
+                src=icon_data_uri(),
+                mimeType=ICON_MIME_TYPE,
+                sizes=[ICON_SIZE],
+            )
+        ],
         instructions=(
             "Call get_runtime_readiness before indexing. If selected model "
             "artifacts are missing, submit prepare_models and poll get_job "

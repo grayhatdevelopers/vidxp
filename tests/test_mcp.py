@@ -1,7 +1,8 @@
-import unittest
-import sys
 import asyncio
+import base64
 import socket
+import sys
+import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock
@@ -34,6 +35,12 @@ from vidxp.authentication import (
 )
 from vidxp.api import create_app
 from vidxp.authorization import AuthorizationPolicy
+from vidxp.branding import (
+    ICON_MIME_TYPE,
+    ICON_SIZE,
+    PROJECT_URL,
+    icon_bytes,
+)
 from vidxp.composition import HttpApplicationContext
 from vidxp.control_plane import ControlPlaneApplication
 from vidxp.job_service import JobService
@@ -134,6 +141,32 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.structured_content, {"items": []})
         self.assertFalse(result.is_error)
+
+    async def test_server_info_exposes_vidxp_branding(self):
+        with TemporaryDirectory() as directory:
+            server = create_mcp_server(
+                self.context(Path(directory)),
+                default_principal=Principal(
+                    subject="local",
+                    scopes=frozenset({"*"}),
+                ),
+            )
+            async with Client(server) as client:
+                server_info = client.server_info
+
+        self.assertIsNotNone(server_info)
+        self.assertEqual(server_info.title, "VidXP")
+        self.assertEqual(server_info.website_url, PROJECT_URL)
+        self.assertEqual(len(server_info.icons or ()), 1)
+        icon = server_info.icons[0]
+        self.assertEqual(icon.mime_type, ICON_MIME_TYPE)
+        self.assertEqual(icon.sizes, [ICON_SIZE])
+        prefix = f"data:{ICON_MIME_TYPE};base64,"
+        self.assertTrue(icon.src.startswith(prefix))
+        self.assertEqual(
+            base64.b64decode(icon.src.removeprefix(prefix)),
+            icon_bytes(),
+        )
 
     async def test_index_submission_uses_shared_stable_idempotency(self):
         with TemporaryDirectory() as directory:

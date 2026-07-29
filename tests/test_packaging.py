@@ -13,6 +13,65 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PackagingTests(unittest.TestCase):
+    def test_canonical_icon_is_packaged_and_desktop_derivatives_are_wired(self):
+        icon = ROOT / "docs" / "images" / "logo.png"
+        self.assertTrue(icon.is_file())
+        self.assertTrue(icon.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+
+        self.assertIn(
+            "include docs/images/logo.png",
+            (ROOT / "MANIFEST.in").read_text(encoding="utf-8"),
+        )
+        project = tomllib.loads(
+            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            project["project"]["urls"]["Homepage"],
+            "https://github.com/grayhatdevelopers/vidxp",
+        )
+        self.assertIn(
+            "./docs/images/logo.png",
+            (ROOT / "README.md").read_text(encoding="utf-8"),
+        )
+        build_hook = (ROOT / "setup.py").read_text(encoding="utf-8")
+        self.assertIn('"docs" / "images" / "logo.png"', build_hook)
+        self.assertIn('"vidxp" / "assets" / "icon.png"', build_hook)
+
+        package = json.loads(
+            (ROOT / "desktop" / "package.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            package["scripts"]["sync:branding"],
+            "node scripts/sync-branding.mjs",
+        )
+        self.assertEqual(
+            package["scripts"]["predesktop:dev"],
+            "npm run sync:branding",
+        )
+        self.assertEqual(
+            package["scripts"]["predesktop:build"],
+            "npm run icons",
+        )
+        self.assertEqual(
+            package["scripts"]["icons"],
+            (
+                "npm run sync:branding && "
+                "tauri icon ../docs/images/logo.png "
+                "--output src-tauri/icons"
+            ),
+        )
+        sync_script = (
+            ROOT / "desktop" / "scripts" / "sync-branding.mjs"
+        ).read_text(encoding="utf-8")
+        self.assertIn("../docs/images/logo.png", sync_script)
+        self.assertIn("web/icon.png", sync_script)
+        self.assertIn(
+            'href="icon.png"',
+            (ROOT / "desktop" / "web" / "index.html").read_text(
+                encoding="utf-8"
+            ),
+        )
+
     def test_cpu_lock_uses_explicit_pytorch_index_without_cuda_packages(self):
         lock = (ROOT / "uv.lock").read_text(encoding="utf-8")
         project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")

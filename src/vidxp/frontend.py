@@ -24,6 +24,7 @@ from vidxp.application_models import (
     QueryVideoCommand,
     SearchCommand,
 )
+from vidxp.branding import PROJECT_URL, icon_path
 from vidxp.composition import create_application, create_job_service
 from vidxp.index_state import IndexNotReadyError
 from vidxp.job_service import JobService
@@ -791,8 +792,14 @@ def _search_controls(ready, uploaded_video, available_modalities):
 
 
 def run():
+    application_icon = icon_path()
+    st.set_page_config(
+        page_title="VidXP",
+        page_icon=application_icon,
+        layout="wide",
+    )
+    st.logo(application_icon, size="large", link=PROJECT_URL)
     service = _configured_service()
-    st.set_page_config(page_title="VidXP", page_icon="🎬", layout="wide")
     st.title("VidXP")
     st.caption("Index and search video by dialogue, scene, and actor.")
     st.caption(f"Index repository: {service.layout.root}")

@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "tauri": "tauri",
+    "sync:branding": "node scripts/sync-branding.mjs",
+    "icons": "npm run sync:branding && tauri icon ../docs/images/logo.png --output src-tauri/icons",
+    "predesktop:dev": "npm run sync:branding",
     "desktop:dev": "tauri dev",
+    "predesktop:build": "npm run icons",
     "desktop:build": "tauri build",
     "sidecar:windows": "powershell -ExecutionPolicy Bypass -File scripts/fetch-uv.ps1",
     "sidecar:unix": "bash scripts/fetch-uv.sh"
