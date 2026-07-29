@@ -20,15 +20,6 @@ PUBLIC_HTTP_PATHS = frozenset({"/health", "/ready"})
 UPLOAD_PATH = "/api/v1/media"
 
 
-def _is_reserved_mcp_path(path: str) -> bool:
-    return (
-        path == "/mcp"
-        or path.startswith("/mcp/")
-        or path == "/.well-known/oauth-protected-resource"
-        or path.startswith("/.well-known/oauth-protected-resource/")
-    )
-
-
 class RequestBodyTooLarge(HTTPException, OSError):
     """Abort body parsing while preserving Starlette's file cleanup path."""
 
@@ -210,7 +201,6 @@ class BearerAuthenticationMiddleware:
         if (
             scope["type"] != "http"
             or str(scope.get("path", "")) in PUBLIC_HTTP_PATHS
-            or _is_reserved_mcp_path(str(scope.get("path", "")))
         ):
             await self.app(scope, receive, send)
             return
@@ -252,9 +242,6 @@ class RequestBodyLimitMiddleware:
         send: Send,
     ) -> None:
         if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-        if _is_reserved_mcp_path(str(scope.get("path", ""))):
             await self.app(scope, receive, send)
             return
         limit = (

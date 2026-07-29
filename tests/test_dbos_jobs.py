@@ -11,14 +11,20 @@ from vidxp.application_models import (
     ApplicationError,
     CreateIndexCommand,
     ErrorCategory,
+    IndexSnapshotReference,
     IndexResult,
     JobKind,
     JobQueue,
     JobState,
     ListJobsCommand,
+    SearchCommand,
+    SearchJobRequest,
+    SearchResult,
 )
+from vidxp.core.cursors import MAX_CURSOR_OFFSET, encode_cursor
 from vidxp.infrastructure.dbos_jobs import DBOSJobBackend
 from vidxp.job_service import JobService
+from vidxp.ports import InvalidJobBackendRequestError
 from vidxp.settings import VidXPSettings
 from vidxp.workflow_contracts import QUEUE_NAMES
 
@@ -27,6 +33,7 @@ MEDIA_ID = "123456781234423481234567890abcde"
 GENERATION_ID = "223456781234423481234567890abcde"
 SNAPSHOT_ID = "323456781234423481234567890abcde"
 IDEMPOTENCY_KEY = "423456781234423481234567890abcde"
+SNAPSHOT_SHA256 = "a" * 64
 
 
 class DBOSJobIntegrationTests(unittest.TestCase):
@@ -58,6 +65,11 @@ class DBOSJobIntegrationTests(unittest.TestCase):
             active_media_count=1,
             record_counts={"scene": 1},
         )
+        self.application.search.return_value = SearchResult(
+            query_id="scene:taxi",
+            query="taxi",
+            modality="scene",
+        )
         self.worker.application = self.application
         DBOS.reset_system_database()
         DBOS.listen_queues([QUEUE_NAMES[JobQueue.cpu]])
@@ -77,6 +89,17 @@ class DBOSJobIntegrationTests(unittest.TestCase):
                 workflow_poll_interval_seconds=0.01,
             ),
             backend=self.backend,
+            read_planner=Mock(
+                plan_search=Mock(
+                    side_effect=lambda command: SearchJobRequest(
+                        command=command,
+                        snapshot=IndexSnapshotReference(
+                            snapshot_id=SNAPSHOT_ID,
+                            snapshot_sha256=SNAPSHOT_SHA256,
+                        ),
+                    )
+                )
+            ),
         )
 
     def tearDown(self):
@@ -131,6 +154,37 @@ class DBOSJobIntegrationTests(unittest.TestCase):
 
         health_check.assert_called_once_with()
 
+    def test_model_search_runs_in_worker_and_returns_typed_result(self):
+        submitted = self.jobs.submit_search(
+            SearchCommand(modality="scene", query="taxi", top_k=1)
+        )
+        completed = self.jobs.wait(submitted.job_id)
+
+        self.assertEqual(completed.state, JobState.succeeded)
+        self.assertEqual(completed.kind, JobKind.search)
+        self.assertEqual(completed.result.result.query, "taxi")
+        self.application.search.assert_called_once_with(
+            SearchCommand(modality="scene", query="taxi", top_k=1),
+            snapshot=IndexSnapshotReference(
+                snapshot_id=SNAPSHOT_ID,
+                snapshot_sha256=SNAPSHOT_SHA256,
+            ),
+        )
+
+    def test_huge_cursor_offset_is_rejected_before_database_access(self):
+        cursor = encode_cursor(
+            "vidxp:jobs",
+            {"offset": MAX_CURSOR_OFFSET + 1},
+        )
+        self.backend.client = Mock(wraps=self.backend.client)
+
+        with self.assertRaises(InvalidJobBackendRequestError):
+            self.backend.list(
+                ListJobsCommand(page_size=1, cursor=cursor)
+            )
+
+        self.backend.client.list_workflows.assert_not_called()
+
     def test_submission_idempotency_replays_only_the_same_request(self):
         command = CreateIndexCommand(
             media_id=MEDIA_ID,
@@ -156,6 +210,34 @@ class DBOSJobIntegrationTests(unittest.TestCase):
             caught.exception.category,
             ErrorCategory.validation,
         )
+
+    def test_descending_pages_are_frozen_against_new_submissions(self):
+        original_ids = (
+            "523456781234423481234567890abcde",
+            "623456781234423481234567890abcde",
+            "723456781234423481234567890abcde",
+        )
+        command = CreateIndexCommand(
+            media_id=MEDIA_ID,
+            modalities=("scene",),
+        )
+        for job_id in original_ids:
+            self.jobs.submit_index(command, job_id=job_id)
+            sleep(0.01)
+
+        first = self.jobs.list(ListJobsCommand(page_size=2))
+        self.assertIsNotNone(first.next_cursor)
+
+        later_id = "823456781234423481234567890abcde"
+        sleep(0.01)
+        self.jobs.submit_index(command, job_id=later_id)
+        second = self.jobs.list(
+            ListJobsCommand(page_size=2, cursor=first.next_cursor)
+        )
+
+        paged_ids = {job.job_id for job in (*first.items, *second.items)}
+        self.assertEqual(paged_ids, set(original_ids))
+        self.assertNotIn(later_id, paged_ids)
 
     def test_cancellation_reaches_the_running_application_operation(self):
         started = Event()

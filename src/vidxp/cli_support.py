@@ -16,11 +16,15 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from vidxp.application import VidXPApplication
-from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.capabilities.schemas import SearchResult
-from vidxp.job_service import JobService
 from vidxp.repositories import RepositoryConfig, RepositoryRegistry
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vidxp.application import VidXPApplication
+    from vidxp.composition import LocalApplicationContext
+    from vidxp.job_service import JobService
+    from vidxp.settings import VidXPSettings
 
 
 class OutputFormat(str, Enum):
@@ -30,12 +34,23 @@ class OutputFormat(str, Enum):
 
 @dataclass
 class CLIState:
-    service: VidXPApplication
-    jobs: JobService
+    local: "LocalApplicationContext"
     registry: RepositoryRegistry
     repository: RepositoryConfig
     output_format: OutputFormat = OutputFormat.rich
     quiet: bool = False
+
+    @property
+    def service(self) -> "VidXPApplication":
+        return self.local.application
+
+    @property
+    def jobs(self) -> "JobService":
+        return self.local.jobs
+
+    @property
+    def settings(self) -> "VidXPSettings":
+        return self.local.settings
 
 
 def state_from_context(ctx: typer.Context) -> CLIState:
@@ -158,29 +173,30 @@ class IndexProgress:
 
 def selected_modalities(
     values: Iterable[str] | None,
-    registry: CapabilityRegistry,
+    available: Iterable[str],
 ) -> tuple[str, ...]:
+    supported = tuple(available)
     if values is None:
-        return registry.index_names()
-    try:
-        return registry.validate_names(values)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        return supported
+    selected = tuple(dict.fromkeys(values))
+    unknown = sorted(set(selected) - set(supported))
+    if unknown:
+        raise typer.BadParameter(
+            "Unknown or unsupported capabilities: " + ", ".join(unknown)
+        )
+    return selected
 
 
 def parse_modalities(
     value: str,
-    registry: CapabilityRegistry,
+    available: Iterable[str],
 ) -> tuple[str, ...]:
     selected = tuple(
         item.strip().lower()
         for item in value.split(",")
         if item.strip()
     )
-    try:
-        return registry.validate_names(selected)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+    return selected_modalities(selected, available)
 
 
 def parse_capability_options(

@@ -12,15 +12,53 @@ from vidxp.benchmarks.hirest import (
     HIREST_DEFAULT_WINDOW_FRACTION,
     run_hirest,
 )
+from vidxp.capabilities.registry import create_capability_registry
 from vidxp.cli_support import (
     OutputFormat,
     effective_output_format,
     emit_json,
     state_from_context,
 )
+from vidxp.dependencies import (
+    active_requirements,
+    inspect_requirement,
+    packaged_requirements,
+)
 
 
 app = typer.Typer(help="Run official benchmark adapters.")
+
+
+def _require_benchmark_dependencies(
+    capability: str,
+    *,
+    include_benchmark_extra: bool = False,
+) -> None:
+    requirements = list(
+        create_capability_registry().requirements_for((capability,))
+    )
+    extras = [capability]
+    if include_benchmark_extra:
+        requirements.extend(
+            active_requirements(packaged_requirements("vidxp.benchmarks"))
+        )
+        extras.append("benchmarks")
+    failures = [
+        check
+        for requirement in dict.fromkeys(requirements)
+        if not (check := inspect_requirement(requirement))["ok"]
+    ]
+    if not failures:
+        return
+    unavailable = ", ".join(
+        f"{failure['requirement']} ({failure['error']})"
+        for failure in failures
+    )
+    extra = ",".join(extras)
+    raise typer.BadParameter(
+        f"Benchmark dependencies are unavailable: {unavailable}. "
+        f'Install them with: pip install "vidxp[{extra}]"'
+    )
 
 
 def _annotation_indices(value: str | None) -> list[int] | None:
@@ -46,7 +84,13 @@ def _annotation_indices(value: str | None) -> list[int] | None:
 def _pair_file(path: Path | None) -> list[tuple[str, str]] | None:
     if path is None:
         return None
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            "The HiREST pair file must contain valid readable JSON.",
+            param_hint="--pairs",
+        ) from exc
     if not isinstance(payload, list) or not payload:
         raise typer.BadParameter(
             "The HiREST pair file must be a non-empty JSON list."
@@ -105,6 +149,7 @@ def didemo_command(
 ) -> None:
     """Run DiDeMo scene retrieval and its official evaluator."""
 
+    _require_benchmark_dependencies("scene")
     state = state_from_context(ctx)
     metrics = run_didemo(
         annotations_path=annotations,
@@ -117,7 +162,7 @@ def didemo_command(
         split=split,
         chunk_pooling=chunk_pooling,
         reset=reset,
-        device=state.service.device or "cpu",
+        device=state.settings.runtime_backend,
     )
     if effective_output_format(state, json_output) == OutputFormat.json:
         emit_json(metrics)
@@ -169,6 +214,16 @@ def hirest_command(
 ) -> None:
     """Run HiREST released-ASR retrieval; score validation predictions."""
 
+    if not 0 < temporal_window_fraction < 1:
+        raise typer.BadParameter(
+            "The temporal window fraction must be greater than zero and "
+            "less than one.",
+            param_hint="--temporal-window-fraction",
+        )
+    _require_benchmark_dependencies(
+        "dialogue",
+        include_benchmark_extra=True,
+    )
     state = state_from_context(ctx)
     metrics = run_hirest(
         ground_truth_path=ground_truth,
@@ -182,7 +237,7 @@ def hirest_command(
         split=split,
         temporal_window_fraction=temporal_window_fraction,
         reset=reset,
-        device=state.service.device or "cpu",
+        device=state.settings.runtime_backend,
     )
     if effective_output_format(state, json_output) == OutputFormat.json:
         emit_json(metrics)

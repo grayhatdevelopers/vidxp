@@ -22,6 +22,7 @@ from vidxp.capabilities.registry import (
     CapabilityRegistry,
     create_capability_registry,
 )
+from vidxp.capability_service import CapabilityService
 from vidxp.capabilities.scene.config import SceneConfig
 from vidxp.core.contracts import IndexConfig
 from vidxp.core.runner import _index_groups
@@ -65,6 +66,18 @@ class CapabilityTests(unittest.TestCase):
             for operation in definition.operations.values():
                 self.assertTrue(issubclass(operation.input_model, BaseModel))
                 self.assertTrue(issubclass(operation.output_model, BaseModel))
+
+    def test_internal_actor_cluster_lookup_is_not_advertised(self):
+        operations = {
+            operation.name
+            for operation in CapabilityService(self.registry)
+            .get("actor")
+            .operations
+        }
+
+        self.assertNotIn("cluster", operations)
+        self.assertIn("clusters", operations)
+        self.assertIn("detections", operations)
 
     def test_executor_handlers_match_declared_operations(self):
         for name, definition in self.registry.definitions.items():

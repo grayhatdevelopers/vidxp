@@ -24,6 +24,7 @@ from vidxp.application_models import (
     JobState,
     MediaAsset,
     Principal,
+    SearchCommand,
 )
 from vidxp.composition import (
     HttpApplicationContext,
@@ -312,6 +313,35 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         context.jobs.submit_index.assert_not_called()
 
+    def test_search_submission_uses_the_durable_query_boundary(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.jobs.submit_search.return_value = queued_job().model_copy(
+                update={"kind": JobKind.search}
+            )
+            with TestClient(create_app(context=context)) as client:
+                response = client.post(
+                    "/api/v1/jobs/search",
+                    headers={"Idempotency-Key": IDEMPOTENCY_KEY},
+                    json={
+                        "modality": "scene",
+                        "query": "yellow taxi",
+                        "top_k": 3,
+                    },
+                )
+
+        self.assertEqual(response.status_code, 202)
+        context.jobs.submit_search.assert_called_once()
+        command = context.jobs.submit_search.call_args.args[0]
+        self.assertEqual(
+            command,
+            SearchCommand(
+                modality="scene",
+                query="yellow taxi",
+                top_k=3,
+            ),
+        )
+
     def test_idempotency_payload_mismatch_returns_422(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
@@ -512,6 +542,25 @@ class ApiTests(unittest.TestCase):
         self.assertIn("multipart/form-data", upload_schema["requestBody"]["content"])
         self.assertNotIn('"format": "path"', str(upload_schema))
 
+    def test_openapi_declares_bearer_security_without_securing_health(self):
+        with TemporaryDirectory() as directory:
+            app = create_app(
+                context=self.context(
+                    Path(directory),
+                    auth=HttpAuthMode.static,
+                )
+            )
+            schema = app.openapi()
+
+        bearer = schema["components"]["securitySchemes"]["BearerAuth"]
+        self.assertEqual(bearer["type"], "http")
+        self.assertEqual(bearer["scheme"], "bearer")
+        self.assertEqual(
+            schema["paths"]["/api/v1/capabilities"]["get"]["security"],
+            [{"BearerAuth": []}],
+        )
+        self.assertNotIn("security", schema["paths"]["/health"]["get"])
+
     def test_cors_is_scoped_to_the_rest_namespace(self):
         with TemporaryDirectory() as directory:
             context = self.context(
@@ -577,7 +626,7 @@ class ApiTests(unittest.TestCase):
             "cors_preflight_invalid",
         )
 
-    def test_authenticated_profiles_do_not_publish_interactive_docs(self):
+    def test_authenticated_profiles_protect_schema_and_hide_interactive_docs(self):
         with TemporaryDirectory() as directory:
             context = self.context(
                 Path(directory),
@@ -589,6 +638,7 @@ class ApiTests(unittest.TestCase):
                     "/docs",
                     headers=self.auth(),
                 )
+                schema_without_token = client.get("/openapi.json")
                 schema = client.get(
                     "/openapi.json",
                     headers=self.auth(),
@@ -596,7 +646,9 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(unauthenticated.status_code, 401)
         self.assertEqual(authenticated.status_code, 404)
-        self.assertEqual(schema.status_code, 404)
+        self.assertEqual(schema_without_token.status_code, 401)
+        self.assertEqual(schema.status_code, 200)
+        self.assertIn("/api/v1/capabilities", schema.json()["paths"])
 
     def test_readiness_masks_component_probe_failures(self):
         with TemporaryDirectory() as directory:
@@ -680,7 +732,7 @@ class ApiTests(unittest.TestCase):
             finally:
                 context.close()
 
-    def test_reserved_mcp_namespace_bypasses_api_auth_and_body_policy(self):
+    def test_reserved_mcp_namespace_uses_api_auth_and_body_policy(self):
         with TemporaryDirectory() as directory:
             context = self.context(
                 Path(directory),
@@ -688,20 +740,30 @@ class ApiTests(unittest.TestCase):
                 json_limit=32,
             )
             with TestClient(create_app(context=context)) as client:
-                endpoint = client.post("/mcp", content=b"x" * 64)
+                unauthorized = client.post("/mcp", content=b"x" * 64)
+                oversized = client.post(
+                    "/mcp",
+                    headers=self.auth(),
+                    content=b"x" * 64,
+                )
                 metadata = client.get(
                     "/.well-known/oauth-protected-resource/mcp"
                 )
 
-        self.assertEqual(endpoint.status_code, 404)
-        self.assertEqual(metadata.status_code, 404)
-        self.assertNotEqual(
-            endpoint.json()["error"]["code"],
+        self.assertEqual(unauthorized.status_code, 401)
+        self.assertEqual(
+            unauthorized.json()["error"]["code"],
             "authentication_required",
         )
-        self.assertNotEqual(
-            endpoint.json()["error"]["code"],
+        self.assertEqual(oversized.status_code, 413)
+        self.assertEqual(
+            oversized.json()["error"]["code"],
             "request_body_too_large",
+        )
+        self.assertEqual(metadata.status_code, 401)
+        self.assertEqual(
+            metadata.json()["error"]["code"],
+            "authentication_required",
         )
 
     def test_typed_application_error_status_mapping(self):

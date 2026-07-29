@@ -363,6 +363,31 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
             snapshot.config_fingerprint,
         )
 
+    def test_historical_snapshot_configuration_reopens_by_checksum(self):
+        config_a, reference_a = self.generation("a", input_sha="a" * 64)
+        snapshot_a = self.repository.publish_generation(reference_a, config_a)
+        active_a, _ = self.repository.active_config(device="cpu")
+        config_b, reference_b = self.generation("b", input_sha="b" * 64)
+        snapshot_b = self.repository.publish_generation(reference_b, config_b)
+
+        historical = self.repository.config_for_snapshot(
+            snapshot_a.snapshot_id,
+            snapshot_sha256=active_a.snapshot_sha256,
+            device="cuda",
+        )
+
+        self.assertNotEqual(snapshot_a.snapshot_id, snapshot_b.snapshot_id)
+        self.assertEqual(historical.snapshot_id, snapshot_a.snapshot_id)
+        self.assertEqual(
+            historical.snapshot_sha256,
+            active_a.snapshot_sha256,
+        )
+        self.assertEqual(historical.device, "cuda")
+        self.assertEqual(
+            historical.fingerprint(),
+            snapshot_a.config_fingerprint,
+        )
+
     def test_profile_mismatch_is_rejected_before_replacing_other_media(self):
         config_a, a = self.generation("a", input_sha="a" * 64)
         self.repository.publish_generation(a, config_a)
@@ -563,8 +588,8 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
         with IndexStorage(config) as storage:
             storage.delete_generation(generation_id)
 
-        with self.assertRaisesRegex(IndexSchemaError, "record counts"):
-            backend.open_store(active)
+        with backend.open_store(active):
+            pass
         with self.assertRaisesRegex(IndexSchemaError, "record counts"):
             backend.status(self.repository.indexes)
 

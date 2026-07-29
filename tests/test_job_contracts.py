@@ -7,7 +7,9 @@ from unittest.mock import Mock
 from pydantic import ValidationError
 
 from vidxp.application_models import (
+    ActorOverlayJobRequest,
     ApplicationError,
+    CreateActorOverlayCommand,
     CreateIndexCommand,
     Job,
     JobKind,
@@ -15,7 +17,10 @@ from vidxp.application_models import (
     JobQueue,
     JobState,
     InvalidRequestError,
+    IndexSnapshotReference,
     ListJobsCommand,
+    SearchCommand,
+    SearchJobRequest,
 )
 from vidxp.job_service import JobService
 from vidxp.ports import InvalidJobBackendRequestError
@@ -27,6 +32,8 @@ from vidxp.workflow_worker import _resolved_database_url
 
 MEDIA_ID = "123456781234423481234567890abcde"
 JOB_ID = "223456781234423481234567890abcde"
+SNAPSHOT_ID = "323456781234423481234567890abcde"
+SNAPSHOT_SHA256 = "a" * 64
 
 
 class JobContractTests(unittest.TestCase):
@@ -90,6 +97,104 @@ class JobContractTests(unittest.TestCase):
     def test_job_list_cursor_is_bounded(self):
         with self.assertRaises(ValidationError):
             ListJobsCommand(cursor="x" * 513)
+
+    def test_search_uses_the_same_model_worker_queue(self):
+        backend = Mock()
+        planner = Mock()
+        command = SearchCommand(
+            modality="scene",
+            query="taxi",
+            top_k=2,
+        )
+        planner.plan_search.return_value = SearchJobRequest(
+            command=command,
+            snapshot=IndexSnapshotReference(
+                snapshot_id=SNAPSHOT_ID,
+                snapshot_sha256=SNAPSHOT_SHA256,
+            ),
+        )
+        backend.submit.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.search,
+            state=JobState.queued,
+            queue=JobQueue.gpu,
+        )
+        service = JobService(
+            settings=VidXPSettings(
+                repository_root=Path("repository"),
+                runtime_backend="cuda:0",
+            ),
+            backend=backend,
+            read_planner=planner,
+        )
+
+        service.submit_search(command)
+
+        request = backend.submit.call_args.args[0]
+        self.assertEqual(request.kind, JobKind.search)
+        self.assertEqual(request.snapshot.snapshot_id, SNAPSHOT_ID)
+        planner.plan_search.assert_called_once_with(command)
+        self.assertEqual(
+            backend.submit.call_args.kwargs["queue"],
+            JobQueue.gpu,
+        )
+
+    def test_actor_job_retains_pinned_snapshot_identity(self):
+        backend = Mock()
+        planner = Mock()
+        command = CreateActorOverlayCommand(cluster_id="actor-1")
+        planner.plan_actor_overlay.return_value = ActorOverlayJobRequest(
+            command=command,
+            snapshot=IndexSnapshotReference(
+                snapshot_id=SNAPSHOT_ID,
+                snapshot_sha256=SNAPSHOT_SHA256,
+            ),
+        )
+        backend.submit.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.actor_overlay,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        service = JobService(
+            settings=VidXPSettings(
+                repository_root=Path("repository"),
+                runtime_backend="cpu",
+            ),
+            backend=backend,
+            read_planner=planner,
+        )
+
+        service.submit_actor_overlay(command)
+
+        request = backend.submit.call_args.args[0]
+        self.assertEqual(request.snapshot.snapshot_id, SNAPSHOT_ID)
+        planner.plan_actor_overlay.assert_called_once_with(command)
+
+    def test_search_and_actor_identifiers_are_bounded(self):
+        command = SearchCommand(
+            modality=" scene ",
+            query="  a chef prepares pizza  ",
+        )
+        self.assertEqual(command.modality, "scene")
+        self.assertEqual(command.query, "a chef prepares pizza")
+
+        for values in (
+            {"modality": "scene/video", "query": "taxi"},
+            {"modality": "scene", "query": "x" * 4097},
+            {"modality": "scene", "query": "   "},
+        ):
+            with self.assertRaises(ValidationError):
+                SearchCommand(**values)
+
+        with self.assertRaises(ValidationError):
+            CreateActorOverlayCommand(cluster_id="../../video")
+        encoded_cluster = CreateActorOverlayCommand(
+            cluster_id=(
+                "generation:run%20name:media:actor-cluster:1"
+            )
+        )
+        self.assertIn("%20", encoded_cluster.cluster_id)
 
     def test_canonical_dbos_job_id_has_a_hex_operation_identity(self):
         execution = ExecutionContext(

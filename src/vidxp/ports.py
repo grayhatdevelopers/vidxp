@@ -323,6 +323,15 @@ class IndexBackend(Protocol):
         device: str,
     ) -> tuple[IndexConfig, dict[str, Any]]: ...
 
+    def config_for_snapshot(
+        self,
+        index_directory: Path,
+        *,
+        snapshot_id: str,
+        snapshot_sha256: str,
+        device: str,
+    ) -> IndexConfig: ...
+
     def create(
         self,
         path: Path,

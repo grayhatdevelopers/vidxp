@@ -49,6 +49,11 @@ def create_snippet(
 ) -> None:
     """Create a managed video snippet artifact."""
 
+    if end_seconds <= start_seconds:
+        raise typer.BadParameter(
+            "The snippet end must be greater than its start.",
+            param_hint="end_seconds",
+        )
     state = state_from_context(ctx)
     job = state.jobs.submit_snippet(
         CreateSnippetCommand(

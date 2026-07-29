@@ -20,6 +20,7 @@ from vidxp.application_models import (
     ListJobsCommand,
     Principal,
     PrepareModelsCommand,
+    SearchCommand,
 )
 from vidxp.composition import HttpApplicationContext
 from vidxp.core.identifiers import JobId
@@ -51,6 +52,35 @@ def submit_index(
                 service,
                 actor,
                 operation="index",
+                idempotency_key=idempotency_key,
+            ),
+        ),
+    )
+
+
+@router.post(
+    "/search",
+    response_model=Job,
+    status_code=202,
+    operation_id="searchMoments",
+    summary="Search indexed moments",
+    dependencies=[Depends(read_principal)],
+)
+def submit_search(
+    command: SearchCommand,
+    response: Response,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+    actor: Annotated[Principal, Depends(read_principal)],
+    idempotency_key: HttpIdempotencyKey,
+) -> Job:
+    return accepted(
+        response,
+        service.jobs.submit_search(
+            command,
+            job_id=scoped_job_id(
+                service,
+                actor,
+                operation="search",
                 idempotency_key=idempotency_key,
             ),
         ),

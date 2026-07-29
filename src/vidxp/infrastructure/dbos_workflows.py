@@ -20,6 +20,7 @@ from vidxp.application_models import (
     JobProgress,
     SnippetJobRequest,
     PrepareModelsJobRequest,
+    SearchJobRequest,
 )
 from vidxp.core.contracts import CancellationToken
 from vidxp.core.contracts import IndexCancelledError
@@ -174,8 +175,38 @@ class VidXPWorkerWorkflows(DBOSConfiguredInstance):
             else:
                 result = self.application.render_actor(
                     request.command,
+                    snapshot=request.snapshot,
                     execution=execution,
                 )
+            return result.model_dump(mode="json")
+
+        return _step_boundary(execute)
+
+    @DBOS.step(name="vidxp.run_search.v1")
+    def run_search_step(self, payload: dict[str, Any]) -> dict[str, Any]:
+        def execute() -> dict[str, Any]:
+            request = SearchJobRequest.model_validate(payload)
+            execution = _execution()
+            _publish_progress(
+                {
+                    "stage": "searching",
+                    "message": "Searching the committed index.",
+                }
+            )
+            execution.checkpoint()
+            result = self.application.search(
+                request.command,
+                snapshot=request.snapshot,
+            )
+            execution.checkpoint()
+            _publish_progress(
+                {
+                    "stage": "complete",
+                    "message": "Search results are ready.",
+                    "current": 1,
+                    "total": 1,
+                }
+            )
             return result.model_dump(mode="json")
 
         return _step_boundary(execute)
@@ -217,6 +248,10 @@ class VidXPWorkerWorkflows(DBOSConfiguredInstance):
     @DBOS.workflow(name=WORKFLOW_NAMES[JobKind.snippet])
     def snippet_workflow(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.run_artifact_step(payload)
+
+    @DBOS.workflow(name=WORKFLOW_NAMES[JobKind.search])
+    def search_workflow(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.run_search_step(payload)
 
     @DBOS.workflow(name=WORKFLOW_NAMES[JobKind.actor_overlay])
     def actor_overlay_workflow(

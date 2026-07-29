@@ -244,9 +244,8 @@ VIDXP_HTTP_TRUSTED_HOSTS=["api.example.com"]
 Use `Authorization: Bearer <token>` for every route except `/health` and
 `/ready`. Configure `VIDXP_HTTP_ALLOWED_ORIGINS` only for browser origins that
 must call `/api/*`; that CORS policy does not apply to the reserved MCP
-namespace. Authenticated profiles do not publish `/docs` or `/openapi.json`;
-generate or expose API documentation separately when operating a remote
-deployment.
+namespace. Authenticated profiles keep the interactive `/docs` UI disabled, while
+the protected `/openapi.json` contract remains available to authenticated clients.
 
 ## Container
 

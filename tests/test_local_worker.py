@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -8,6 +9,7 @@ from time import sleep
 from unittest.mock import Mock, patch
 
 from filelock import Timeout
+from vidxp import __version__
 from vidxp.application_models import (
     ApplicationError,
     JobState,
@@ -31,6 +33,14 @@ from vidxp.workflow_worker import main as workflow_worker_main
 
 
 class LocalWorkerSupervisorTests(unittest.TestCase):
+    def test_workflow_version_identifies_the_release_and_implementation(self):
+        value = workflow_application_version()
+
+        self.assertRegex(
+            value,
+            rf"^{re.escape(__version__)}\+[0-9a-f]{{16}}$",
+        )
+
     def test_worker_is_spawned_detached_without_job_state(self):
         with TemporaryDirectory() as directory:
             settings = VidXPSettings(

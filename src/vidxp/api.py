@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 from typing import Annotated, AsyncIterator
 
 from asgi_correlation_id import CorrelationIdMiddleware
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response, Security
+from fastapi.security import HTTPBearer
 from vidxp import __version__
 from vidxp.api_errors import install_exception_handlers
 from vidxp.api_middleware import (
@@ -20,6 +21,17 @@ from vidxp.api_routes import create_api_router
 from vidxp.api_routes.dependencies import context
 from vidxp.composition import HttpApplicationContext, create_http_application
 from vidxp.settings import VidXPSettings
+
+
+_BEARER_SECURITY = HTTPBearer(
+    auto_error=False,
+    scheme_name="BearerAuth",
+    description=(
+        "Bearer access token. Authentication is enforced once by the "
+        "server middleware."
+    ),
+)
+
 
 def create_app(
     settings: VidXPSettings | None = None,
@@ -47,7 +59,7 @@ def create_app(
         lifespan=lifespan,
         docs_url="/docs" if publish_docs else None,
         redoc_url="/redoc" if publish_docs else None,
-        openapi_url="/openapi.json" if publish_docs else None,
+        openapi_url="/openapi.json",
     )
     app.state.vidxp = active_context
     install_exception_handlers(app)
@@ -80,7 +92,15 @@ def create_app(
             status="ready" if is_ready else "not_ready",
         )
 
-    app.include_router(create_api_router())
+    api_dependencies = (
+        [Security(_BEARER_SECURITY)]
+        if active_settings.http_auth_mode.value != "none"
+        else []
+    )
+    app.include_router(
+        create_api_router(),
+        dependencies=api_dependencies,
+    )
     app.add_exception_handler(
         RequestBodyTooLarge,
         _request_body_too_large_response,

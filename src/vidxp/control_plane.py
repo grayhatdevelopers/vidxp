@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import Callable
 
 from vidxp.application_boundary import application_boundary
 from vidxp.application_models import (
@@ -26,10 +26,6 @@ from vidxp.ports import LocalFileResource
 from vidxp.repository_layout import RepositoryLayout
 
 
-class IndexStatusPort(Protocol):
-    def status(self) -> dict | None: ...
-
-
 class ControlPlaneApplication:
     """Model-free application facade used by HTTP and future remote adapters."""
 
@@ -40,13 +36,13 @@ class ControlPlaneApplication:
         capabilities: CapabilityService,
         media: MediaService,
         artifacts: ArtifactQueryService,
-        index: IndexStatusPort,
+        index_status: Callable[[], dict | None],
     ) -> None:
         self.layout = layout
         self.capabilities = capabilities
         self.media = media
         self.artifacts = artifacts
-        self.index = index
+        self._read_index_status = index_status
 
     @application_boundary
     def import_uploaded_media(
@@ -80,7 +76,7 @@ class ControlPlaneApplication:
 
     @application_boundary
     def index_status(self) -> IndexStatus:
-        stored = self.index.status()
+        stored = self._read_index_status()
         payload = (
             dict(stored)
             if stored is not None

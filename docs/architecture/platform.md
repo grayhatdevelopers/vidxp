@@ -465,10 +465,12 @@ reviewed dead-executor recovery coordinator.
 exclusion. Queue-global concurrency is configured only where one job across every
 worker is intentionally required.
 
-`application_version` is the immutable VidXP release identity. Recovery occurs only
-on a worker supporting that workflow version. Deployments drain old-version jobs or
-run blue/green old-version workers until they finish; breaking workflow changes
-require an explicit DBOS patch/migration strategy.
+`application_version` combines the VidXP release with a digest of the installed
+workflow implementation. Recovery therefore occurs only on a worker running the
+same code, including when a prerelease build changes without a package-version
+bump. Deployments drain old-version jobs or run blue/green old-version workers until
+they finish; breaking workflow changes require an explicit DBOS patch/migration
+strategy.
 
 ## 12. Resource scheduling and model runtime
 

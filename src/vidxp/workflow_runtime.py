@@ -61,8 +61,11 @@ def workflow_database_url(settings: VidXPSettings) -> str:
     return f"sqlite:///{database.as_posix()}"
 
 
+@lru_cache(maxsize=1)
 def workflow_application_version() -> str:
-    return __version__
+    """Identify the exact workflow implementation, not only the release."""
+
+    return f"{__version__}+{implementation_digest()[:16]}"
 
 
 @lru_cache(maxsize=16)

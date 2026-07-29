@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any, Generic, Literal, Mapping, TypeVar
+from typing import Annotated, Any, Generic, Literal, Mapping, TypeAlias, TypeVar
 
 from pydantic import (
     AwareDatetime,
@@ -11,11 +11,13 @@ from pydantic import (
     Field,
     JsonValue,
     NonNegativeInt,
+    StringConstraints,
     field_validator,
     model_validator,
 )
 
 from vidxp.core.identifiers import (
+    ActorClusterId as ActorClusterId,
     ArtifactId as ArtifactId,
     Identifier as Identifier,
     IndexGenerationId as IndexGenerationId,
@@ -32,6 +34,7 @@ from vidxp.core.artifacts import (
     ArtifactKind,
     ArtifactState,
 )
+from vidxp.core.contracts import INDEX_SCHEMA_VERSION
 from vidxp.core.media import (
     MEDIA_SCHEMA_VERSION,
     MediaState,
@@ -40,6 +43,10 @@ from vidxp.core.media import (
 )
 
 T = TypeVar("T")
+SearchQuery: TypeAlias = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=4096),
+]
 
 
 class ApplicationModel(BaseModel):
@@ -85,6 +92,7 @@ class ErrorCategory(StrEnum):
 
 class JobKind(StrEnum):
     index = "index"
+    search = "search"
     snippet = "snippet"
     actor_overlay = "actor_overlay"
     prepare_models = "prepare_models"
@@ -327,9 +335,7 @@ class ActorOverlayProfile(StrEnum):
 
 
 class CreateActorOverlayCommand(ApplicationModel):
-    media_id: MediaId
-    generation_id: IndexGenerationId
-    cluster_id: str = Field(min_length=1)
+    cluster_id: ActorClusterId
     profile: ActorOverlayProfile = ActorOverlayProfile.default
 
 
@@ -367,9 +373,80 @@ class IndexStatusSummary(ApplicationModel):
 
 
 class SearchCommand(ApplicationModel):
-    modality: str = Field(min_length=1)
-    query: str = Field(min_length=1)
+    modality: Identifier
+    query: SearchQuery
     top_k: int = Field(default=10, gt=0, le=100)
+
+
+class SearchHit(ApplicationModel):
+    rank: int = Field(gt=0)
+    media_id: MediaId
+    video_id: VideoId
+    generation_id: IndexGenerationId
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    score: float
+    raw_distance: float
+    modality: str = Field(min_length=1)
+    source_id: str = Field(min_length=1)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator("metadata")
+    @classmethod
+    def _reject_internal_metadata(
+        cls,
+        value: dict[str, JsonValue],
+    ) -> dict[str, JsonValue]:
+        forbidden: set[str] = set()
+
+        def inspect(item: JsonValue) -> None:
+            if isinstance(item, dict):
+                for key, nested in item.items():
+                    if (
+                        key == "path"
+                        or key == "storage_key"
+                        or key.endswith("_path")
+                        or key.endswith("_directory")
+                    ):
+                        forbidden.add(key)
+                    inspect(nested)
+            elif isinstance(item, list):
+                for nested in item:
+                    inspect(nested)
+
+        inspect(value)
+        if forbidden:
+            raise ValueError(
+                "Search metadata contains internal location fields."
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _validate_interval(self) -> "SearchHit":
+        if self.end <= self.start:
+            raise ValueError("end must be greater than start")
+        return self
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
+
+
+class SearchResult(ApplicationModel):
+    schema_version: int = INDEX_SCHEMA_VERSION
+    query_id: str = Field(min_length=1)
+    query: str = Field(min_length=1)
+    modality: str = Field(min_length=1)
+    hits: tuple[SearchHit, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
+
+    def to_prediction(self) -> dict[str, list[dict[str, Any]]]:
+        return {
+            self.query_id: [
+                hit.model_dump(mode="json") for hit in self.hits
+            ]
+        }
 
 
 class PrepareModelsCommand(ApplicationModel):
@@ -381,6 +458,7 @@ class PrepareModelsCommand(ApplicationModel):
 
 class DependencyCheckCommand(ApplicationModel):
     modalities: tuple[str, ...]
+    include_runtime_checks: bool = True
 
 
 class DependencyCheckResult(ApplicationModel):
@@ -398,9 +476,20 @@ class PrepareModelsResult(ApplicationModel):
 JOB_SCHEMA_VERSION = 1
 
 
+class IndexSnapshotReference(ApplicationModel):
+    snapshot_id: IndexSnapshotId
+    snapshot_sha256: Sha256
+
+
 class IndexJobRequest(ApplicationModel):
     kind: Literal[JobKind.index] = JobKind.index
     command: CreateIndexCommand
+
+
+class SearchJobRequest(ApplicationModel):
+    kind: Literal[JobKind.search] = JobKind.search
+    command: SearchCommand
+    snapshot: IndexSnapshotReference
 
 
 class SnippetJobRequest(ApplicationModel):
@@ -411,6 +500,7 @@ class SnippetJobRequest(ApplicationModel):
 class ActorOverlayJobRequest(ApplicationModel):
     kind: Literal[JobKind.actor_overlay] = JobKind.actor_overlay
     command: CreateActorOverlayCommand
+    snapshot: IndexSnapshotReference
 
 
 class PrepareModelsJobRequest(ApplicationModel):
@@ -420,6 +510,7 @@ class PrepareModelsJobRequest(ApplicationModel):
 
 JobRequest = Annotated[
     IndexJobRequest
+    | SearchJobRequest
     | SnippetJobRequest
     | ActorOverlayJobRequest
     | PrepareModelsJobRequest,
@@ -430,6 +521,11 @@ JobRequest = Annotated[
 class IndexJobResult(ApplicationModel):
     kind: Literal[JobKind.index] = JobKind.index
     result: IndexResult
+
+
+class SearchJobResult(ApplicationModel):
+    kind: Literal[JobKind.search] = JobKind.search
+    result: SearchResult
 
 
 class ArtifactJobResult(ApplicationModel):
@@ -443,7 +539,10 @@ class PrepareModelsJobResult(ApplicationModel):
 
 
 JobResult = Annotated[
-    IndexJobResult | ArtifactJobResult | PrepareModelsJobResult,
+    IndexJobResult
+    | SearchJobResult
+    | ArtifactJobResult
+    | PrepareModelsJobResult,
     Field(discriminator="kind"),
 ]
 

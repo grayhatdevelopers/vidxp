@@ -11,6 +11,7 @@ ERROR_EVENT = "vidxp.error"
 
 WORKFLOW_NAMES: dict[JobKind, str] = {
     JobKind.index: "vidxp.index.v1",
+    JobKind.search: "vidxp.search.v1",
     JobKind.snippet: "vidxp.snippet.v1",
     JobKind.actor_overlay: "vidxp.actor_overlay.v1",
     JobKind.prepare_models: "vidxp.prepare_models.v1",

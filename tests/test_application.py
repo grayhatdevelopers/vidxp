@@ -10,11 +10,15 @@ from vidxp.application import VidXPApplication
 from vidxp.application_models import (
     ApplicationError,
     CapabilityDependencyCheck,
+    ComponentReadiness,
+    CreateActorOverlayCommand,
     CreateIndexCommand,
     DependencyKind,
     DependencyCheckCommand,
+    DependencyCheckResult,
     DependencyUnavailableError,
     IndexResult,
+    IndexSnapshotReference,
     PrepareModelsCommand,
     RemoveIndexCommand,
     SearchCommand,
@@ -33,6 +37,14 @@ from vidxp.capabilities.registry import (
     create_capability_registry,
 )
 from vidxp.capabilities.schemas import SearchInput, SearchResult
+from vidxp.capabilities.actor.schemas import (
+    ActorClusterInput,
+    ActorClusterSummary,
+    ActorDetection,
+    ActorDetectionsInput,
+    ActorDetectionsOutput,
+)
+from vidxp.control_plane import ControlPlaneApplication
 from vidxp.composition import create_local_application
 from vidxp.repository_layout import RepositoryLayout
 from vidxp.repositories import RepositoryConfigError
@@ -44,6 +56,7 @@ from vidxp.ports import IndexStore
 MEDIA_ID = "123456781234423481234567890abcde"
 GENERATION_ID = "223456781234423481234567890abcde"
 SNAPSHOT_ID = "323456781234423481234567890abcde"
+SNAPSHOT_SHA256 = "a" * 64
 
 
 class ApplicationTests(unittest.TestCase):
@@ -70,8 +83,9 @@ class ApplicationTests(unittest.TestCase):
                 registry=registry or create_capability_registry(),
                 runtime=runtime,
                 index_backend=active_backend,
-                media_service=media_service,
-                artifact_service=artifact_service,
+                media=media_service,
+                artifacts=artifact_service,
+                index_status=lambda: active_backend.status(Path(root)),
             ),
             active_backend,
         )
@@ -147,6 +161,37 @@ class ApplicationTests(unittest.TestCase):
         ):
             create_local_application()
 
+    def test_local_composition_opens_and_closes_services_lazily(self):
+        application = Mock()
+        jobs = Mock()
+        with (
+            TemporaryDirectory() as directory,
+            patch(
+                "vidxp.composition.create_application",
+                return_value=application,
+            ) as create_application,
+            patch(
+                "vidxp.composition.create_job_service",
+                return_value=jobs,
+            ) as create_jobs,
+        ):
+            local = create_local_application(index_directory=directory)
+            self.assertEqual(local.repository.index_directory, Path(directory))
+            create_application.assert_not_called()
+            create_jobs.assert_not_called()
+
+            self.assertIs(local.application, application)
+            self.assertIs(local.application, application)
+            create_application.assert_called_once()
+            create_jobs.assert_not_called()
+            local.close()
+            jobs.close.assert_not_called()
+
+            self.assertIs(local.jobs, jobs)
+            create_jobs.assert_called_once()
+            local.close()
+            jobs.close.assert_called_once()
+
     def test_missing_index_has_shared_status_model(self):
         application, backend = self.application("missing")
         backend.status.return_value = None
@@ -155,15 +200,193 @@ class ApplicationTests(unittest.TestCase):
 
         self.assertEqual(status.state, "missing")
         self.assertEqual(status.schema_version, 1)
+        self.assertIsInstance(application, ControlPlaneApplication)
+
+    def test_actor_cluster_is_a_typed_projection_over_execute(self):
+        application, _ = self.application("repository")
+        expected = ActorClusterSummary(
+            cluster_id="actor-1",
+            media_id=MEDIA_ID,
+            generation_id=GENERATION_ID,
+            detection_count=2,
+            first_timestamp=1,
+            last_timestamp=2,
+        )
+        with patch.object(
+            application,
+            "execute",
+            return_value=expected,
+        ) as execute:
+            cluster = application.actor_cluster("actor-1")
+
+        self.assertEqual(cluster, expected)
+        execute.assert_called_once_with(
+            "actor",
+            "cluster",
+            {"cluster_id": "actor-1"},
+        )
+
+    def test_pinned_search_reopens_the_requested_snapshot(self):
+        contexts = []
+
+        def handler(context, request):
+            contexts.append(context)
+            return SearchResult(
+                query_id="indexed:query",
+                query=request.query,
+                modality="indexed",
+            )
+
+        manager = MagicMock()
+        manager.__enter__.return_value = Mock(spec=IndexStore)
+        application = self.indexed_application(handler, manager)
+        backend = application.index_backend
+        pinned = IndexConfig.local(
+            enabled_modalities=("indexed",),
+            collection_names={"indexed": "indexed"},
+            snapshot_id=SNAPSHOT_ID,
+            snapshot_sha256=SNAPSHOT_SHA256,
+        )
+        backend.config_for_snapshot.return_value = pinned
+
+        result = application.search(
+            SearchCommand(modality="indexed", query="query"),
+            snapshot=IndexSnapshotReference(
+                snapshot_id=SNAPSHOT_ID,
+                snapshot_sha256=SNAPSHOT_SHA256,
+            ),
+        )
+
+        self.assertEqual(result.query, "query")
+        backend.active_config.assert_not_called()
+        backend.config_for_snapshot.assert_called_once_with(
+            application.index_directory,
+            snapshot_id=SNAPSHOT_ID,
+            snapshot_sha256=SNAPSHOT_SHA256,
+            device="cpu",
+        )
+        backend.open_store.assert_called_once_with(pinned)
+        self.assertIs(contexts[0].storage, manager.__enter__.return_value)
+
+    def test_actor_render_reuses_one_pinned_store_and_context(self):
+        contexts = []
+        calls = []
+
+        def cluster_handler(context, request):
+            contexts.append(context)
+            calls.append(("cluster", request.cluster_id))
+            return ActorClusterSummary(
+                cluster_id=request.cluster_id,
+                media_id=MEDIA_ID,
+                generation_id=GENERATION_ID,
+                detection_count=1,
+                first_timestamp=1,
+                last_timestamp=1,
+            )
+
+        def detections_handler(context, request):
+            contexts.append(context)
+            calls.append(("detections", request.cursor))
+            return ActorDetectionsOutput(
+                cluster_id=request.cluster_id,
+                detections=(
+                    ActorDetection(
+                        detection_id="detection-1",
+                        cluster_id=request.cluster_id,
+                        frame_index=1,
+                        timestamp=1,
+                        bbox=(0, 0, 10, 10),
+                        dataset="local",
+                        split="local",
+                        run_id="default",
+                        media_id=MEDIA_ID,
+                        generation_id=GENERATION_ID,
+                        modality="actor",
+                        source_id="frame-1",
+                    ),
+                ),
+            )
+
+        definition = CapabilityDefinition(
+            name="actor",
+            description="Actor provider.",
+            extra="actor",
+            collection_name="actor",
+            index_stage="actor",
+            execution_group="actor",
+            operations={
+                "cluster": OperationDefinition(
+                    input_model=ActorClusterInput,
+                    output_model=ActorClusterSummary,
+                ),
+                "detections": OperationDefinition(
+                    input_model=ActorDetectionsInput,
+                    output_model=ActorDetectionsOutput,
+                ),
+            },
+        )
+        registry = CapabilityRegistry(
+            (
+                CapabilityPlugin(
+                    definition=definition,
+                    executor_factory=lambda: CapabilityExecutor(
+                        indexer=Mock(),
+                        operations={
+                            "cluster": cluster_handler,
+                            "detections": detections_handler,
+                        },
+                    ),
+                ),
+            )
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = Mock(spec=IndexStore)
+        application, backend = self.application(
+            "repository",
+            registry=registry,
+        )
+        pinned = IndexConfig.local(
+            enabled_modalities=("actor",),
+            collection_names={"actor": "actor"},
+            snapshot_id=SNAPSHOT_ID,
+            snapshot_sha256=SNAPSHOT_SHA256,
+        )
+        backend.config_for_snapshot.return_value = pinned
+        backend.open_store.return_value = manager
+        application.artifacts.create_actor_overlay.return_value = Mock()
+
+        application.render_actor(
+            CreateActorOverlayCommand(cluster_id="actor-1"),
+            snapshot=IndexSnapshotReference(
+                snapshot_id=SNAPSHOT_ID,
+                snapshot_sha256=SNAPSHOT_SHA256,
+            ),
+            media_id=MEDIA_ID,
+            generation_id=GENERATION_ID,
+        )
+
+        backend.active_config.assert_not_called()
+        backend.open_store.assert_called_once_with(pinned)
+        self.assertEqual(
+            calls,
+            [("cluster", "actor-1"), ("detections", None)],
+        )
+        self.assertEqual(len({id(context) for context in contexts}), 1)
+        application.artifacts.create_actor_overlay.assert_called_once()
+        artifact_call = (
+            application.artifacts.create_actor_overlay.call_args.kwargs
+        )
+        self.assertEqual(artifact_call["media_id"], MEDIA_ID)
+        self.assertEqual(artifact_call["generation_id"], GENERATION_ID)
 
     def test_create_index_builds_one_central_config(self):
         with TemporaryDirectory() as directory:
             application, backend = self.application(directory)
-            application.media_service.require_record.return_value = Mock(
+            application.media.require_record.return_value = Mock(
                 original_filename="video.mp4",
                 sha256="1" * 64,
             )
-            application.media_service.content.return_value = Mock(
+            application.media.content.return_value = Mock(
                 path=Path("managed.mp4")
             )
             backend.create.return_value = {
@@ -324,7 +547,7 @@ class ApplicationTests(unittest.TestCase):
     def test_missing_media_error_does_not_expose_path(self):
         application, _ = self.application("unused")
         secret_path = Path("private/customer/video.mp4")
-        application.media_service.require_record.side_effect = (
+        application.media.require_record.side_effect = (
             MediaUnavailableError("secret")
         )
 
@@ -347,11 +570,11 @@ class ApplicationTests(unittest.TestCase):
             path = Path(directory) / "video.mp4"
             path.write_bytes(b"video")
             application, backend = self.application(directory)
-            application.media_service.require_record.return_value = Mock(
+            application.media.require_record.return_value = Mock(
                 original_filename="video.mp4",
                 sha256="1" * 64,
             )
-            application.media_service.content.return_value = Mock(path=path)
+            application.media.content.return_value = Mock(path=path)
             backend.create.side_effect = FileNotFoundError("ffmpeg")
 
             with self.assertRaises(DependencyUnavailableError) as raised:
@@ -556,6 +779,37 @@ class ApplicationTests(unittest.TestCase):
 
         self.assertFalse(result.ok)
         self.assertEqual(result.modalities, ("scene",))
+
+    def test_runtime_readiness_includes_dependency_failures(self):
+        application, _ = self.application("unused")
+        application.control_plane_readiness = Mock(
+            return_value=(
+                ComponentReadiness(
+                    name="catalog",
+                    ready=True,
+                    message="available",
+                ),
+            )
+        )
+        application._index_storage_readiness = Mock(
+            return_value=ComponentReadiness(
+                name="index_storage",
+                ready=True,
+                message="available",
+            )
+        )
+        application.check_dependencies = Mock(
+            return_value=DependencyCheckResult(
+                ok=False,
+                modalities=("scene",),
+                checks=(),
+            )
+        )
+
+        readiness = application.runtime_readiness()
+
+        self.assertFalse(readiness.ready)
+        self.assertFalse(readiness.dependencies.ok)
 
     def test_prepare_uses_injected_runtime_and_executor(self):
         definition = CapabilityDefinition(

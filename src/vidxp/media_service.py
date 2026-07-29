@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-import base64
-import hashlib
 import json
+from pathlib import Path
+import hashlib
 from uuid import uuid4
 
 from vidxp.application_models import (
@@ -19,6 +18,11 @@ from vidxp.core.media import (
     StagedMedia,
     MediaUnavailableError,
     utc_now,
+)
+from vidxp.core.cursors import (
+    CursorError,
+    decode_offset_cursor,
+    encode_offset_cursor,
 )
 from vidxp.ports import (
     LocalFileResource,
@@ -231,7 +235,10 @@ class MediaService:
         scope = hashlib.sha256(
             str(self.settings.repository_root.resolve()).encode()
         ).hexdigest()
-        offset = self._decode_cursor(command.cursor, scope)
+        try:
+            offset = decode_offset_cursor(command.cursor, scope=scope)
+        except CursorError as exc:
+            raise ValueError("The media cursor is invalid.") from exc
         total = self.catalog.count_media()
         if offset > total:
             raise ValueError("The media cursor is outside the result set.")
@@ -244,7 +251,7 @@ class MediaService:
         )
         next_offset = offset + len(items)
         cursor = (
-            self._encode_cursor(next_offset, scope)
+            encode_offset_cursor(next_offset, scope=scope)
             if next_offset < total
             else None
         )
@@ -253,42 +260,6 @@ class MediaService:
             total=total,
             next_cursor=cursor,
         )
-
-    @staticmethod
-    def _encode_cursor(offset: int, scope: str) -> str:
-        payload = json.dumps(
-            {"version": 1, "scope": scope, "offset": offset},
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode()
-        return base64.urlsafe_b64encode(payload).decode()
-
-    @staticmethod
-    def _decode_cursor(cursor: str | None, scope: str) -> int:
-        if cursor is None:
-            return 0
-        try:
-            payload = json.loads(
-                base64.urlsafe_b64decode(cursor.encode()).decode()
-            )
-            if (
-                not isinstance(payload, dict)
-                or payload.get("version") != 1
-                or payload.get("scope") != scope
-            ):
-                raise ValueError
-            offset = int(payload["offset"])
-        except (
-            KeyError,
-            TypeError,
-            UnicodeDecodeError,
-            ValueError,
-            json.JSONDecodeError,
-        ) as exc:
-            raise ValueError("The media cursor is invalid.") from exc
-        if offset < 0:
-            raise ValueError("The media cursor is invalid.")
-        return offset
 
     def require_record(self, media_id: str) -> MediaRecord:
         record = self.catalog.get_media(media_id)

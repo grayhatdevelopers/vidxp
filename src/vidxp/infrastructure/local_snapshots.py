@@ -412,6 +412,43 @@ class LocalSnapshotRepository:
             raise IndexNotReadyError(
                 "The active index snapshot contains no media."
             )
+        return (
+            self._config_for_snapshot(
+                snapshot,
+                snapshot_sha256=pointer.snapshot_sha256,
+                device=device,
+            ),
+            snapshot,
+        )
+
+    def config_for_snapshot(
+        self,
+        snapshot_id: str,
+        *,
+        snapshot_sha256: str,
+        device: str,
+    ) -> IndexConfig:
+        snapshot = self.read_snapshot(
+            snapshot_id,
+            expected_sha256=snapshot_sha256,
+        )
+        if not snapshot.generations:
+            raise IndexNotReadyError(
+                "The requested index snapshot contains no media."
+            )
+        return self._config_for_snapshot(
+            snapshot,
+            snapshot_sha256=snapshot_sha256,
+            device=device,
+        )
+
+    def _config_for_snapshot(
+        self,
+        snapshot: IndexSnapshot,
+        *,
+        snapshot_sha256: str,
+        device: str,
+    ) -> IndexConfig:
         stored = dict(snapshot.configuration)
         stored["enabled_modalities"] = tuple(stored["enabled_modalities"])
         stored["collection_names"] = dict(stored["collection_names"])
@@ -419,7 +456,7 @@ class LocalSnapshotRepository:
             {
                 "storage_directory": str(self.store),
                 "snapshot_id": snapshot.snapshot_id,
-                "snapshot_sha256": pointer.snapshot_sha256,
+                "snapshot_sha256": snapshot_sha256,
                 "device": device,
             }
         )
@@ -427,13 +464,13 @@ class LocalSnapshotRepository:
             config = IndexConfig(**stored)
         except (TypeError, ValueError) as exc:
             raise IndexSchemaError(
-                "The active snapshot configuration is invalid."
+                "The snapshot configuration is invalid."
             ) from exc
         if config.fingerprint() != snapshot.config_fingerprint:
             raise IndexSchemaError(
-                "The active snapshot configuration fingerprint is invalid."
+                "The snapshot configuration fingerprint is invalid."
             )
-        return config, snapshot
+        return config
 
     def status(self) -> dict[str, Any] | None:
         resolved = self._read_active()

@@ -15,6 +15,7 @@ from vidxp.application_models import (
     CreateActorOverlayCommand,
     CreateIndexCommand,
     DependencyCheckCommand,
+    ErrorCategory,
     ImportMediaCommand,
     JobState,
     SearchCommand,
@@ -62,6 +63,41 @@ SEARCH_RESULT_KEY = "_vidxp_search_result"
 CANCEL_REQUESTED_KEY = "_vidxp_cancel_requested"
 MEDIA_ID_KEY = "_vidxp_media_id"
 UPLOAD_TOKEN_KEY = "_vidxp_upload_token"
+INDEX_JOB_QUERY_PARAM = "index_job"
+SEARCH_JOB_QUERY_PARAM = "search_job"
+SEARCH_TYPE_QUERY_PARAM = "search_type"
+
+
+def _remember_job(
+    *,
+    job_id: str,
+    query_param: str,
+    search_type: str | None = None,
+) -> None:
+    st.query_params[query_param] = job_id
+    if search_type is not None:
+        st.query_params[SEARCH_TYPE_QUERY_PARAM] = search_type
+
+
+def _forget_job(query_param: str) -> None:
+    st.query_params.pop(query_param, None)
+    if query_param == SEARCH_JOB_QUERY_PARAM:
+        st.query_params.pop(SEARCH_TYPE_QUERY_PARAM, None)
+
+
+def _restore_durable_jobs() -> None:
+    if INDEX_JOB_ID_KEY not in st.session_state:
+        if job_id := st.query_params.get(INDEX_JOB_QUERY_PARAM):
+            st.session_state[INDEX_JOB_ID_KEY] = str(job_id)
+    if SEARCH_RESULT_KEY not in st.session_state:
+        if job_id := st.query_params.get(SEARCH_JOB_QUERY_PARAM):
+            st.session_state[SEARCH_RESULT_KEY] = {
+                "type": str(
+                    st.query_params.get(SEARCH_TYPE_QUERY_PARAM) or "search"
+                ),
+                "query": "",
+                "job_id": str(job_id),
+            }
 
 
 def _upload_token(uploaded_video):
@@ -111,9 +147,16 @@ def _get_job(jobs: JobService, job_id: str | None):
         return None
     try:
         return jobs.get(job_id)
-    except ApplicationError:
-        LOGGER.warning("Ignoring unavailable background job %s.", job_id)
-        return None
+    except ApplicationError as exc:
+        if exc.category == ErrorCategory.not_found:
+            LOGGER.info("Background job %s no longer exists.", job_id)
+            return None
+        LOGGER.warning(
+            "Could not query background job %s: %s",
+            job_id,
+            exc.code,
+        )
+        raise
 
 
 def _render_index_status(status, active, media_id, request_error=None):
@@ -172,12 +215,51 @@ def _request_cancellation():
 def _available_index_modalities() -> tuple[str, ...]:
     service = _configured_service()
     return tuple(
-        name
-        for name in service.registry.index_names()
+        capability.name
+        for capability in service.list_capabilities()
+        if capability.supports_indexing
         if service.check_dependencies(
-            DependencyCheckCommand(modalities=(name,))
+            DependencyCheckCommand(
+                modalities=(capability.name,),
+                include_runtime_checks=False,
+            )
         ).ok
     )
+
+
+def _available_query_modalities(
+    configured: tuple[str, ...],
+) -> tuple[str, ...]:
+    def supports_query(capability) -> bool:
+        operations = {
+            operation.name for operation in capability.operations
+        }
+        return (
+            "search" in operations
+            or {"clusters", "detections"}.issubset(operations)
+        )
+
+    return tuple(
+        capability.name
+        for capability in _configured_service().list_capabilities()
+        if capability.name in configured
+        if supports_query(capability)
+    )
+
+
+def _finish_index_job(job) -> None:
+    _forget_job(INDEX_JOB_QUERY_PARAM)
+    if job.state == JobState.succeeded:
+        st.session_state.pop(INDEX_ERROR_KEY, None)
+    elif job.error is not None:
+        st.session_state[INDEX_ERROR_KEY] = job.error.message
+    elif job.state == JobState.cancelled:
+        st.session_state[INDEX_ERROR_KEY] = "Indexing was cancelled."
+    else:
+        st.session_state[INDEX_ERROR_KEY] = (
+            "Indexing did not complete successfully."
+        )
+    st.session_state.pop(INDEX_JOB_ID_KEY, None)
 
 
 def _run_indexing(uploaded_video, status, modalities):
@@ -218,6 +300,10 @@ def _run_indexing(uploaded_video, status, modalities):
             )
         )
         st.session_state[INDEX_JOB_ID_KEY] = job.job_id
+        _remember_job(
+            job_id=job.job_id,
+            query_param=INDEX_JOB_QUERY_PARAM,
+        )
     except ApplicationError as exc:
         st.session_state[INDEX_ERROR_KEY] = str(exc)
     except Exception:
@@ -241,50 +327,36 @@ def _run_search(search_type, query):
         if status.get("state") != "ready":
             raise IndexNotReadyError("The video index is not ready.")
         if search_type == "actor":
-            clusters = service.actor_clusters(page_size=100).clusters
-            cluster = next(
-                (
-                    item
-                    for item in clusters
-                    if item.cluster_id == query
-                ),
-                None,
-            )
-            if cluster is None:
-                return {"error": "No matching actor cluster was found."}
             job = _configured_jobs().submit_actor_overlay(
-                CreateActorOverlayCommand(
-                    cluster_id=query,
-                    media_id=cluster.media_id,
-                    generation_id=cluster.generation_id,
-                )
+                CreateActorOverlayCommand(cluster_id=query)
             )
-            artifact = _configured_jobs().wait(job.job_id).result
-            if artifact is None:
-                return {"error": "The actor artifact result is unavailable."}
-            artifact = artifact.result
+            _remember_job(
+                job_id=job.job_id,
+                query_param=SEARCH_JOB_QUERY_PARAM,
+                search_type=search_type,
+            )
             return {
                 "type": search_type,
                 "query": query,
-                "artifact_id": artifact.artifact_id,
+                "job_id": job.job_id,
             }
 
-        result = service.search(
+        job = _configured_jobs().submit_search(
             SearchCommand(
                 modality=search_type,
                 query=query,
                 top_k=1,
             )
         )
-        if not result.hits:
-            return {"error": f"No {search_type} match was found."}
-        hit = result.hits[0]
+        _remember_job(
+            job_id=job.job_id,
+            query_param=SEARCH_JOB_QUERY_PARAM,
+            search_type=search_type,
+        )
         return {
             "type": search_type,
             "query": query,
-            "timestamp": hit.start,
-            "hit": hit.to_dict(),
-            "media_id": hit.media_id,
+            "job_id": job.job_id,
         }
     except IndexNotReadyError as exc:
         return {"error": str(exc)}
@@ -302,6 +374,88 @@ def _render_search_result(result):
         st.error(error)
         return
 
+    if "job_id" in result:
+
+        @st.fragment(run_every="1s")
+        def poll_search_job():
+            label = (
+                "actor overlay"
+                if result["type"] == "actor"
+                else f"{result['type']} search"
+            )
+            try:
+                job = _get_job(_configured_jobs(), result["job_id"])
+            except ApplicationError as exc:
+                message = (
+                    f"The {label} status is temporarily unavailable. Retrying."
+                    if exc.retryable
+                    else f"The {label} status could not be read: {exc}"
+                )
+                st.warning(message)
+                return
+            if job is None:
+                _forget_job(SEARCH_JOB_QUERY_PARAM)
+                st.session_state[SEARCH_RESULT_KEY] = {
+                    "type": result["type"],
+                    "query": result["query"],
+                    "error": f"The {label} job is unavailable.",
+                }
+                st.rerun()
+                return
+            if job.state in {JobState.queued, JobState.running}:
+                if job.progress is not None:
+                    _render_progress(job.progress.model_dump(mode="json"))
+                else:
+                    st.markdown(f"⏳ {label.title()} is queued.")
+                return
+            if job.state != JobState.succeeded or job.result is None:
+                _forget_job(SEARCH_JOB_QUERY_PARAM)
+                message = {
+                    JobState.cancelled: f"The {label} was cancelled.",
+                }.get(
+                    job.state,
+                    (
+                        job.error.message
+                        if job.error is not None
+                        else f"The {label} did not complete successfully."
+                    ),
+                )
+                st.session_state[SEARCH_RESULT_KEY] = {
+                    "type": result["type"],
+                    "query": result["query"],
+                    "error": message,
+                }
+                st.rerun()
+                return
+            completed = job.result.result
+            _forget_job(SEARCH_JOB_QUERY_PARAM)
+            if result["type"] == "actor":
+                resolved = {
+                    "type": "actor",
+                    "query": result["query"],
+                    "artifact_id": completed.artifact_id,
+                }
+            elif not completed.hits:
+                resolved = {
+                    "type": result["type"],
+                    "query": completed.query,
+                    "error": f"No {result['type']} match was found.",
+                }
+            else:
+                hit = completed.hits[0]
+                resolved = {
+                    "type": result["type"],
+                    "query": completed.query,
+                    "timestamp": hit.start,
+                    "hit": hit.to_dict(),
+                    "media_id": hit.media_id,
+                }
+            st.session_state[SEARCH_RESULT_KEY] = resolved
+            st.rerun()
+
+        poll_search_job()
+        return
+
     service = _configured_service()
     try:
         resource = (
@@ -315,7 +469,13 @@ def _render_search_result(result):
 
     search_type = result["type"]
     if search_type == "actor":
-        st.success(f"Actor cluster {result['query']}")
+        st.success(
+            (
+                f"Actor cluster {result['query']}"
+                if result.get("query")
+                else "Actor overlay"
+            )
+        )
         st.video(
             str(resource.path),
             format=resource.mime_type,
@@ -406,14 +566,34 @@ def run():
     st.caption(f"Index repository: {service.layout.root}")
 
     jobs = _configured_jobs()
+    _restore_durable_jobs()
     job_id = st.session_state.get(INDEX_JOB_ID_KEY)
-    current_job = _get_job(jobs, job_id)
+    job_lookup_error = None
+    try:
+        current_job = _get_job(jobs, job_id)
+    except ApplicationError as exc:
+        current_job = None
+        job_lookup_error = exc
     if job_id is not None and current_job is None:
-        st.session_state.pop(INDEX_JOB_ID_KEY, None)
+        if job_lookup_error is None:
+            st.session_state.pop(INDEX_JOB_ID_KEY, None)
+            _forget_job(INDEX_JOB_QUERY_PARAM)
+            job_id = None
+    elif (
+        current_job is not None
+        and current_job.state not in {JobState.queued, JobState.running}
+    ):
+        _finish_index_job(current_job)
         job_id = None
     active = (
-        current_job is not None
-        and current_job.state in {JobState.queued, JobState.running}
+        job_id is not None
+        and (
+            job_lookup_error is not None
+            or (
+                current_job is not None
+                and current_job.state in {JobState.queued, JobState.running}
+            )
+        )
     )
     if not active:
         st.session_state.pop(CANCEL_REQUESTED_KEY, None)
@@ -490,9 +670,20 @@ def run():
 
             @st.fragment(run_every="1s")
             def poll_index_status():
-                latest_job = _get_job(jobs, job_id)
+                try:
+                    latest_job = _get_job(jobs, job_id)
+                except ApplicationError as exc:
+                    message = (
+                        "The indexing job status is temporarily unavailable. "
+                        "Retrying."
+                        if exc.retryable
+                        else f"The indexing job status could not be read: {exc}"
+                    )
+                    st.warning(message)
+                    return
                 if latest_job is None:
                     st.session_state.pop(INDEX_JOB_ID_KEY, None)
+                    _forget_job(INDEX_JOB_QUERY_PARAM)
                     st.error("The background indexing job is unavailable.")
                     st.rerun()
                     return
@@ -501,21 +692,7 @@ def run():
                     JobState.running,
                 }
                 if not latest_active:
-                    if latest_job.state == JobState.succeeded:
-                        st.session_state.pop(INDEX_ERROR_KEY, None)
-                    elif latest_job.error is not None:
-                        st.session_state[INDEX_ERROR_KEY] = (
-                            latest_job.error.message
-                        )
-                    elif latest_job.state == JobState.cancelled:
-                        st.session_state[INDEX_ERROR_KEY] = (
-                            "Indexing was cancelled."
-                        )
-                    else:
-                        st.session_state[INDEX_ERROR_KEY] = (
-                            "Indexing did not complete successfully."
-                        )
-                    st.session_state.pop(INDEX_JOB_ID_KEY, None)
+                    _finish_index_job(latest_job)
                     st.rerun()
                     return
                 latest_status = (
@@ -547,15 +724,13 @@ def run():
         configured_modalities = (
             (status.get("summary") or {}).get(
                 "modalities",
-                ("scene", "dialogue", "actor"),
+                (),
             )
             if ready
-            else ("scene", "dialogue", "actor")
+            else ()
         )
-        available_modalities = tuple(
-            modality
-            for modality in ("scene", "dialogue", "actor")
-            if modality in configured_modalities
+        available_modalities = _available_query_modalities(
+            tuple(configured_modalities)
         )
         search_clicked, search_type, query = _search_controls(
             ready,

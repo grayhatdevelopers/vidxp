@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import base64
-import binascii
-import json
 from collections.abc import Callable
 from datetime import datetime, timezone
+from time import time_ns
 from typing import Any
 from uuid import uuid4
 
@@ -28,8 +26,17 @@ from vidxp.application_models import (
     ListJobsCommand,
     PrepareModelsJobResult,
     PrepareModelsResult,
+    SearchJobResult,
+    SearchResult,
 )
 from vidxp.core.identifiers import JobId
+from vidxp.core.cursors import (
+    MAX_CURSOR_OFFSET,
+    CursorError,
+    decode_cursor,
+    decode_offset_cursor,
+    encode_cursor,
+)
 from vidxp.ports import (
     InvalidJobBackendRequestError,
     JobIdempotencyConflictError,
@@ -49,6 +56,7 @@ from vidxp.workflow_contracts import (
 _JOB_ID_ADAPTER = TypeAdapter(JobId)
 _JOB_REQUEST_ADAPTER = TypeAdapter(JobRequest)
 _LIST_SCOPE = "vidxp:jobs"
+_WINDOW_END_FIELD = "window_end_ms"
 _STATUS_STATES = {
     "ENQUEUED": JobState.queued,
     "DELAYED": JobState.queued,
@@ -58,46 +66,6 @@ _STATUS_STATES = {
     "CANCELLED": JobState.cancelled,
     "MAX_RECOVERY_ATTEMPTS_EXCEEDED": JobState.recovery_exhausted,
 }
-
-
-def _encode_cursor(offset: int, *, has_more: bool) -> str | None:
-    if not has_more:
-        return None
-    payload = json.dumps(
-        {"version": 1, "scope": _LIST_SCOPE, "offset": offset},
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    return base64.urlsafe_b64encode(payload).decode()
-
-
-def _decode_cursor(cursor: str | None) -> int:
-    if cursor is None:
-        return 0
-    try:
-        payload = json.loads(
-            base64.urlsafe_b64decode(cursor.encode()).decode()
-        )
-        offset = int(payload["offset"])
-    except (
-        KeyError,
-        TypeError,
-        UnicodeDecodeError,
-        ValueError,
-        json.JSONDecodeError,
-        binascii.Error,
-    ) as exc:
-        raise InvalidJobBackendRequestError(
-            "The job cursor is invalid."
-        ) from exc
-    if (
-        not isinstance(payload, dict)
-        or payload.get("version") != 1
-        or payload.get("scope") != _LIST_SCOPE
-        or offset < 0
-    ):
-        raise InvalidJobBackendRequestError("The job cursor is invalid.")
-    return offset
 
 
 def _job_id(value: str) -> str:
@@ -113,6 +81,16 @@ def _timestamp(value: int | None) -> datetime | None:
     if value is None:
         return None
     return datetime.fromtimestamp(value / 1000, timezone.utc)
+
+
+def _now_ms() -> int:
+    return time_ns() // 1_000_000
+
+
+def _window_end_iso(value: int) -> str:
+    return datetime.fromtimestamp(value / 1000, timezone.utc).isoformat(
+        timespec="milliseconds"
+    )
 
 
 class DBOSJobBackend:
@@ -206,22 +184,60 @@ class DBOSJobBackend:
 
     def list(self, command: ListJobsCommand) -> JobPage:
         self._prepare_access()
-        offset = _decode_cursor(command.cursor)
+        try:
+            offset = decode_offset_cursor(
+                command.cursor,
+                scope=_LIST_SCOPE,
+            )
+            if command.cursor is None:
+                window_end_ms = _now_ms()
+            else:
+                payload = decode_cursor(command.cursor, _LIST_SCOPE)
+                window_end_ms = payload.get(_WINDOW_END_FIELD)
+                if window_end_ms is None:
+                    # Legacy v1 offset cursors did not freeze the result
+                    # window. Preserve them on a best-effort basis, then
+                    # upgrade the next cursor to the stable representation.
+                    window_end_ms = _now_ms()
+                if (
+                    not isinstance(window_end_ms, int)
+                    or isinstance(window_end_ms, bool)
+                    or window_end_ms < 0
+                    or window_end_ms > MAX_CURSOR_OFFSET
+                ):
+                    raise CursorError("The cursor window is invalid.")
+        except CursorError as exc:
+            raise InvalidJobBackendRequestError(
+                "The job cursor is invalid."
+            ) from exc
         statuses = self.client.list_workflows(
             name=list(WORKFLOW_KINDS),
             limit=command.page_size + 1,
             offset=offset,
             sort_desc=True,
+            end_time=_window_end_iso(window_end_ms),
             load_input=False,
             load_output=True,
         )
         has_more = len(statuses) > command.page_size
         selected = statuses[: command.page_size]
+        next_offset = offset + len(selected)
+        if next_offset > MAX_CURSOR_OFFSET:
+            raise InvalidJobBackendRequestError(
+                "The job cursor is invalid."
+            )
         return JobPage(
             items=tuple(self._job(status) for status in selected),
-            next_cursor=_encode_cursor(
-                offset + len(selected),
-                has_more=has_more,
+            next_cursor=(
+                encode_cursor(
+                    _LIST_SCOPE,
+                    {
+                        "offset": next_offset,
+                        _WINDOW_END_FIELD: window_end_ms,
+                    },
+                )
+                if has_more
+                else None
             ),
         )
 
@@ -313,6 +329,10 @@ class DBOSJobBackend:
             if kind == JobKind.index:
                 result = IndexJobResult(
                     result=IndexResult.model_validate(status.output)
+                )
+            elif kind == JobKind.search:
+                result = SearchJobResult(
+                    result=SearchResult.model_validate(status.output)
                 )
             elif kind in {JobKind.snippet, JobKind.actor_overlay}:
                 result = ArtifactJobResult(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator, Mapping, cast
+from typing import Any, Callable, Iterator, Mapping, cast
 
 from pydantic import BaseModel
 
@@ -10,7 +10,6 @@ from vidxp.application_boundary import application_boundary
 from vidxp.application_models import (
     ApplicationError,
     Artifact,
-    CapabilityInfo,
     ComponentReadiness,
     CreateIndexCommand,
     CreateActorOverlayCommand,
@@ -19,13 +18,10 @@ from vidxp.application_models import (
     DependencyCheckResult,
     DependencyUnavailableError,
     ErrorCategory,
-    InvalidRequestError,
     IndexResult,
-    IndexStatus,
     ImportMediaCommand,
-    ListMediaCommand,
+    IndexSnapshotReference,
     MediaAsset,
-    MediaPage,
     PrepareModelsCommand,
     PrepareModelsResult,
     RemoveIndexCommand,
@@ -34,6 +30,7 @@ from vidxp.application_models import (
     SearchCommand,
 )
 from vidxp.capabilities.actor.schemas import (
+    ActorClusterSummary,
     ActorClustersOutput,
     ActorDetectionsOutput,
 )
@@ -50,26 +47,20 @@ from vidxp.core.contracts import (
     IndexConfig,
 )
 from vidxp.execution import ExecutionContext, execution_context
-from vidxp.index_state import (
-    INDEX_STATUS_SCHEMA,
-)
 from vidxp.ports import IndexBackend, ModelRuntimePort
-from vidxp.ports import LocalFileResource
 from vidxp.model_contracts import ModelArtifactUnavailableError
 from vidxp.repository_layout import RepositoryLayout
 from vidxp.settings import VidXPSettings
+from vidxp.control_plane import ControlPlaneApplication
 from vidxp.artifact_service import (
     ArtifactService,
-)
-from vidxp.core.media import (
-    QuarantinedMedia,
 )
 from vidxp.media_service import (
     MediaService,
 )
 
 
-class VidXPApplication:
+class VidXPApplication(ControlPlaneApplication):
     """The transport-neutral command and query boundary."""
 
     def __init__(
@@ -80,17 +71,21 @@ class VidXPApplication:
         registry: CapabilityRegistry,
         runtime: ModelRuntimePort,
         index_backend: IndexBackend,
-        media_service: MediaService,
-        artifact_service: ArtifactService,
+        media: MediaService,
+        artifacts: ArtifactService,
+        index_status: Callable[[], dict[str, Any] | None],
     ) -> None:
-        self.settings = settings
-        self.layout = layout
         self.registry = registry
-        self.capabilities = CapabilityService(registry)
         self.runtime = runtime
         self.index_backend = index_backend
-        self.media_service = media_service
-        self.artifact_service = artifact_service
+        super().__init__(
+            layout=layout,
+            capabilities=CapabilityService(registry),
+            media=media,
+            artifacts=artifacts,
+            index_status=index_status,
+        )
+        self.settings = settings
 
     @contextmanager
     def _capability_dependencies(
@@ -127,21 +122,6 @@ class VidXPApplication:
         return self.runtime.backends.torch_device
 
     @application_boundary
-    def index_status(self) -> IndexStatus:
-        stored = self.index_backend.status(self.index_directory)
-        payload = (
-            dict(stored)
-            if stored is not None
-            else {
-                "schema_version": INDEX_STATUS_SCHEMA,
-                "state": "missing",
-                "stage": "status",
-                "message": "No local video index was found.",
-            }
-        )
-        return IndexStatus.model_validate(payload)
-
-    @application_boundary
     def _active_config(self) -> tuple[IndexConfig, dict[str, Any]]:
         return self.index_backend.active_config(
             self.index_directory,
@@ -151,115 +131,41 @@ class VidXPApplication:
     @application_boundary
     def import_media(self, command: ImportMediaCommand) -> MediaAsset:
         self.layout.ensure_local_directories()
-        return self.media_service.import_local(command)
-
-    @application_boundary
-    def import_uploaded_media(
-        self,
-        *,
-        staged_path: Path,
-        original_filename: str,
-        declared_mime_type: str | None,
-    ) -> MediaAsset:
-        self.layout.ensure_local_directories()
-        return self.media_service.import_quarantined(
-            QuarantinedMedia(
-                path=staged_path,
-                original_filename=original_filename,
-                declared_mime_type=declared_mime_type,
-            )
-        )
-
-    @application_boundary
-    def list_capabilities(self) -> tuple[CapabilityInfo, ...]:
-        return self.capabilities.list()
-
-    @application_boundary
-    def get_capability(self, name: str) -> CapabilityInfo:
-        try:
-            return self.capabilities.get(name)
-        except CapabilityRequestError as exc:
-            raise ResourceNotFoundError("capability") from exc
-
-    @application_boundary
-    def control_plane_readiness(self) -> tuple[ComponentReadiness, ...]:
-        components: list[ComponentReadiness] = []
-        try:
-            self.media_service.list(ListMediaCommand(page_size=1))
-        except Exception:
-            components.append(
-                ComponentReadiness(
-                    name="catalog",
-                    ready=False,
-                    message="The media catalog is unavailable.",
-                )
-            )
-        else:
-            components.append(
-                ComponentReadiness(
-                    name="catalog",
-                    ready=True,
-                    message="The media catalog is available.",
-                )
-            )
-        try:
-            self.index_status()
-        except ApplicationError:
-            components.append(
-                ComponentReadiness(
-                    name="index",
-                    ready=False,
-                    message="The index catalog is unavailable.",
-                )
-            )
-        else:
-            components.append(
-                ComponentReadiness(
-                    name="index",
-                    ready=True,
-                    message="The index catalog is available.",
-                )
-            )
-        return tuple(components)
+        return self.media.import_local(command)
 
     @application_boundary
     def runtime_readiness(self) -> RuntimeReadiness:
-        components = self.control_plane_readiness()
+        components = (
+            *self.control_plane_readiness(),
+            self._index_storage_readiness(),
+        )
         dependencies = self.check_dependencies(
             DependencyCheckCommand(modalities=self.registry.names())
         )
         return RuntimeReadiness(
-            ready=all(component.ready for component in components),
+            ready=(
+                all(component.ready for component in components)
+                and dependencies.ok
+            ),
             runtime=self.runtime.backends,
             components=components,
             dependencies=dependencies,
         )
 
-    @application_boundary
-    def get_media(self, media_id: str) -> MediaAsset:
-        return self.media_service.get(media_id)
-
-    @application_boundary
-    def list_media(
-        self,
-        command: ListMediaCommand,
-    ) -> MediaPage:
+    def _index_storage_readiness(self) -> ComponentReadiness:
         try:
-            return self.media_service.list(command)
-        except ValueError as exc:
-            raise InvalidRequestError() from exc
-
-    @application_boundary
-    def open_media_content(self, media_id: str) -> LocalFileResource:
-        return self.media_service.content(media_id)
-
-    @application_boundary
-    def get_artifact(self, artifact_id: str) -> Artifact:
-        return self.artifact_service.get(artifact_id)
-
-    @application_boundary
-    def open_artifact_content(self, artifact_id: str) -> LocalFileResource:
-        return self.artifact_service.content(artifact_id)
+            self.index_backend.status(self.index_directory)
+        except Exception:
+            return ComponentReadiness(
+                name="index_storage",
+                ready=False,
+                message="The committed index storage failed integrity checks.",
+            )
+        return ComponentReadiness(
+            name="index_storage",
+            ready=True,
+            message="The committed index storage passed integrity checks.",
+        )
 
     @application_boundary
     def create_index(
@@ -279,8 +185,8 @@ class VidXPApplication:
             raise CapabilityRequestError(
                 "One or more selected capabilities do not support indexing."
             )
-        media = self.media_service.require_record(command.media_id)
-        content = self.media_service.content(command.media_id)
+        media = self.media.require_record(command.media_id)
+        content = self.media.content(command.media_id)
         self.layout.ensure_local_directories()
         config = IndexConfig.local(
             video_id=command.media_id,
@@ -319,7 +225,10 @@ class VidXPApplication:
         command: DependencyCheckCommand,
     ) -> DependencyCheckResult:
         selected = self.registry.validate_names(command.modalities)
-        checks = self.registry.dependency_checks(selected)
+        checks = self.registry.dependency_checks(
+            selected,
+            include_runtime_checks=command.include_runtime_checks,
+        )
         return DependencyCheckResult(
             ok=all(check.ok for check in checks),
             modalities=selected,
@@ -378,25 +287,16 @@ class VidXPApplication:
         operation: str,
         payload: BaseModel | Mapping[str, Any],
     ) -> BaseModel:
-        definition = self.registry.get(capability)
-        try:
-            contract = definition.operations[operation]
-            handler = self.registry.executor(capability).operations[operation]
-        except KeyError as exc:
-            available = ", ".join(definition.operations) or "none"
-            raise CapabilityRequestError(
-                f"Capability {capability!r} has no operation {operation!r}; "
-                f"available operations: {available}."
-            ) from exc
-
+        definition, contract, handler = self._operation(
+            capability,
+            operation,
+        )
+        request = contract.input_model.model_validate(payload)
         config = None
         if contract.requires_index:
             config, _ = self._active_config()
-            if capability not in config.enabled_modalities:
-                raise CapabilityRequestError(
-                    f"The {capability} capability is not present in this index."
-                )
-        request = contract.input_model.model_validate(payload)
+            self._require_indexed_capability(capability, config)
+
         with self._capability_dependencies((capability,)):
             if config is None:
                 with self.runtime.scheduler.inference():
@@ -408,28 +308,109 @@ class VidXPApplication:
                         request,
                     )
                 return contract.output_model.model_validate(response)
-            with self.index_backend.open_store(config) as storage:
-                with self.runtime.scheduler.inference():
-                    response = handler(
-                        CapabilityContext(
-                            config=config,
-                            runtime=self.runtime,
-                            storage=storage,
-                        ),
-                        request,
-                    )
-                return contract.output_model.model_validate(response)
+            else:
+                with self.index_backend.open_store(config) as storage:
+                    with self.runtime.scheduler.inference():
+                        response = handler(
+                            CapabilityContext(
+                                config=config,
+                                runtime=self.runtime,
+                                storage=storage,
+                            ),
+                            request,
+                        )
+                    return contract.output_model.model_validate(response)
+
+    def _operation(self, capability: str, operation: str):
+        definition = self.registry.get(capability)
+        try:
+            contract = definition.operations[operation]
+            handler = self.registry.executor(capability).operations[operation]
+        except KeyError as exc:
+            available = ", ".join(definition.operations) or "none"
+            raise CapabilityRequestError(
+                f"Capability {capability!r} has no operation {operation!r}; "
+                f"available operations: {available}."
+            ) from exc
+        return definition, contract, handler
+
+    @staticmethod
+    def _require_indexed_capability(
+        capability: str,
+        config: IndexConfig,
+    ) -> None:
+        if capability not in config.enabled_modalities:
+            raise CapabilityRequestError(
+                f"The {capability} capability is not present in this index."
+            )
+
+    def _invoke_operation(
+        self,
+        capability: str,
+        operation: str,
+        payload: BaseModel | Mapping[str, Any],
+        *,
+        context: CapabilityContext,
+    ) -> BaseModel:
+        _, contract, handler = self._operation(capability, operation)
+        if contract.requires_index:
+            if context.config is None or context.storage is None:
+                raise RuntimeError(
+                    "Indexed capability execution requires a pinned store."
+                )
+            self._require_indexed_capability(capability, context.config)
+        request = contract.input_model.model_validate(payload)
+        response = handler(context, request)
+        return contract.output_model.model_validate(response)
+
+    def _config_for_snapshot(
+        self,
+        reference: IndexSnapshotReference,
+    ) -> IndexConfig:
+        return self.index_backend.config_for_snapshot(
+            self.index_directory,
+            snapshot_id=reference.snapshot_id,
+            snapshot_sha256=reference.snapshot_sha256,
+            device=self.device,
+        )
 
     @application_boundary
-    def search(self, command: SearchCommand) -> SearchResult:
-        return cast(
-            SearchResult,
-            self.execute(
-                command.modality,
-                "search",
-                {"query": command.query, "top_k": command.top_k},
-            ),
-        )
+    def search(
+        self,
+        command: SearchCommand,
+        *,
+        snapshot: IndexSnapshotReference | None = None,
+    ) -> SearchResult:
+        if snapshot is None:
+            return cast(
+                SearchResult,
+                self.execute(
+                    command.modality,
+                    "search",
+                    {"query": command.query, "top_k": command.top_k},
+                ),
+            )
+        config = self._config_for_snapshot(snapshot)
+        self._require_indexed_capability(command.modality, config)
+        with self._capability_dependencies((command.modality,)):
+            with self.index_backend.open_store(config) as storage:
+                with self.runtime.scheduler.inference():
+                    return cast(
+                        SearchResult,
+                        self._invoke_operation(
+                            command.modality,
+                            "search",
+                            {
+                                "query": command.query,
+                                "top_k": command.top_k,
+                            },
+                            context=CapabilityContext(
+                                config=config,
+                                runtime=self.runtime,
+                                storage=storage,
+                            ),
+                        ),
+                    )
 
     @application_boundary
     def actor_clusters(
@@ -444,6 +425,17 @@ class VidXPApplication:
                 "actor",
                 "clusters",
                 {"page_size": page_size, "cursor": cursor},
+            ),
+        )
+
+    @application_boundary
+    def actor_cluster(self, cluster_id: str) -> ActorClusterSummary:
+        return cast(
+            ActorClusterSummary,
+            self.execute(
+                "actor",
+                "cluster",
+                {"cluster_id": cluster_id},
             ),
         )
 
@@ -473,41 +465,87 @@ class VidXPApplication:
         self,
         command: CreateActorOverlayCommand,
         *,
+        snapshot: IndexSnapshotReference | None = None,
+        media_id: str | None = None,
+        generation_id: str | None = None,
         execution: ExecutionContext | None = None,
     ) -> Artifact:
         active_execution = execution_context(execution)
+        if (media_id is None) != (generation_id is None):
+            raise ValueError(
+                "Pinned actor media and generation identities must be "
+                "provided together."
+            )
         active_execution.report(
             {
                 "stage": "resolving_detections",
                 "message": "Resolving actor detections.",
             }
         )
+        config = (
+            self._config_for_snapshot(snapshot)
+            if snapshot is not None
+            else self._active_config()[0]
+        )
+        self._require_indexed_capability("actor", config)
         detections = []
-        cursor = None
-        while True:
-            active_execution.checkpoint()
-            page = self.actor_detections(
-                command.cluster_id,
-                page_size=100,
-                cursor=cursor,
-            )
-            detections.extend(page.detections)
-            cursor = page.next_cursor
-            if cursor is None:
-                break
+        with self._capability_dependencies(("actor",)):
+            with self.index_backend.open_store(config) as storage:
+                context = CapabilityContext(
+                    config=config,
+                    runtime=self.runtime,
+                    storage=storage,
+                )
+                with self.runtime.scheduler.inference():
+                    cluster = cast(
+                        ActorClusterSummary,
+                        self._invoke_operation(
+                            "actor",
+                            "cluster",
+                            {"cluster_id": command.cluster_id},
+                            context=context,
+                        ),
+                    )
+                    cursor = None
+                    while True:
+                        active_execution.checkpoint()
+                        page = cast(
+                            ActorDetectionsOutput,
+                            self._invoke_operation(
+                                "actor",
+                                "detections",
+                                {
+                                    "cluster_id": command.cluster_id,
+                                    "page_size": 100,
+                                    "cursor": cursor,
+                                },
+                                context=context,
+                            ),
+                        )
+                        detections.extend(page.detections)
+                        cursor = page.next_cursor
+                        if cursor is None:
+                            break
         identities = {
             (detection.media_id, detection.generation_id)
             for detection in detections
         }
-        if identities != {(command.media_id, command.generation_id)}:
+        expected_identity = (cluster.media_id, cluster.generation_id)
+        if (
+            identities != {expected_identity}
+            or (
+                media_id is not None
+                and expected_identity != (media_id, generation_id)
+            )
+        ):
             raise ApplicationError(
                 "actor_cluster_identity_invalid",
                 ErrorCategory.conflict,
                 "The actor cluster does not match the requested index identity.",
             )
-        return self.artifact_service.create_actor_overlay(
-            media_id=command.media_id,
-            generation_id=command.generation_id,
+        return self.artifacts.create_actor_overlay(
+            media_id=cluster.media_id,
+            generation_id=cluster.generation_id,
             cluster_id=command.cluster_id,
             detections=[
                 detection.model_dump(mode="python")
@@ -526,7 +564,7 @@ class VidXPApplication:
         execution: ExecutionContext | None = None,
     ) -> Artifact:
         active_execution = execution_context(execution)
-        return self.artifact_service.create_snippet(
+        return self.artifacts.create_snippet(
             command,
             job_id=active_execution.job_id,
             execution=active_execution,

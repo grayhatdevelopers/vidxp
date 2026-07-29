@@ -10,6 +10,7 @@ import typer
 
 from vidxp import __version__
 from vidxp.application_models import ApplicationError
+from vidxp.benchmarks.cli import app as benchmark_app
 from vidxp.cli_commands.actors import app as actor_app
 from vidxp.cli_commands.index import app as index_app
 from vidxp.cli_commands.jobs import app as jobs_app
@@ -20,7 +21,6 @@ from vidxp.cli_commands.runtime import doctor, prepare, ui
 from vidxp.cli_commands.search import search
 from vidxp.cli_support import CLIState, OutputFormat
 from vidxp.composition import create_local_application
-from vidxp.dependencies import requirements_available
 
 
 app = typer.Typer(
@@ -36,16 +36,7 @@ app.add_typer(repositories_app, name="repositories")
 app.add_typer(actor_app, name="actors")
 
 
-def _load_benchmark_app():
-    if not requirements_available("vidxp.benchmarks"):
-        return None
-    from vidxp.benchmarks.cli import app as benchmark_app
-
-    return benchmark_app
-
-
-if _benchmark_app := _load_benchmark_app():
-    app.add_typer(_benchmark_app, name="benchmark")
+app.add_typer(benchmark_app, name="benchmark")
 app.command()(doctor)
 app.command()(prepare)
 app.command()(ui)
@@ -120,9 +111,9 @@ def app_options(
         index_directory=index_directory,
         device=device,
     )
+    ctx.call_on_close(local.close)
     ctx.obj = CLIState(
-        service=local.application,
-        jobs=local.jobs,
+        local=local,
         registry=local.repositories,
         repository=local.repository,
         output_format=output_format,

@@ -113,12 +113,17 @@ def index_create(
     """Add media or replace its immutable generation in the active index."""
 
     state = state_from_context(ctx)
+    indexable = tuple(
+        capability.name
+        for capability in state.service.list_capabilities()
+        if capability.supports_indexing
+    )
     create_index(
         state,
         media_id=media_id,
         modalities=selected_modalities(
             modalities,
-            state.service.registry,
+            indexable,
         ),
         frame_stride=frame_stride,
         capability_options=parse_capability_options(capability_options),

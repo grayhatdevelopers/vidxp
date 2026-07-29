@@ -344,6 +344,7 @@ class CapabilityRegistry:
         names: Iterable[str],
         *,
         source: VideoSource | None = None,
+        include_runtime_checks: bool = True,
     ) -> tuple[CapabilityDependencyCheck, ...]:
         selected = self.validate_names(names)
         checks = []
@@ -357,21 +358,22 @@ class CapabilityRegistry:
                     **result,
                 )
             )
-        for binding in self._runtime_check_bindings(
-            selected,
-            source=source,
-        ):
-            result = binding.check.inspect()
-            checks.append(
-                CapabilityDependencyCheck(
-                    capability=binding.capability,
-                    provenance=binding.provenance,
-                    kind=DependencyKind.runtime,
-                    name=result["name"],
-                    ok=result["ok"],
-                    error=result["error"],
+        if include_runtime_checks:
+            for binding in self._runtime_check_bindings(
+                selected,
+                source=source,
+            ):
+                result = binding.check.inspect()
+                checks.append(
+                    CapabilityDependencyCheck(
+                        capability=binding.capability,
+                        provenance=binding.provenance,
+                        kind=DependencyKind.runtime,
+                        name=result["name"],
+                        ok=result["ok"],
+                        error=result["error"],
+                    )
                 )
-            )
         return tuple(checks)
 
     def require_dependencies(

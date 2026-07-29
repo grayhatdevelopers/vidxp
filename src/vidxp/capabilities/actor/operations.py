@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 from vidxp.capabilities.actor.results import (
+    actor_cluster,
     actor_clusters,
     actor_detections,
 )
-from vidxp.capabilities.contracts import CapabilityContext
 from vidxp.capabilities.actor.schemas import (
+    ActorClusterInput,
+    ActorClusterSummary,
     ActorClustersInput,
     ActorClustersOutput,
     ActorDetectionsInput,
     ActorDetectionsOutput,
 )
+from vidxp.capabilities.contracts import CapabilityContext
+
+
+def cluster_operation(
+    context: CapabilityContext,
+    request: ActorClusterInput,
+) -> ActorClusterSummary:
+    return actor_cluster(
+        context.require_config(),
+        request.cluster_id,
+        storage=context.require_storage(),
+    )
 
 
 def clusters_operation(

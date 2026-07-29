@@ -23,6 +23,9 @@ class ActorIndexState:
     known_ids: list[str] = field(default_factory=list)
     histories: dict[str, list[Any]] = field(default_factory=dict)
     cluster_sizes: dict[str, int] = field(default_factory=dict)
+    cluster_ranges: dict[str, tuple[float, float]] = field(
+        default_factory=dict
+    )
     processed_frames: int = 0
 
 
@@ -81,6 +84,39 @@ def _actor_records(
                     "bbox_right": right,
                     "bbox_bottom": bottom,
                     "bbox_left": left,
+                },
+            )
+        )
+    return records
+
+
+def _actor_cluster_records(
+    cluster_sizes: dict[str, int],
+    cluster_ranges: dict[str, tuple[float, float]],
+    config: IndexConfig,
+) -> list[StorageRecord]:
+    records = []
+    for cluster_id in sorted(cluster_sizes):
+        size = cluster_sizes[cluster_id]
+        first_timestamp, last_timestamp = cluster_ranges[cluster_id]
+        source_id = stable_source_id(
+            config.run_id,
+            str(config.video_id),
+            "actor-cluster-summary",
+            cluster_id,
+            generation_id=config.generation_id,
+        )
+        records.append(
+            StorageRecord(
+                source_id=source_id,
+                embedding=[0.0],
+                metadata={
+                    **config.record_identity("actor", source_id),
+                    "record_kind": "cluster_summary",
+                    "summary_cluster_id": cluster_id,
+                    "detection_count": size,
+                    "first_timestamp": first_timestamp,
+                    "last_timestamp": last_timestamp,
                 },
             )
         )
@@ -148,6 +184,16 @@ def process_actor_samples(
                 state.cluster_sizes[cluster_id] = (
                     state.cluster_sizes.get(cluster_id, 0) + 1
                 )
+                previous_range = state.cluster_ranges.get(cluster_id)
+                timestamp = float(sample.timestamp)
+                state.cluster_ranges[cluster_id] = (
+                    timestamp
+                    if previous_range is None
+                    else min(previous_range[0], timestamp),
+                    timestamp
+                    if previous_range is None
+                    else max(previous_range[1], timestamp),
+                )
                 detections.append(
                     {
                         "detection_id": (
@@ -196,6 +242,19 @@ def finalize_actor_index(
         for cluster_id, size in state.cluster_sizes.items()
         if size >= settings.minimum_detections
     }
+    storage.upsert(
+        "actor",
+        _actor_cluster_records(
+            retained,
+            {
+                cluster_id: state.cluster_ranges[cluster_id]
+                for cluster_id in retained
+            },
+            config,
+        ),
+        batch_size=config.storage_batch_size,
+        cancellation=CancellationToken(),
+    )
     return sum(retained.values()), len(retained)
 
 

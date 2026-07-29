@@ -3,7 +3,12 @@ from __future__ import annotations
 from pydantic import Field, model_validator
 
 from vidxp.capabilities.contracts import CapabilityInput, CapabilityOutput
-from vidxp.core.identifiers import IndexGenerationId, MediaId
+from vidxp.core.identifiers import (
+    ActorClusterId,
+    Identifier,
+    IndexGenerationId,
+    MediaId,
+)
 
 
 class ActorClustersInput(CapabilityInput):
@@ -11,8 +16,12 @@ class ActorClustersInput(CapabilityInput):
     cursor: str | None = Field(default=None, min_length=1, max_length=512)
 
 
+class ActorClusterInput(CapabilityInput):
+    cluster_id: ActorClusterId
+
+
 class ActorClusterSummary(CapabilityOutput):
-    cluster_id: str = Field(min_length=1)
+    cluster_id: ActorClusterId
     media_id: MediaId
     generation_id: IndexGenerationId
     detection_count: int = Field(ge=0)
@@ -31,19 +40,19 @@ class ActorClusterSummary(CapabilityOutput):
 
 class ActorClustersOutput(CapabilityOutput):
     clusters: tuple[ActorClusterSummary, ...] = ()
-    total: int = Field(ge=0)
+    total: int | None = Field(default=None, ge=0)
     next_cursor: str | None = None
 
 
 class ActorDetectionsInput(CapabilityInput):
-    cluster_id: str = Field(min_length=1)
+    cluster_id: ActorClusterId
     page_size: int = Field(default=50, gt=0, le=100)
     cursor: str | None = Field(default=None, min_length=1, max_length=512)
 
 
 class ActorDetection(CapabilityOutput):
-    detection_id: str = Field(min_length=1)
-    cluster_id: str = Field(min_length=1)
+    detection_id: Identifier
+    cluster_id: ActorClusterId
     frame_index: int = Field(ge=0)
     timestamp: float = Field(ge=0)
     bbox: tuple[int, int, int, int]
@@ -57,7 +66,7 @@ class ActorDetection(CapabilityOutput):
 
 
 class ActorDetectionsOutput(CapabilityOutput):
-    cluster_id: str = Field(min_length=1)
+    cluster_id: ActorClusterId
     detections: tuple[ActorDetection, ...] = ()
     total: int | None = Field(default=None, ge=0)
     next_cursor: str | None = None

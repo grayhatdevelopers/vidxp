@@ -8,6 +8,7 @@ from vidxp.capabilities.actor.models import (
     get_actor_models,
 )
 from vidxp.capabilities.actor.operations import (
+    cluster_operation,
     clusters_operation,
     detections_operation,
 )
@@ -21,6 +22,8 @@ from vidxp.capabilities.contracts import (
     module_import_check,
 )
 from vidxp.capabilities.actor.schemas import (
+    ActorClusterInput,
+    ActorClusterSummary,
     ActorClustersInput,
     ActorClustersOutput,
     ActorDetectionsInput,
@@ -76,6 +79,11 @@ DEFINITION = CapabilityDefinition(
     prepares_models=True,
     model_specs=(YUNET_MODEL, SFACE_MODEL),
     operations={
+        "cluster": OperationDefinition(
+            input_model=ActorClusterInput,
+            output_model=ActorClusterSummary,
+            public=False,
+        ),
         "clusters": OperationDefinition(
             input_model=ActorClustersInput,
             output_model=ActorClustersOutput,
@@ -93,6 +101,7 @@ def create_executor() -> CapabilityExecutor:
         indexer=index_capabilities,
         index_processor=VISUAL_PROCESSOR,
         operations={
+            "cluster": cluster_operation,
             "clusters": clusters_operation,
             "detections": detections_operation,
         },

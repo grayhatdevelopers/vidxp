@@ -13,6 +13,17 @@ Identifier: TypeAlias = Annotated[
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
     ),
 ]
+ActorClusterId: TypeAlias = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=512,
+        pattern=r"^[A-Za-z0-9._~:%-]+$",
+    ),
+]
+
+
 def _require_uuid4_hex(value: str) -> str:
     identifier = UUID(hex=value)
     if identifier.version != 4 or identifier.hex != value:

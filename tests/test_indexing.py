@@ -6,6 +6,7 @@ import numpy as np
 
 from vidxp.capabilities.actor.indexing import (
     _actor_cluster_id,
+    _actor_cluster_records,
     _actor_records,
 )
 from vidxp.capabilities.contracts import (
@@ -330,6 +331,30 @@ class IndexingTests(unittest.TestCase):
         }
 
         self.assertEqual(len(identities), 3)
+
+    def test_actor_cluster_summaries_are_materialized_for_bounded_paging(self):
+        config = IndexConfig(
+            run_id="actors",
+            video_id="video-1",
+            generation_id="generation-1",
+            enabled_modalities=("actor",),
+        )
+
+        records = _actor_cluster_records(
+            {"cluster-1": 3},
+            {"cluster-1": (1.25, 4.5)},
+            config,
+        )
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].metadata["record_kind"], "cluster_summary")
+        self.assertEqual(
+            records[0].metadata["summary_cluster_id"],
+            "cluster-1",
+        )
+        self.assertEqual(records[0].metadata["detection_count"], 3)
+        self.assertEqual(records[0].metadata["first_timestamp"], 1.25)
+        self.assertEqual(records[0].metadata["last_timestamp"], 4.5)
 
 
 if __name__ == "__main__":

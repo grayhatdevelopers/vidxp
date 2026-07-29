@@ -4,7 +4,7 @@ from typing import Annotated
 
 import typer
 
-from vidxp.application_models import SearchCommand
+from vidxp.application_models import SearchCommand, SearchJobResult
 from vidxp.capabilities.schemas import SearchResult
 from vidxp.cli_support import (
     CLIState,
@@ -22,13 +22,17 @@ def run_search(
     top_k: int,
     json_output: bool,
 ) -> SearchResult:
-    result = state.service.search(
+    job = state.jobs.submit_search(
         SearchCommand(
             modality=capability,
             query=query,
             top_k=top_k,
         )
     )
+    completed = state.jobs.wait(job.job_id)
+    if not isinstance(completed.result, SearchJobResult):
+        raise RuntimeError("The completed search job has no search result.")
+    result = completed.result.result
     emit_search(
         result,
         output_format=effective_output_format(state, json_output),

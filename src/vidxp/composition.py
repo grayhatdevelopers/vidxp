@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -11,7 +12,10 @@ from vidxp.artifact_service import ArtifactQueryService, ArtifactService
 from vidxp.authentication import Authenticator, create_authenticator
 from vidxp.authorization import AuthorizationPolicy
 from vidxp.capability_service import CapabilityService
-from vidxp.capabilities.registry import create_capability_registry
+from vidxp.capabilities.registry import (
+    CapabilityRegistry,
+    create_capability_registry,
+)
 from vidxp.control_plane import ControlPlaneApplication
 from vidxp.infrastructure.local_index import (
     LOCAL_INDEX_RUNTIME_CHECKS,
@@ -30,6 +34,7 @@ from vidxp.infrastructure.local_worker import LocalWorkerSupervisor
 from vidxp.job_service import JobService
 from vidxp.media_service import MediaService
 from vidxp.readiness_service import ReadinessService
+from vidxp.read_job_planner import LocalReadJobPlanner
 from vidxp.runtime import ModelRuntime, RuntimeBackendUnavailableError
 from vidxp.repositories import (
     RepositoryConfig,
@@ -44,12 +49,50 @@ from vidxp.workflow_runtime import (
 )
 
 
-@dataclass(frozen=True)
 class LocalApplicationContext:
-    application: VidXPApplication
-    jobs: JobService
-    repositories: RepositoryRegistry
-    repository: RepositoryConfig
+    """Lazy local composition so lightweight CLI commands stay lightweight."""
+
+    def __init__(
+        self,
+        *,
+        repositories: RepositoryRegistry,
+        repository: RepositoryConfig,
+        settings: VidXPSettings | None = None,
+        application: VidXPApplication | None = None,
+        jobs: JobService | None = None,
+    ) -> None:
+        if settings is None and (application is None or jobs is None):
+            raise ValueError(
+                "Lazy local composition requires settings or composed services."
+            )
+        self.repositories = repositories
+        self.repository = repository
+        self._settings = settings
+        if application is not None:
+            self.__dict__["application"] = application
+        if jobs is not None:
+            self.__dict__["jobs"] = jobs
+
+    @cached_property
+    def application(self) -> VidXPApplication:
+        assert self._settings is not None
+        return create_application(self._settings)
+
+    @property
+    def settings(self) -> VidXPSettings:
+        if self._settings is not None:
+            return self._settings
+        return settings_for_repository(self.repository)
+
+    @cached_property
+    def jobs(self) -> JobService:
+        assert self._settings is not None
+        return create_job_service(self._settings)
+
+    def close(self) -> None:
+        jobs = self.__dict__.get("jobs")
+        if jobs is not None:
+            jobs.close()
 
 
 @dataclass(frozen=True)
@@ -65,6 +108,43 @@ class HttpApplicationContext:
         self.jobs.close()
 
 
+@dataclass(frozen=True)
+class _ControlPlaneComponents:
+    registry: CapabilityRegistry
+    catalog: LocalCatalog
+    media: MediaService
+    artifact_store: LocalArtifactStore
+    probe: FFprobeMediaProbe
+
+
+def _create_control_plane_components(
+    settings: VidXPSettings,
+) -> _ControlPlaneComponents:
+    settings.layout.ensure_local_directories()
+    registry = create_capability_registry(
+        external=settings.external_capabilities,
+        allowlist=settings.capability_allowlist,
+        platform_runtime_checks=LOCAL_INDEX_RUNTIME_CHECKS,
+    )
+    catalog = LocalCatalog(settings.layout.catalog)
+    probe = FFprobeMediaProbe(settings.ffprobe_executable)
+    return _ControlPlaneComponents(
+        registry=registry,
+        catalog=catalog,
+        media=MediaService(
+            settings=settings,
+            catalog=catalog,
+            store=LocalMediaStore(
+                settings.layout.media,
+                max_bytes=settings.max_local_import_bytes,
+            ),
+            probe=probe,
+        ),
+        artifact_store=LocalArtifactStore(settings.layout.artifacts),
+        probe=probe,
+    )
+
+
 def settings_for_repository(repository: RepositoryConfig) -> VidXPSettings:
     values = {"repository_root": repository.index_directory}
     if repository.device is not None:
@@ -76,15 +156,11 @@ def create_application(
     settings: VidXPSettings | None = None,
 ) -> VidXPApplication:
     active_settings = settings or VidXPSettings()
-    registry = create_capability_registry(
-        external=active_settings.external_capabilities,
-        allowlist=active_settings.capability_allowlist,
-        platform_runtime_checks=LOCAL_INDEX_RUNTIME_CHECKS,
-    )
+    components = _create_control_plane_components(active_settings)
     try:
         runtime = ModelRuntime(
             active_settings,
-            allowed_specs=registry.model_specs(),
+            allowed_specs=components.registry.model_specs(),
         )
     except RuntimeBackendUnavailableError as exc:
         raise ApplicationError(
@@ -92,23 +168,16 @@ def create_application(
             ErrorCategory.unavailable,
             "The requested runtime backend is unavailable.",
         ) from exc
-    backend = LocalIndexBackend(registry, runtime, active_settings.layout)
-    active_settings.layout.ensure_local_directories()
-    catalog = LocalCatalog(active_settings.layout.catalog)
-    media = MediaService(
-        settings=active_settings,
-        catalog=catalog,
-        store=LocalMediaStore(
-            active_settings.layout.media,
-            max_bytes=active_settings.max_local_import_bytes,
-        ),
-        probe=FFprobeMediaProbe(active_settings.ffprobe_executable),
+    backend = LocalIndexBackend(
+        components.registry,
+        runtime,
+        active_settings.layout,
     )
     artifacts = ArtifactService(
-        catalog=catalog,
-        store=LocalArtifactStore(active_settings.layout.artifacts),
-        media=media,
-        probe=FFprobeMediaProbe(active_settings.ffprobe_executable),
+        catalog=components.catalog,
+        store=components.artifact_store,
+        media=components.media,
+        probe=components.probe,
         actor_renderer=LocalActorRenderer(),
         snippet_renderer=FFmpegSnippetRenderer(
             active_settings.ffmpeg_executable
@@ -120,11 +189,12 @@ def create_application(
     return VidXPApplication(
         settings=active_settings,
         layout=active_settings.layout,
-        registry=registry,
+        registry=components.registry,
         runtime=runtime,
         index_backend=backend,
-        media_service=media,
-        artifact_service=artifacts,
+        media=components.media,
+        artifacts=artifacts,
+        index_status=backend.repository.status,
     )
 
 
@@ -147,6 +217,7 @@ def create_job_service(settings: VidXPSettings) -> JobService:
             health_check=health_check,
             stop_executor=stop_executor,
         ),
+        read_planner=LocalReadJobPlanner(layout=settings.layout),
     )
 
 
@@ -155,31 +226,18 @@ def create_http_application(
 ) -> HttpApplicationContext:
     active_settings = settings or VidXPSettings()
     active_settings.validate_http_server()
-    active_settings.layout.ensure_local_directories()
-    registry = create_capability_registry(
-        external=active_settings.external_capabilities,
-        allowlist=active_settings.capability_allowlist,
-        platform_runtime_checks=LOCAL_INDEX_RUNTIME_CHECKS,
-    )
-    catalog = LocalCatalog(active_settings.layout.catalog)
-    media = MediaService(
-        settings=active_settings,
-        catalog=catalog,
-        store=LocalMediaStore(
-            active_settings.layout.media,
-            max_bytes=active_settings.max_local_import_bytes,
-        ),
-        probe=FFprobeMediaProbe(active_settings.ffprobe_executable),
-    )
+    components = _create_control_plane_components(active_settings)
     application = ControlPlaneApplication(
         layout=active_settings.layout,
-        capabilities=CapabilityService(registry),
-        media=media,
+        capabilities=CapabilityService(components.registry),
+        media=components.media,
         artifacts=ArtifactQueryService(
-            catalog=catalog,
-            store=LocalArtifactStore(active_settings.layout.artifacts),
+            catalog=components.catalog,
+            store=components.artifact_store,
         ),
-        index=LocalSnapshotRepository(active_settings.layout.indexes),
+        index_status=LocalSnapshotRepository(
+            active_settings.layout.indexes
+        ).status,
     )
     jobs = create_job_service(active_settings)
     authenticator = create_authenticator(active_settings)
@@ -219,8 +277,7 @@ def create_local_application(
             "The repository or runtime configuration is invalid.",
         ) from exc
     return LocalApplicationContext(
-        application=create_application(settings),
-        jobs=create_job_service(settings),
         repositories=repositories,
         repository=repository,
+        settings=settings,
     )

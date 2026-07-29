@@ -6,6 +6,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from vidxp.application_models import CreateActorOverlayCommand
 from vidxp.cli_support import (
     CLIState,
     OutputFormat,
@@ -13,9 +14,6 @@ from vidxp.cli_support import (
     emit_json,
     state_from_context,
 )
-from vidxp.application_models import CreateActorOverlayCommand
-
-
 app = typer.Typer(
     no_args_is_help=True,
     help="Inspect and render actor clusters.",
@@ -178,32 +176,8 @@ def actors_render(
     """Render one actor cluster as a result video."""
 
     state = state_from_context(ctx)
-    cursor = None
-    selected = None
-    while True:
-        page = state.service.actor_clusters(
-            page_size=100,
-            cursor=cursor,
-        )
-        selected = next(
-            (
-                cluster
-                for cluster in page.clusters
-                if cluster.cluster_id == cluster_id
-            ),
-            None,
-        )
-        if selected is not None or page.next_cursor is None:
-            break
-        cursor = page.next_cursor
-    if selected is None:
-        raise typer.BadParameter("Actor cluster was not found.")
     job = state.jobs.submit_actor_overlay(
-        CreateActorOverlayCommand(
-            cluster_id=cluster_id,
-            media_id=selected.media_id,
-            generation_id=selected.generation_id,
-        )
+        CreateActorOverlayCommand(cluster_id=cluster_id)
     )
     if not detach:
         job = state.jobs.wait(job.job_id)

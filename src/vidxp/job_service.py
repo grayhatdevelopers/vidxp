@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import wraps
 from time import sleep
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from vidxp.application_models import (
     ActorOverlayJobRequest,
@@ -23,6 +23,8 @@ from vidxp.application_models import (
     PrepareModelsCommand,
     PrepareModelsJobRequest,
     ResourceNotFoundError,
+    SearchCommand,
+    SearchJobRequest,
     SnippetJobRequest,
 )
 from vidxp.ports import (
@@ -31,6 +33,17 @@ from vidxp.ports import (
     JobIdempotencyConflictError,
 )
 from vidxp.settings import VidXPSettings
+
+
+class ReadJobPlanner(Protocol):
+    """Resolve immutable index identities before durable read jobs enqueue."""
+
+    def plan_search(self, command: SearchCommand) -> SearchJobRequest: ...
+
+    def plan_actor_overlay(
+        self,
+        command: CreateActorOverlayCommand,
+    ) -> ActorOverlayJobRequest: ...
 
 
 def job_boundary(handler: Callable) -> Callable:
@@ -69,9 +82,20 @@ class JobService:
         *,
         settings: VidXPSettings,
         backend: JobBackend,
+        read_planner: ReadJobPlanner | None = None,
     ) -> None:
         self.settings = settings
         self.backend = backend
+        self.read_planner = read_planner
+
+    def _read_job_planner(self) -> ReadJobPlanner:
+        if self.read_planner is None:
+            raise ApplicationError(
+                "read_job_planner_unavailable",
+                ErrorCategory.unavailable,
+                "Durable index reads are not configured.",
+            )
+        return self.read_planner
 
     @job_boundary
     def start(self) -> None:
@@ -86,6 +110,19 @@ class JobService:
     ) -> Job:
         return self.backend.submit(
             IndexJobRequest(command=command),
+            queue=self._model_queue(),
+            job_id=job_id,
+        )
+
+    @job_boundary
+    def submit_search(
+        self,
+        command: SearchCommand,
+        *,
+        job_id: str | None = None,
+    ) -> Job:
+        return self.backend.submit(
+            self._read_job_planner().plan_search(command),
             queue=self._model_queue(),
             job_id=job_id,
         )
@@ -111,7 +148,7 @@ class JobService:
         job_id: str | None = None,
     ) -> Job:
         return self.backend.submit(
-            ActorOverlayJobRequest(command=command),
+            self._read_job_planner().plan_actor_overlay(command),
             queue=JobQueue.cpu,
             job_id=job_id,
         )

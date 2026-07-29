@@ -37,10 +37,13 @@ def doctor(
     """Validate selected indexing dependencies without downloading models."""
 
     state = state_from_context(ctx)
+    available = tuple(
+        capability.name for capability in state.service.list_capabilities()
+    )
     selected = (
-        state.service.registry.names()
+        available
         if modalities is None
-        else parse_modalities(modalities, state.service.registry)
+        else parse_modalities(modalities, available)
     )
     result = state.service.check_dependencies(
         DependencyCheckCommand(modalities=selected)
@@ -111,10 +114,15 @@ def prepare(
     """Download and cache selected runtime models before indexing."""
 
     state = state_from_context(ctx)
+    preparable = tuple(
+        capability.name
+        for capability in state.service.list_capabilities()
+        if capability.prepares_models
+    )
     selected = (
-        state.service.registry.preparable_names()
+        preparable
         if modalities is None
-        else parse_modalities(modalities, state.service.registry)
+        else parse_modalities(modalities, preparable)
     )
     job = state.jobs.submit_prepare_models(
         PrepareModelsCommand(
@@ -188,5 +196,5 @@ def ui(
         streamlit_arguments.append(f"--server.port={port}")
     frontend.main(
         streamlit_arguments,
-        settings=state.service.settings,
+        settings=state.settings,
     )

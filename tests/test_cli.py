@@ -25,9 +25,11 @@ from vidxp.application_models import (
     PrepareModelsJobResult,
     RemoveIndexCommand,
     SearchCommand,
+    SearchJobResult,
 )
 from vidxp.core.media import MediaState, MediaStream
 from vidxp.capabilities.registry import create_capability_registry
+from vidxp.capability_service import CapabilityService
 from vidxp.capabilities.schemas import SearchResult
 from vidxp.repositories import RepositoryConfig, RepositoryRegistry
 
@@ -43,6 +45,9 @@ class CliTests(unittest.TestCase):
         self.runner = CliRunner()
         self.service = Mock()
         self.service.registry = create_capability_registry()
+        self.service.list_capabilities.return_value = CapabilityService(
+            self.service.registry
+        ).list()
         self.service.index_directory = Path("repo/indexes")
         self.service.layout.root = Path("repo")
         self.service.runtime.backends.requested = "cpu"
@@ -84,11 +89,34 @@ class CliTests(unittest.TestCase):
         ):
             self.assertIn(command, result.output)
 
+    def test_snippet_rejects_an_inverted_time_range_before_submission(self):
+        result = self.invoke(
+            ["artifacts", "snippet", MEDIA_ID, "3", "2"]
+        )
+
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("snippet end must be greater than its", result.output)
+        self.assertIn("start.", result.output)
+        self.jobs.submit_snippet.assert_not_called()
+
     def test_search_constructs_shared_command(self):
-        self.service.search.return_value = SearchResult(
+        search_result = SearchResult(
             query_id="scene:1",
             query="yellow taxi",
             modality="scene",
+        )
+        self.jobs.submit_search.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.search,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        self.jobs.wait.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.search,
+            state=JobState.succeeded,
+            queue=JobQueue.cpu,
+            result=SearchJobResult(result=search_result),
         )
 
         result = self.invoke(
@@ -96,7 +124,7 @@ class CliTests(unittest.TestCase):
         )
 
         self.assertEqual(result.exit_code, 0, result.output)
-        self.service.search.assert_called_once_with(
+        self.jobs.submit_search.assert_called_once_with(
             SearchCommand(
                 modality="scene",
                 query="yellow taxi",
@@ -256,7 +284,7 @@ class CliTests(unittest.TestCase):
             ["doctor", "--modalities", "unknown", "--json"]
         )
         self.assertNotEqual(result.exit_code, 0)
-        self.assertIn("Unknown capability", result.output)
+        self.assertIn("Unknown or unsupported capabilities", result.output)
 
     def test_repository_without_device_preserves_runtime_environment(self):
         repository = RepositoryConfig(

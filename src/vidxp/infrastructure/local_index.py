@@ -46,15 +46,10 @@ LOCAL_INDEX_RUNTIME_CHECKS = (
 )
 
 
-class LocalIndexBackend:
-    def __init__(
-        self,
-        registry: CapabilityRegistry,
-        runtime: ModelRuntime,
-        layout: RepositoryLayout,
-    ) -> None:
-        self.registry = registry
-        self.runtime = runtime
+class LocalIndexReader:
+    """Model-free access to immutable local index snapshots."""
+
+    def __init__(self, layout: RepositoryLayout) -> None:
         self.layout = layout
         self.repository = LocalSnapshotRepository(layout.indexes)
 
@@ -63,6 +58,108 @@ class LocalIndexBackend:
             raise ValueError(
                 "The index operation is outside the configured repository."
             )
+
+    def active_config(
+        self,
+        index_directory: Path,
+        *,
+        device: str,
+    ) -> tuple[IndexConfig, dict[str, Any]]:
+        self._require_index_directory(index_directory)
+        config, snapshot = self.repository.active_config(device=device)
+        return config, {
+            "snapshot_id": snapshot.snapshot_id,
+            "generation_ids": [
+                reference.generation_id
+                for reference in snapshot.generations.values()
+            ],
+            "media_ids": sorted(snapshot.generations),
+        }
+
+    def config_for_snapshot(
+        self,
+        index_directory: Path,
+        *,
+        snapshot_id: str,
+        snapshot_sha256: str,
+        device: str,
+    ) -> IndexConfig:
+        self._require_index_directory(index_directory)
+        return self.repository.config_for_snapshot(
+            snapshot_id,
+            snapshot_sha256=snapshot_sha256,
+            device=device,
+        )
+
+    def open_store(self, config: IndexConfig) -> SnapshotScopedIndexStore:
+        if config.snapshot_id is None:
+            raise IndexSchemaError("A snapshot ID is required for index reads.")
+        if config.snapshot_sha256 is None:
+            raise IndexSchemaError(
+                "A snapshot checksum is required for index reads."
+            )
+        snapshot = self.repository.read_snapshot(
+            config.snapshot_id,
+            expected_sha256=config.snapshot_sha256,
+        )
+        generation_ids = tuple(
+            reference.generation_id
+            for reference in snapshot.generations.values()
+        )
+        storage = self._open_committed_storage(config)
+        return SnapshotScopedIndexStore(
+            storage,
+            generation_ids=generation_ids,
+        )
+
+    @classmethod
+    def _validate_snapshot_storage(
+        cls,
+        storage: IndexStorage,
+        snapshot,
+        base_config: IndexConfig | None = None,
+    ) -> None:
+        active_config = base_config or storage.config
+        for reference in snapshot.generations.values():
+            try:
+                actual = {
+                    modality: storage.count_records(
+                        modality,
+                        video_id=reference.media_id,
+                        generation_ids=(reference.generation_id,),
+                    )
+                    for modality in active_config.enabled_modalities
+                }
+            except FileNotFoundError as exc:
+                raise IndexSchemaError(
+                    "A committed Chroma collection is missing."
+                ) from exc
+            if actual != dict(reference.record_counts):
+                raise IndexSchemaError(
+                    "Stored generation record counts do not match the "
+                    "authoritative manifest."
+                )
+
+    @staticmethod
+    def _open_committed_storage(config: IndexConfig) -> IndexStorage:
+        try:
+            return IndexStorage(config, create=False)
+        except FileNotFoundError as exc:
+            raise IndexSchemaError(
+                "The committed Chroma store is missing."
+            ) from exc
+
+
+class LocalIndexBackend(LocalIndexReader):
+    def __init__(
+        self,
+        registry: CapabilityRegistry,
+        runtime: ModelRuntime,
+        layout: RepositoryLayout,
+    ) -> None:
+        super().__init__(layout)
+        self.registry = registry
+        self.runtime = runtime
 
     def status(self, index_directory: Path) -> dict[str, Any] | None:
         self._require_index_directory(index_directory)
@@ -74,25 +171,6 @@ class LocalIndexBackend:
             with self._open_committed_storage(config) as storage:
                 self._validate_snapshot_storage(storage, snapshot)
         return status
-
-    def active_config(
-        self,
-        index_directory: Path,
-        *,
-        device: str,
-    ) -> tuple[IndexConfig, dict[str, Any]]:
-        self._require_index_directory(index_directory)
-        config, snapshot = self.repository.active_config(
-            device=device
-        )
-        return config, {
-            "snapshot_id": snapshot.snapshot_id,
-            "generation_ids": [
-                reference.generation_id
-                for reference in snapshot.generations.values()
-            ],
-            "media_ids": sorted(snapshot.generations),
-        }
 
     def create(
         self,
@@ -320,43 +398,6 @@ class LocalIndexBackend:
         return counts
 
     @classmethod
-    def _validate_snapshot_storage(
-        cls,
-        storage: IndexStorage,
-        snapshot,
-        base_config: IndexConfig | None = None,
-    ) -> None:
-        active_config = base_config or storage.config
-        for reference in snapshot.generations.values():
-            try:
-                actual = {
-                    modality: storage.count_records(
-                        modality,
-                        video_id=reference.media_id,
-                        generation_ids=(reference.generation_id,),
-                    )
-                    for modality in active_config.enabled_modalities
-                }
-            except FileNotFoundError as exc:
-                raise IndexSchemaError(
-                    "A committed Chroma collection is missing."
-                ) from exc
-            if actual != dict(reference.record_counts):
-                raise IndexSchemaError(
-                    "Stored generation record counts do not match the "
-                    "authoritative manifest."
-                )
-
-    @staticmethod
-    def _open_committed_storage(config: IndexConfig) -> IndexStorage:
-        try:
-            return IndexStorage(config, create=False)
-        except FileNotFoundError as exc:
-            raise IndexSchemaError(
-                "The committed Chroma store is missing."
-            ) from exc
-
-    @classmethod
     def _cleanup_abandoned_generations(
         cls,
         repository: LocalSnapshotRepository,
@@ -476,33 +517,6 @@ class LocalIndexBackend:
     def indexing_in_progress(self, config: IndexConfig) -> bool:
         self._require_index_directory(config.index_directory)
         return self.repository.mutation_in_progress()
-
-    def open_store(self, config: IndexConfig) -> SnapshotScopedIndexStore:
-        repository = self.repository
-        if config.snapshot_id is None:
-            raise IndexSchemaError("A snapshot ID is required for index reads.")
-        if config.snapshot_sha256 is None:
-            raise IndexSchemaError(
-                "A snapshot checksum is required for index reads."
-            )
-        snapshot = repository.read_snapshot(
-            config.snapshot_id,
-            expected_sha256=config.snapshot_sha256,
-        )
-        generation_ids = tuple(
-            reference.generation_id
-            for reference in snapshot.generations.values()
-        )
-        storage = self._open_committed_storage(config)
-        try:
-            self._validate_snapshot_storage(storage, snapshot, config)
-            return SnapshotScopedIndexStore(
-                storage,
-                generation_ids=generation_ids,
-            )
-        except BaseException:
-            storage.close()
-            raise
 
     def remove(self, config: IndexConfig, media_id: str) -> bool:
         self._require_index_directory(config.index_directory)
