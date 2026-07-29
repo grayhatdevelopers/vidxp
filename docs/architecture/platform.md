@@ -1348,6 +1348,14 @@ the operation grammar.
 - pinned model smoke tests
 - resource limits
 
+The 2026-07-29 evaluation selects PyTorch 2.13 `cu126` as the first compatible
+NVIDIA baseline. CUDA 12.8 has no Torch 2.13 distribution, while CUDA 13 does
+not share current CTranslate2/faster-whisper's CUDA 12 runtime contract. The
+full worker set resolves on Python 3.14 to Torch 2.13.0, CTranslate2 4.8.1,
+faster-whisper 1.2.1, and cuDNN 9.10.2. Implementation remains deferred until a
+CUDA host and prepared model cache are available; no model or image was pulled
+during the evaluation. See `docs/deployment/gpu-evaluation.md`.
+
 Gate: GPU readiness and execution are explicit; no silent CPU fallback.
 Clean-image dependency/SBOM checks, CPU-without-CUDA proof, selected scene and
 transcription provider smoke tests, CPU actor routing, OOM handling, cancellation,
