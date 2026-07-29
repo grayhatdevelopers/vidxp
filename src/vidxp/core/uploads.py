@@ -8,7 +8,6 @@ from vidxp.core.identifiers import (
     JobId,
     MediaId,
     MimeType,
-    RepositoryId,
     Uuid4Hex,
 )
 from vidxp.core.media import validate_display_filename
@@ -34,8 +33,6 @@ class UploadIntentRecord(BaseModel):
 
     intent_id: Uuid4Hex
     request_key: str = Field(pattern=r"^[0-9a-f]{64}$")
-    repository_id: RepositoryId
-    owner_subject: str = Field(min_length=1, max_length=255)
     original_filename: str = Field(min_length=1, max_length=255)
     byte_size: int = Field(gt=0)
     declared_mime_type: MimeType | None = None

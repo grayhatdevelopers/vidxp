@@ -60,7 +60,7 @@ def _service(
         upload_internal_endpoint="http://localhost:8080/uploads/",
         upload_cleanup_token="x" * 32,
         upload_max_bytes=quota,
-        upload_principal_quota_bytes=quota,
+        upload_quota_bytes=quota,
     )
     return (
         RemoteUploadService(
@@ -82,7 +82,9 @@ def _command(size: int = 60) -> CreateUploadIntentCommand:
     )
 
 
-def test_upload_intent_is_idempotent_and_owner_scoped(tmp_path: Path) -> None:
+def test_upload_intent_is_idempotent_and_repository_shared(
+    tmp_path: Path,
+) -> None:
     service, catalog, _ = _service(tmp_path)
     owner = Principal(subject="owner")
     created = service.create_intent(
@@ -99,12 +101,13 @@ def test_upload_intent_is_idempotent_and_owner_scoped(tmp_path: Path) -> None:
         )
         == created
     )
-    with pytest.raises(ApplicationError) as denied:
+    assert (
         service.get_intent(
             created.intent_id,
             principal=Principal(subject="other"),
         )
-    assert denied.value.detail.code == "resource_not_found"
+        == created
+    )
     catalog.close()
 
 
@@ -260,8 +263,6 @@ def test_expired_creation_persists_state_and_releases_quota(
     record = UploadIntentRecord(
         intent_id=uuid4().hex,
         request_key="a" * 64,
-        repository_id=service.settings.repository_id,
-        owner_subject="owner",
         original_filename="sample.mp4",
         byte_size=60,
         declared_mime_type="video/mp4",
@@ -296,8 +297,6 @@ def test_active_resumable_upload_is_not_expired(tmp_path: Path) -> None:
     record = UploadIntentRecord(
         intent_id=uuid4().hex,
         request_key="a" * 64,
-        repository_id=service.settings.repository_id,
-        owner_subject="owner",
         original_filename="sample.mp4",
         byte_size=60,
         declared_mime_type="video/mp4",

@@ -81,7 +81,7 @@ Domain contracts and ports
           │
           ▼
 Infrastructure implementations
-  ├── filesystem / object storage
+  ├── managed local filesystem storage
   ├── Chroma
   ├── DBOS SQLite / Postgres
   ├── FFmpeg / ffprobe / OpenCV
@@ -99,15 +99,14 @@ Use one immutable `VidXPSettings` model built with `pydantic-settings`.
 
 It owns:
 
-- repository root and repository selection
-- media and artifact storage backends
+- repository root and active local repository selection
 - trusted local import roots
 - upload limits and retention
 - authentication mode and secrets
 - public base URL
 - MCP transport configuration
 - MCP canonical resource URL, body limit, allowed hosts, and allowed origins
-- workflow database and queue selection
+- local/server workflow mode and queue selection
 - resolved CPU/GPU runtime request
 - model cache path and offline/download policy
 - allowed model identifiers
@@ -299,8 +298,8 @@ Local media does not need to travel through an HTTP upload endpoint.
 Remote upload is a four-stage protocol:
 
 1. An authenticated client creates an upload intent.
-2. tusd's blocking `pre-create` HTTP hook validates the principal, repository,
-   declared size/type, and intent and assigns an opaque upload ID.
+2. tusd's blocking `pre-create` HTTP hook authenticates the request, validates the
+   declared size/type and intent, and assigns an opaque upload ID.
 3. tusd returns an HTTPS upload URL. That URL is an unscoped bearer credential for
    subsequent HEAD/PATCH requests because tusd cannot bind resumptions to the user
    who created the upload.
@@ -320,17 +319,23 @@ from the hook request body and redacted; client tokens are never stored in tus
 metadata. Only the tus upload route is public. A completed upload is not a
 `MediaAsset` until durable probe/import succeeds.
 
-The single-node default uses tusd filestore on a named quarantine volume shared
-read-only with the hook service and worker. It is not horizontally scalable. The
-production/HA profile uses tusd's S3-compatible backend; no local media/artifact
-volume is shared across replicas. Clients upload directly to tusd/storage; FastAPI
-does not proxy large video bodies.
+The supported server topology uses tusd filestore on a named quarantine volume
+shared read-only with the hook service and worker. Managed media and artifacts use
+the stack's named content volume. The whole deployment is single-node and one
+deployed stack is one repository boundary. Clients upload directly to tusd;
+FastAPI does not proxy large video bodies.
+
+S3-compatible storage is deferred and not implemented. If revisited, it would
+apply only to upload quarantine, source media, and generated artifacts—never to
+embeddings, which remain in Chroma. Although tusd can receive uploads into S3,
+VidXP would still require explicit import, processing, publication, recovery,
+cleanup, and delivery integration.
 
 tusd 2.10.0 is pinned to a tested release digest, uses an explicit base path/public HTTPS
-URL, a default 50 GiB maximum upload size, per-principal/repository storage quotas,
+URL, a default 50 GiB maximum upload size, a deployment-wide upload quota,
 restricted CORS origins, disabled downloads, and disabled concatenation. Deployments
-may lower the maximum but cannot raise it above the storage backend's reviewed hard
-ceiling. Termination remains enabled so tusd owns its file locks and deletion.
+may lower the configured maximum. Termination remains enabled so tusd owns its file
+locks and deletion.
 The blocking `pre-terminate` hook prevents deletion while import is processing and
 admits completed/expired cleanup only with the private cleanup credential.
 
@@ -744,26 +749,15 @@ remains available when it is disabled.
 - state
 - creation/expiry
 
-Local artifacts are served through protected Starlette `FileResponse`, including
-byte-range support. Object-storage deployments return short-lived presigned GET
-URLs. FastAPI does not proxy object-store bodies.
+Media and artifacts are served from the managed local content volume through
+protected Starlette `FileResponse`, including byte-range support.
 
-Every delivery URL is minted only after repository/owner authorization. Local
+Every delivery request is handled only after repository authorization. Artifact
 delivery resolves an `ArtifactStore` key beneath its configured root, rejects
 symlink/path escapes, and only then constructs `FileResponse`.
 
 Local source playback applies the identical configured-root and symlink/path-escape
 checks to the `MediaStore` key before constructing `FileResponse`.
-
-Presigned URLs are least-privilege bearer credentials, returned with
-`Cache-Control: private, no-store`, and never persisted or logged. Source-playback
-URLs expire within five minutes; downloadable artifact URLs expire within fifteen
-minutes. These are hard upper bounds in settings, not caller-selected TTLs.
-
-Each object-store implementation must pass GET/HEAD, single-range 206,
-`Accept-Ranges`, `Content-Range`, `Content-Length`, MIME/`Content-Disposition`,
-expired-signature, and browser-CORS tests. Clients refresh an expired authorized URL
-before resuming.
 
 Search results normally use an authorized range-enabled source URL and client-side
 seeking. VidXP does not generate a clip for every search hit.
@@ -1003,7 +997,7 @@ client.
 
 ## 22. Deployment topology
 
-Default Coolify stack:
+Supported Coolify/Compose server stack:
 
 ```text
 api-mcp
@@ -1029,9 +1023,19 @@ tusd
 single-node media/artifact/quarantine volumes
 ```
 
-Optional:
+This is one node, one application stack, and one repository. PostgreSQL, Chroma,
+tusd, and the named content volumes are deployment components of that stack, not
+provider plug-in points. A separate repository requires a separate stack and
+separate databases and volumes. Arbitrary hosted databases, externally shared
+Chroma, multiple API/worker replicas, failover, and provider compatibility are
+outside the supported topology.
 
-- S3-compatible media/artifact storage, required for the HA profile
+Server code connects only to the internal Compose service names `postgres` and
+`chroma`. Their endpoints are fixed rather than exposed through
+`VIDXP_DATABASE_URL`, `VIDXP_CHROMA_SERVER_URL`, or equivalent user settings.
+
+Optional application services:
+
 - GPU worker supplementing the CPU worker
 - internal CPU-default Ollama `slm` profile
 - external OIDC provider configuration
@@ -1058,10 +1062,10 @@ Use immutable release tags or digests. API/MCP and workers share an application
 release but use purpose-specific image targets. API/MCP carries no heavy model or
 CUDA dependencies; workers and the optional `slm` service do.
 
-Deployment v1 is one API/MCP replica and one node. Named media/artifact/quarantine
-volumes are single-node only. Multiple API/worker replicas are a future gate that
-requires Postgres leases, Chroma server, S3 media/artifacts, shared snapshot/catalog
-transaction semantics, and load/failover tests.
+Deployment v1 is exactly one API/MCP replica and one node. Named
+media/artifact/quarantine volumes are part of this topology. The fixed internal
+service names and storage paths are not promises of arbitrary external-provider,
+multi-replica, or high-availability compatibility.
 
 The one-click template consumes published tags/digests and must pass a real Coolify
 deployment, upgrade, rollback, persistent-data and healthcheck test.
@@ -1200,9 +1204,8 @@ Capability discovery tests:
 - import failure
 - deterministic behavior on supported Python 3.11 through 3.14
 
-Artifact backend tests cover authorization, path/symlink containment, TTL upper
-bounds, URL log redaction, GET/HEAD/range headers, MIME/disposition, expired URL
-refresh, and browser CORS.
+Managed artifact delivery tests cover authorization, path/symlink containment,
+missing or corrupt content, GET/HEAD/range headers, and MIME/disposition metadata.
 
 ### 24.7 Platforms and installation profiles
 
@@ -1413,9 +1416,9 @@ Validated on 2026-07-28:
 - **tusd:** accepted with the capability-URL and hook semantics documented above.
   HTTP hooks are duplicate/out-of-order capable; the durable importer and sweep own
   correctness.
-- **Artifacts:** accepted. Starlette and S3-compatible range delivery provide the
-  required primitives; the authorization, containment, TTL, CORS, and bearer-URL
-  rules above remain mandatory.
+- **Artifacts:** accepted for the managed local content volume. Protected Starlette
+  range delivery, authorization, storage-key containment, integrity checks, and
+  response metadata remain mandatory.
 - **Pydantic AI/Ollama:** accepted as the local SLM provider boundary. Typed native
   output is supported. The exact model remains deliberately blocked by the
   no-large-model-download constraint until Phase 9's measured gate.

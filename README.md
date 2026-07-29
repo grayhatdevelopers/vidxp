@@ -239,13 +239,16 @@ per-media ownership rules.
 ```text
 VIDXP_MODE=server
 VIDXP_RUNTIME_BACKEND=cpu
-VIDXP_DATABASE_URL=postgresql://...
 VIDXP_HTTP_BIND_HOST=0.0.0.0
 VIDXP_HTTP_AUTH_MODE=static
 VIDXP_HTTP_STATIC_BEARER_TOKEN=<random-secret-of-at-least-32-characters>
 VIDXP_HTTP_TRUSTED_HOSTS=["api.example.com"]
 VIDXP_MCP_ALLOWED_HOSTS=["api.example.com"]
 ```
+
+Server mode is supported through the bundled Compose topology and always connects
+to its internal `postgres` and `chroma` services. Database and Chroma endpoints are
+not user-configurable settings.
 
 Use `Authorization: Bearer <token>` for every route except `/health` and
 `/ready`. Configure `VIDXP_HTTP_ALLOWED_ORIGINS` only for browser origins that

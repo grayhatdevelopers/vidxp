@@ -36,10 +36,8 @@ _MAXIMUM_LOG_BYTES = 5 * 1024 * 1024
 
 def _arguments(values: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run VidXP DBOS workflows.")
-    parser.add_argument("--database-url")
     parser.add_argument("--executor-id")
     parser.add_argument("--role", choices=("all", "cpu", "gpu"), default="cpu")
-    parser.add_argument("--ordinal", type=int, default=0)
     parser.add_argument("--lock-file", type=Path)
     parser.add_argument("--ready-file", type=Path)
     parser.add_argument("--stop-file", type=Path)
@@ -76,17 +74,6 @@ def _local_bootstrap() -> LocalWorkerBootstrap | None:
         )
     finally:
         durable_unlink(path, missing_ok=True)
-
-
-def _resolved_database_url(
-    settings: VidXPSettings,
-    override: str | None,
-) -> str:
-    if override is None:
-        return workflow_database_url(settings)
-    return workflow_database_url(
-        settings.model_copy(update={"database_url": override})
-    )
 
 
 def run_worker(
@@ -157,29 +144,22 @@ def main(arguments: Sequence[str] | None = None) -> None:
         else VidXPSettings()
     )
     if bootstrap is not None:
-        expected_bootstrap = local_worker_bootstrap(
-            settings,
-            database_url=bootstrap.database_url,
-        )
+        expected_bootstrap = local_worker_bootstrap(settings)
         if expected_bootstrap.fingerprint != bootstrap.fingerprint:
             raise ValueError(
                 "The local worker bootstrap identity is invalid."
             )
-    database_override = (
+    database_url = (
         bootstrap.database_url
         if bootstrap is not None
-        else options.database_url
+        else workflow_database_url(settings)
     )
-    database_url = _resolved_database_url(settings, database_override)
     role = options.role
     executor_id = options.executor_id
     if executor_id is None:
         if role == "all":
             raise ValueError("The all-queue worker requires an executor ID.")
-        executor_id = server_executor_id(
-            role=role,
-            ordinal=options.ordinal,
-        )
+        executor_id = server_executor_id(role=role)
 
     if options.lock_file is None:
         stop_event = Event()

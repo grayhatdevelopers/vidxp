@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from vidxp import cli
 from vidxp.composition import LocalApplicationContext, settings_for_repository
+from vidxp.settings import ApplicationMode
 from vidxp.application_models import (
     CreateIndexCommand,
     DependencyCheckResult,
@@ -386,6 +387,18 @@ class CliTests(unittest.TestCase):
             settings = settings_for_repository(repository)
 
         self.assertEqual(settings.runtime_backend, "cpu")
+
+    def test_local_repository_ignores_server_mode_environment(self):
+        repository = RepositoryConfig(
+            "default",
+            Path("repo"),
+            device=None,
+            configured=False,
+        )
+        with patch.dict(os.environ, {"VIDXP_MODE": "server"}):
+            settings = settings_for_repository(repository)
+
+        self.assertEqual(settings.mode, ApplicationMode.local)
 
 
 if __name__ == "__main__":

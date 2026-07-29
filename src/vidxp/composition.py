@@ -17,6 +17,7 @@ from vidxp.capabilities.registry import (
     create_capability_registry,
 )
 from vidxp.control_plane import ControlPlaneApplication
+from vidxp.core.storage import BUNDLED_CHROMA_SERVER_URL
 from vidxp.dependencies import active_requirements, packaged_requirements
 from vidxp.infrastructure.local_index import (
     LOCAL_INDEX_RUNTIME_CHECKS,
@@ -146,14 +147,15 @@ class _ControlPlaneComponents:
     snapshots: LocalSnapshotRepository
 
 
+def _server_chroma_url(settings: VidXPSettings) -> str | None:
+    if settings.mode != ApplicationMode.server:
+        return None
+    return BUNDLED_CHROMA_SERVER_URL
+
+
 def _create_control_plane_components(
     settings: VidXPSettings,
 ) -> _ControlPlaneComponents:
-    if (
-        settings.mode == ApplicationMode.server
-        and settings.chroma_server_url is None
-    ):
-        raise ValueError("Server applications require a remote Chroma URL.")
     settings.layout.ensure_local_directories()
     server_mode = settings.mode == ApplicationMode.server
     registry = create_capability_registry(
@@ -188,7 +190,6 @@ def _create_control_plane_components(
         SQLSnapshotRepository(
             settings.layout.indexes,
             engine=catalog.engine,
-            repository_id=settings.repository_id,
         )
         if settings.mode == ApplicationMode.server
         else LocalSnapshotRepository(settings.layout.indexes)
@@ -216,7 +217,10 @@ def _create_control_plane_components(
 
 
 def settings_for_repository(repository: RepositoryConfig) -> VidXPSettings:
-    values = {"repository_root": repository.index_directory}
+    values = {
+        "mode": ApplicationMode.local,
+        "repository_root": repository.index_directory,
+    }
     if repository.device is not None:
         values["runtime_backend"] = repository.device
     return VidXPSettings(**values)
@@ -242,7 +246,7 @@ def create_application(
         components.registry,
         runtime,
         active_settings.layout,
-        chroma_server_url=active_settings.chroma_server_url,
+        chroma_server_url=_server_chroma_url(active_settings),
         snapshot_repository=components.snapshots,
     )
     artifacts = ArtifactService(
@@ -339,7 +343,7 @@ def create_job_service(
                 layout=settings.layout,
                 index=LocalIndexReader(
                     settings.layout,
-                    chroma_server_url=settings.chroma_server_url,
+                    chroma_server_url=_server_chroma_url(settings),
                     snapshot_repository=snapshots,
                 ),
             )

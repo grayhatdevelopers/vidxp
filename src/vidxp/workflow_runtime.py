@@ -5,7 +5,6 @@ import json
 import sys
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,6 +19,9 @@ from vidxp.settings import (
 
 
 LOCAL_WORKER_BOOTSTRAP_ENV = "VIDXP_LOCAL_WORKER_BOOTSTRAP_FILE"
+BUNDLED_POSTGRES_DATABASE_URL = (
+    "postgresql+psycopg://vidxp@postgres:5432/vidxp"
+)
 
 
 class LocalWorkerBootstrap(BaseModel):
@@ -52,20 +54,8 @@ class LocalWorkerStopRequest(BaseModel):
 
 
 def workflow_database_url(settings: VidXPSettings) -> str:
-    if settings.database_url is not None:
-        database_url = settings.database_url
-        if (
-            settings.mode == ApplicationMode.server
-            and not urlsplit(database_url).scheme.startswith("postgresql")
-        ):
-            raise ValueError(
-                "Server mode requires a PostgreSQL workflow database URL."
-            )
-        return database_url
     if settings.mode == ApplicationMode.server:
-        raise ValueError(
-            "Server mode requires VIDXP_DATABASE_URL."
-        )
+        return BUNDLED_POSTGRES_DATABASE_URL
     database = settings.layout.workflow_database.resolve()
     return f"sqlite:///{database.as_posix()}"
 
@@ -94,13 +84,9 @@ def _local_execution_provenance(
     }
 
 
-def local_worker_bootstrap(
-    settings: VidXPSettings,
-    *,
-    database_url: str | None = None,
-) -> LocalWorkerBootstrap:
+def local_worker_bootstrap(settings: VidXPSettings) -> LocalWorkerBootstrap:
     local_settings = LocalExecutionSettings.from_settings(settings)
-    active_database_url = database_url or workflow_database_url(settings)
+    active_database_url = workflow_database_url(settings)
     identity = {
         "application_version": workflow_application_version(),
         "database_url": active_database_url,
@@ -131,10 +117,10 @@ def local_executor_id(settings: VidXPSettings) -> str:
     return f"{workflow_application_version()}-local-0"
 
 
-def server_executor_id(*, role: str, ordinal: int) -> str:
-    if role not in {"cpu", "gpu"} or ordinal < 0:
-        raise ValueError("The worker role or ordinal is invalid.")
-    return f"{workflow_application_version()}-{role}-{ordinal}"
+def server_executor_id(*, role: str) -> str:
+    if role not in {"cpu", "gpu"}:
+        raise ValueError("The worker role is invalid.")
+    return f"{workflow_application_version()}-{role}-0"
 
 
 def sqlite_database_path(database_url: str) -> Path | None:

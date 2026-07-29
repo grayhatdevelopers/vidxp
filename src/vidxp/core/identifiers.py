@@ -71,7 +71,6 @@ MimeType: TypeAlias = Annotated[
     ),
 ]
 
-RepositoryId: TypeAlias = Identifier
 MediaId: TypeAlias = Uuid4Hex
 VideoId: TypeAlias = MediaId
 IndexGenerationId: TypeAlias = Uuid4Hex

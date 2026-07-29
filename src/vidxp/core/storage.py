@@ -13,6 +13,8 @@ from vidxp.core.contracts import (
 
 _T = TypeVar("_T")
 
+BUNDLED_CHROMA_SERVER_URL = "http://chroma:8000"
+
 
 class IndexStorageUnavailableError(RuntimeError):
     """The configured remote vector store could not serve an operation."""

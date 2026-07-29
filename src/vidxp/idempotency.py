@@ -18,11 +18,11 @@ IdempotencyKey: TypeAlias = Annotated[
     ),
 ]
 RequestTransport: TypeAlias = Literal["http", "mcp"]
+_SINGLE_REPOSITORY_SCOPE = "default"
 
 
 def scoped_request_key(
     *,
-    repository_id: str,
     principal: Principal,
     transport: RequestTransport,
     operation: str,
@@ -33,7 +33,7 @@ def scoped_request_key(
     material = "\0".join(
         (
             f"vidxp-{transport}-request-v1",
-            repository_id,
+            _SINGLE_REPOSITORY_SCOPE,
             principal.subject,
             operation,
             idempotency_key,
@@ -44,7 +44,6 @@ def scoped_request_key(
 
 def scoped_job_id(
     *,
-    repository_id: str,
     principal: Principal,
     transport: RequestTransport,
     operation: str,
@@ -53,7 +52,6 @@ def scoped_job_id(
     """Project a scoped request identity into a valid deterministic job UUID."""
 
     digest = scoped_request_key(
-        repository_id=repository_id,
         principal=principal,
         transport=transport,
         operation=operation,

@@ -28,6 +28,7 @@ from vidxp.workflow_runtime import (
     LocalWorkerStopRequest,
     local_worker_bootstrap,
     local_executor_id,
+    server_executor_id,
     workflow_application_version,
     workflow_database_url,
 )
@@ -42,6 +43,14 @@ class LocalWorkerSupervisorTests(unittest.TestCase):
             value,
             rf"^{re.escape(__version__)}\+[0-9a-f]{{16}}$",
         )
+
+    def test_server_executor_identity_keeps_the_single_worker_ordinal(self):
+        version = workflow_application_version()
+
+        self.assertEqual(server_executor_id(role="cpu"), f"{version}-cpu-0")
+        self.assertEqual(server_executor_id(role="gpu"), f"{version}-gpu-0")
+        with self.assertRaisesRegex(ValueError, "role"):
+            server_executor_id(role="other")
 
     def test_worker_is_spawned_detached_without_job_state(self):
         with TemporaryDirectory() as directory:
@@ -149,7 +158,7 @@ class LocalWorkerSupervisorTests(unittest.TestCase):
 
         self.assertEqual(settings.http_auth_mode, "none")
         self.assertIsNone(settings.http_static_bearer_token)
-        self.assertIsNone(settings.database_url)
+        self.assertNotIn("database_url", type(settings).model_fields)
 
     def test_startup_wait_finishes_when_worker_owns_lock(self):
         with TemporaryDirectory() as directory:

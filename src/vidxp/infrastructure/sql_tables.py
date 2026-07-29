@@ -9,7 +9,6 @@ from sqlalchemy import (
     String,
     Table,
     Text,
-    UniqueConstraint,
 )
 
 
@@ -70,8 +69,6 @@ upload_intents = Table(
     metadata,
     Column("intent_id", String(32), primary_key=True),
     Column("request_key", String(64), nullable=False, unique=True),
-    Column("repository_id", String(255), nullable=False),
-    Column("owner_subject", String(255), nullable=False),
     Column("original_filename", String(255), nullable=False),
     Column("byte_size", BigInteger, nullable=False),
     Column("declared_mime_type", String(127), nullable=True),
@@ -86,51 +83,45 @@ upload_intents = Table(
         ForeignKey("media.media_id"),
         nullable=True,
     ),
-    UniqueConstraint(
-        "repository_id",
-        "intent_id",
-        name="upload_intents_repository_intent_key",
-    ),
 )
 
-upload_quotas = Table(
-    "upload_quotas",
+upload_quota = Table(
+    "upload_quota",
     metadata,
-    Column("repository_id", String(255), primary_key=True),
-    Column("owner_subject", String(255), primary_key=True),
+    Column("singleton_id", String(1), primary_key=True),
     Column("reserved_bytes", BigInteger, nullable=False, default=0),
     CheckConstraint(
         "reserved_bytes >= 0",
-        name="upload_quotas_reserved_bytes_nonnegative",
+        name="upload_quota_reserved_bytes_nonnegative",
+    ),
+    CheckConstraint(
+        "singleton_id = '1'",
+        name="upload_quota_singleton",
     ),
 )
 
-repositories = Table(
-    "repositories",
+index_state = Table(
+    "index_state",
     metadata,
-    Column("repository_id", String(255), primary_key=True),
+    Column("singleton_id", String(1), primary_key=True),
     Column("active_snapshot_id", String(32), nullable=True),
     Column("active_snapshot_sha256", String(64), nullable=True),
+    CheckConstraint(
+        "singleton_id = '1'",
+        name="index_state_singleton",
+    ),
 )
 
 index_generations = Table(
     "index_generations",
     metadata,
     Column("generation_id", String(32), primary_key=True),
-    Column("repository_id", String(255), nullable=False),
     Column("media_id", String(32), nullable=False),
     Column("manifest_sha256", String(64), nullable=False),
     Column("payload", JSON, nullable=False),
-    UniqueConstraint(
-        "repository_id",
-        "media_id",
-        "generation_id",
-        name="index_generations_repository_media_generation_key",
-    ),
 )
 Index(
-    "index_generations_repository_media",
-    index_generations.c.repository_id,
+    "index_generations_media",
     index_generations.c.media_id,
 )
 
@@ -138,21 +129,13 @@ index_snapshots = Table(
     "index_snapshots",
     metadata,
     Column("snapshot_id", String(32), primary_key=True),
-    Column("repository_id", String(255), nullable=False),
     Column("created_at", Text, nullable=False),
     Column("sha256", String(64), nullable=False),
     Column("payload", JSON, nullable=False),
 )
 Index(
-    "index_snapshots_repository_created",
-    index_snapshots.c.repository_id,
+    "index_snapshots_created",
     index_snapshots.c.created_at,
-)
-Index(
-    "upload_intents_owner_state",
-    upload_intents.c.repository_id,
-    upload_intents.c.owner_subject,
-    upload_intents.c.state,
 )
 Index(
     "upload_intents_expiry",

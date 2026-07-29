@@ -28,6 +28,10 @@ VIDXP_UPLOAD_PUBLIC_ENDPOINT=https://uploads.example.com/uploads/
 VIDXP_UPLOAD_CORS_ORIGIN_REGEX=^https://app\.example\.com$
 ```
 
+Optional deployment-wide upload limits use `VIDXP_UPLOAD_MAX_BYTES` for one object
+and `VIDXP_UPLOAD_QUOTA_BYTES` for all reserved upload bytes in the singleton
+repository. There is no per-principal or per-repository quota setting.
+
 Route the API service's port 8000 to the API hostname. Route only tusd's
 `/uploads/` path on port 8080 to the upload hostname. Do not publish PostgreSQL,
 Chroma, or the hook service.
@@ -81,12 +85,17 @@ The migration and readiness containers should exit successfully. PostgreSQL, API
 hooks, worker, and tusd should report healthy; Chroma is checked by the completed
 `chroma-ready` gate.
 
-This profile is intentionally single-node. Its named content, upload, model, and
-Chroma volumes are not a multi-replica storage design. Back up the PostgreSQL and
-named data volumes before replacing a release.
+This is the supported server topology: one node, one API/MCP service, one hook
+service, one CPU worker, and the bundled PostgreSQL, Chroma, tusd, and named
+volumes. It is not a multi-replica, failover, or provider-portability design. Back
+up PostgreSQL and the named data volumes before replacing a release.
 
-Treat each deployed stack as one repository boundary. The current PostgreSQL
-catalog tables and Chroma collection names are deployment-scoped rather than
-repository-namespaced, so multiple repository IDs must not share the same
-PostgreSQL database and Chroma service. Deploy another stack (and volumes) for a
-separate repository.
+Treat each deployed stack as its singleton repository boundary. The current
+PostgreSQL catalog and Chroma collections intentionally contain no repository
+namespace. Deploy another complete stack, with separate databases and volumes, for
+a separate repository.
+
+VidXP server mode connects to the internal Compose service names `postgres` and
+`chroma`. Those endpoints are fixed by the supported topology: do not set
+`VIDXP_DATABASE_URL` or `VIDXP_CHROMA_SERVER_URL`, and do not substitute hosted
+PostgreSQL, hosted Chroma, or alternative database providers.

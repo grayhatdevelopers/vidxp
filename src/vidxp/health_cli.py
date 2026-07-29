@@ -7,7 +7,10 @@ from urllib.request import urlopen
 
 from sqlalchemy import create_engine, select
 
-from vidxp.core.storage import ChromaClientFactory
+from vidxp.core.storage import (
+    BUNDLED_CHROMA_SERVER_URL,
+    ChromaClientFactory,
+)
 from vidxp.settings import VidXPSettings
 from vidxp.workflow_runtime import workflow_database_url
 
@@ -18,10 +21,8 @@ def main(arguments: Sequence[str] | None = None) -> None:
     options = parser.parse_args(arguments)
     settings = VidXPSettings()
     if options.role == "chroma":
-        if settings.chroma_server_url is None:
-            raise RuntimeError("Chroma readiness requires a server URL.")
         deadline = monotonic() + 120
-        endpoint = settings.chroma_server_url.rstrip("/") + "/api/v2/heartbeat"
+        endpoint = BUNDLED_CHROMA_SERVER_URL + "/api/v2/heartbeat"
         while True:
             try:
                 with urlopen(endpoint, timeout=3) as response:
@@ -41,9 +42,7 @@ def main(arguments: Sequence[str] | None = None) -> None:
     finally:
         engine.dispose()
     if options.role == "worker":
-        if settings.chroma_server_url is None:
-            raise RuntimeError("Worker readiness requires Chroma server mode.")
-        ChromaClientFactory(settings.chroma_server_url).heartbeat()
+        ChromaClientFactory(BUNDLED_CHROMA_SERVER_URL).heartbeat()
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ from vidxp.infrastructure.sql_tables import (
     media_import_requests,
     metadata,
     upload_intents,
-    upload_quotas,
+    upload_quota,
 )
 
 _RESERVED_UPLOAD_STATES = {
@@ -30,6 +30,7 @@ _RESERVED_UPLOAD_STATES = {
     UploadState.processing.value,
     UploadState.failed.value,
 }
+_UPLOAD_QUOTA_ID = "1"
 
 
 class UploadQuotaExceededError(RuntimeError):
@@ -52,8 +53,6 @@ def _upload_record(row: Any) -> UploadIntentRecord:
     return UploadIntentRecord(
         intent_id=row.intent_id,
         request_key=row.request_key,
-        repository_id=row.repository_id,
-        owner_subject=row.owner_subject,
         original_filename=row.original_filename,
         byte_size=row.byte_size,
         declared_mime_type=row.declared_mime_type,
@@ -469,8 +468,6 @@ class SQLCatalog:
         with self._write_transaction() as connection:
             self._reserve_upload_quota(
                 connection,
-                repository_id=record.repository_id,
-                owner_subject=record.owner_subject,
                 byte_size=record.byte_size,
                 quota_limit=quota_limit,
             )
@@ -478,8 +475,6 @@ class SQLCatalog:
                 insert(upload_intents).values(
                     intent_id=record.intent_id,
                     request_key=record.request_key,
-                    repository_id=record.repository_id,
-                    owner_subject=record.owner_subject,
                     original_filename=record.original_filename,
                     byte_size=record.byte_size,
                     declared_mime_type=record.declared_mime_type,
@@ -497,43 +492,36 @@ class SQLCatalog:
     def _reserve_upload_quota(
         connection: Connection,
         *,
-        repository_id: str,
-        owner_subject: str,
         byte_size: int,
         quota_limit: int,
     ) -> None:
-        identity = (
-            upload_quotas.c.repository_id == repository_id,
-            upload_quotas.c.owner_subject == owner_subject,
-        )
         row = connection.execute(
-            select(upload_quotas.c.reserved_bytes)
-            .where(*identity)
+            select(upload_quota.c.reserved_bytes)
+            .where(upload_quota.c.singleton_id == _UPLOAD_QUOTA_ID)
             .with_for_update()
         ).one_or_none()
         if row is None:
             try:
                 with connection.begin_nested():
                     connection.execute(
-                        insert(upload_quotas).values(
-                            repository_id=repository_id,
-                            owner_subject=owner_subject,
+                        insert(upload_quota).values(
+                            singleton_id=_UPLOAD_QUOTA_ID,
                             reserved_bytes=0,
                         )
                     )
             except IntegrityError:
                 pass
             row = connection.execute(
-                select(upload_quotas.c.reserved_bytes)
-                .where(*identity)
+                select(upload_quota.c.reserved_bytes)
+                .where(upload_quota.c.singleton_id == _UPLOAD_QUOTA_ID)
                 .with_for_update()
             ).one()
         reserved = int(row.reserved_bytes)
         if reserved + byte_size > quota_limit:
             raise UploadQuotaExceededError
         connection.execute(
-            update(upload_quotas)
-            .where(*identity)
+            update(upload_quota)
+            .where(upload_quota.c.singleton_id == _UPLOAD_QUOTA_ID)
             .values(reserved_bytes=reserved + byte_size)
         )
 
@@ -601,8 +589,6 @@ class SQLCatalog:
     ) -> bool:
         current = connection.execute(
             select(
-                upload_intents.c.repository_id,
-                upload_intents.c.owner_subject,
                 upload_intents.c.byte_size,
                 upload_intents.c.state,
             )
@@ -637,20 +623,16 @@ class SQLCatalog:
             and state.value not in _RESERVED_UPLOAD_STATES
         ):
             quota = connection.execute(
-                select(upload_quotas.c.reserved_bytes)
+                select(upload_quota.c.reserved_bytes)
                 .where(
-                    upload_quotas.c.repository_id
-                    == current.repository_id,
-                    upload_quotas.c.owner_subject == current.owner_subject,
+                    upload_quota.c.singleton_id == _UPLOAD_QUOTA_ID,
                 )
                 .with_for_update()
             ).scalar_one()
             connection.execute(
-                update(upload_quotas)
+                update(upload_quota)
                 .where(
-                    upload_quotas.c.repository_id
-                    == current.repository_id,
-                    upload_quotas.c.owner_subject == current.owner_subject,
+                    upload_quota.c.singleton_id == _UPLOAD_QUOTA_ID,
                 )
                 .values(
                     reserved_bytes=max(0, int(quota) - current.byte_size)

@@ -24,12 +24,16 @@ from vidxp.application_models import (
     SearchCommand,
     SearchJobRequest,
 )
+from vidxp.core.storage import BUNDLED_CHROMA_SERVER_URL
 from vidxp.job_service import JobService
 from vidxp.ports import InvalidJobBackendRequestError
 from vidxp.execution import ExecutionContext
+from vidxp.composition import _server_chroma_url
 from vidxp.settings import ApplicationMode, VidXPSettings
-from vidxp.workflow_runtime import workflow_database_url
-from vidxp.workflow_worker import _resolved_database_url
+from vidxp.workflow_runtime import (
+    BUNDLED_POSTGRES_DATABASE_URL,
+    workflow_database_url,
+)
 
 
 MEDIA_ID = "123456781234423481234567890abcde"
@@ -249,17 +253,34 @@ class JobContractTests(unittest.TestCase):
 
         self.assertEqual(execution.operation_id, JOB_ID)
 
-    def test_server_workflow_database_must_be_postgres(self):
+    def test_local_storage_uses_repository_services(self):
+        settings = VidXPSettings(
+            repository_root=Path("repository"),
+        )
+
+        self.assertEqual(
+            workflow_database_url(settings),
+            (
+                "sqlite:///"
+                f"{settings.layout.workflow_database.resolve().as_posix()}"
+            ),
+        )
+        self.assertIsNone(_server_chroma_url(settings))
+
+    def test_server_uses_bundled_storage_services(self):
         settings = VidXPSettings(
             mode=ApplicationMode.server,
             runtime_backend="cpu",
-            database_url="sqlite:///jobs.sqlite3",
         )
 
-        with self.assertRaisesRegex(ValueError, "PostgreSQL"):
-            workflow_database_url(settings)
-        with self.assertRaisesRegex(ValueError, "PostgreSQL"):
-            _resolved_database_url(settings, "sqlite:///override.sqlite3")
+        self.assertEqual(
+            workflow_database_url(settings),
+            BUNDLED_POSTGRES_DATABASE_URL,
+        )
+        self.assertEqual(
+            _server_chroma_url(settings),
+            BUNDLED_CHROMA_SERVER_URL,
+        )
 
     def test_job_backend_errors_are_normalized_for_every_adapter(self):
         backend = Mock()

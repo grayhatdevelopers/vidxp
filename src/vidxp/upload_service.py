@@ -72,6 +72,7 @@ class RemoteUploadService:
         request_key: str,
     ) -> UploadIntent:
         self._require_configured()
+        del principal
         if command.byte_size > self.settings.upload_max_bytes:
             raise ApplicationError(
                 "upload_too_large",
@@ -79,15 +80,12 @@ class RemoteUploadService:
                 "The requested upload exceeds the configured limit.",
             )
         if existing := self.catalog.get_upload_intent_by_request(request_key):
-            self._require_owner(existing, principal)
             self._require_same_request(existing, command)
             return _public_intent(existing)
         now = utc_now()
         record = UploadIntentRecord(
             intent_id=uuid4().hex,
             request_key=request_key,
-            repository_id=self.settings.repository_id,
-            owner_subject=principal.subject,
             original_filename=command.original_filename,
             byte_size=command.byte_size,
             declared_mime_type=command.declared_mime_type,
@@ -100,7 +98,7 @@ class RemoteUploadService:
             return _public_intent(
                 self.catalog.create_upload_intent(
                     record,
-                    quota_limit=self.settings.upload_principal_quota_bytes,
+                    quota_limit=self.settings.upload_quota_bytes,
                 )
             )
         except UploadQuotaExceededError as exc:
@@ -112,7 +110,6 @@ class RemoteUploadService:
         except IntegrityError:
             replay = self.catalog.get_upload_intent_by_request(request_key)
             if replay is not None:
-                self._require_owner(replay, principal)
                 self._require_same_request(replay, command)
                 return _public_intent(replay)
             raise
@@ -123,6 +120,7 @@ class RemoteUploadService:
         *,
         principal: Principal,
     ) -> UploadIntent:
+        del principal
         record = self.catalog.get_upload_intent(intent_id)
         if record is None:
             raise ApplicationError(
@@ -130,7 +128,6 @@ class RemoteUploadService:
                 ErrorCategory.not_found,
                 "The requested upload intent was not found.",
             )
-        self._require_owner(record, principal)
         return _public_intent(record)
 
     def upload_url(
@@ -139,6 +136,7 @@ class RemoteUploadService:
         *,
         principal: Principal,
     ) -> str | None:
+        del principal
         record = self.catalog.get_upload_intent(intent_id)
         if record is None:
             raise ApplicationError(
@@ -146,7 +144,6 @@ class RemoteUploadService:
                 ErrorCategory.not_found,
                 "The requested upload intent was not found.",
             )
-        self._require_owner(record, principal)
         if record.state != UploadState.accepted or record.upload_id is None:
             return None
         assert self.settings.upload_public_endpoint is not None
@@ -159,6 +156,7 @@ class RemoteUploadService:
         principal: Principal,
         byte_size: int,
     ) -> UploadIntentRecord:
+        del principal
         now = utc_now()
 
         def accept(connection: Connection) -> UploadIntentRecord | None:
@@ -168,13 +166,6 @@ class RemoteUploadService:
                 for_update=True,
             )
             if record is None:
-                raise ApplicationError(
-                    "upload_intent_invalid",
-                    ErrorCategory.validation,
-                    "The upload intent is invalid.",
-                )
-            self._require_owner(record, principal)
-            if record.repository_id != self.settings.repository_id:
                 raise ApplicationError(
                     "upload_intent_invalid",
                     ErrorCategory.validation,
@@ -253,7 +244,6 @@ class RemoteUploadService:
             if (
                 record is None
                 or record.upload_id != upload_id
-                or record.repository_id != self.settings.repository_id
             ):
                 raise ApplicationError(
                     "upload_completion_invalid",
@@ -650,21 +640,6 @@ class RemoteUploadService:
                 "remote_upload_unavailable",
                 ErrorCategory.unavailable,
                 "Remote resumable uploads are not configured.",
-            )
-
-    def _require_owner(
-        self,
-        record: UploadIntentRecord,
-        principal: Principal,
-    ) -> None:
-        if (
-            record.repository_id != self.settings.repository_id
-            or record.owner_subject != principal.subject
-        ):
-            raise ApplicationError(
-                "resource_not_found",
-                ErrorCategory.not_found,
-                "The requested upload intent was not found.",
             )
 
     @staticmethod

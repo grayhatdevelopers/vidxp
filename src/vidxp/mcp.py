@@ -419,7 +419,6 @@ def create_mcp_server(
             return context.jobs.submit_index(
                 command,
                 job_id=scoped_job_id(
-                    repository_id=settings.repository_id,
                     principal=actor,
                     transport="mcp",
                     operation="index",
@@ -447,7 +446,6 @@ def create_mcp_server(
             return context.jobs.submit_search(
                 command,
                 job_id=scoped_job_id(
-                    repository_id=settings.repository_id,
                     principal=actor,
                     transport="mcp",
                     operation="search",
@@ -478,7 +476,6 @@ def create_mcp_server(
             return context.jobs.submit_query(
                 command,
                 job_id=scoped_job_id(
-                    repository_id=settings.repository_id,
                     principal=actor,
                     transport="mcp",
                     operation="query",
@@ -540,7 +537,6 @@ def create_mcp_server(
             return context.jobs.retry(
                 job_id,
                 retry_id=scoped_job_id(
-                    repository_id=settings.repository_id,
                     principal=actor,
                     transport="mcp",
                     operation=f"retry:{job_id}",

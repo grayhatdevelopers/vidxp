@@ -428,8 +428,8 @@ class ModelTests(unittest.TestCase):
             capability_allowlist=("acme-capabilities:ocr",),
         )
         self.assertEqual(settings.runtime_backend, "cuda:0")
-        with self.assertRaises(ValidationError):
-            VidXPSettings(chroma_server_url="http://localhost:8000/prefix")
+        self.assertNotIn("database_url", VidXPSettings.model_fields)
+        self.assertNotIn("chroma_server_url", VidXPSettings.model_fields)
         with self.assertRaises(ValidationError):
             VidXPSettings(slm_base_url="http://localhost:11434/v1")
         with self.assertRaises(ValidationError):

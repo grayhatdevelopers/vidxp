@@ -25,7 +25,6 @@ from vidxp.core.identifiers import (
     JobId as JobId,
     MediaId as MediaId,
     MimeType,
-    RepositoryId as RepositoryId,
     Sha256,
     UploadIntentId as UploadIntentId,
     VideoId as VideoId,

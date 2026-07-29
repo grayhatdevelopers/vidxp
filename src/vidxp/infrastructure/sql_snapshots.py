@@ -26,8 +26,11 @@ from vidxp.infrastructure.local_snapshots import LocalSnapshotRepository
 from vidxp.infrastructure.sql_tables import (
     index_generations,
     index_snapshots,
-    repositories,
+    index_state,
 )
+
+_INDEX_STATE_ID = "1"
+_INDEX_LOCK_IDENTITY = "vidxp:index"
 
 
 def _checksum(snapshot: IndexSnapshot) -> str:
@@ -48,11 +51,9 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
         indexes: str | Path,
         *,
         engine: Engine,
-        repository_id: str,
     ) -> None:
         super().__init__(indexes)
         self.engine = engine
-        self.repository_id = repository_id
 
     @contextmanager
     def lease(self) -> Iterator[None]:
@@ -60,7 +61,7 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
         with self.engine.connect() as connection:
             acquired = connection.execute(
                 text("SELECT pg_try_advisory_lock(hashtext(:identity))"),
-                {"identity": f"vidxp:index:{self.repository_id}"},
+                {"identity": _INDEX_LOCK_IDENTITY},
             ).scalar_one()
             if not acquired:
                 raise IndexingInProgressError(
@@ -71,34 +72,34 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
             finally:
                 connection.execute(
                     text("SELECT pg_advisory_unlock(hashtext(:identity))"),
-                    {"identity": f"vidxp:index:{self.repository_id}"},
+                    {"identity": _INDEX_LOCK_IDENTITY},
                 )
 
     def mutation_in_progress(self) -> bool:
         with self.engine.connect() as connection:
             acquired = connection.execute(
                 text("SELECT pg_try_advisory_lock(hashtext(:identity))"),
-                {"identity": f"vidxp:index:{self.repository_id}"},
+                {"identity": _INDEX_LOCK_IDENTITY},
             ).scalar_one()
             if acquired:
                 connection.execute(
                     text("SELECT pg_advisory_unlock(hashtext(:identity))"),
-                    {"identity": f"vidxp:index:{self.repository_id}"},
+                    {"identity": _INDEX_LOCK_IDENTITY},
                 )
             return not bool(acquired)
 
     @staticmethod
-    def _ensure_repository(connection: Connection, repository_id: str) -> None:
+    def _ensure_index_state(connection: Connection) -> None:
         if connection.execute(
-            select(repositories.c.repository_id).where(
-                repositories.c.repository_id == repository_id
+            select(index_state.c.singleton_id).where(
+                index_state.c.singleton_id == _INDEX_STATE_ID
             )
         ).scalar_one_or_none() is not None:
             return
         try:
             with connection.begin_nested():
                 connection.execute(
-                    insert(repositories).values(repository_id=repository_id)
+                    insert(index_state).values(singleton_id=_INDEX_STATE_ID)
                 )
         except IntegrityError:
             pass
@@ -107,9 +108,9 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
         with self.engine.connect() as connection:
             row = connection.execute(
                 select(
-                    repositories.c.active_snapshot_id,
-                    repositories.c.active_snapshot_sha256,
-                ).where(repositories.c.repository_id == self.repository_id)
+                    index_state.c.active_snapshot_id,
+                    index_state.c.active_snapshot_sha256,
+                ).where(index_state.c.singleton_id == _INDEX_STATE_ID)
             ).one_or_none()
             if row is None or row.active_snapshot_id is None:
                 if required:
@@ -145,12 +146,11 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
     ) -> IndexSnapshot:
         row = connection.execute(
             select(
-                index_snapshots.c.repository_id,
                 index_snapshots.c.sha256,
                 index_snapshots.c.payload,
             ).where(index_snapshots.c.snapshot_id == snapshot_id)
         ).one_or_none()
-        if row is None or row.repository_id != self.repository_id:
+        if row is None:
             raise IndexSchemaError(f"Index snapshot {snapshot_id} is missing.")
         if expected_sha256 is not None and row.sha256 != expected_sha256:
             raise IndexSchemaError(
@@ -180,7 +180,6 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
                 select(index_generations.c.payload).where(
                     index_generations.c.generation_id
                     == reference.generation_id,
-                    index_generations.c.repository_id == self.repository_id,
                 )
             ).scalar_one_or_none()
         if (
@@ -289,22 +288,22 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
         configuration: dict[str, Any],
     ) -> IndexSnapshot:
         with self.engine.begin() as connection:
-            self._ensure_repository(connection, self.repository_id)
-            repository = connection.execute(
+            self._ensure_index_state(connection)
+            state = connection.execute(
                 select(
-                    repositories.c.active_snapshot_id,
-                    repositories.c.active_snapshot_sha256,
+                    index_state.c.active_snapshot_id,
+                    index_state.c.active_snapshot_sha256,
                 )
-                .where(repositories.c.repository_id == self.repository_id)
+                .where(index_state.c.singleton_id == _INDEX_STATE_ID)
                 .with_for_update()
             ).one()
             active = (
                 None
-                if repository.active_snapshot_id is None
+                if state.active_snapshot_id is None
                 else self._read_snapshot(
                     connection,
-                    repository.active_snapshot_id,
-                    expected_sha256=repository.active_snapshot_sha256,
+                    state.active_snapshot_id,
+                    expected_sha256=state.active_snapshot_sha256,
                 )
             )
             generations = dict(active.generations) if active is not None else {}
@@ -323,7 +322,6 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
                     connection.execute(
                         insert(index_generations).values(
                             generation_id=replacement.generation_id,
-                            repository_id=self.repository_id,
                             media_id=replacement.media_id,
                             manifest_sha256=replacement.manifest_sha256,
                             payload=replacement.model_dump(mode="json"),
@@ -354,15 +352,14 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
             connection.execute(
                 insert(index_snapshots).values(
                     snapshot_id=snapshot.snapshot_id,
-                    repository_id=self.repository_id,
                     created_at=snapshot.created_at.isoformat(),
                     sha256=checksum,
                     payload=snapshot.model_dump(mode="json"),
                 )
             )
             connection.execute(
-                update(repositories)
-                .where(repositories.c.repository_id == self.repository_id)
+                update(index_state)
+                .where(index_state.c.singleton_id == _INDEX_STATE_ID)
                 .values(
                     active_snapshot_id=snapshot.snapshot_id,
                     active_snapshot_sha256=checksum,

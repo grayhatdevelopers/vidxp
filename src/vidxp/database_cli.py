@@ -27,17 +27,10 @@ def main(arguments: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Apply VidXP relational database migrations."
     )
-    parser.add_argument("--database-url")
-    options = parser.parse_args(arguments)
-    overrides = (
-        {"database_url": options.database_url}
-        if options.database_url is not None
-        else {}
-    )
+    parser.parse_args(arguments)
     settings = VidXPSettings(
         mode=ApplicationMode.server,
         runtime_backend="cpu",
-        **overrides,
     )
     upgrade_database(workflow_database_url(settings))
 

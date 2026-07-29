@@ -42,12 +42,6 @@ class VidXPSettings(BaseSettings):
     )
 
     mode: ApplicationMode = ApplicationMode.local
-    repository_id: str = Field(
-        default="default",
-        min_length=1,
-        max_length=255,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
-    )
     repository_root: Path = Path("chroma_data")
     runtime_backend: str = "auto"
     model_cache: Path = Field(
@@ -57,7 +51,6 @@ class VidXPSettings(BaseSettings):
     max_loaded_models: int = Field(default=3, gt=0, le=16)
     max_concurrent_indexing: int = Field(default=1, gt=0, le=16)
     max_concurrent_inference: int = Field(default=2, gt=0, le=64)
-    database_url: str | None = Field(default=None, min_length=1)
     workflow_poll_interval_seconds: float = Field(
         default=0.25,
         gt=0,
@@ -147,7 +140,7 @@ class VidXPSettings(BaseSettings):
         default=50 * 1024 * 1024 * 1024,
         gt=0,
     )
-    upload_principal_quota_bytes: int = Field(
+    upload_quota_bytes: int = Field(
         default=100 * 1024 * 1024 * 1024,
         gt=0,
     )
@@ -163,11 +156,6 @@ class VidXPSettings(BaseSettings):
     )
     upload_quarantine_root: Path | None = None
     upload_cleanup_token: SecretStr | None = None
-    chroma_server_url: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=2048,
-    )
     slm_base_url: str | None = Field(
         default=None,
         min_length=1,
@@ -381,7 +369,6 @@ class VidXPSettings(BaseSettings):
     @field_validator(
         "upload_public_endpoint",
         "upload_internal_endpoint",
-        "chroma_server_url",
         "slm_base_url",
     )
     @classmethod
@@ -422,11 +409,6 @@ class VidXPSettings(BaseSettings):
             raise ValueError(
                 "upload_public_endpoint must use HTTPS outside loopback."
             )
-        if (
-            info.field_name == "chroma_server_url"
-            and parsed.path not in {"", "/"}
-        ):
-            raise ValueError("chroma_server_url must not contain a path.")
         if info.field_name == "slm_base_url":
             if parsed.path.rstrip("/") != "/v1":
                 raise ValueError("slm_base_url must end with /v1.")
@@ -435,7 +417,7 @@ class VidXPSettings(BaseSettings):
                     "slm_base_url must use a self-hosted Ollama service."
                 )
         if (
-            info.field_name not in {"chroma_server_url", "slm_base_url"}
+            info.field_name != "slm_base_url"
             and not value.endswith("/")
         ):
             raise ValueError(f"{info.field_name} must end with a slash.")
@@ -646,11 +628,9 @@ class LocalExecutionSettings(BaseModel):
         defaults = VidXPSettings.model_construct().model_dump(mode="python")
         defaults.update(self.model_dump(mode="python"))
         defaults["mode"] = ApplicationMode.local
-        defaults["database_url"] = None
         defaults["upload_public_endpoint"] = None
         defaults["upload_internal_endpoint"] = None
         defaults["upload_cleanup_token"] = None
-        defaults["chroma_server_url"] = None
         defaults["http_auth_mode"] = HttpAuthMode.none
         defaults["http_static_bearer_token"] = None
         defaults["http_oidc_issuer"] = None

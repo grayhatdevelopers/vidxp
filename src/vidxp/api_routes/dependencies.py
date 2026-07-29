@@ -87,7 +87,6 @@ def scoped_job_id(
     """Derive a non-reversible DBOS workflow ID from an HTTP request key."""
 
     return derive_scoped_job_id(
-        repository_id=service.settings.repository_id,
         principal=actor,
         transport="http",
         operation=operation,
@@ -103,7 +102,6 @@ def scoped_request_key(
     idempotency_key: str,
 ) -> str:
     return derive_scoped_request_key(
-        repository_id=service.settings.repository_id,
         principal=actor,
         transport="http",
         operation=operation,
