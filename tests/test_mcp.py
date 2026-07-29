@@ -1,5 +1,8 @@
 import asyncio
 import base64
+import contextlib
+import io
+import json
 import socket
 import sys
 import unittest
@@ -45,6 +48,8 @@ from vidxp.composition import HttpApplicationContext
 from vidxp.control_plane import ControlPlaneApplication
 from vidxp.job_service import JobService
 from vidxp.mcp import VidXPTokenVerifier, create_mcp_server
+from vidxp.mcp_cli import main as mcp_main
+from vidxp.mcp_cli import stdio_client_config
 from vidxp.settings import VidXPSettings
 
 
@@ -139,8 +144,52 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             all(tool.output_schema is not None for tool in discovered.tools)
         )
+        tools = {tool.name: tool for tool in discovered.tools}
+        for name in ("search_moments", "query_video"):
+            schema = tools[name].input_schema
+            command_ref = schema["properties"]["command"]["$ref"]
+            command_name = command_ref.rsplit("/", 1)[-1]
+            media_description = schema["$defs"][command_name]["properties"][
+                "media_id"
+            ]["description"]
+            self.assertIn("omit it", media_description)
+            self.assertIn("active index snapshot", media_description)
         self.assertEqual(result.structured_content, {"items": []})
         self.assertFalse(result.is_error)
+
+    def test_stdio_help_and_config_are_ready_to_copy(self):
+        config = stdio_client_config(
+            command=r"C:\VidXP\vidxp-mcp.exe",
+            repository="library",
+        )
+        self.assertEqual(
+            config,
+            {
+                "mcpServers": {
+                    "vidxp": {
+                        "command": r"C:\VidXP\vidxp-mcp.exe",
+                        "args": ["--repository", "library"],
+                    }
+                }
+            },
+        )
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as raised:
+                mcp_main(["--help"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("COPY/PASTE MCP CLIENT CONFIG", output.getvalue())
+        self.assertIn('"mcpServers"', output.getvalue())
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            mcp_main(["--print-config", "--repository", "library"])
+        rendered = json.loads(output.getvalue())
+        self.assertEqual(
+            rendered["mcpServers"]["vidxp"]["args"],
+            ["--repository", "library"],
+        )
 
     async def test_server_info_exposes_vidxp_branding(self):
         with TemporaryDirectory() as directory:

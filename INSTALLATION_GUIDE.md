@@ -129,6 +129,29 @@ Set `VIDXP_DATA_DIR` instead when every local entry point, including
 overrides. Docker and Compose are separate deployment profiles and use their
 explicitly configured volumes.
 
+## Connect a local MCP client
+
+Add the MCP adapter to the same environment as the local worker. For a source
+checkout:
+
+```bash
+uv sync --frozen --extra local-worker --extra mcp
+uv run vidxp mcp-config
+```
+
+For a published pipx worker install:
+
+```bash
+pipx runpip vidxp install "vidxp[mcp]"
+vidxp mcp-config
+```
+
+The second command prints a complete `mcpServers` JSON object with the resolved
+absolute executable path. Copy and paste that object into LobeHub's
+**Import JSON config** action or another stdio MCP client. To select a named
+collection, run `vidxp mcp-config --repository <name>`. The equivalent
+standalone commands are `vidxp-mcp --print-config` and `vidxp-mcp --help`.
+
 ## Verify providers and model readiness without downloading
 
 ```bash
@@ -189,14 +212,21 @@ preparation.
 ## First indexing run
 
 ```bash
-vidxp index create samplevideo.mp4
+vidxp media import samplevideo.mp4 --json
+vidxp index create <media-id>
 vidxp search scene "a yellow taxi on a city street"
 ```
+
+The import result contains the stable `media_id` used by indexing and optional
+single-video filters. Use `vidxp media list` to rediscover IDs and filenames,
+and `vidxp media show <media-id>` for the full registered metadata.
+Omit `--media-id` from search/query to rank across every media item in the
+active index snapshot, or provide it to restrict results to one video.
 
 Use fewer capabilities or adjust the scene sampling rate when appropriate:
 
 ```bash
-vidxp index create samplevideo.mp4 \
+vidxp index create <media-id> \
   --modality scene \
   --scene-sample-fps 1
 ```

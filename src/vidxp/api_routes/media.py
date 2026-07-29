@@ -162,6 +162,11 @@ def import_media(
     response_model=MediaPage,
     operation_id="listMedia",
     summary="List media",
+    description=(
+        "List registered filenames, metadata, and stable media IDs. A "
+        "registered item is searchable only when its ID is also present in "
+        "the active index snapshot."
+    ),
     dependencies=[Depends(read_principal)],
 )
 def list_media(
@@ -182,6 +187,10 @@ def list_media(
     response_model=MediaAsset,
     operation_id="getMedia",
     summary="Get media metadata",
+    description=(
+        "Get one registered media item by the stable ID returned from the "
+        "media list or a completed upload."
+    ),
     dependencies=[Depends(read_principal)],
 )
 def get_media(

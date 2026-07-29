@@ -71,7 +71,7 @@ def list_media(
         typer.Option("--json", help="Emit machine-readable JSON."),
     ] = False,
 ) -> None:
-    """List ready media assets in the selected repository."""
+    """List filenames, metadata, and stable IDs used by other commands."""
 
     state = state_from_context(ctx)
     page = state.service.list_media(
@@ -95,3 +95,27 @@ def list_media(
             f"{asset.byte_size:,}",
         )
     Console().print(table)
+
+
+@app.command("show")
+def show_media(
+    ctx: typer.Context,
+    media_id: Annotated[
+        str,
+        typer.Argument(
+            help="Stable media identifier returned by import or list."
+        ),
+    ],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Show all registered metadata for one media ID."""
+
+    state = state_from_context(ctx)
+    payload = state.service.get_media(media_id).model_dump(mode="json")
+    if effective_output_format(state, json_output) == OutputFormat.json:
+        emit_json(payload)
+    else:
+        Console().print_json(data=payload)

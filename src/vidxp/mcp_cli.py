@@ -1,31 +1,137 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import shutil
+import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
-from vidxp.application_models import Principal
-from vidxp.composition import (
-    create_control_plane_application,
-    create_local_application,
-)
-from vidxp.mcp import create_mcp_server
+
+def mcp_executable() -> str:
+    """Return the most reliable executable path for desktop MCP clients."""
+
+    discovered = shutil.which("vidxp-mcp")
+    if discovered is not None:
+        return str(Path(discovered).resolve())
+    executable_name = "vidxp-mcp.exe" if os.name == "nt" else "vidxp-mcp"
+    sibling = Path(sys.executable).with_name(executable_name)
+    if sibling.is_file():
+        return str(sibling.resolve())
+    return "vidxp-mcp"
+
+
+def stdio_client_config(
+    *,
+    command: str | None = None,
+    registry: str | None = None,
+    repository: str | None = "default",
+    index_directory: str | None = None,
+    data_directory: Path | None = None,
+    device: str | None = None,
+) -> dict[str, Any]:
+    """Build a broadly supported copy/paste MCP client configuration."""
+
+    arguments: list[str] = []
+    for flag, value in (
+        ("--registry", registry),
+        ("--repository", repository),
+        ("--index-directory", index_directory),
+        ("--data-dir", data_directory),
+        ("--device", device),
+    ):
+        if value is not None:
+            arguments.extend((flag, str(value)))
+    return {
+        "mcpServers": {
+            "vidxp": {
+                "command": command or mcp_executable(),
+                "args": arguments,
+            }
+        }
+    }
+
+
+def render_stdio_client_config(**options: Any) -> str:
+    return json.dumps(
+        stdio_client_config(**options),
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _parser() -> argparse.ArgumentParser:
+    example = render_stdio_client_config()
+    return argparse.ArgumentParser(
+        description="Run the local VidXP MCP server over stdio.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "COPY/PASTE MCP CLIENT CONFIG\n"
+            "Import this JSON into LobeHub or another stdio MCP client:\n\n"
+            f"{example}\n\n"
+            "Run `vidxp-mcp --print-config` to print only the JSON. Add the "
+            "same repository/data/device options to either command when you "
+            "need non-default values."
+        ),
+    )
 
 
 def main(arguments: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(
-        description="Run the local VidXP MCP server over stdio."
+    parser = _parser()
+    parser.add_argument(
+        "--registry",
+        help="Path to the named-repository configuration file.",
     )
-    parser.add_argument("--registry")
-    parser.add_argument("--repository")
-    parser.add_argument("--index-directory")
+    parser.add_argument(
+        "--repository",
+        help="Named repository to use; the implicit default is 'default'.",
+    )
+    parser.add_argument(
+        "--index-directory",
+        help="Override the selected repository's index directory.",
+    )
     parser.add_argument(
         "--data-dir",
         type=Path,
         help="Store VidXP models and the default repository here.",
     )
-    parser.add_argument("--device")
+    parser.add_argument(
+        "--device",
+        help="Override the selected repository runtime device.",
+    )
+    parser.add_argument(
+        "--print-config",
+        action="store_true",
+        help="Print import-ready MCP client JSON and exit.",
+    )
     options = parser.parse_args(arguments)
+    if options.print_config:
+        print(
+            render_stdio_client_config(
+                registry=options.registry,
+                repository=options.repository or "default",
+                index_directory=options.index_directory,
+                data_directory=options.data_dir,
+                device=options.device,
+            )
+        )
+        return
+
+    from vidxp.application_models import Principal
+    from vidxp.composition import (
+        create_control_plane_application,
+        create_local_application,
+    )
+    try:
+        from vidxp.mcp import create_mcp_server
+    except ModuleNotFoundError as exc:
+        if exc.name == "mcp":
+            parser.error(
+                'MCP support is not installed. Install "vidxp[mcp]" in this '
+                "same environment, then run the command again."
+            )
+        raise
 
     local = create_local_application(
         registry_path=options.registry,

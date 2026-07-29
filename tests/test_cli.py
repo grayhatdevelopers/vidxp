@@ -122,8 +122,22 @@ class CliTests(unittest.TestCase):
             "artifacts",
             "doctor",
             "prepare",
+            "mcp-config",
         ):
             self.assertIn(command, result.output)
+
+    def test_mcp_config_is_copy_paste_json_without_opening_repository(self):
+        result = self.invoke(["mcp-config"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.create_local_application.assert_not_called()
+        config = json.loads(result.output)
+        server = config["mcpServers"]["vidxp"]
+        self.assertIn(
+            Path(server["command"]).name.lower(),
+            {"vidxp-mcp", "vidxp-mcp.exe"},
+        )
+        self.assertEqual(server["args"], ["--repository", "default"])
 
     def test_startup_notice_targets_long_interactive_commands(self):
         self.assertEqual(startup_command(["doctor"]), "doctor")
@@ -184,7 +198,16 @@ class CliTests(unittest.TestCase):
         )
 
         result = self.invoke(
-            ["search", "scene", "yellow taxi", "--top-k", "7", "--json"]
+            [
+                "search",
+                "scene",
+                "yellow taxi",
+                "--media-id",
+                MEDIA_ID,
+                "--top-k",
+                "7",
+                "--json",
+            ]
         )
 
         self.assertEqual(result.exit_code, 0, result.output)
@@ -192,10 +215,18 @@ class CliTests(unittest.TestCase):
             SearchCommand(
                 modalities=("scene",),
                 query="yellow taxi",
+                media_id=MEDIA_ID,
                 top_k=7,
             )
         )
         self.assertEqual(json.loads(result.output)["query"], "yellow taxi")
+
+    def test_search_help_explains_cross_media_default(self):
+        result = self.invoke(["search", "--help"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("every media item in the active", result.output)
+        self.assertIn("index snapshot.", result.output)
 
     def test_query_constructs_shared_command_and_emits_typed_answer(self):
         answer = QueryAnswer(
@@ -339,6 +370,36 @@ class CliTests(unittest.TestCase):
             self.service.import_media.call_args.args[0].path,
             video.resolve(),
         )
+
+    def test_media_show_returns_registered_metadata(self):
+        self.service.get_media.return_value = MediaAsset(
+            schema_version=1,
+            media_id=MEDIA_ID,
+            video_id=MEDIA_ID,
+            original_filename="video.mp4",
+            sha256="1" * 64,
+            byte_size=5,
+            detected_mime_type="video/mp4",
+            container="mp4",
+            duration_seconds=1,
+            streams=(
+                MediaStream(
+                    index=0,
+                    kind="video",
+                    codec="h264",
+                    width=1,
+                    height=1,
+                ),
+            ),
+            state=MediaState.ready,
+            created_at=datetime.now(timezone.utc),
+        )
+
+        result = self.invoke(["media", "show", MEDIA_ID, "--json"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.service.get_media.assert_called_once_with(MEDIA_ID)
+        self.assertEqual(json.loads(result.output)["media_id"], MEDIA_ID)
 
     def test_status_serializes_shared_model(self):
         self.service.index_status.return_value = IndexStatus(

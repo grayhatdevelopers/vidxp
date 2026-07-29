@@ -22,6 +22,7 @@ def run_search(
     capability: str,
     query: str,
     *,
+    media_id: str | None,
     top_k: int,
     json_output: bool,
 ) -> FusedSearchResult:
@@ -33,6 +34,7 @@ def run_search(
         SearchCommand(
             modalities=(capability,),
             query=query,
+            media_id=media_id,
             top_k=top_k,
         )
     )
@@ -60,6 +62,16 @@ def search(
         str,
         typer.Argument(help="Text query to find."),
     ],
+    media_id: Annotated[
+        str | None,
+        typer.Option(
+            "--media-id",
+            help=(
+                "Search only this media ID. Omit to rank matches across every "
+                "media item in the active index snapshot."
+            ),
+        ),
+    ] = None,
     top_k: Annotated[
         int,
         typer.Option(
@@ -80,6 +92,7 @@ def search(
         state,
         capability,
         query,
+        media_id=media_id,
         top_k=top_k,
         json_output=json_output,
     )

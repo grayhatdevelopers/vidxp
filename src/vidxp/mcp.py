@@ -347,8 +347,11 @@ def create_mcp_server(
             "artifacts are missing, submit prepare_models and poll get_job "
             "until it completes. Discover registered media with list_media. "
             "Register and upload new video through the HTTP/tus API, then use "
-            "its media_id with the durable indexing and query tools. Use "
-            "list_jobs to recover job IDs across agent sessions."
+            "its media_id with start_indexing. get_index_status identifies the "
+            "media included in the active index snapshot. For search_moments "
+            "and query_video, provide command.media_id to restrict work to one "
+            "video, or omit it to search/query across every media item in that "
+            "snapshot. Use list_jobs to recover job IDs across agent sessions."
         ),
         version=__version__,
         token_verifier=token_verifier,
@@ -399,7 +402,11 @@ def create_mcp_server(
         )
 
     @server.tool(
-        description="List registered video metadata without transferring bytes.",
+        description=(
+            "List registered video filenames, metadata, and stable media IDs "
+            "without transferring video bytes. Registration does not imply "
+            "that a video is present in the active index snapshot."
+        ),
         annotations=_READ_ONLY,
         structured_output=True,
     )
@@ -420,7 +427,10 @@ def create_mcp_server(
         )
 
     @server.tool(
-        description="Get metadata for one registered video.",
+        description=(
+            "Get one registered video's metadata by the stable media ID "
+            "returned by list_media."
+        ),
         annotations=_READ_ONLY,
         structured_output=True,
     )
@@ -433,7 +443,10 @@ def create_mcp_server(
         )
 
     @server.tool(
-        description="Inspect the active index state.",
+        description=(
+            "Inspect the active index snapshot, including its indexed media "
+            "count and media IDs."
+        ),
         annotations=_READ_ONLY,
         structured_output=True,
     )
@@ -446,7 +459,11 @@ def create_mcp_server(
         )
 
     @server.tool(
-        description="Submit durable indexing for a registered media ID.",
+        description=(
+            "Add or replace one registered media ID in the active multi-video "
+            "index snapshot. Obtain the ID from list_media or a completed "
+            "upload, then poll get_job."
+        ),
         annotations=_SUBMIT,
         structured_output=True,
     )
@@ -504,7 +521,11 @@ def create_mcp_server(
         )
 
     @server.tool(
-        description="Submit a durable search over the active index.",
+        description=(
+            "Submit a durable ranked moment search. Set command.media_id to "
+            "search one registered video; omit it to search across every media "
+            "item in the active index snapshot. Poll get_job for top-k results."
+        ),
         annotations=_SUBMIT,
         structured_output=True,
     )
@@ -533,7 +554,9 @@ def create_mcp_server(
     @server.tool(
         description=(
             "Submit a durable grounded natural-language query over indexed "
-            "moments and actor evidence."
+            "moments and actor evidence. Set command.media_id for one video, "
+            "or omit it to query across every media item in the active index "
+            "snapshot. Poll get_job for the answer and evidence."
         ),
         annotations=_SUBMIT,
         structured_output=True,

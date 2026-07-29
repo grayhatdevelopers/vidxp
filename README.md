@@ -153,14 +153,28 @@ use that ID instead of exposing repository file paths.
 Search the completed index:
 
 ```bash
+vidxp media list
 vidxp search dialogue "the bread just came out of the oven"
 vidxp search scene "a yellow taxi on a city street" --top-k 5
+vidxp search scene "a yellow taxi" --media-id <media-id>
 vidxp query "What happens after the taxi arrives?" --media-id <media-id>
 vidxp actors list
 vidxp actors render <cluster-id> --json
 vidxp artifacts snippet <media-id> 30 45 --json
 vidxp artifacts show <artifact-id>
 ```
+
+`vidxp media list` returns registered filenames and stable IDs. Search and
+query omit `--media-id` by default, which ranks evidence across every media
+item in the active index snapshot. Add `--media-id` to restrict either command
+to one video. `vidxp media show <media-id>` returns that video's complete
+registered metadata, and every ranked result identifies its source `media_id`.
+
+Each successful `vidxp index create` adds a new video to the active snapshot or
+replaces that video's existing generation; it does not discard the other
+indexed videos. `vidxp index status` lists active membership, and
+`vidxp index remove <media-id>` removes one item. Use separate named
+repositories when you need separate searchable video collections.
 
 Index only selected capabilities or adjust the time-based scene sampling rate:
 
@@ -302,12 +316,24 @@ VIDXP_MCP_ALLOWED_ORIGINS=[]
 For adjacent local agents, install the MCP extra and use stdio:
 
 ```bash
-pipx install "vidxp[all,mcp]"
-vidxp-mcp --repository default
+pipx install "vidxp[local-worker,mcp]"
+vidxp mcp-config
 ```
+
+`vidxp mcp-config` prints import-ready `mcpServers` JSON containing the resolved
+absolute `vidxp-mcp` executable path and `--repository default`. Copy and paste
+the whole object into LobeHub's **Import JSON config** action or another stdio
+MCP client. `vidxp-mcp --print-config` emits the same JSON, while
+`vidxp-mcp --help` includes a ready-to-copy example alongside all server
+options.
 
 The stdio process owns its local repository/job lifecycle and exits cleanly when
 the client closes the transport.
+
+MCP agents discover registered filenames and IDs with `list_media`, then inspect
+active indexed membership with `get_index_status`. For `search_moments` and
+`query_video`, setting `command.media_id` restricts results to that video;
+omitting it searches or queries every media item in the active index snapshot.
 
 ## Container
 

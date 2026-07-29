@@ -63,7 +63,13 @@ def query(
     ],
     media_id: Annotated[
         str | None,
-        typer.Option("--media-id", help="Restrict evidence to one media ID."),
+        typer.Option(
+            "--media-id",
+            help=(
+                "Use evidence only from this media ID. Omit to query every "
+                "media item in the active index snapshot."
+            ),
+        ),
     ] = None,
     modality: Annotated[
         list[str] | None,

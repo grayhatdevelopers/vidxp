@@ -36,6 +36,10 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
     status_code=202,
     operation_id="startIndexing",
     summary="Start indexing",
+    description=(
+        "Add or replace one registered media item in the active multi-video "
+        "index snapshot."
+    ),
     dependencies=[Depends(write_principal)],
 )
 def submit_index(
@@ -66,6 +70,10 @@ def submit_index(
     status_code=202,
     operation_id="searchMoments",
     summary="Search indexed moments",
+    description=(
+        "Set media_id to search one video, or omit it to rank moments across "
+        "every media item in the active index snapshot."
+    ),
     dependencies=[Depends(read_principal)],
 )
 def submit_search(
@@ -95,6 +103,10 @@ def submit_search(
     status_code=202,
     operation_id="queryVideo",
     summary="Ask a grounded question about indexed media",
+    description=(
+        "Set media_id to ground the answer in one video, or omit it to use "
+        "evidence across every media item in the active index snapshot."
+    ),
     dependencies=[Depends(read_principal)],
 )
 def submit_query(

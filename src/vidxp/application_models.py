@@ -299,7 +299,12 @@ class ImportMediaCommand(ApplicationModel):
 
 class MediaAsset(ApplicationModel):
     schema_version: Literal[MEDIA_SCHEMA_VERSION] = MEDIA_SCHEMA_VERSION
-    media_id: MediaId
+    media_id: MediaId = Field(
+        description=(
+            "Stable registered-media identifier used by indexing and optional "
+            "single-media search/query filters."
+        )
+    )
     video_id: VideoId
     original_filename: str = Field(min_length=1)
     sha256: Sha256
@@ -314,8 +319,18 @@ class MediaAsset(ApplicationModel):
 
 
 class ListMediaCommand(ApplicationModel):
-    page_size: int = Field(default=50, gt=0, le=100)
-    cursor: str | None = Field(default=None, min_length=1, max_length=512)
+    page_size: int = Field(
+        default=50,
+        gt=0,
+        le=100,
+        description="Maximum registered media records to return.",
+    )
+    cursor: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=512,
+        description="Opaque next_cursor from the previous list_media page.",
+    )
 
 
 class MediaPage(Page[MediaAsset]):
@@ -346,7 +361,12 @@ class UploadIntent(ApplicationModel):
 
 
 class CreateIndexCommand(ApplicationModel):
-    media_id: MediaId
+    media_id: MediaId = Field(
+        description=(
+            "Stable identifier returned by list_media, get_media, or a "
+            "completed upload."
+        )
+    )
     modalities: tuple[str, ...]
     frame_stride: int = Field(
         default=1,
@@ -484,12 +504,22 @@ class IndexStatus(ApplicationModel):
 class IndexStatusSummary(ApplicationModel):
     index_schema_version: int = Field(ge=1)
     snapshot_id: IndexSnapshotId
-    media_count: int = Field(ge=0)
+    media_count: int = Field(
+        ge=0,
+        description="Number of media items in the active index snapshot.",
+    )
     media_ids: tuple[MediaId, ...] = Field(
         default=(),
         max_length=INDEX_STATUS_MEDIA_ID_LIMIT,
+        description=(
+            "Stable IDs included in the active snapshot. The list is capped; "
+            "check media_ids_truncated before treating it as complete."
+        ),
     )
-    media_ids_truncated: bool = False
+    media_ids_truncated: bool = Field(
+        default=False,
+        description="Whether active snapshot media IDs were omitted by the cap.",
+    )
     modalities: tuple[str, ...] = ()
 
     @model_validator(mode="after")
@@ -510,10 +540,28 @@ class FusionProfile(StrEnum):
 
 
 class SearchCommand(ApplicationModel):
-    query: SearchQuery
-    modalities: tuple[Identifier, ...] = ()
-    media_id: MediaId | None = None
-    top_k: int = Field(default=10, gt=0, le=100)
+    query: SearchQuery = Field(description="Text to match against indexed moments.")
+    modalities: tuple[Identifier, ...] = Field(
+        default=(),
+        description=(
+            "Indexed capabilities to search. Omit to use every searchable "
+            "capability in the active snapshot."
+        ),
+    )
+    media_id: MediaId | None = Field(
+        default=None,
+        description=(
+            "Optional single-media filter. Provide a stable ID from list_media "
+            "to search only that video; omit it to rank results across every "
+            "media item in the active index snapshot."
+        ),
+    )
+    top_k: int = Field(
+        default=10,
+        gt=0,
+        le=100,
+        description="Maximum fused moments to return across the selected scope.",
+    )
 
     @field_validator("modalities")
     @classmethod
@@ -637,10 +685,31 @@ class FusedSearchResult(ApplicationModel):
 
 
 class QueryVideoCommand(ApplicationModel):
-    question: SearchQuery
-    media_id: MediaId | None = None
-    modalities: tuple[Identifier, ...] = Field(default=(), max_length=8)
-    top_k: int = Field(default=10, gt=0, le=50)
+    question: SearchQuery = Field(
+        description="Natural-language question grounded in indexed evidence."
+    )
+    media_id: MediaId | None = Field(
+        default=None,
+        description=(
+            "Optional single-media filter. Provide a stable ID from list_media "
+            "to use evidence only from that video; omit it to use evidence "
+            "from every media item in the active index snapshot."
+        ),
+    )
+    modalities: tuple[Identifier, ...] = Field(
+        default=(),
+        max_length=8,
+        description=(
+            "Indexed capabilities to use as evidence. Omit to use every "
+            "queryable capability in the active snapshot."
+        ),
+    )
+    top_k: int = Field(
+        default=10,
+        gt=0,
+        le=50,
+        description="Maximum ranked evidence moments used for the answer.",
+    )
 
     @field_validator("modalities")
     @classmethod
