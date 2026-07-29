@@ -74,10 +74,12 @@ class VidXPApplication(ControlPlaneApplication):
         media: MediaService,
         artifacts: ArtifactService,
         index_status: Callable[[], dict[str, Any] | None],
+        completed_upload_importer: Callable[[str], MediaAsset] | None = None,
     ) -> None:
         self.registry = registry
         self.runtime = runtime
         self.index_backend = index_backend
+        self._completed_upload_importer = completed_upload_importer
         super().__init__(
             layout=layout,
             capabilities=CapabilityService(registry),
@@ -132,6 +134,16 @@ class VidXPApplication(ControlPlaneApplication):
     def import_media(self, command: ImportMediaCommand) -> MediaAsset:
         self.layout.ensure_local_directories()
         return self.media.import_local(command)
+
+    @application_boundary
+    def import_completed_upload(self, upload_id: str) -> MediaAsset:
+        if self._completed_upload_importer is None:
+            raise ApplicationError(
+                "remote_upload_unavailable",
+                ErrorCategory.unavailable,
+                "Remote resumable uploads are not configured.",
+            )
+        return self._completed_upload_importer(upload_id)
 
     @application_boundary
     def runtime_readiness(self) -> RuntimeReadiness:

@@ -25,6 +25,7 @@ from vidxp.application_models import (
     MediaAsset,
     Principal,
     SearchCommand,
+    UploadIntent,
 )
 from vidxp.composition import (
     HttpApplicationContext,
@@ -34,10 +35,12 @@ from vidxp.control_plane import ControlPlaneApplication
 from vidxp.authentication import create_authenticator
 from vidxp.authorization import AuthorizationPolicy
 from vidxp.core.media import MediaState, MediaStream
+from vidxp.core.uploads import UploadState
 from vidxp.job_service import JobService
 from vidxp.ports import LocalFileResource
 from vidxp.readiness_service import ReadinessService
 from vidxp.settings import HttpAuthMode, VidXPSettings
+from vidxp.upload_service import RemoteUploadService
 
 
 MEDIA_ID = "123456781234423481234567890abcde"
@@ -88,6 +91,7 @@ class ApiTests(unittest.TestCase):
         upload_limit: int = 256 * 1024 * 1024,
         json_limit: int = 4 * 1024 * 1024,
         allowed_origins: tuple[str, ...] = (),
+        remote_uploads: bool = False,
     ) -> HttpApplicationContext:
         settings = VidXPSettings(
             repository_root=root,
@@ -98,11 +102,23 @@ class ApiTests(unittest.TestCase):
             http_max_small_upload_bytes=upload_limit,
             http_max_json_body_bytes=json_limit,
             http_allowed_origins=allowed_origins,
+            upload_public_endpoint=(
+                "http://localhost:8080/uploads/"
+                if remote_uploads
+                else None
+            ),
+            upload_internal_endpoint=(
+                "http://localhost:8080/uploads/"
+                if remote_uploads
+                else None
+            ),
+            upload_cleanup_token="c" * 32 if remote_uploads else None,
         )
         application = Mock()
         jobs = Mock(spec=JobService)
         readiness = Mock()
         readiness.ready.return_value = True
+        uploads = Mock(spec=RemoteUploadService) if remote_uploads else None
         return HttpApplicationContext(
             application=application,
             jobs=jobs,
@@ -110,6 +126,7 @@ class ApiTests(unittest.TestCase):
             authenticator=create_authenticator(settings),
             authorization=AuthorizationPolicy(),
             settings=settings,
+            uploads=uploads,
         )
 
     @staticmethod
@@ -130,6 +147,56 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(health.json(), {"status": "ok"})
         self.assertEqual(ready.status_code, 200)
         self.assertEqual(ready.json(), {"ready": True, "status": "ready"})
+
+    def test_resumable_upload_api_uses_typed_intents_and_private_urls(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(
+                Path(directory),
+                auth=HttpAuthMode.static,
+                remote_uploads=True,
+            )
+            assert context.uploads is not None
+            now = datetime.now(timezone.utc)
+            intent = UploadIntent(
+                intent_id="123456781234423481234567890abcde",
+                original_filename="video.mp4",
+                byte_size=20,
+                declared_mime_type="video/mp4",
+                state=UploadState.pending,
+                created_at=now,
+                expires_at=now.replace(year=now.year + 1),
+            )
+            context.uploads.create_intent.return_value = intent
+            context.uploads.upload_url.return_value = None
+            with TestClient(create_app(context=context)) as client:
+                created = client.post(
+                    "/api/v1/media/uploads",
+                    headers={
+                        **self.auth(),
+                        "Idempotency-Key": IDEMPOTENCY_KEY,
+                    },
+                    json={
+                        "original_filename": "video.mp4",
+                        "byte_size": 20,
+                        "declared_mime_type": "video/mp4",
+                    },
+                )
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.headers["cache-control"], "private, no-store")
+        self.assertEqual(created.headers["referrer-policy"], "no-referrer")
+        self.assertEqual(
+            created.headers["location"],
+            f"/api/v1/media/uploads/{intent.intent_id}",
+        )
+        payload = created.json()
+        self.assertEqual(payload["intent"]["state"], "pending")
+        self.assertEqual(
+            payload["creation_url"],
+            "http://localhost:8080/uploads/",
+        )
+        self.assertIsNone(payload["resume_url"])
+        self.assertTrue(payload["upload_metadata"].startswith("intent_id "))
 
     def test_readiness_failure_returns_503_without_details(self):
         with TemporaryDirectory() as directory:

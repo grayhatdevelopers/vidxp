@@ -73,7 +73,16 @@ class PackagingTests(unittest.TestCase):
         }
         self.assertEqual(
             chroma_contracts,
-            {"src/vidxp/requirements/storage.txt"},
+            {
+                "src/vidxp/requirements/storage.txt",
+                "src/vidxp/requirements/server-storage.txt",
+            },
+        )
+        self.assertIn(
+            "chromadb-client",
+            (
+                ROOT / "src" / "vidxp" / "requirements" / "server-storage.txt"
+            ).read_text(encoding="utf-8"),
         )
         self.assertNotIn("benchmarks/requirements.txt", all_block)
         self.assertNotIn("requirements/frontend.txt", all_block)

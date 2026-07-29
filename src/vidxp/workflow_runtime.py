@@ -43,8 +43,8 @@ class LocalWorkerReady(BaseModel):
 
 
 def workflow_database_url(settings: VidXPSettings) -> str:
-    if settings.workflow_database_url is not None:
-        database_url = settings.workflow_database_url
+    if settings.database_url is not None:
+        database_url = settings.database_url
         if (
             settings.mode == ApplicationMode.server
             and not urlsplit(database_url).scheme.startswith("postgresql")
@@ -55,7 +55,7 @@ def workflow_database_url(settings: VidXPSettings) -> str:
         return database_url
     if settings.mode == ApplicationMode.server:
         raise ValueError(
-            "Server mode requires VIDXP_WORKFLOW_DATABASE_URL."
+            "Server mode requires VIDXP_DATABASE_URL."
         )
     database = settings.layout.workflow_database.resolve()
     return f"sqlite:///{database.as_posix()}"

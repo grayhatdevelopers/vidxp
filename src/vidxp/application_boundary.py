@@ -34,6 +34,7 @@ from vidxp.core.media import (
     MediaStoreIntegrityError,
     MediaUnavailableError,
 )
+from vidxp.core.storage import IndexStorageUnavailableError
 from vidxp.index_state import (
     IndexingInProgressError,
     IndexNotReadyError,
@@ -96,6 +97,13 @@ def application_boundary(handler: Callable) -> Callable:
                 "index_schema_incompatible",
                 ErrorCategory.conflict,
                 "The index schema is incompatible with this version.",
+            ) from exc
+        except IndexStorageUnavailableError as exc:
+            raise ApplicationError(
+                "index_storage_unavailable",
+                ErrorCategory.unavailable,
+                "The remote index storage is unavailable.",
+                retryable=True,
             ) from exc
         except IndexCancelledError as exc:
             raise ApplicationError(

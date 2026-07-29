@@ -153,6 +153,20 @@ wheels = [
 ]
 
 [[package]]
+name = "alembic"
+version = "1.18.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mako" },
+    { name = "sqlalchemy" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1a/cc/ac0bed8e562e7407fe55c3ba85a4dce86e6dbd8730887bd1e406a6c5c18a/alembic-1.18.5.tar.gz", hash = "sha256:1554982221dd17e9a749b53902407578eb305e453f71999e8c7f0a48389fff8e", size = 2060480, upload-time = "2026-06-25T15:20:54.888Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/78/5fe6dc3a3a5b2f5a2a4faef8bfe336d5fa049a38884ab3172e0098160c01/alembic-1.18.5-py3-none-any.whl", hash = "sha256:06d8ba9d04558022f5395e9317de03d270f3dced49cee01f89fe7a13c26f14bc", size = 264664, upload-time = "2026-06-25T15:20:56.673Z" },
+]
+
+[[package]]
 name = "altair"
 version = "6.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -537,6 +551,32 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/38/4e/937bc4d2e6f8ab9664ec79931fbbd69efff47e513ec2924b071e4b0ff774/chromadb-1.5.9-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9192d111bd662241625867962333d99369a00769a50f8b2f58cb388731274d7e", size = 22680924, upload-time = "2026-05-05T05:54:36.25Z" },
     { url = "https://files.pythonhosted.org/packages/e6/ec/0c42039e80b9acc534f67b73b7a42471948042859b3a64867b50a4a77fa3/chromadb-1.5.9-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cc09b3df76e5a5cb386aed2715a2eea152e3949f9e1ba93c7119505377749929", size = 23316203, upload-time = "2026-05-05T05:54:41.157Z" },
     { url = "https://files.pythonhosted.org/packages/eb/ce/0f7be6e5d0feafa2cda54b12e6542afeea7dea89d2d411e14da90f8abb96/chromadb-1.5.9-cp39-abi3-win_amd64.whl", hash = "sha256:4fd0b560e56761b7f3cb4d5c6205fd5f20814484b4a3e4e9af9038c2b428fc6c", size = 23542454, upload-time = "2026-05-05T05:54:54.942Z" },
+]
+
+[[package]]
+name = "chromadb-client"
+version = "1.5.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "jsonschema" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-sdk" },
+    { name = "orjson" },
+    { name = "overrides" },
+    { name = "pybase64" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyyaml" },
+    { name = "tenacity" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/73/3b/47c02df4d56883f1dee3548d03a52e75ab1d1c282030ffaf32031bb46569/chromadb_client-1.5.9.tar.gz", hash = "sha256:5e481d51ce6634fe54230b0411bf1ff257607ace222fc64c669e27874c12175b", size = 22112301, upload-time = "2026-05-05T05:36:19.069Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/0c/4ae7985586638bcaf5459f6cad5e81704317df1946419c8a16fb8f9c1fbc/chromadb_client-1.5.9-py3-none-any.whl", hash = "sha256:3200b9f79389974f9a35bbcdd0657289f5352da3a7d0d37c63194283e02d0605", size = 798976, upload-time = "2026-05-05T05:36:15.966Z" },
 ]
 
 [[package]]
@@ -1130,6 +1170,15 @@ wheels = [
 ]
 
 [[package]]
+name = "iniconfig"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
 name = "itsdangerous"
 version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1205,6 +1254,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ca/57/b07b96353f902aa1bdbe00e878e3a12a137977d03a962479785576aa8ec9/kubernetes-36.0.3.tar.gz", hash = "sha256:36993ed25ce59b789c9341473a228fcf268504a2fec7c2b2b1531d73072e5ce7", size = 2337528, upload-time = "2026-07-13T20:38:12.128Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5b/30/a96d47df739689ac0001ade0afefc16e3b477fc2fb426b568515fdc8afce/kubernetes-36.0.3-py2.py3-none-any.whl", hash = "sha256:8fde9241c4b298e6374a069dcf728359b4e72c2fb29489a975ba4e1c047cf10f", size = 4618066, upload-time = "2026-07-13T20:38:10.172Z" },
+]
+
+[[package]]
+name = "mako"
+version = "1.3.12"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markupsafe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/00/62/791b31e69ae182791ec67f04850f2f062716bbd205483d63a215f3e062d3/mako-1.3.12.tar.gz", hash = "sha256:9f778e93289bd410bb35daadeb4fc66d95a746f0b75777b942088b7fd7af550a", size = 400219, upload-time = "2026-04-28T19:01:08.512Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bc/b1/a0ec7a5a9db730a08daef1fdfb8090435b82465abbf758a596f0ea88727e/mako-1.3.12-py3-none-any.whl", hash = "sha256:8f61569480282dbf557145ce441e4ba888be453c30989f879f0d652e39f53ea9", size = 78521, upload-time = "2026-04-28T19:01:10.393Z" },
 ]
 
 [[package]]
@@ -2049,6 +2110,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pluggy"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
+]
+
+[[package]]
 name = "pooch"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2676,6 +2746,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e7/82/28175b2414effca1cdac8dc99f76d660e7a4fb0ceefa4b4ab8f5f6742925/pyproject_hooks-1.2.0.tar.gz", hash = "sha256:1e859bd5c40fae9448642dd871adf459e5e2084186e8d2c2a79a824c970da1f8", size = 19228, upload-time = "2024-09-29T09:24:13.293Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bd/24/12818598c362d7f300f18e74db45963dbcb85150324092410c8b49405e42/pyproject_hooks-1.2.0-py3-none-any.whl", hash = "sha256:9e5c6bfa8dcc30091c74b0cf803c81fdd29d94f01992a7707bc97babb1141913", size = 10216, upload-time = "2024-09-29T09:24:11.978Z" },
+]
+
+[[package]]
+name = "pytest"
+version = "9.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "iniconfig" },
+    { name = "packaging" },
+    { name = "pluggy" },
+    { name = "pygments" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e4/47/b9efed96c114afcfa3c9d3fe98a76a1d14c74a9e266d397cf6eb64be5e01/pytest-9.1.1.tar.gz", hash = "sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313", size = 1636369, upload-time = "2026-06-19T10:58:32.857Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/24/25/1de2678b631f5a49215c6c96fff41ba892b0a34df68d6d80292b1b48aa7f/pytest-9.1.1-py3-none-any.whl", hash = "sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c", size = 386536, upload-time = "2026-06-19T10:58:31.347Z" },
 ]
 
 [[package]]
@@ -3695,6 +3781,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "rich" },
+    { name = "sqlalchemy" },
     { name = "typer" },
 ]
 
@@ -3763,11 +3850,35 @@ scene = [
     { name = "transformers" },
 ]
 server = [
+    { name = "alembic" },
     { name = "asgi-correlation-id" },
     { name = "fastapi" },
     { name = "psutil" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+server-worker = [
+    { name = "alembic" },
+    { name = "asgi-correlation-id" },
+    { name = "chromadb-client" },
+    { name = "fastapi" },
+    { name = "faster-whisper" },
+    { name = "huggingface-hub" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "opencv-python-headless" },
+    { name = "pillow" },
+    { name = "pooch" },
+    { name = "psutil" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "python-multipart" },
+    { name = "sentence-transformers" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "transformers" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 storage = [
@@ -3776,74 +3887,98 @@ storage = [
 ]
 test = [
     { name = "httpx" },
+    { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", marker = "extra == 'server'", specifier = ">=1.18.5,<2" },
+    { name = "alembic", marker = "extra == 'server-worker'", specifier = ">=1.18.5,<2" },
     { name = "asgi-correlation-id", marker = "extra == 'server'", specifier = ">=5.0.1,<6" },
+    { name = "asgi-correlation-id", marker = "extra == 'server-worker'", specifier = ">=5.0.1,<6" },
     { name = "chromadb", marker = "extra == 'actor'", specifier = ">=1.5.9,<2" },
     { name = "chromadb", marker = "extra == 'all'", specifier = ">=1.5.9,<2" },
     { name = "chromadb", marker = "extra == 'dialogue'", specifier = ">=1.5.9,<2" },
     { name = "chromadb", marker = "extra == 'local-worker'", specifier = ">=1.5.9,<2" },
     { name = "chromadb", marker = "extra == 'scene'", specifier = ">=1.5.9,<2" },
     { name = "chromadb", marker = "extra == 'storage'", specifier = ">=1.5.9,<2" },
+    { name = "chromadb-client", marker = "extra == 'server-worker'", specifier = ">=1.5.9,<2" },
     { name = "dbos", specifier = ">=2.28,<3" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.140.13,<0.141" },
+    { name = "fastapi", marker = "extra == 'server-worker'", specifier = ">=0.140.13,<0.141" },
     { name = "faster-whisper", marker = "extra == 'all'", specifier = ">=1.2.1,<2" },
     { name = "faster-whisper", marker = "extra == 'dialogue'", specifier = ">=1.2.1,<2" },
     { name = "faster-whisper", marker = "extra == 'local-worker'", specifier = ">=1.2.1,<2" },
+    { name = "faster-whisper", marker = "extra == 'server-worker'", specifier = ">=1.2.1,<2" },
     { name = "filelock", specifier = ">=3.32,<4" },
     { name = "httpx", marker = "extra == 'test'", specifier = ">=0.28.1,<0.29" },
     { name = "huggingface-hub", marker = "extra == 'all'", specifier = ">=1.25.1,<2" },
     { name = "huggingface-hub", marker = "extra == 'dialogue'", specifier = ">=1.25.1,<2" },
     { name = "huggingface-hub", marker = "extra == 'local-worker'", specifier = ">=1.25.1,<2" },
     { name = "huggingface-hub", marker = "extra == 'scene'", specifier = ">=1.25.1,<2" },
+    { name = "huggingface-hub", marker = "extra == 'server-worker'", specifier = ">=1.25.1,<2" },
     { name = "numpy", marker = "extra == 'actor'", specifier = ">=2.3,<3" },
     { name = "numpy", marker = "extra == 'all'", specifier = ">=2.3,<3" },
     { name = "numpy", marker = "extra == 'local-worker'", specifier = ">=2.3,<3" },
     { name = "numpy", marker = "extra == 'scene'", specifier = ">=2.3,<3" },
+    { name = "numpy", marker = "extra == 'server-worker'", specifier = ">=2.3,<3" },
     { name = "opencv-python-headless", marker = "extra == 'actor'", specifier = ">=5.0.0.93,<6" },
     { name = "opencv-python-headless", marker = "extra == 'all'", specifier = ">=5.0.0.93,<6" },
     { name = "opencv-python-headless", marker = "extra == 'local-worker'", specifier = ">=5.0.0.93,<6" },
     { name = "opencv-python-headless", marker = "extra == 'scene'", specifier = ">=5.0.0.93,<6" },
+    { name = "opencv-python-headless", marker = "extra == 'server-worker'", specifier = ">=5.0.0.93,<6" },
     { name = "packaging", specifier = ">=26.2,<27" },
     { name = "pillow", marker = "extra == 'all'", specifier = ">=12.3,<13" },
     { name = "pillow", marker = "extra == 'local-worker'", specifier = ">=12.3,<13" },
     { name = "pillow", marker = "extra == 'scene'", specifier = ">=12.3,<13" },
+    { name = "pillow", marker = "extra == 'server-worker'", specifier = ">=12.3,<13" },
     { name = "platformdirs", specifier = ">=4.11,<5" },
     { name = "pooch", marker = "extra == 'actor'", specifier = ">=1.9,<2" },
     { name = "pooch", marker = "extra == 'all'", specifier = ">=1.9,<2" },
     { name = "pooch", marker = "extra == 'local-worker'", specifier = ">=1.9,<2" },
+    { name = "pooch", marker = "extra == 'server-worker'", specifier = ">=1.9,<2" },
     { name = "psutil", marker = "extra == 'actor'", specifier = ">=7.2.2,<8" },
     { name = "psutil", marker = "extra == 'all'", specifier = ">=7.2.2,<8" },
     { name = "psutil", marker = "extra == 'dialogue'", specifier = ">=7.2.2,<8" },
     { name = "psutil", marker = "extra == 'local-worker'", specifier = ">=7.2.2,<8" },
     { name = "psutil", marker = "extra == 'scene'", specifier = ">=7.2.2,<8" },
     { name = "psutil", marker = "extra == 'server'", specifier = ">=7.2.2,<8" },
+    { name = "psutil", marker = "extra == 'server-worker'", specifier = ">=7.2.2,<8" },
     { name = "psutil", marker = "extra == 'storage'", specifier = ">=7.2.2,<8" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.3.4,<4" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'server-worker'", specifier = ">=3.3.4,<4" },
     { name = "pydantic", specifier = ">=2.13.4,<3" },
     { name = "pydantic-settings", specifier = ">=2.14.2,<3" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'server'", specifier = ">=2.13,<3" },
+    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'server-worker'", specifier = ">=2.13,<3" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=9.1.1,<10" },
     { name = "python-multipart", marker = "extra == 'server'", specifier = ">=0.0.32,<0.1" },
+    { name = "python-multipart", marker = "extra == 'server-worker'", specifier = ">=0.0.32,<0.1" },
     { name = "rich", specifier = ">=15,<16" },
     { name = "sentence-transformers", marker = "extra == 'all'", specifier = ">=5.6.1,<6" },
     { name = "sentence-transformers", marker = "extra == 'dialogue'", specifier = ">=5.6.1,<6" },
     { name = "sentence-transformers", marker = "extra == 'local-worker'", specifier = ">=5.6.1,<6" },
+    { name = "sentence-transformers", marker = "extra == 'server-worker'", specifier = ">=5.6.1,<6" },
+    { name = "sqlalchemy", specifier = ">=2.0.51,<2.1" },
     { name = "srt", marker = "extra == 'benchmarks'", specifier = ">=3.5,<4" },
     { name = "streamlit", marker = "extra == 'frontend'", specifier = ">=1.60,<2" },
     { name = "torch", marker = "(sys_platform == 'linux' and extra == 'all') or (sys_platform == 'win32' and extra == 'all')", specifier = ">=2.13,<3", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "(sys_platform == 'linux' and extra == 'local-worker') or (sys_platform == 'win32' and extra == 'local-worker')", specifier = ">=2.13,<3", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "(sys_platform == 'linux' and extra == 'scene') or (sys_platform == 'win32' and extra == 'scene')", specifier = ">=2.13,<3", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torch", marker = "(sys_platform == 'linux' and extra == 'server-worker') or (sys_platform == 'win32' and extra == 'server-worker')", specifier = ">=2.13,<3", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32' and extra == 'all'", specifier = ">=2.13,<3" },
     { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32' and extra == 'local-worker'", specifier = ">=2.13,<3" },
     { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32' and extra == 'scene'", specifier = ">=2.13,<3" },
+    { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32' and extra == 'server-worker'", specifier = ">=2.13,<3" },
     { name = "transformers", marker = "extra == 'all'", specifier = ">=5.14.1,<6" },
     { name = "transformers", marker = "extra == 'local-worker'", specifier = ">=5.14.1,<6" },
     { name = "transformers", marker = "extra == 'scene'", specifier = ">=5.14.1,<6" },
+    { name = "transformers", marker = "extra == 'server-worker'", specifier = ">=5.14.1,<6" },
     { name = "typer", specifier = ">=0.27,<1" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.51,<0.52" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'server-worker'", specifier = ">=0.51,<0.52" },
 ]
-provides-extras = ["storage", "dialogue", "scene", "actor", "all", "local-worker", "server", "test", "frontend", "benchmarks"]
+provides-extras = ["storage", "dialogue", "scene", "actor", "all", "local-worker", "server", "server-worker", "test", "frontend", "benchmarks"]
 
 [[package]]
 name = "watchdog"

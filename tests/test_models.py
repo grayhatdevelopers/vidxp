@@ -401,6 +401,8 @@ class ModelTests(unittest.TestCase):
             capability_allowlist=("acme-capabilities:ocr",),
         )
         self.assertEqual(settings.runtime_backend, "cuda:0")
+        with self.assertRaises(ValidationError):
+            VidXPSettings(chroma_server_url="http://localhost:8000/prefix")
 
     def test_auto_runtime_remains_cpu_until_acceleration_parity_is_enabled(self):
         with patch(

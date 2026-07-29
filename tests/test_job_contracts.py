@@ -207,7 +207,7 @@ class JobContractTests(unittest.TestCase):
         settings = VidXPSettings(
             mode=ApplicationMode.server,
             runtime_backend="cpu",
-            workflow_database_url="sqlite:///jobs.sqlite3",
+            database_url="sqlite:///jobs.sqlite3",
         )
 
         with self.assertRaisesRegex(ValueError, "PostgreSQL"):

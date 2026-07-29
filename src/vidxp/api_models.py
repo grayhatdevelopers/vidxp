@@ -6,6 +6,7 @@ from vidxp.application_models import (
     ApplicationModel,
     CapabilityInfo,
     ErrorDetail,
+    UploadIntent,
 )
 
 
@@ -24,3 +25,10 @@ class ReadinessResponse(ApplicationModel):
 
 class CapabilityList(ApplicationModel):
     items: tuple[CapabilityInfo, ...] = ()
+
+
+class UploadIntentResponse(ApplicationModel):
+    intent: UploadIntent
+    creation_url: str
+    upload_metadata: str
+    resume_url: str | None = None

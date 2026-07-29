@@ -108,7 +108,7 @@ def scoped_request_key(
     material = "\0".join(
         (
             "vidxp-http-request-v1",
-            str(service.settings.layout.root.resolve()),
+            service.settings.repository_id,
             actor.subject,
             operation,
             idempotency_key,

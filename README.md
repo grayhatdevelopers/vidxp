@@ -208,10 +208,13 @@ search is intentionally not mounted in this phase because it would perform
 model work in the API process; the remote query boundary is added with the
 search/MCP phases.
 
-Large resumable uploads remain assigned to the deployment profile's `tusd`
-service. The compatibility endpoint accepts at most 256 MiB. Media imports,
-job creation, and job retries require an opaque `Idempotency-Key`; keys are
-scoped to the repository, authenticated subject, and operation.
+Large remote media uses an upload intent plus the deployment profile's `tusd`
+service. Create the intent at `/api/v1/media/uploads`, then use the returned
+creation URL and `Upload-Metadata` with a normal tus client. Poll the intent URL
+until it supplies a `media_id`. The multipart compatibility endpoint remains
+capped at 256 MiB. Media imports, upload intents, job creation, and job retries
+require an opaque `Idempotency-Key`; keys are scoped to the stable repository
+identity, authenticated subject, and operation.
 
 ```bash
 curl -F "upload=@samplevideo.mp4" \
@@ -234,7 +237,7 @@ per-media ownership rules.
 ```text
 VIDXP_MODE=server
 VIDXP_RUNTIME_BACKEND=cpu
-VIDXP_WORKFLOW_DATABASE_URL=postgresql://...
+VIDXP_DATABASE_URL=postgresql://...
 VIDXP_HTTP_BIND_HOST=0.0.0.0
 VIDXP_HTTP_AUTH_MODE=static
 VIDXP_HTTP_STATIC_BEARER_TOKEN=<random-secret-of-at-least-32-characters>
@@ -258,6 +261,9 @@ docker compose up
 
 See the [installation guide](INSTALLATION_GUIDE.md#run-the-container) for model
 preparation, configuration, and direct `docker run` usage.
+
+For the prebuilt API/worker deployment, see the
+[Coolify deployment guide](docs/deployment/coolify.md).
 
 ## Use VidXP as a Python package
 

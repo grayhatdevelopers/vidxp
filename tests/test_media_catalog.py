@@ -60,6 +60,32 @@ def media_record(
 
 
 class LocalCatalogTests(unittest.TestCase):
+    def test_catalog_enforces_sqlite_integrity_and_schema_version(self):
+        with TemporaryDirectory() as directory:
+            database = Path(directory) / "catalog.sqlite3"
+            catalog = LocalCatalog(database)
+            with catalog.engine.connect() as connection:
+                self.assertEqual(
+                    connection.exec_driver_sql(
+                        "PRAGMA foreign_keys"
+                    ).scalar_one(),
+                    1,
+                )
+                self.assertEqual(
+                    connection.exec_driver_sql(
+                        "PRAGMA busy_timeout"
+                    ).scalar_one(),
+                    30_000,
+                )
+            with catalog.transaction() as connection:
+                connection.exec_driver_sql(
+                    "UPDATE catalog_metadata SET schema_version = 999"
+                )
+            catalog.close()
+
+            with self.assertRaisesRegex(RuntimeError, "incompatible"):
+                LocalCatalog(database)
+
     def test_catalog_persists_and_deduplicates_media_by_checksum(self):
         with TemporaryDirectory() as directory:
             database = Path(directory) / "catalog.sqlite3"

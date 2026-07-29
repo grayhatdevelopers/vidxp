@@ -10,6 +10,7 @@ from vidxp.core.contracts import (
 )
 from vidxp.core.storage import (
     IndexStorage,
+    IndexStorageUnavailableError,
     SnapshotScopedIndexStore,
     directory_size,
     metadata_filter,
@@ -73,6 +74,7 @@ def fake_storage(config, collection):
     storage.config = config
     storage.path = config.index_directory
     storage.client = FakeClient(collection)
+    storage._client_factory = MagicMock(remote=False)
     storage._create = True
     storage._collections = {}
     storage._names = {
@@ -91,6 +93,13 @@ class StorageTests(unittest.TestCase):
             run_id="run-1",
             enabled_modalities=("scene",),
         )
+
+    def test_remote_transport_failures_are_retryable_storage_failures(self):
+        storage = object.__new__(IndexStorage)
+        storage._client_factory = MagicMock(remote=True)
+
+        with self.assertRaises(IndexStorageUnavailableError):
+            storage._call(MagicMock(side_effect=RuntimeError("offline")))
 
     def test_upserts_are_split_into_declared_write_batches(self):
         collection = FakeCollection()

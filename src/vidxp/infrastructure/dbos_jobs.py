@@ -24,6 +24,8 @@ from vidxp.application_models import (
     JobRequest,
     JobState,
     ListJobsCommand,
+    MediaAsset,
+    MediaImportJobResult,
     PrepareModelsJobResult,
     PrepareModelsResult,
     SearchJobResult,
@@ -99,13 +101,26 @@ class DBOSJobBackend:
     def __init__(
         self,
         *,
-        system_database_url: str,
+        system_database_url: str | None,
         application_version: str,
+        system_database_engine: Any | None = None,
         before_access: Callable[[], None] | None = None,
         health_check: Callable[[], None] | None = None,
         stop_executor: Callable[[], bool] | None = None,
     ) -> None:
-        self.client = DBOSClient(system_database_url=system_database_url)
+        self.client = DBOSClient(
+            system_database_url=system_database_url,
+            system_database_engine=system_database_engine,
+            dbos_system_schema=(
+                "dbos"
+                if system_database_engine is not None
+                or (
+                    system_database_url is not None
+                    and not system_database_url.startswith("sqlite:///")
+                )
+                else None
+            ),
+        )
         self.application_version = application_version
         self.before_access = before_access
         self.health_check = health_check
@@ -130,7 +145,52 @@ class DBOSJobBackend:
             existing = self._status(identifier, load_input=True)
             if existing is not None:
                 return self._idempotent_job(existing, request)
-        options: EnqueueOptions = {
+        self.client.enqueue(
+            self._enqueue_options(
+                request=request,
+                queue=queue,
+                identifier=identifier,
+            ),
+            request.model_dump(mode="json"),
+        )
+        status = self._status(identifier, load_input=True)
+        if status is None:
+            raise RuntimeError("DBOS did not persist the submitted workflow.")
+        return self._idempotent_job(status, request)
+
+    def enqueue_in_transaction(
+        self,
+        connection: Any,
+        request: JobRequest,
+        *,
+        queue: JobQueue,
+        job_id: str,
+    ) -> str:
+        """Enqueue through a caller-owned transaction on the DBOS database."""
+
+        self._prepare_access()
+        identifier = _job_id(job_id)
+        handle = self.client.enqueue_in_transaction(
+            connection,
+            self._enqueue_options(
+                request=request,
+                queue=queue,
+                identifier=identifier,
+            ),
+            request.model_dump(mode="json"),
+        )
+        if handle.get_workflow_id() != identifier:
+            raise RuntimeError("DBOS returned an unexpected workflow identity.")
+        return identifier
+
+    def _enqueue_options(
+        self,
+        *,
+        request: JobRequest,
+        queue: JobQueue,
+        identifier: str,
+    ) -> EnqueueOptions:
+        return {
             "workflow_name": WORKFLOW_NAMES[request.kind],
             "queue_name": QUEUE_NAMES[queue],
             "workflow_id": identifier,
@@ -139,11 +199,6 @@ class DBOSJobBackend:
             "class_name": WORKFLOW_CLASS_NAME,
             "instance_name": WORKFLOW_INSTANCE_NAME,
         }
-        self.client.enqueue(options, request.model_dump(mode="json"))
-        status = self._status(identifier, load_input=True)
-        if status is None:
-            raise RuntimeError("DBOS did not persist the submitted workflow.")
-        return self._idempotent_job(status, request)
 
     def get(self, job_id: str) -> Job | None:
         self._prepare_access()
@@ -326,7 +381,11 @@ class DBOSJobBackend:
         )
         result = None
         if state == JobState.succeeded:
-            if kind == JobKind.index:
+            if kind == JobKind.media_import:
+                result = MediaImportJobResult(
+                    result=MediaAsset.model_validate(status.output)
+                )
+            elif kind == JobKind.index:
                 result = IndexJobResult(
                     result=IndexResult.model_validate(status.output)
                 )

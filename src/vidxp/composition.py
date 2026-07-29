@@ -20,6 +20,7 @@ from vidxp.control_plane import ControlPlaneApplication
 from vidxp.infrastructure.local_index import (
     LOCAL_INDEX_RUNTIME_CHECKS,
     LocalIndexBackend,
+    LocalIndexReader,
 )
 from vidxp.infrastructure.local_artifacts import (
     FFmpegSnippetRenderer,
@@ -27,6 +28,8 @@ from vidxp.infrastructure.local_artifacts import (
     LocalArtifactStore,
 )
 from vidxp.infrastructure.local_catalog import LocalCatalog
+from vidxp.infrastructure.sql_catalog import SQLCatalog
+from vidxp.infrastructure.sql_snapshots import SQLSnapshotRepository
 from vidxp.infrastructure.local_media import FFprobeMediaProbe, LocalMediaStore
 from vidxp.infrastructure.local_snapshots import LocalSnapshotRepository
 from vidxp.infrastructure.dbos_jobs import DBOSJobBackend
@@ -43,6 +46,7 @@ from vidxp.repositories import (
     resolve_repository,
 )
 from vidxp.settings import ApplicationMode, VidXPSettings
+from vidxp.upload_service import RemoteUploadService
 from vidxp.workflow_runtime import (
     workflow_application_version,
     workflow_database_url,
@@ -103,31 +107,71 @@ class HttpApplicationContext:
     authenticator: Authenticator
     authorization: AuthorizationPolicy
     settings: VidXPSettings
+    catalog: SQLCatalog | None = None
+    uploads: RemoteUploadService | None = None
 
     def close(self) -> None:
         self.jobs.close()
+        if self.catalog is not None:
+            self.catalog.close()
+
+
+@dataclass(frozen=True)
+class UploadHookContext:
+    jobs: JobService
+    authenticator: Authenticator
+    authorization: AuthorizationPolicy
+    settings: VidXPSettings
+    catalog: SQLCatalog
+    uploads: RemoteUploadService
+
+    def close(self) -> None:
+        self.jobs.close()
+        self.catalog.close()
 
 
 @dataclass(frozen=True)
 class _ControlPlaneComponents:
     registry: CapabilityRegistry
-    catalog: LocalCatalog
+    catalog: SQLCatalog
     media: MediaService
     artifact_store: LocalArtifactStore
     probe: FFprobeMediaProbe
+    snapshots: LocalSnapshotRepository
 
 
 def _create_control_plane_components(
     settings: VidXPSettings,
 ) -> _ControlPlaneComponents:
+    if (
+        settings.mode == ApplicationMode.server
+        and settings.chroma_server_url is None
+    ):
+        raise ValueError("Server applications require a remote Chroma URL.")
     settings.layout.ensure_local_directories()
     registry = create_capability_registry(
         external=settings.external_capabilities,
         allowlist=settings.capability_allowlist,
         platform_runtime_checks=LOCAL_INDEX_RUNTIME_CHECKS,
     )
-    catalog = LocalCatalog(settings.layout.catalog)
+    catalog = (
+        SQLCatalog(
+            workflow_database_url(settings),
+            initialize=False,
+        )
+        if settings.mode == ApplicationMode.server
+        else LocalCatalog(settings.layout.catalog)
+    )
     probe = FFprobeMediaProbe(settings.ffprobe_executable)
+    snapshots = (
+        SQLSnapshotRepository(
+            settings.layout.indexes,
+            engine=catalog.engine,
+            repository_id=settings.repository_id,
+        )
+        if settings.mode == ApplicationMode.server
+        else LocalSnapshotRepository(settings.layout.indexes)
+    )
     return _ControlPlaneComponents(
         registry=registry,
         catalog=catalog,
@@ -136,12 +180,17 @@ def _create_control_plane_components(
             catalog=catalog,
             store=LocalMediaStore(
                 settings.layout.media,
-                max_bytes=settings.max_local_import_bytes,
+                max_bytes=(
+                    settings.upload_max_bytes
+                    if settings.mode == ApplicationMode.server
+                    else settings.max_local_import_bytes
+                ),
             ),
             probe=probe,
         ),
         artifact_store=LocalArtifactStore(settings.layout.artifacts),
         probe=probe,
+        snapshots=snapshots,
     )
 
 
@@ -172,6 +221,8 @@ def create_application(
         components.registry,
         runtime,
         active_settings.layout,
+        chroma_server_url=active_settings.chroma_server_url,
+        snapshot_repository=components.snapshots,
     )
     artifacts = ArtifactService(
         catalog=components.catalog,
@@ -186,6 +237,15 @@ def create_application(
             active_settings.max_snippet_duration_seconds
         ),
     )
+    upload_service = (
+        RemoteUploadService(
+            settings=active_settings,
+            catalog=components.catalog,
+            media=components.media,
+        )
+        if active_settings.mode == ApplicationMode.server
+        else None
+    )
     return VidXPApplication(
         settings=active_settings,
         layout=active_settings.layout,
@@ -195,10 +255,21 @@ def create_application(
         media=components.media,
         artifacts=artifacts,
         index_status=backend.repository.status,
+        completed_upload_importer=(
+            upload_service.import_completed
+            if upload_service is not None
+            else None
+        ),
     )
 
 
-def create_job_service(settings: VidXPSettings) -> JobService:
+def create_job_service(
+    settings: VidXPSettings,
+    *,
+    catalog: SQLCatalog | None = None,
+    snapshots: LocalSnapshotRepository | None = None,
+    include_read_planner: bool = True,
+) -> JobService:
     settings.layout.ensure_local_directories()
     before_access = None
     health_check = None
@@ -211,13 +282,35 @@ def create_job_service(settings: VidXPSettings) -> JobService:
     return JobService(
         settings=settings,
         backend=DBOSJobBackend(
-            system_database_url=workflow_database_url(settings),
+            system_database_url=(
+                None
+                if settings.mode == ApplicationMode.server
+                and catalog is not None
+                else workflow_database_url(settings)
+            ),
+            system_database_engine=(
+                catalog.engine
+                if settings.mode == ApplicationMode.server
+                and catalog is not None
+                else None
+            ),
             application_version=workflow_application_version(),
             before_access=before_access,
             health_check=health_check,
             stop_executor=stop_executor,
         ),
-        read_planner=LocalReadJobPlanner(layout=settings.layout),
+        read_planner=(
+            LocalReadJobPlanner(
+                layout=settings.layout,
+                index=LocalIndexReader(
+                    settings.layout,
+                    chroma_server_url=settings.chroma_server_url,
+                    snapshot_repository=snapshots,
+                ),
+            )
+            if include_read_planner
+            else None
+        ),
     )
 
 
@@ -235,11 +328,23 @@ def create_http_application(
             catalog=components.catalog,
             store=components.artifact_store,
         ),
-        index_status=LocalSnapshotRepository(
-            active_settings.layout.indexes
-        ).status,
+        index_status=components.snapshots.status,
     )
-    jobs = create_job_service(active_settings)
+    jobs = create_job_service(
+        active_settings,
+        catalog=components.catalog,
+        snapshots=components.snapshots,
+    )
+    uploads = (
+        RemoteUploadService(
+            settings=active_settings,
+            catalog=components.catalog,
+            media=components.media,
+            jobs=jobs,
+        )
+        if active_settings.mode == ApplicationMode.server
+        else None
+    )
     authenticator = create_authenticator(active_settings)
     return HttpApplicationContext(
         application=application,
@@ -252,7 +357,45 @@ def create_http_application(
         authenticator=authenticator,
         authorization=AuthorizationPolicy(),
         settings=active_settings,
+        catalog=components.catalog,
+        uploads=uploads,
     )
+
+
+def create_upload_hook_context(
+    settings: VidXPSettings | None = None,
+) -> UploadHookContext:
+    active_settings = settings or VidXPSettings()
+    active_settings.validate_http_server()
+    if active_settings.mode != ApplicationMode.server:
+        raise ValueError("The tusd hook service requires server mode.")
+    catalog = SQLCatalog(
+        workflow_database_url(active_settings),
+        initialize=False,
+    )
+    try:
+        jobs = create_job_service(
+            active_settings,
+            catalog=catalog,
+            include_read_planner=False,
+        )
+        uploads = RemoteUploadService(
+            settings=active_settings,
+            catalog=catalog,
+            media=None,
+            jobs=jobs,
+        )
+        return UploadHookContext(
+            jobs=jobs,
+            authenticator=create_authenticator(active_settings),
+            authorization=AuthorizationPolicy(),
+            settings=active_settings,
+            catalog=catalog,
+            uploads=uploads,
+        )
+    except Exception:
+        catalog.close()
+        raise
 
 
 def create_local_application(

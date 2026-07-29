@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping, TypeVar
+from urllib.parse import urlsplit
 
 from vidxp.core.contracts import (
     CancellationToken,
@@ -9,6 +10,12 @@ from vidxp.core.contracts import (
     StorageRecord,
     batched,
 )
+
+_T = TypeVar("_T")
+
+
+class IndexStorageUnavailableError(RuntimeError):
+    """The configured remote vector store could not serve an operation."""
 
 
 def metadata_filter(
@@ -55,27 +62,68 @@ def _generation_ids(
     return tuple(dict.fromkeys(values))
 
 
-def _client_for_path(path: str):
-    import chromadb
+class ChromaClientFactory:
+    def __init__(self, server_url: str | None = None) -> None:
+        self.server_url = server_url
 
-    return chromadb.PersistentClient(path=path)
+    @property
+    def remote(self) -> bool:
+        return self.server_url is not None
+
+    def create(self, path: Path):
+        import chromadb
+
+        if self.server_url is None:
+            return chromadb.PersistentClient(path=str(path.resolve()))
+        parsed = urlsplit(self.server_url)
+        return chromadb.HttpClient(
+            host=parsed.hostname or "",
+            port=parsed.port or (443 if parsed.scheme == "https" else 80),
+            ssl=parsed.scheme == "https",
+        )
+
+    def heartbeat(self) -> int:
+        client = self.create(Path("."))
+        try:
+            return int(client.heartbeat())
+        finally:
+            close = getattr(client, "close", None)
+            if close is not None:
+                close()
 
 
 class IndexStorage:
-    def __init__(self, config: IndexConfig, *, create: bool = True):
+    def __init__(
+        self,
+        config: IndexConfig,
+        *,
+        create: bool = True,
+        client_factory: ChromaClientFactory | None = None,
+    ):
         self.config = config
         self.path = config.index_directory
         self._create = create
-        if create:
+        self._client_factory = client_factory or ChromaClientFactory()
+        if create and not self._client_factory.remote:
             self.path.mkdir(parents=True, exist_ok=True)
         elif (
-            not self.path.is_dir()
-            or not (self.path / "chroma.sqlite3").is_file()
+            not self._client_factory.remote
+            and (
+                not self.path.is_dir()
+                or not (self.path / "chroma.sqlite3").is_file()
+            )
         ):
             raise FileNotFoundError(
                 f"The committed Chroma store is missing at {self.path}."
             )
-        self.client = _client_for_path(str(self.path.resolve()))
+        try:
+            self.client = self._client_factory.create(self.path)
+        except Exception as exc:
+            if self._client_factory.remote:
+                raise IndexStorageUnavailableError(
+                    "The remote Chroma service is unavailable."
+                ) from exc
+            raise
         self._names = dict(config.collection_names)
         self._collections: dict[str, Any] = {}
 
@@ -99,17 +147,26 @@ class IndexStorage:
         except KeyError as exc:
             raise ValueError(f"Unsupported collection modality: {modality}") from exc
         if self._create:
-            collection = self.client.get_or_create_collection(
+            collection = self._call(
+                self.client.get_or_create_collection,
                 name=name,
                 metadata={"hnsw:space": self.config.vector_distance},
             )
         else:
+            from chromadb.errors import NotFoundError
+
             try:
                 collection = self.client.get_collection(name=name)
-            except Exception as exc:
+            except NotFoundError as exc:
                 raise FileNotFoundError(
                     f"Committed Chroma collection {name!r} is missing."
                 ) from exc
+            except Exception as exc:
+                if self._client_factory.remote:
+                    raise IndexStorageUnavailableError(
+                        "The remote Chroma service is unavailable."
+                    ) from exc
+                raise
         configuration = getattr(collection, "configuration", {}) or {}
         actual_distance = (configuration.get("hnsw") or {}).get("space")
         if (
@@ -123,20 +180,31 @@ class IndexStorage:
         self._collections[modality] = collection
         return collection
 
+    def _call(self, operation: Callable[..., _T], /, *args, **kwargs) -> _T:
+        try:
+            return operation(*args, **kwargs)
+        except Exception as exc:
+            if self._client_factory.remote:
+                raise IndexStorageUnavailableError(
+                    "The remote Chroma service is unavailable."
+                ) from exc
+            raise
+
     def clear(self, modalities: Iterable[str] | None = None) -> None:
         selected = tuple(modalities or self._names)
         existing = {
             getattr(collection, "name", collection)
-            for collection in self.client.list_collections()
+            for collection in self._call(self.client.list_collections)
         }
         for modality in selected:
             name = self._names[modality]
             if name in existing:
-                self.client.delete_collection(name)
+                self._call(self.client.delete_collection, name)
             self._collections.pop(modality, None)
 
     def delete_video(self, modality: str, video_id: str) -> None:
-        self.collection(modality).delete(
+        self._call(
+            self.collection(modality).delete,
             where=metadata_filter(self.config, video_id=video_id),
         )
 
@@ -147,7 +215,8 @@ class IndexStorage:
         video_id: str,
         filters: Mapping[str, Any] | None = None,
     ) -> None:
-        self.collection(modality).delete(
+        self._call(
+            self.collection(modality).delete,
             where=metadata_filter(
                 self.config,
                 video_id=video_id,
@@ -170,7 +239,7 @@ class IndexStorage:
             generation_ids=(generation_id,),
         )
         for modality in selected:
-            self.collection(modality).delete(where=where)
+            self._call(self.collection(modality).delete, where=where)
 
     def upsert(
         self,
@@ -195,7 +264,7 @@ class IndexStorage:
             }
             if any(record.document is not None for record in group):
                 options["documents"] = [record.document or "" for record in group]
-            collection.upsert(**options)
+            self._call(collection.upsert, **options)
             stored += len(group)
         return stored
 
@@ -226,7 +295,7 @@ class IndexStorage:
                 extra=filters,
             ),
         }
-        result = self.collection(modality).query(**options)
+        result = self._call(self.collection(modality).query, **options)
         ids = (result.get("ids") or [[]])[0]
         metadatas = (result.get("metadatas") or [[]])[0]
         distances = (result.get("distances") or [[]])[0]
@@ -260,7 +329,8 @@ class IndexStorage:
             raise ValueError("limit must be positive")
         if offset < 0:
             raise ValueError("offset must be nonnegative")
-        result = self.collection(modality).get(
+        result = self._call(
+            self.collection(modality).get,
             where=metadata_filter(
                 self.config,
                 video_id=video_id,
@@ -288,7 +358,8 @@ class IndexStorage:
         selected_generations = _generation_ids(generation_ids)
         if selected_generations == ():
             return 0
-        result = self.collection(modality).get(
+        result = self._call(
+            self.collection(modality).get,
             where=metadata_filter(
                 self.config,
                 video_id=video_id,
@@ -300,7 +371,7 @@ class IndexStorage:
         return len(result.get("ids") or ())
 
     def size_bytes(self) -> int:
-        return directory_size(self.path)
+        return 0 if self._client_factory.remote else directory_size(self.path)
 
 
 class SnapshotScopedIndexStore:

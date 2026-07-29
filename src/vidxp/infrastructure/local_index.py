@@ -20,7 +20,11 @@ from vidxp.core.contracts import (
 from vidxp.core.indexing_common import ProgressCallback
 from vidxp.core.manifest import MANIFEST_FILE, ManifestStore
 from vidxp.core.runner import index_video
-from vidxp.core.storage import IndexStorage, SnapshotScopedIndexStore
+from vidxp.core.storage import (
+    ChromaClientFactory,
+    IndexStorage,
+    SnapshotScopedIndexStore,
+)
 from vidxp.infrastructure.local_snapshots import LocalSnapshotRepository
 from vidxp.repository_layout import RepositoryLayout
 from vidxp.runtime import ModelRuntime
@@ -49,9 +53,18 @@ LOCAL_INDEX_RUNTIME_CHECKS = (
 class LocalIndexReader:
     """Model-free access to immutable local index snapshots."""
 
-    def __init__(self, layout: RepositoryLayout) -> None:
+    def __init__(
+        self,
+        layout: RepositoryLayout,
+        *,
+        chroma_server_url: str | None = None,
+        snapshot_repository: LocalSnapshotRepository | None = None,
+    ) -> None:
         self.layout = layout
-        self.repository = LocalSnapshotRepository(layout.indexes)
+        self.repository = snapshot_repository or LocalSnapshotRepository(
+            layout.indexes
+        )
+        self.chroma_clients = ChromaClientFactory(chroma_server_url)
 
     def _require_index_directory(self, index_directory: str | Path) -> None:
         if Path(index_directory) != self.layout.indexes:
@@ -140,10 +153,13 @@ class LocalIndexReader:
                     "authoritative manifest."
                 )
 
-    @staticmethod
-    def _open_committed_storage(config: IndexConfig) -> IndexStorage:
+    def _open_committed_storage(self, config: IndexConfig) -> IndexStorage:
         try:
-            return IndexStorage(config, create=False)
+            return IndexStorage(
+                config,
+                create=False,
+                client_factory=self.chroma_clients,
+            )
         except FileNotFoundError as exc:
             raise IndexSchemaError(
                 "The committed Chroma store is missing."
@@ -156,8 +172,15 @@ class LocalIndexBackend(LocalIndexReader):
         registry: CapabilityRegistry,
         runtime: ModelRuntime,
         layout: RepositoryLayout,
+        *,
+        chroma_server_url: str | None = None,
+        snapshot_repository: LocalSnapshotRepository | None = None,
     ) -> None:
-        super().__init__(layout)
+        super().__init__(
+            layout,
+            chroma_server_url=chroma_server_url,
+            snapshot_repository=snapshot_repository,
+        )
         self.registry = registry
         self.runtime = runtime
 
@@ -264,6 +287,7 @@ class LocalIndexBackend(LocalIndexReader):
                             with IndexStorage(
                                 build_config,
                                 create=False,
+                                client_factory=self.chroma_clients,
                             ) as storage:
                                 recovered_counts = (
                                     self._validate_generation_records(
@@ -302,6 +326,7 @@ class LocalIndexBackend(LocalIndexReader):
             self._cleanup_abandoned_generations(
                 repository,
                 build_config,
+                client_factory=self.chroma_clients,
             )
             generation_validated = False
             try:
@@ -310,7 +335,10 @@ class LocalIndexBackend(LocalIndexReader):
                     registry=self.registry,
                     runtime=self.runtime,
                 )
-                with IndexStorage(build_config) as storage:
+                with IndexStorage(
+                    build_config,
+                    client_factory=self.chroma_clients,
+                ) as storage:
                     index_video(
                         str(path),
                         progress_callback=progress,
@@ -397,17 +425,22 @@ class LocalIndexBackend(LocalIndexReader):
             )
         return counts
 
-    @classmethod
+    @staticmethod
     def _cleanup_abandoned_generations(
-        cls,
         repository: LocalSnapshotRepository,
         config: IndexConfig,
+        *,
+        client_factory: ChromaClientFactory | None = None,
     ) -> None:
+        clients = client_factory or ChromaClientFactory()
         completed: set[str] = set()
         incomplete: dict[str, Path] = {}
         if repository.generations.is_dir():
             for path in repository.generations.iterdir():
-                if not path.is_dir() or not cls._is_generation_id(path.name):
+                if (
+                    not path.is_dir()
+                    or not LocalIndexBackend._is_generation_id(path.name)
+                ):
                     continue
                 manifest_path = path / MANIFEST_FILE
                 try:
@@ -435,8 +468,12 @@ class LocalIndexBackend(LocalIndexReader):
             snapshot_sha256=None,
         )
         database = repository.store / "chroma.sqlite3"
-        if database.is_file():
-            with IndexStorage(cleanup_config, create=False) as storage:
+        if clients.remote or database.is_file():
+            with IndexStorage(
+                cleanup_config,
+                create=False,
+                client_factory=clients,
+            ) as storage:
                 stored_ids: set[str] = set()
                 for modality in cleanup_config.enabled_modalities:
                     try:
@@ -447,7 +484,9 @@ class LocalIndexBackend(LocalIndexReader):
                         generation_id = record.get("generation_id")
                         if (
                             isinstance(generation_id, str)
-                            and cls._is_generation_id(generation_id)
+                            and LocalIndexBackend._is_generation_id(
+                                generation_id
+                            )
                         ):
                             stored_ids.add(generation_id)
                 for generation_id in sorted(
@@ -478,8 +517,8 @@ class LocalIndexBackend(LocalIndexReader):
             return False
         return identifier.version == 4 and identifier.hex == value
 
-    @staticmethod
     def _remove_uncommitted_generation(
+        self,
         repository: LocalSnapshotRepository,
         config: IndexConfig,
         *,
@@ -506,7 +545,10 @@ class LocalIndexBackend(LocalIndexReader):
         if state == "complete" and preserve_completed:
             return
         try:
-            with IndexStorage(config) as storage:
+            with IndexStorage(
+                config,
+                client_factory=self.chroma_clients,
+            ) as storage:
                 storage.delete_generation(generation_id)
         except Exception:
             # Cleanup is best-effort and must never replace the build failure.

@@ -10,6 +10,7 @@ PROGRESS_EVENT = "vidxp.progress"
 ERROR_EVENT = "vidxp.error"
 
 WORKFLOW_NAMES: dict[JobKind, str] = {
+    JobKind.media_import: "vidxp.media_import.v1",
     JobKind.index: "vidxp.index.v1",
     JobKind.search: "vidxp.search.v1",
     JobKind.snippet: "vidxp.snippet.v1",

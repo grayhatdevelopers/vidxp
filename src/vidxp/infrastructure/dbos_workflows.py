@@ -18,6 +18,7 @@ from vidxp.application_models import (
     IndexJobRequest,
     JobKind,
     JobProgress,
+    MediaImportJobRequest,
     SnippetJobRequest,
     PrepareModelsJobRequest,
     SearchJobRequest,
@@ -162,6 +163,34 @@ class VidXPWorkerWorkflows(DBOSConfiguredInstance):
 
         return _step_boundary(execute)
 
+    @DBOS.step(name="vidxp.run_media_import.v1")
+    def run_media_import_step(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        def execute() -> dict[str, Any]:
+            request = MediaImportJobRequest.model_validate(payload)
+            _publish_progress(
+                {
+                    "stage": "importing",
+                    "message": "Validating and importing the completed upload.",
+                }
+            )
+            result = self.application.import_completed_upload(
+                request.upload_id
+            )
+            _publish_progress(
+                {
+                    "stage": "complete",
+                    "message": "The uploaded media is ready.",
+                    "current": 1,
+                    "total": 1,
+                }
+            )
+            return result.model_dump(mode="json")
+
+        return _step_boundary(execute)
+
     @DBOS.step(name="vidxp.run_artifact.v1")
     def run_artifact_step(self, payload: dict[str, Any]) -> dict[str, Any]:
         def execute() -> dict[str, Any]:
@@ -244,6 +273,13 @@ class VidXPWorkerWorkflows(DBOSConfiguredInstance):
     @DBOS.workflow(name=WORKFLOW_NAMES[JobKind.index])
     def index_workflow(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.run_index_step(payload)
+
+    @DBOS.workflow(name=WORKFLOW_NAMES[JobKind.media_import])
+    def media_import_workflow(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.run_media_import_step(payload)
 
     @DBOS.workflow(name=WORKFLOW_NAMES[JobKind.snippet])
     def snippet_workflow(self, payload: dict[str, Any]) -> dict[str, Any]:

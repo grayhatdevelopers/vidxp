@@ -305,11 +305,13 @@ Remote upload is a four-stage protocol:
 4. The non-blocking `post-finish` hook idempotently upserts completion by upload ID
    and enqueues the durable ffprobe/import workflow.
 
-Upload URLs and IDs are never placed in application logs, analytics, referrers, or
-MCP results. Hook handlers assume duplicate and out-of-order delivery and never run
-ffprobe or encoding inline. A recovery sweep finds completed uploads whose finish
-hook was missed. A retention workflow removes abandoned intents and quarantine
-objects.
+Application responses carrying upload URLs use `private, no-store` and
+`no-referrer`; hook payloads and MCP results do not persist them. The opaque path is
+still a bearer credential and may appear in an upstream proxy's access log unless
+that deployment disables or redacts logging for `/uploads/`. Hook handlers assume
+duplicate and out-of-order delivery and never run ffprobe or encoding inline. A
+recovery sweep finds completed uploads whose finish hook was missed. A retention
+workflow removes abandoned intents and quarantine objects.
 
 The hook endpoint is private to the Compose network. Client authorization is read
 from the hook request body and redacted; client tokens are never stored in tus
@@ -317,16 +319,18 @@ metadata. Only the tus upload route is public. A completed upload is not a
 `MediaAsset` until durable probe/import succeeds.
 
 The single-node default uses tusd filestore on a named quarantine volume shared
-read-only with the worker after completion. It is not horizontally scalable. The
+read-only with the hook service and worker. It is not horizontally scalable. The
 production/HA profile uses tusd's S3-compatible backend; no local media/artifact
 volume is shared across replicas. Clients upload directly to tusd/storage; FastAPI
 does not proxy large video bodies.
 
-tusd is pinned to a tested release digest, uses an explicit base path/public HTTPS
+tusd 2.10.0 is pinned to a tested release digest, uses an explicit base path/public HTTPS
 URL, a default 50 GiB maximum upload size, per-principal/repository storage quotas,
-restricted CORS origins, and disabled downloads. Deployments may lower the maximum
-but cannot raise it above the storage backend's reviewed hard ceiling. Termination is
-disabled in the first release; cleanup is owned by retention workflows.
+restricted CORS origins, disabled downloads, and disabled concatenation. Deployments
+may lower the maximum but cannot raise it above the storage backend's reviewed hard
+ceiling. Termination remains enabled so tusd owns its file locks and deletion.
+The blocking `pre-terminate` hook prevents deletion while import is processing and
+admits completed/expired cleanup only with the private cleanup credential.
 
 FastAPI retains one small multipart compatibility endpoint with a central hard
 maximum of 256 MiB. It rejects oversized declared `Content-Length` before reading
@@ -408,7 +412,8 @@ The application exposes one `JobService` contract:
 DBOS 2.28 is the durable orchestration, queue, and state backend:
 
 - SQLite for local CLI/UI/desktop
-- Postgres for API/Coolify
+- one Postgres database for the API catalog, uploads, snapshots, and DBOS's
+  isolated `dbos` schema in API/Coolify
 - the same workflow definitions and job contract in both modes
 - separate CPU and GPU worker queues
 - concurrency one by default for indexing per constrained runtime
@@ -979,14 +984,17 @@ Default Coolify stack:
 ```text
 api-mcp
   ├── FastAPI routes
-  ├── private tusd hook callback
   └── MCP Streamable HTTP mount
+
+hooks
+  └── private tusd callback and recovery sweep
 
 worker-cpu
   └── DBOS CPU queue, stable executor ID, concurrency 1
 
 postgres
-  └── DBOS durable workflow state
+  ├── application catalog, uploads, and snapshot metadata
+  └── DBOS durable workflow state in the `dbos` schema
 
 chroma
   └── private vector-search server with its own volume
@@ -1005,10 +1013,11 @@ Optional:
 - external OIDC provider configuration
 
 Postgres, Chroma, and hook endpoints remain private. Only API/MCP and the tus upload
-route are published. Every service has a meaningful Compose healthcheck. Required
-secrets use `${VAR:?required}` rather than insecure defaults. Public routing cannot
-reach the tusd callback path; tests exercise that denial independently of the
-private-network hook flow.
+route are published. Long-running services have healthchecks; one-shot storage,
+migration, and Chroma-readiness gates must complete before their consumers start.
+Required secrets use `${VAR:?required}` rather than insecure defaults. Public
+routing cannot reach the tusd callback path; tests exercise that denial
+independently of the private-network hook flow.
 
 Release artifacts are:
 

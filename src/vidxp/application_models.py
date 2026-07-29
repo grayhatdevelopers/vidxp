@@ -27,6 +27,7 @@ from vidxp.core.identifiers import (
     MimeType,
     RepositoryId as RepositoryId,
     Sha256,
+    UploadIntentId as UploadIntentId,
     VideoId as VideoId,
 )
 from vidxp.core.artifacts import (
@@ -41,6 +42,7 @@ from vidxp.core.media import (
     MediaStream,
     validate_display_filename,
 )
+from vidxp.core.uploads import UploadState
 
 T = TypeVar("T")
 SearchQuery: TypeAlias = Annotated[
@@ -91,6 +93,7 @@ class ErrorCategory(StrEnum):
 
 
 class JobKind(StrEnum):
+    media_import = "media_import"
     index = "index"
     search = "search"
     snippet = "snippet"
@@ -291,6 +294,29 @@ class MediaPage(Page[MediaAsset]):
     pass
 
 
+class CreateUploadIntentCommand(ApplicationModel):
+    original_filename: str = Field(min_length=1, max_length=255)
+    byte_size: int = Field(gt=0)
+    declared_mime_type: MimeType | None = None
+
+    @field_validator("original_filename")
+    @classmethod
+    def _filename_only(cls, value: str) -> str:
+        return validate_display_filename(value)
+
+
+class UploadIntent(ApplicationModel):
+    intent_id: UploadIntentId
+    original_filename: str = Field(min_length=1, max_length=255)
+    byte_size: int = Field(gt=0)
+    declared_mime_type: MimeType | None = None
+    state: UploadState
+    created_at: AwareDatetime
+    expires_at: AwareDatetime
+    job_id: JobId | None = None
+    media_id: MediaId | None = None
+
+
 class CreateIndexCommand(ApplicationModel):
     media_id: MediaId
     modalities: tuple[str, ...]
@@ -486,6 +512,11 @@ class IndexJobRequest(ApplicationModel):
     command: CreateIndexCommand
 
 
+class MediaImportJobRequest(ApplicationModel):
+    kind: Literal[JobKind.media_import] = JobKind.media_import
+    upload_id: Identifier
+
+
 class SearchJobRequest(ApplicationModel):
     kind: Literal[JobKind.search] = JobKind.search
     command: SearchCommand
@@ -509,7 +540,8 @@ class PrepareModelsJobRequest(ApplicationModel):
 
 
 JobRequest = Annotated[
-    IndexJobRequest
+    MediaImportJobRequest
+    | IndexJobRequest
     | SearchJobRequest
     | SnippetJobRequest
     | ActorOverlayJobRequest
@@ -521,6 +553,11 @@ JobRequest = Annotated[
 class IndexJobResult(ApplicationModel):
     kind: Literal[JobKind.index] = JobKind.index
     result: IndexResult
+
+
+class MediaImportJobResult(ApplicationModel):
+    kind: Literal[JobKind.media_import] = JobKind.media_import
+    result: MediaAsset
 
 
 class SearchJobResult(ApplicationModel):
@@ -539,7 +576,8 @@ class PrepareModelsJobResult(ApplicationModel):
 
 
 JobResult = Annotated[
-    IndexJobResult
+    MediaImportJobResult
+    | IndexJobResult
     | SearchJobResult
     | ArtifactJobResult
     | PrepareModelsJobResult,

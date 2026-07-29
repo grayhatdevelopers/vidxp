@@ -75,7 +75,7 @@ class LocalWorkerSupervisorTests(unittest.TestCase):
                     {
                         "VIDXP_HTTP_AUTH_MODE": "static",
                         "VIDXP_HTTP_STATIC_BEARER_TOKEN": "e" * 32,
-                        "VIDXP_WORKFLOW_DATABASE_URL": (
+                        "VIDXP_DATABASE_URL": (
                             "postgresql://user:password@db/vidxp"
                         ),
                         "DBOS__CLOUD": "true",
@@ -133,7 +133,7 @@ class LocalWorkerSupervisorTests(unittest.TestCase):
             {
                 "VIDXP_HTTP_AUTH_MODE": "static",
                 "VIDXP_HTTP_STATIC_BEARER_TOKEN": "e" * 32,
-                "VIDXP_WORKFLOW_DATABASE_URL": (
+                "VIDXP_DATABASE_URL": (
                     "postgresql://user:password@db/vidxp"
                 ),
             },
@@ -142,7 +142,7 @@ class LocalWorkerSupervisorTests(unittest.TestCase):
 
         self.assertEqual(settings.http_auth_mode, "none")
         self.assertIsNone(settings.http_static_bearer_token)
-        self.assertIsNone(settings.workflow_database_url)
+        self.assertIsNone(settings.database_url)
 
     def test_startup_wait_finishes_when_worker_owns_lock(self):
         with TemporaryDirectory() as directory:

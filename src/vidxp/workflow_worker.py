@@ -82,7 +82,7 @@ def _resolved_database_url(
     if override is None:
         return workflow_database_url(settings)
     return workflow_database_url(
-        settings.model_copy(update={"workflow_database_url": override})
+        settings.model_copy(update={"database_url": override})
     )
 
 
@@ -101,6 +101,9 @@ def run_worker(
         "executor_id": executor_id,
         "max_executor_threads": 1 if role == "all" else None,
         "use_listen_notify": not database_url.startswith("sqlite:///"),
+        "dbos_system_schema": (
+            None if database_url.startswith("sqlite:///") else "dbos"
+        ),
     }
     DBOS(config=config)
 

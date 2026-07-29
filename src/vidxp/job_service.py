@@ -14,12 +14,14 @@ from vidxp.application_models import (
     ErrorCategory,
     IndexJobRequest,
     Job,
+    JobKind,
     JobPage,
     JobQueue,
     JobResult,
     JobState,
     InvalidRequestError,
     ListJobsCommand,
+    MediaImportJobRequest,
     PrepareModelsCommand,
     PrepareModelsJobRequest,
     ResourceNotFoundError,
@@ -166,6 +168,25 @@ class JobService:
             job_id=job_id,
         )
 
+    def enqueue_media_import_in_transaction(
+        self,
+        upload_id: str,
+        *,
+        connection: Any,
+        job_id: str,
+    ) -> str:
+        enqueue = getattr(self.backend, "enqueue_in_transaction", None)
+        if enqueue is None:
+            raise RuntimeError(
+                "The durable job backend cannot join an upload transaction."
+            )
+        return enqueue(
+            connection,
+            MediaImportJobRequest(upload_id=upload_id),
+            queue=JobQueue.cpu,
+            job_id=job_id,
+        )
+
     @job_boundary
     def get(self, job_id: str) -> Job:
         job = self.backend.get(job_id)
@@ -180,6 +201,12 @@ class JobService:
     @job_boundary
     def cancel(self, job_id: str) -> Job:
         current = self.get(job_id)
+        if current.kind == JobKind.media_import:
+            raise ApplicationError(
+                "job_not_cancellable",
+                ErrorCategory.conflict,
+                "Media import jobs are managed by the upload lifecycle.",
+            )
         if current.state in {
             JobState.succeeded,
             JobState.failed,
@@ -200,6 +227,12 @@ class JobService:
         retry_id: str | None = None,
     ) -> Job:
         current = self.get(job_id)
+        if current.kind == JobKind.media_import:
+            raise ApplicationError(
+                "job_not_retryable",
+                ErrorCategory.conflict,
+                "Create a new upload intent to retry a media import.",
+            )
         if current.state not in {
             JobState.failed,
             JobState.cancelled,

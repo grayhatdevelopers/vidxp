@@ -42,6 +42,7 @@ dependencies = [
   "pydantic>=2.13.4,<3",
   "pydantic-settings>=2.14.2,<3",
   "rich>=15,<16",
+  "sqlalchemy>=2.0.51,<2.1",
   "typer>=0.27,<1",
 ]
 
@@ -49,6 +50,8 @@ dependencies = [
 vidxp = "vidxp.cli:main"
 vidxp-api = "vidxp.api_cli:main"
 vidxp-worker = "vidxp.workflow_worker:main"
+vidxp-database = "vidxp.database_cli:main"
+vidxp-hooks = "vidxp.hook_cli:main"
 
 [project.urls]
 Repository = "https://github.com/grayhatdevelopers/vidxp"
@@ -67,6 +70,8 @@ vidxp = [
   "benchmarks/requirements.txt",
   "capabilities/*/requirements.txt",
   "requirements/*.txt",
+  "migrations/*.py",
+  "migrations/versions/*.py",
 ]
 
 [tool.setuptools.dynamic.optional-dependencies]
@@ -96,6 +101,13 @@ local-worker = { file = [
   "src/vidxp/capabilities/actor/requirements.txt",
 ] }
 server = { file = ["src/vidxp/requirements/server.txt"] }
+server-worker = { file = [
+  "src/vidxp/requirements/server.txt",
+  "src/vidxp/requirements/server-storage.txt",
+  "src/vidxp/capabilities/dialogue/requirements.txt",
+  "src/vidxp/capabilities/scene/requirements.txt",
+  "src/vidxp/capabilities/actor/requirements.txt",
+] }
 test = { file = ["src/vidxp/requirements/test.txt"] }
 frontend = { file = ["src/vidxp/requirements/frontend.txt"] }
 benchmarks = { file = ["src/vidxp/benchmarks/requirements.txt"] }
