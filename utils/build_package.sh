@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+python utils/sync_desktop_lock_versions.py "${NEW_VERSION:?NEW_VERSION is required}"
+
 BASE_URL="https://github.com/grayhatdevelopers/vidxp/blob/main"
 README="README.md"
 README_BAK="$README.bak"

@@ -3,7 +3,8 @@
 The desktop application is a thin Tauri v2 installer and process supervisor. It
 does not contain a second VidXP implementation:
 
-- the selected capability extras are installed from the exact PyPI release;
+- the selected capability extras are installed from the exact configured
+  package release;
 - the existing Streamlit adapter remains the local human interface;
 - the repository, model cache, managed Python, and package environments use
   platform application-data directories;
@@ -43,6 +44,12 @@ outputs are ignored by Git.
 
 Users select dialogue, scene, and actor capabilities independently. The
 installer always adds the `frontend` extra and uses a single sorted extra set.
+For the current beta, it first acquires only the exact VidXP package from
+TestPyPI with dependency resolution disabled. It then resolves that installed
+package's selected extras from production PyPI. This prevents TestPyPI from
+becoming a competing source for transitive dependencies. The acquisition index
+is derived from the stamped package version: prereleases use TestPyPI and stable
+versions use production PyPI.
 Windows and Linux resolve CPU-only PyTorch wheels using uv's
 `--torch-backend cpu`; macOS uses native PyPI wheels. The custom PyTorch index
 is therefore a resolver input and is not embedded as a package URL, avoiding
@@ -53,10 +60,12 @@ the selected modalities. Setup subprocesses are owned by the Tauri supervisor;
 closing the app cancels the active process and stops a preparation worker before
 exit. No model is bundled in the installer.
 
-FFmpeg and ffprobe are currently validated as system dependencies. Target
-binaries will not be bundled until the exact build provenance, enabled codecs,
-and redistribution licenses are recorded. This is an explicit packaging gate,
-not a silent download from an unaudited third party.
+`vidxp doctor` validates FFmpeg and ffprobe as system dependencies before
+activating the staged runtime. The Python package and desktop bootstrap do not
+install OS packages. Target binaries will not be bundled until the exact build
+provenance, enabled codecs, and redistribution licenses are recorded. This is
+an explicit packaging gate, not a silent download from an unaudited third
+party.
 
 ## Release targets
 

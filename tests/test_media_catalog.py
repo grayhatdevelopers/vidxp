@@ -66,6 +66,21 @@ class LocalCatalogTests(unittest.TestCase):
             catalog = LocalCatalog(database)
             with catalog.engine.connect() as connection:
                 self.assertEqual(
+                    set(
+                        connection.exec_driver_sql(
+                            "SELECT name FROM sqlite_master "
+                            "WHERE type = 'table'"
+                        ).scalars()
+                    ),
+                    {
+                        "artifact_requests",
+                        "artifacts",
+                        "catalog_metadata",
+                        "media",
+                        "media_import_requests",
+                    },
+                )
+                self.assertEqual(
                     connection.exec_driver_sql(
                         "PRAGMA foreign_keys"
                     ).scalar_one(),

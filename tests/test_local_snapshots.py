@@ -35,7 +35,13 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
             storage_directory=self.repository.store,
         )
 
-    def generation(self, media_id: str, *, input_sha: str):
+    def generation(
+        self,
+        media_id: str,
+        *,
+        input_sha: str,
+        store_size_bytes_at_commit: int | None = 123,
+    ):
         generation_id = self.repository.new_generation_id()
         config = replace(
             self.config,
@@ -49,6 +55,7 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
             config,
             media_id=media_id,
             input_sha=input_sha,
+            store_size_bytes_at_commit=store_size_bytes_at_commit,
         )
 
     def write_generation(
@@ -58,6 +65,7 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
         media_id: str,
         input_sha: str,
         record_counts: dict[str, int] | None = None,
+        store_size_bytes_at_commit: int | None = 123,
     ):
         now = datetime.now(timezone.utc).isoformat()
         manifest = {
@@ -104,7 +112,7 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
                 modality: (record_counts or {}).get(modality, 0)
                 for modality in config.enabled_modalities
             },
-            "store_size_bytes_at_commit": 123,
+            "store_size_bytes_at_commit": store_size_bytes_at_commit,
         }
         write_json_atomic(
             config.run_directory / MANIFEST_FILE,
@@ -113,6 +121,20 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
         return self.repository.generation_reference(
             generation_id=str(config.generation_id),
             media_id=media_id,
+        )
+
+    def test_unknown_store_size_round_trips_through_snapshot_metadata(self):
+        config, reference = self.generation(
+            "a",
+            input_sha="a" * 64,
+            store_size_bytes_at_commit=None,
+        )
+
+        snapshot = self.repository.publish_generation(reference, config)
+
+        self.assertIsNone(reference.store_size_bytes_at_commit)
+        self.assertIsNone(
+            snapshot.generations["a"].store_size_bytes_at_commit
         )
 
     def test_add_reindex_remove_and_clear_publish_immutable_snapshots(self):

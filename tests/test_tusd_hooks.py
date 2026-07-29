@@ -8,7 +8,7 @@ from vidxp.application_models import (
 )
 from vidxp.authentication import StaticBearerAuthenticator
 from vidxp.authorization import AuthorizationPolicy
-from vidxp.infrastructure.local_catalog import LocalCatalog
+from vidxp.infrastructure.sql_catalog import SQLCatalog
 from vidxp.infrastructure.tusd_contracts import TusdHookRequest
 from vidxp.settings import VidXPSettings
 from vidxp.tusd_hooks import TusdHookService
@@ -29,7 +29,10 @@ class _Jobs:
 
 def _hooks(tmp_path: Path):
     token = "t" * 32
-    catalog = LocalCatalog(tmp_path / "catalog.sqlite3")
+    catalog = SQLCatalog(
+        f"sqlite:///{(tmp_path / 'server.sqlite3').resolve().as_posix()}",
+        initialize=True,
+    )
     settings = VidXPSettings(
         repository_root=tmp_path,
         upload_public_endpoint="http://localhost:8080/uploads/",

@@ -10,7 +10,8 @@ dependencies are never installed accidentally.
 - Apple Silicon macOS 14 or newer
 - Linux x86-64
 - Windows x86-64
-- FFmpeg and ffprobe on `PATH` for video/audio processing
+- FFmpeg and ffprobe on `PATH` for video/audio processing. VidXP wheels do not
+  install or modify operating-system packages.
 
 The actor capability uses OpenCV YuNet and SFace. It does not use `dlib`, CMake,
 or a local C++ compiler.
@@ -120,7 +121,7 @@ Model weights are cached separately from the Python environment:
 | Capability | Provider/model |
 |---|---|
 | Dialogue embeddings | `Qwen/Qwen3-Embedding-0.6B` |
-| Transcription | `mobiuslabsgmbh/faster-whisper-large-v3-turbo` |
+| Transcription | `dropbox-dash/faster-whisper-large-v3-turbo` |
 | Scene search | `google/siglip2-base-patch16-224` |
 | Actor detection | OpenCV Zoo YuNet |
 | Actor recognition | OpenCV Zoo SFace |
@@ -192,15 +193,18 @@ VIDXP_PORT=8501
 VIDXP_DEVICE=cpu
 ```
 
-The separate API+MCP/Coolify composition belongs to the later server phases and
-is not claimed by this image yet.
+The local image above is distinct from the prebuilt server topology. Stable
+releases also publish `<release>-control` and `<release>-worker` images used by
+the [Coolify deployment](docs/deployment/coolify.md).
 
 ## Common problems
 
 ### FFmpeg is not found
 
-Run `ffmpeg -version` and `ffprobe -version` in the same terminal. Install
-FFmpeg or add its executable directory to `PATH`, then rerun `vidxp doctor`.
+Run `vidxp doctor`; it checks both executables without downloading or changing
+the machine. If either check fails, run `ffmpeg -version` and `ffprobe -version`
+in the same terminal, install FFmpeg with the operating-system package manager
+or add its executable directory to `PATH`, then rerun the doctor command.
 
 ### Linux pulls CUDA or NVIDIA packages
 

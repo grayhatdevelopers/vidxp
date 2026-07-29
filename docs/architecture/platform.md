@@ -632,7 +632,7 @@ composition root and is sorted deterministically.
   blocks current Python and constrains an older Torch family. The first replacement
   is latest stable `faster-whisper`/CTranslate2 using batched transcription, VAD, and
   word timestamps. The default is
-  `mobiuslabsgmbh/faster-whisper-large-v3-turbo` at immutable revision
+  `dropbox-dash/faster-whisper-large-v3-turbo` at immutable revision
   `0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf`. Its transcript/timestamp output is
   tested against the existing
   dialogue contract. Forced alignment is an optional provider behind a separate

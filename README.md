@@ -80,10 +80,12 @@ Some ideas on how to use VidXP:
 
 ## Quick start
 
-VidXP supports Python 3.11 through 3.14 and requires FFmpeg for media
-processing. See the [installation guide](INSTALLATION_GUIDE.md) for
-platform-specific local-worker installation, model preparation, and
-troubleshooting.
+VidXP supports Python 3.11 through 3.14. Media operations require the
+`ffmpeg` and `ffprobe` executables on `PATH`; Python wheels intentionally do
+not install operating-system packages. `vidxp doctor` reports either missing
+executable before media work begins. See the
+[installation guide](INSTALLATION_GUIDE.md) for platform-specific
+local-worker installation, model preparation, and troubleshooting.
 
 Install the lightweight command line in an isolated environment with
 [pipx](https://packaging.python.org/en/latest/guides/installing-stand-alone-command-line-tools/).
@@ -361,7 +363,7 @@ VidXP is an evolving beta. We'd love to hear your feedback and where you'd like 
 | Capability | Model |
 |---|---|
 | Dialogue embeddings | `Qwen/Qwen3-Embedding-0.6B` |
-| Transcription | `mobiuslabsgmbh/faster-whisper-large-v3-turbo` |
+| Transcription | `dropbox-dash/faster-whisper-large-v3-turbo` |
 | Scene search | `google/siglip2-base-patch16-224` |
 | Actor detection | OpenCV Zoo YuNet |
 | Actor recognition | OpenCV Zoo SFace |

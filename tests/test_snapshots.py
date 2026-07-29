@@ -142,6 +142,13 @@ class SnapshotModelTests(unittest.TestCase):
                 record_counts={"dialogue": -1, "scene": 1}
             )
 
+    def test_generation_store_size_may_be_unknown(self):
+        reference = self.generation_reference(
+            store_size_bytes_at_commit=None
+        )
+
+        self.assertIsNone(reference.store_size_bytes_at_commit)
+
     def test_snapshot_configuration_must_be_json_safe(self):
         with self.assertRaises(ValidationError):
             self.index_snapshot(configuration={"runtime": object()})

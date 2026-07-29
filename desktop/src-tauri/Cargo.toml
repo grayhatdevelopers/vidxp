@@ -1,6 +1,6 @@
 [package]
 name = "vidxp-desktop"
-version = "0.2.1-beta.1"
+version = "0.2.1-b.1"
 description = "A thin desktop installer and supervisor for VidXP"
 edition = "2024"
 rust-version = "1.85"

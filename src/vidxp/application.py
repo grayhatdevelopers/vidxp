@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
+from shutil import which
 from typing import Any, Callable, Iterator, Mapping, cast
 
 from pydantic import BaseModel
@@ -10,12 +11,14 @@ from vidxp.application_boundary import application_boundary
 from vidxp.application_models import (
     ApplicationError,
     Artifact,
+    CapabilityDependencyCheck,
     ComponentReadiness,
     CreateIndexCommand,
     CreateActorOverlayCommand,
     CreateSnippetCommand,
     DependencyCheckCommand,
     DependencyCheckResult,
+    DependencyKind,
     DependencyUnavailableError,
     ErrorCategory,
     FusedSearchResult,
@@ -244,15 +247,58 @@ class VidXPApplication(ControlPlaneApplication):
         command: DependencyCheckCommand,
     ) -> DependencyCheckResult:
         selected = self.registry.validate_names(command.modalities)
-        checks = self.registry.dependency_checks(
-            selected,
-            include_runtime_checks=command.include_runtime_checks,
+        checks = (
+            *self.registry.dependency_checks(
+                selected,
+                include_runtime_checks=command.include_runtime_checks,
+            ),
+            *(
+                self._media_runtime_checks()
+                if command.include_runtime_checks
+                else ()
+            ),
         )
         return DependencyCheckResult(
             ok=all(check.ok for check in checks),
             modalities=selected,
             checks=checks,
         )
+
+    def _media_runtime_checks(
+        self,
+    ) -> tuple[CapabilityDependencyCheck, ...]:
+        checks = []
+        for name, executable, setting in (
+            (
+                "ffmpeg",
+                self.settings.ffmpeg_executable,
+                "VIDXP_FFMPEG_EXECUTABLE",
+            ),
+            (
+                "ffprobe",
+                self.settings.ffprobe_executable,
+                "VIDXP_FFPROBE_EXECUTABLE",
+            ),
+        ):
+            resolved = which(executable)
+            checks.append(
+                CapabilityDependencyCheck(
+                    capability="media",
+                    kind=DependencyKind.runtime,
+                    name=name,
+                    ok=resolved is not None,
+                    error=(
+                        None
+                        if resolved is not None
+                        else (
+                            f"{executable!r} is unavailable. Install FFmpeg "
+                            "with the operating-system package manager or set "
+                            f"{setting}; VidXP does not install OS packages."
+                        )
+                    ),
+                )
+            )
+        return tuple(checks)
 
     @application_boundary
     def prepare_models(

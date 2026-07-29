@@ -137,7 +137,16 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.semantic_release]
-version_toml = ["pyproject.toml:project.version"]
+version_toml = [
+  "pyproject.toml:project.version",
+  "desktop/src-tauri/Cargo.toml:package.version",
+]
+version_variables = [
+  "desktop/package.json:version",
+  "desktop/runtime-manifest.json:desktop_version",
+  "desktop/runtime-manifest.json:package_version",
+  "desktop/src-tauri/tauri.conf.json:version",
+]
 tag_format = "v{version}"
 build_command = "bash ./utils/build_package.sh"
 build_command_env = ["BUILD_CHANGELOG", "BUILD_RELEASE_NOTES"]

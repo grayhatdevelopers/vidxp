@@ -23,7 +23,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
+    with:
+      checkout_ref: ${{ github.sha }}
+      full: true
+
   prerelease:
+    needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -172,6 +172,12 @@ class CompletedGenerationManifestTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     self.validate(payload)
 
+        unknown_size = completed_manifest()
+        unknown_size["store_size_bytes_at_commit"] = None
+        self.assertIsNone(
+            self.validate(unknown_size).store_size_bytes_at_commit
+        )
+
         for field in ("processed_frames", "store_size_bytes_at_commit"):
             with self.subTest(field=field):
                 payload = completed_manifest()

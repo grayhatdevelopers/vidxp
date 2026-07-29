@@ -45,7 +45,7 @@ struct RuntimeManifest {
     desktop_version: String,
     package_name: String,
     package_version: String,
-    package_index: String,
+    dependency_index: String,
     python_version: String,
     uv_version: String,
     always_install_extras: Vec<String>,
@@ -186,6 +186,58 @@ fn package_specification(manifest: &RuntimeManifest, capabilities: &[String]) ->
         extras.into_iter().collect::<Vec<_>>().join(","),
         manifest.package_version
     )
+}
+
+fn base_package_specification(manifest: &RuntimeManifest) -> String {
+    format!("{}=={}", manifest.package_name, manifest.package_version)
+}
+
+fn package_index(package_version: &str) -> &'static str {
+    if package_version.split_once('-').is_some() {
+        "https://test.pypi.org/simple"
+    } else {
+        "https://pypi.org/simple"
+    }
+}
+
+fn package_acquisition_arguments(manifest: &RuntimeManifest, python: &Path) -> Vec<String> {
+    vec![
+        "pip".into(),
+        "install".into(),
+        "--python".into(),
+        python.to_string_lossy().into_owned(),
+        "--no-config".into(),
+        "--no-deps".into(),
+        "--default-index".into(),
+        package_index(&manifest.package_version).into(),
+        "--index-strategy".into(),
+        "first-index".into(),
+        base_package_specification(manifest),
+    ]
+}
+
+fn dependency_installation_arguments(
+    manifest: &RuntimeManifest,
+    capabilities: &[String],
+    python: &Path,
+    cpu_torch: bool,
+) -> Vec<String> {
+    let mut arguments = vec![
+        "pip".into(),
+        "install".into(),
+        "--python".into(),
+        python.to_string_lossy().into_owned(),
+        "--no-config".into(),
+        "--default-index".into(),
+        manifest.dependency_index.clone(),
+        "--index-strategy".into(),
+        "first-index".into(),
+    ];
+    if cpu_torch {
+        arguments.extend(["--torch-backend".into(), "cpu".into()]);
+    }
+    arguments.push(package_specification(manifest, capabilities));
+    arguments
 }
 
 fn capability_command_arguments(
@@ -529,28 +581,25 @@ async fn install_runtime(
         )
         .await?;
 
-        let mut install_arguments = vec![
-            "pip".into(),
-            "install".into(),
-            "--python".into(),
-            executable(&staging, "python")
-                .to_string_lossy()
-                .into_owned(),
-            "--no-config".into(),
-            "--default-index".into(),
-            manifest.package_index.clone(),
-            "--index-strategy".into(),
-            "first-index".into(),
-        ];
-        if !cfg!(target_os = "macos") {
-            install_arguments.extend(["--torch-backend".into(), "cpu".into()]);
-        }
-        install_arguments.push(package_specification(&manifest, &capabilities));
         uv_output(
             &app,
             &state,
             &paths,
-            install_arguments,
+            package_acquisition_arguments(&manifest, &executable(&staging, "python")),
+            "VidXP package acquisition",
+        )
+        .await?;
+
+        uv_output(
+            &app,
+            &state,
+            &paths,
+            dependency_installation_arguments(
+                &manifest,
+                &capabilities,
+                &executable(&staging, "python"),
+                !cfg!(target_os = "macos"),
+            ),
             "VidXP package installation",
         )
         .await?;
@@ -772,8 +821,11 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        capability_command_arguments, manifest, package_specification, selected_capabilities,
+        base_package_specification, capability_command_arguments,
+        dependency_installation_arguments, manifest, package_acquisition_arguments, package_index,
+        package_specification, selected_capabilities,
     };
+    use std::path::Path;
 
     #[test]
     fn capability_selection_is_sorted_and_rejects_unknown_values() {
@@ -792,10 +844,40 @@ mod tests {
     fn package_specification_has_one_sorted_extra_set() {
         let manifest = manifest().expect("manifest");
 
+        assert_eq!(base_package_specification(&manifest), "vidxp==0.2.1-b.1");
         assert_eq!(
             package_specification(&manifest, &["scene".into(), "dialogue".into()]),
-            "vidxp[dialogue,frontend,scene]==0.2.1b1"
+            "vidxp[dialogue,frontend,scene]==0.2.1-b.1"
         );
+    }
+
+    #[test]
+    fn prerelease_package_and_dependencies_use_separate_indexes() {
+        let manifest = manifest().expect("manifest");
+        let python = Path::new("managed-python");
+        let acquisition = package_acquisition_arguments(&manifest, python);
+        let dependencies =
+            dependency_installation_arguments(&manifest, &["scene".into()], python, true);
+
+        assert_eq!(
+            package_index(&manifest.package_version),
+            "https://test.pypi.org/simple"
+        );
+        assert_eq!(package_index("0.3.0"), "https://pypi.org/simple");
+        assert_eq!(manifest.dependency_index, "https://pypi.org/simple");
+        assert!(acquisition.iter().any(|item| item == "--no-deps"));
+        assert!(
+            acquisition
+                .iter()
+                .any(|item| item == "https://test.pypi.org/simple")
+        );
+        assert!(!dependencies.iter().any(|item| item == "--no-deps"));
+        assert!(
+            dependencies
+                .iter()
+                .any(|item| item == &manifest.dependency_index)
+        );
+        assert!(dependencies.iter().any(|item| item == "--torch-backend"));
     }
 
     #[test]

@@ -39,7 +39,7 @@ class GenerationReference(_SnapshotModel):
     config_fingerprint: Sha256
     modalities: tuple[Identifier, ...] = Field(min_length=1)
     record_counts: dict[Identifier, int]
-    store_size_bytes_at_commit: int = Field(ge=0)
+    store_size_bytes_at_commit: int | None = Field(ge=0)
 
     @model_validator(mode="after")
     def _validate_record_counts(self) -> GenerationReference:

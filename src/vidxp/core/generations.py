@@ -84,7 +84,7 @@ class CompletedGenerationManifest(_GenerationManifestModel):
     interrupted_videos: tuple[Identifier, ...] = Field(max_length=0)
     processed_frames: NonNegativeInt
     record_counts: dict[Identifier, NonNegativeInt]
-    store_size_bytes_at_commit: NonNegativeInt
+    store_size_bytes_at_commit: NonNegativeInt | None
 
     @model_validator(mode="after")
     def _validate_completed_generation(self) -> CompletedGenerationManifest:

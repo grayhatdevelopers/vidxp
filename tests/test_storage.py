@@ -1,7 +1,15 @@
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock
+
+import httpx
+from chromadb.errors import (
+    InvalidArgumentError,
+    InvalidDimensionException,
+    VersionMismatchError,
+)
 
 from vidxp.core.contracts import (
     CancellationToken,
@@ -99,7 +107,45 @@ class StorageTests(unittest.TestCase):
         storage._client_factory = MagicMock(remote=True)
 
         with self.assertRaises(IndexStorageUnavailableError):
-            storage._call(MagicMock(side_effect=RuntimeError("offline")))
+            storage._call(
+                MagicMock(side_effect=httpx.ConnectError("offline"))
+            )
+
+    def test_remote_validation_failures_retain_their_original_type(self):
+        storage = object.__new__(IndexStorage)
+        storage._client_factory = MagicMock(remote=True)
+
+        for failure in (
+            InvalidArgumentError("invalid filter"),
+            InvalidDimensionException("wrong embedding dimensions"),
+            VersionMismatchError("incompatible client and server"),
+            ValueError("invalid schema"),
+        ):
+            with self.subTest(failure=type(failure).__name__):
+                with self.assertRaises(type(failure)):
+                    storage._call(MagicMock(side_effect=failure))
+
+    def test_read_only_storage_uses_the_public_collection_api(self):
+        with TemporaryDirectory() as directory:
+            client = MagicMock()
+            client.list_collections.return_value = ["scene"]
+            factory = MagicMock(remote=False)
+            factory.create.return_value = client
+
+            with IndexStorage(
+                replace(self.config, storage_directory=directory),
+                create=False,
+                client_factory=factory,
+            ):
+                pass
+
+            client.list_collections.assert_called_once_with()
+
+    def test_remote_store_size_is_unknown(self):
+        storage = object.__new__(IndexStorage)
+        storage._client_factory = MagicMock(remote=True)
+
+        self.assertIsNone(storage.size_bytes())
 
     def test_upserts_are_split_into_declared_write_batches(self):
         collection = FakeCollection()

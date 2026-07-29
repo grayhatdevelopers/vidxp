@@ -941,6 +941,28 @@ class ApplicationTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.modalities, ("scene",))
 
+    @patch("vidxp.application.which", return_value=None)
+    def test_dependency_check_reports_missing_media_executables(self, _which):
+        registry = create_capability_registry()
+        registry.dependency_checks = Mock(return_value=())
+        application, _ = self.application("unused", registry=registry)
+
+        result = application.check_dependencies(
+            DependencyCheckCommand(modalities=("scene",))
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [(check.capability, check.name) for check in result.checks],
+            [("media", "ffmpeg"), ("media", "ffprobe")],
+        )
+        self.assertTrue(
+            all(
+                "does not install OS packages" in (check.error or "")
+                for check in result.checks
+            )
+        )
+
     def test_runtime_readiness_includes_dependency_failures(self):
         application, _ = self.application("unused")
         application.control_plane_readiness = Mock(
@@ -1092,6 +1114,7 @@ class ApplicationTests(unittest.TestCase):
                 ModelRuntime(settings),
                 settings.layout,
             )
+            cleanup_storage = MagicMock()
             storage = MagicMock()
             storage.__enter__.return_value = storage
             config = IndexConfig.local(
@@ -1107,7 +1130,7 @@ class ApplicationTests(unittest.TestCase):
             with (
                 patch(
                     "vidxp.infrastructure.local_index.IndexStorage",
-                    return_value=storage,
+                    side_effect=(cleanup_storage, storage),
                 ),
                 patch(
                     "vidxp.infrastructure.local_index.index_video",
@@ -1153,6 +1176,7 @@ class ApplicationTests(unittest.TestCase):
             self.assertIsNotNone(
                 index_video.call_args.kwargs["config"].generation_id
             )
+            cleanup_storage.__exit__.assert_called_once()
             storage.__exit__.assert_called_once()
 
 

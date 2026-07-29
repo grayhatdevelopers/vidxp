@@ -11,7 +11,6 @@ from filelock import FileLock, Timeout
 from pydantic import ValidationError
 
 from vidxp.core.contracts import (
-    INDEX_SCHEMA_VERSION,
     IndexConfig,
     IndexSchemaError,
 )
@@ -25,7 +24,7 @@ from vidxp.core.snapshots import (
 from vidxp.index_state import (
     IndexNotReadyError,
     IndexingInProgressError,
-    bounded_media_ids,
+    snapshot_status,
 )
 from vidxp.repository_layout import RepositoryLayout
 
@@ -480,26 +479,4 @@ class LocalSnapshotRepository:
         resolved = self._read_active()
         if resolved is None:
             return None
-        _, snapshot = resolved
-        media_ids = sorted(snapshot.generations)
-        ready = bool(media_ids)
-        return {
-            "schema_version": 1,
-            "state": "ready" if ready else "empty",
-            "stage": "status",
-            "message": (
-                f"The active snapshot contains {len(media_ids)} media item(s)."
-                if ready
-                else "The active index snapshot is empty."
-            ),
-            "updated_at": snapshot.created_at.isoformat(),
-            "summary": {
-                "index_schema_version": INDEX_SCHEMA_VERSION,
-                "snapshot_id": snapshot.snapshot_id,
-                "media_count": len(media_ids),
-                **bounded_media_ids(media_ids),
-                "modalities": tuple(
-                    snapshot.configuration.get("enabled_modalities", ())
-                ),
-            },
-        }
+        return snapshot_status(resolved[1])

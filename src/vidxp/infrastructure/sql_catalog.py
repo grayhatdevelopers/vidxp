@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
-import json
 from typing import Any
 
 from sqlalchemy import Engine, create_engine, delete, event, func, insert, select, update
@@ -44,9 +43,7 @@ def _payload(value: Any) -> dict[str, Any]:
 
 
 def _record(model: Any, value: Any) -> Any:
-    return model.model_validate_json(
-        json.dumps(_payload(value), separators=(",", ":"))
-    )
+    return model.model_validate(_payload(value), strict=False)
 
 
 def _upload_record(row: Any) -> UploadIntentRecord:

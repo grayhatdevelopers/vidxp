@@ -467,39 +467,41 @@ class LocalIndexBackend(LocalIndexReader):
             snapshot_id=None,
             snapshot_sha256=None,
         )
-        database = repository.store / "chroma.sqlite3"
-        if clients.remote or database.is_file():
-            with IndexStorage(
-                cleanup_config,
-                create=False,
-                client_factory=clients,
-            ) as storage:
-                stored_ids: set[str] = set()
-                for modality in cleanup_config.enabled_modalities:
-                    try:
-                        records = storage.records(modality)
-                    except FileNotFoundError:
-                        continue
-                    for record in records:
-                        generation_id = record.get("generation_id")
-                        if (
-                            isinstance(generation_id, str)
-                            and LocalIndexBackend._is_generation_id(
-                                generation_id
-                            )
-                        ):
-                            stored_ids.add(generation_id)
-                for generation_id in sorted(
-                    set(incomplete) | (stored_ids - completed)
-                ):
+        if clients.remote or repository.store.is_dir():
+            try:
+                with IndexStorage(
+                    cleanup_config,
+                    create=False,
+                    client_factory=clients,
+                ) as storage:
+                    stored_ids: set[str] = set()
                     for modality in cleanup_config.enabled_modalities:
                         try:
-                            storage.delete_generation(
-                                generation_id,
-                                modalities=(modality,),
-                            )
+                            records = storage.records(modality)
                         except FileNotFoundError:
                             continue
+                        for record in records:
+                            generation_id = record.get("generation_id")
+                            if (
+                                isinstance(generation_id, str)
+                                and LocalIndexBackend._is_generation_id(
+                                    generation_id
+                                )
+                            ):
+                                stored_ids.add(generation_id)
+                    for generation_id in sorted(
+                        set(incomplete) | (stored_ids - completed)
+                    ):
+                        for modality in cleanup_config.enabled_modalities:
+                            try:
+                                storage.delete_generation(
+                                    generation_id,
+                                    modalities=(modality,),
+                                )
+                            except FileNotFoundError:
+                                continue
+            except FileNotFoundError:
+                pass
 
         for generation_id, path in incomplete.items():
             resolved = path.resolve()

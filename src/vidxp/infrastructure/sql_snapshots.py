@@ -13,14 +13,14 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from pydantic import ValidationError
 
-from vidxp.core.contracts import INDEX_SCHEMA_VERSION, IndexConfig, IndexSchemaError
+from vidxp.core.contracts import IndexConfig, IndexSchemaError
 from vidxp.core.generations import CompletedGenerationManifest
 from vidxp.core.manifest import MANIFEST_FILE, sha256_file
 from vidxp.core.snapshots import GenerationReference, IndexSnapshot
 from vidxp.index_state import (
     IndexNotReadyError,
     IndexingInProgressError,
-    bounded_media_ids,
+    snapshot_status,
 )
 from vidxp.infrastructure.local_snapshots import LocalSnapshotRepository
 from vidxp.infrastructure.sql_tables import (
@@ -157,9 +157,7 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
                 f"Index snapshot {snapshot_id} failed integrity validation."
             )
         try:
-            snapshot = IndexSnapshot.model_validate_json(
-                json.dumps(row.payload, separators=(",", ":"))
-            )
+            snapshot = IndexSnapshot.model_validate(row.payload, strict=False)
         except ValueError as exc:
             raise IndexSchemaError(
                 f"Index snapshot {snapshot_id} is invalid."
@@ -184,9 +182,7 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
             ).scalar_one_or_none()
         if (
             payload is None
-            or GenerationReference.model_validate_json(
-                json.dumps(payload, separators=(",", ":"))
-            )
+            or GenerationReference.model_validate(payload, strict=False)
             != reference
         ):
             raise IndexSchemaError(
@@ -237,23 +233,6 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
             config_fingerprint=reference.config_fingerprint,
             configuration=self.snapshot_configuration(config),
         )
-
-    def require_compatible_profile(
-        self,
-        *,
-        media_id: str,
-        config_fingerprint: str,
-    ) -> IndexSnapshot | None:
-        active = self.read_active()
-        if active is not None and (
-            set(active.generations) - {media_id}
-            and active.config_fingerprint != config_fingerprint
-        ):
-            raise IndexSchemaError(
-                "All media in one active snapshot must use the same index "
-                "profile. Re-index or clear the other media first."
-            )
-        return active
 
     def remove(self, media_id: str) -> bool:
         active = self.read_active()
@@ -328,9 +307,7 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
                         )
                     )
                 elif (
-                    GenerationReference.model_validate_json(
-                        json.dumps(existing, separators=(",", ":"))
-                    )
+                    GenerationReference.model_validate(existing, strict=False)
                     != replacement
                 ):
                     raise IndexSchemaError(
@@ -387,49 +364,8 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
             snapshot,
         )
 
-    def config_for_snapshot(
-        self,
-        snapshot_id: str,
-        *,
-        snapshot_sha256: str,
-        device: str,
-    ) -> IndexConfig:
-        snapshot = self.read_snapshot(
-            snapshot_id,
-            expected_sha256=snapshot_sha256,
-        )
-        if not snapshot.generations:
-            raise IndexNotReadyError(
-                "The requested index snapshot contains no media."
-            )
-        return self._config_for_snapshot(
-            snapshot,
-            snapshot_sha256=snapshot_sha256,
-            device=device,
-        )
-
     def status(self) -> dict[str, Any] | None:
         snapshot = self.read_active()
         if snapshot is None:
             return None
-        media_ids = sorted(snapshot.generations)
-        return {
-            "schema_version": 1,
-            "state": "ready" if media_ids else "empty",
-            "stage": "status",
-            "message": (
-                f"The active snapshot contains {len(media_ids)} media item(s)."
-                if media_ids
-                else "The active index snapshot is empty."
-            ),
-            "updated_at": snapshot.created_at.isoformat(),
-            "summary": {
-                "index_schema_version": INDEX_SCHEMA_VERSION,
-                "snapshot_id": snapshot.snapshot_id,
-                "media_count": len(media_ids),
-                **bounded_media_ids(media_ids),
-                "modalities": tuple(
-                    snapshot.configuration.get("enabled_modalities", ())
-                ),
-            },
-        }
+        return snapshot_status(snapshot)

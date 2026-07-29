@@ -5,6 +5,13 @@ from pathlib import Path
 from sqlalchemy import Column, Integer, MetaData, Table, insert, select, update
 
 from vidxp.infrastructure.sql_catalog import SQLCatalog
+from vidxp.infrastructure.sql_tables import (
+    artifact_requests,
+    artifacts,
+    media,
+    media_import_requests,
+    metadata,
+)
 
 CATALOG_SCHEMA_VERSION = 3
 _local_metadata = MetaData()
@@ -22,7 +29,16 @@ class LocalCatalog(SQLCatalog):
         database.parent.mkdir(parents=True, exist_ok=True)
         super().__init__(
             f"sqlite:///{database.resolve().as_posix()}",
-            initialize=True,
+            initialize=False,
+        )
+        metadata.create_all(
+            self.engine,
+            tables=(
+                media,
+                artifacts,
+                artifact_requests,
+                media_import_requests,
+            ),
         )
         _local_metadata.create_all(self.engine)
         with self.transaction() as connection:

@@ -268,7 +268,7 @@ class ModelRuntimePort(Protocol):
 class IndexReader(Protocol):
     """Read-only vector records available to application queries."""
 
-    def size_bytes(self) -> int: ...
+    def size_bytes(self) -> int | None: ...
 
     def query(
         self,

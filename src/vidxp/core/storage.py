@@ -20,6 +20,25 @@ class IndexStorageUnavailableError(RuntimeError):
     """The configured remote vector store could not serve an operation."""
 
 
+def _is_remote_unavailable(exc: Exception) -> bool:
+    """Return whether an exception represents a retryable remote failure."""
+
+    import httpx
+    from chromadb.errors import (
+        InternalError,
+        RateLimitError,
+    )
+
+    return isinstance(
+        exc,
+        (
+            httpx.TransportError,
+            InternalError,
+            RateLimitError,
+        ),
+    )
+
+
 def metadata_filter(
     config: IndexConfig,
     *,
@@ -106,28 +125,36 @@ class IndexStorage:
         self.path = config.index_directory
         self._create = create
         self._client_factory = client_factory or ChromaClientFactory()
+        self._names = dict(config.collection_names)
+        self._collections: dict[str, Any] = {}
         if create and not self._client_factory.remote:
             self.path.mkdir(parents=True, exist_ok=True)
-        elif (
-            not self._client_factory.remote
-            and (
-                not self.path.is_dir()
-                or not (self.path / "chroma.sqlite3").is_file()
-            )
-        ):
+        elif not self._client_factory.remote and not self.path.is_dir():
             raise FileNotFoundError(
                 f"The committed Chroma store is missing at {self.path}."
             )
         try:
             self.client = self._client_factory.create(self.path)
         except Exception as exc:
-            if self._client_factory.remote:
+            if (
+                self._client_factory.remote
+                and _is_remote_unavailable(exc)
+            ):
                 raise IndexStorageUnavailableError(
                     "The remote Chroma service is unavailable."
                 ) from exc
             raise
-        self._names = dict(config.collection_names)
-        self._collections: dict[str, Any] = {}
+        if not create:
+            try:
+                existing = self._call(self.client.list_collections)
+            except Exception:
+                self.close()
+                raise
+            if not existing:
+                self.close()
+                raise FileNotFoundError(
+                    f"The committed Chroma store is missing at {self.path}."
+                )
 
     def close(self) -> None:
         self._collections.clear()
@@ -158,17 +185,14 @@ class IndexStorage:
             from chromadb.errors import NotFoundError
 
             try:
-                collection = self.client.get_collection(name=name)
+                collection = self._call(
+                    self.client.get_collection,
+                    name=name,
+                )
             except NotFoundError as exc:
                 raise FileNotFoundError(
                     f"Committed Chroma collection {name!r} is missing."
                 ) from exc
-            except Exception as exc:
-                if self._client_factory.remote:
-                    raise IndexStorageUnavailableError(
-                        "The remote Chroma service is unavailable."
-                    ) from exc
-                raise
         configuration = getattr(collection, "configuration", {}) or {}
         actual_distance = (configuration.get("hnsw") or {}).get("space")
         if (
@@ -186,7 +210,10 @@ class IndexStorage:
         try:
             return operation(*args, **kwargs)
         except Exception as exc:
-            if self._client_factory.remote:
+            if (
+                self._client_factory.remote
+                and _is_remote_unavailable(exc)
+            ):
                 raise IndexStorageUnavailableError(
                     "The remote Chroma service is unavailable."
                 ) from exc
@@ -372,8 +399,10 @@ class IndexStorage:
         )
         return len(result.get("ids") or ())
 
-    def size_bytes(self) -> int:
-        return 0 if self._client_factory.remote else directory_size(self.path)
+    def size_bytes(self) -> int | None:
+        if self._client_factory.remote:
+            return None
+        return directory_size(self.path)
 
 
 class SnapshotScopedIndexStore:
@@ -397,7 +426,7 @@ class SnapshotScopedIndexStore:
     def __exit__(self, *args: Any) -> Any:
         return self._store.__exit__(*args)
 
-    def size_bytes(self) -> int:
+    def size_bytes(self) -> int | None:
         return self._store.size_bytes()
 
     def query(

@@ -324,7 +324,7 @@ class ManifestStore:
                 "interrupted_videos": [],
                 "processed_frames": 0,
                 "record_counts": {},
-                "store_size_bytes_at_commit": 0,
+                "store_size_bytes_at_commit": None,
             }
             if reset:
                 for path in (
@@ -529,7 +529,7 @@ class ManifestStore:
     def complete_run(
         self,
         *,
-        store_size_bytes_at_commit: int,
+        store_size_bytes_at_commit: int | None,
     ) -> dict[str, Any]:
         manifest = self.read()
         self._refresh_runtime(manifest)

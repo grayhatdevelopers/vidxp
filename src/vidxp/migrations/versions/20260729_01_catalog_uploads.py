@@ -1,4 +1,4 @@
-"""Create shared catalog and remote upload tables.
+"""Create the single-repository server catalog.
 
 Revision ID: 20260729_01
 Revises:
@@ -64,69 +64,66 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("request_key"),
     )
     op.create_table(
-        "repositories",
-        sa.Column("repository_id", sa.String(length=255), nullable=False),
+        "index_state",
+        sa.Column("singleton_id", sa.String(length=1), nullable=False),
         sa.Column("active_snapshot_id", sa.String(length=32), nullable=True),
         sa.Column(
             "active_snapshot_sha256",
             sa.String(length=64),
             nullable=True,
         ),
-        sa.PrimaryKeyConstraint("repository_id"),
+        sa.CheckConstraint(
+            "singleton_id = '1'",
+            name="index_state_singleton",
+        ),
+        sa.PrimaryKeyConstraint("singleton_id"),
     )
     op.create_table(
         "index_generations",
         sa.Column("generation_id", sa.String(length=32), nullable=False),
-        sa.Column("repository_id", sa.String(length=255), nullable=False),
         sa.Column("media_id", sa.String(length=32), nullable=False),
         sa.Column("manifest_sha256", sa.String(length=64), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
         sa.PrimaryKeyConstraint("generation_id"),
-        sa.UniqueConstraint(
-            "repository_id",
-            "media_id",
-            "generation_id",
-            name="index_generations_repository_media_generation_key",
-        ),
     )
     op.create_index(
-        "index_generations_repository_media",
+        "index_generations_media",
         "index_generations",
-        ["repository_id", "media_id"],
+        ["media_id"],
         unique=False,
     )
     op.create_table(
         "index_snapshots",
         sa.Column("snapshot_id", sa.String(length=32), nullable=False),
-        sa.Column("repository_id", sa.String(length=255), nullable=False),
         sa.Column("created_at", sa.Text(), nullable=False),
         sa.Column("sha256", sa.String(length=64), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
         sa.PrimaryKeyConstraint("snapshot_id"),
     )
     op.create_index(
-        "index_snapshots_repository_created",
+        "index_snapshots_created",
         "index_snapshots",
-        ["repository_id", "created_at"],
+        ["created_at"],
         unique=False,
     )
     op.create_table(
-        "upload_quotas",
-        sa.Column("repository_id", sa.String(length=255), nullable=False),
-        sa.Column("owner_subject", sa.String(length=255), nullable=False),
+        "upload_quota",
+        sa.Column("singleton_id", sa.String(length=1), nullable=False),
         sa.Column("reserved_bytes", sa.BigInteger(), nullable=False),
         sa.CheckConstraint(
             "reserved_bytes >= 0",
-            name="upload_quotas_reserved_bytes_nonnegative",
+            name="upload_quota_reserved_bytes_nonnegative",
         ),
-        sa.PrimaryKeyConstraint("repository_id", "owner_subject"),
+        sa.CheckConstraint(
+            "singleton_id = '1'",
+            name="upload_quota_singleton",
+        ),
+        sa.PrimaryKeyConstraint("singleton_id"),
     )
     op.create_table(
         "upload_intents",
         sa.Column("intent_id", sa.String(length=32), nullable=False),
         sa.Column("request_key", sa.String(length=64), nullable=False),
-        sa.Column("repository_id", sa.String(length=255), nullable=False),
-        sa.Column("owner_subject", sa.String(length=255), nullable=False),
         sa.Column("original_filename", sa.String(length=255), nullable=False),
         sa.Column("byte_size", sa.BigInteger(), nullable=False),
         sa.Column(
@@ -145,11 +142,6 @@ def upgrade() -> None:
         sa.UniqueConstraint("job_id"),
         sa.UniqueConstraint("request_key"),
         sa.UniqueConstraint("upload_id"),
-        sa.UniqueConstraint(
-            "repository_id",
-            "intent_id",
-            name="upload_intents_repository_intent_key",
-        ),
     )
     op.create_index(
         "upload_intents_expiry",
@@ -157,33 +149,23 @@ def upgrade() -> None:
         ["expires_at", "state"],
         unique=False,
     )
-    op.create_index(
-        "upload_intents_owner_state",
-        "upload_intents",
-        ["repository_id", "owner_subject", "state"],
-        unique=False,
-    )
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "upload_intents_owner_state",
-        table_name="upload_intents",
-    )
     op.drop_index("upload_intents_expiry", table_name="upload_intents")
     op.drop_table("upload_intents")
-    op.drop_table("upload_quotas")
+    op.drop_table("upload_quota")
     op.drop_index(
-        "index_snapshots_repository_created",
+        "index_snapshots_created",
         table_name="index_snapshots",
     )
     op.drop_table("index_snapshots")
     op.drop_index(
-        "index_generations_repository_media",
+        "index_generations_media",
         table_name="index_generations",
     )
     op.drop_table("index_generations")
-    op.drop_table("repositories")
+    op.drop_table("index_state")
     op.drop_table("media_import_requests")
     op.drop_table("artifact_requests")
     op.drop_index("artifacts_media_id", table_name="artifacts")

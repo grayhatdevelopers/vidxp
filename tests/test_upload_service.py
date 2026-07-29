@@ -16,9 +16,9 @@ from vidxp.application_models import (
     JobState,
     Principal,
 )
-from vidxp.infrastructure.local_catalog import LocalCatalog
 from vidxp.core.media import utc_now
 from vidxp.core.uploads import UploadIntentRecord, UploadState
+from vidxp.infrastructure.sql_catalog import SQLCatalog
 from vidxp.settings import VidXPSettings
 from vidxp.upload_service import RemoteUploadService
 
@@ -51,8 +51,11 @@ def _service(
     root: Path,
     *,
     quota: int = 100,
-) -> tuple[RemoteUploadService, LocalCatalog, _Jobs]:
-    catalog = LocalCatalog(root / "catalog.sqlite3")
+) -> tuple[RemoteUploadService, SQLCatalog, _Jobs]:
+    catalog = SQLCatalog(
+        f"sqlite:///{(root / 'server.sqlite3').resolve().as_posix()}",
+        initialize=True,
+    )
     jobs = _Jobs()
     settings = VidXPSettings(
         repository_root=root,
