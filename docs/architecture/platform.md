@@ -810,7 +810,10 @@ links. FFmpeg output is cached by source checksum, interval and encoding profile
 written to a temporary key, validated, and atomically published.
 
 Actor overlays and other rendered media use the same artifact workflow. Public
-commands never accept arbitrary output paths.
+rendering commands never accept output paths. The separate CLI artifact-download
+command may copy an already-authorized managed artifact to an explicit user
+destination; API downloads remain protected responses and MCP returns a lazy
+resource link instead of embedding video bytes in the tool result.
 
 ## 18. FastAPI adapter
 

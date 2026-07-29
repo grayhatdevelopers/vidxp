@@ -482,10 +482,26 @@ class SnippetProfile(StrEnum):
 
 
 class CreateSnippetCommand(ApplicationModel):
-    media_id: MediaId
-    start_seconds: float = Field(ge=0)
-    end_seconds: float = Field(gt=0)
-    profile: SnippetProfile = SnippetProfile.compatible_mp4
+    media_id: MediaId = Field(
+        description=(
+            "Source video ID, normally copied from a search or query result."
+        )
+    )
+    start_seconds: float = Field(
+        ge=0,
+        description="Inclusive clip start from the selected result, in seconds.",
+    )
+    end_seconds: float = Field(
+        gt=0,
+        description="Exclusive clip end from the selected result, in seconds.",
+    )
+    profile: SnippetProfile = Field(
+        default=SnippetProfile.compatible_mp4,
+        description=(
+            "Use compatible_mp4 for a broadly playable download; source "
+            "preserves source codecs in a Matroska container."
+        ),
+    )
 
     def model_post_init(self, _context: Any) -> None:
         if self.end_seconds <= self.start_seconds:

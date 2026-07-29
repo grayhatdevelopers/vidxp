@@ -6,6 +6,7 @@ import json
 import socket
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock
@@ -17,9 +18,11 @@ from mcp.client import Client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
+from mcp.types import ResourceLink
 
 from vidxp.application_models import (
     ApplicationError,
+    Artifact,
     ErrorCategory,
     IndexStatus,
     Job,
@@ -46,15 +49,18 @@ from vidxp.branding import (
 )
 from vidxp.composition import HttpApplicationContext
 from vidxp.control_plane import ControlPlaneApplication
+from vidxp.core.artifacts import ArtifactKind, ArtifactState
 from vidxp.job_service import JobService
 from vidxp.mcp import VidXPTokenVerifier, create_mcp_server
 from vidxp.mcp_cli import main as mcp_main
 from vidxp.mcp_cli import stdio_client_config
+from vidxp.ports import LocalFileResource
 from vidxp.settings import VidXPSettings
 
 
 MEDIA_ID = "123456781234423481234567890abcde"
 JOB_ID = "223456781234423481234567890abcde"
+ARTIFACT_ID = "323456781234423481234567890abcde"
 
 
 def queued_job() -> Job:
@@ -135,6 +141,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 "prepare_models",
                 "search_moments",
                 "query_video",
+                "create_clip",
+                "get_artifact_download",
                 "list_jobs",
                 "get_job",
                 "retry_job",
@@ -208,7 +216,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         rendered = output.getvalue()
         self.assertIn("OK VidXP MCP", rendered)
         self.assertIn("Index state: missing", rendered)
-        self.assertIn("Tools: 14", rendered)
+        self.assertIn("Tools: 16", rendered)
         self.assertIn("get_index_status", rendered)
 
     async def test_server_info_exposes_vidxp_branding(self):
@@ -424,6 +432,71 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             calls[1].kwargs["retry_id"],
         )
 
+    async def test_clip_submission_and_lazy_artifact_download(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            clip = root / "clip.mp4"
+            clip.write_bytes(b"clip-content")
+            context = self.context(root)
+            context.jobs.submit_snippet.return_value = (
+                queued_job().model_copy(update={"kind": JobKind.snippet})
+            )
+            context.application.get_artifact.return_value = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                kind=ArtifactKind.snippet,
+                profile="compatible_mp4",
+                mime_type="video/mp4",
+                byte_size=12,
+                sha256="1" * 64,
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            context.application.open_artifact_content.return_value = (
+                LocalFileResource(
+                    path=clip,
+                    filename=f"snippet-{ARTIFACT_ID}.mp4",
+                    mime_type="video/mp4",
+                    byte_size=12,
+                    etag="1" * 64,
+                )
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"*"}),
+                ),
+            )
+            async with Client(server) as client:
+                submitted = await client.call_tool(
+                    "create_clip",
+                    {
+                        "command": {
+                            "media_id": MEDIA_ID,
+                            "start_seconds": 9,
+                            "end_seconds": 17,
+                        },
+                        "idempotency_key": "agent-clip-0001",
+                    },
+                )
+                linked = await client.call_tool(
+                    "get_artifact_download",
+                    {"artifact_id": ARTIFACT_ID},
+                )
+                link = linked.content[0]
+                downloaded = await client.read_resource(str(link.uri))
+
+        self.assertFalse(submitted.is_error)
+        submitted_command = context.jobs.submit_snippet.call_args.args[0]
+        self.assertEqual(submitted_command.media_id, MEDIA_ID)
+        self.assertEqual(submitted_command.start_seconds, 9)
+        self.assertEqual(submitted_command.end_seconds, 17)
+        self.assertIsInstance(link, ResourceLink)
+        self.assertEqual(link.mime_type, "video/mp4")
+        self.assertEqual(link.size, 12)
+        self.assertEqual(downloaded.contents[0].blob, "Y2xpcC1jb250ZW50")
+
     async def test_application_errors_are_machine_readable_and_safe(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
@@ -528,6 +601,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 "prepare_models",
                 "search_moments",
                 "query_video",
+                "create_clip",
+                "get_artifact_download",
                 "list_jobs",
                 "get_job",
                 "retry_job",
@@ -585,7 +660,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 14)
+        self.assertEqual(len(discovered.tools), 16)
         self.assertEqual(result.structured_content, {"items": []})
 
     async def test_oidc_verifier_projects_the_shared_validated_token(self):

@@ -13,6 +13,8 @@ from vidxp.entrypoint import startup_command
 from vidxp.composition import LocalApplicationContext, settings_for_repository
 from vidxp.settings import ApplicationMode
 from vidxp.application_models import (
+    Artifact,
+    ArtifactJobResult,
     CapabilityDependencyCheck,
     CreateIndexCommand,
     DependencyCheckResult,
@@ -40,16 +42,19 @@ from vidxp.application_models import (
     SearchJobResult,
     SearchMomentsPlanStep,
 )
+from vidxp.core.artifacts import ArtifactKind, ArtifactState
 from vidxp.core.media import MediaState, MediaStream
 from vidxp.capabilities.registry import create_capability_registry
 from vidxp.capability_service import CapabilityService
 from vidxp.repositories import RepositoryConfig, RepositoryRegistry
+from vidxp.ports import LocalFileResource
 
 
 MEDIA_ID = "123456781234423481234567890abcde"
 GENERATION_ID = "223456781234423481234567890abcde"
 SNAPSHOT_ID = "323456781234423481234567890abcde"
 JOB_ID = "423456781234423481234567890abcde"
+ARTIFACT_ID = "523456781234423481234567890abcde"
 
 
 class CliTests(unittest.TestCase):
@@ -173,6 +178,90 @@ class CliTests(unittest.TestCase):
         self.assertIn("snippet end must be greater than its", result.output)
         self.assertIn("start.", result.output)
         self.jobs.submit_snippet.assert_not_called()
+
+    def test_snippet_completion_points_to_the_download_command(self):
+        artifact = Artifact(
+            artifact_id=ARTIFACT_ID,
+            media_id=MEDIA_ID,
+            kind=ArtifactKind.snippet,
+            profile="compatible_mp4",
+            mime_type="video/mp4",
+            byte_size=12,
+            sha256="1" * 64,
+            state=ArtifactState.ready,
+            created_at=datetime.now(timezone.utc),
+        )
+        self.jobs.submit_snippet.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.snippet,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        self.jobs.wait.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.snippet,
+            state=JobState.succeeded,
+            queue=JobQueue.cpu,
+            result=ArtifactJobResult(
+                kind=JobKind.snippet,
+                result=artifact,
+            ),
+        )
+
+        result = self.invoke(
+            ["artifacts", "snippet", MEDIA_ID, "9", "17"]
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn(f"Clip ready: {ARTIFACT_ID}", result.output)
+        self.assertIn(
+            f"vidxp artifacts download {ARTIFACT_ID}",
+            result.output,
+        )
+
+    def test_artifact_download_copies_authorized_content(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "managed.mp4"
+            source.write_bytes(b"clip-content")
+            destination = root / "exported.mp4"
+            self.service.open_artifact_content.return_value = (
+                LocalFileResource(
+                    path=source,
+                    filename=f"snippet-{ARTIFACT_ID}.mp4",
+                    mime_type="video/mp4",
+                    byte_size=12,
+                    etag="1" * 64,
+                )
+            )
+
+            result = self.invoke(
+                [
+                    "artifacts",
+                    "download",
+                    ARTIFACT_ID,
+                    str(destination),
+                    "--json",
+                ]
+            )
+
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual(destination.read_bytes(), b"clip-content")
+            payload = json.loads(result.output)
+            self.assertEqual(payload["artifact_id"], ARTIFACT_ID)
+            self.assertEqual(payload["path"], str(destination.resolve()))
+
+            refused = self.invoke(
+                [
+                    "artifacts",
+                    "download",
+                    ARTIFACT_ID,
+                    str(destination),
+                ]
+            )
+
+        self.assertEqual(refused.exit_code, 2, refused.output)
+        self.assertIn("already exists", refused.output)
 
     def test_search_constructs_shared_command(self):
         search_result = FusedSearchResult(

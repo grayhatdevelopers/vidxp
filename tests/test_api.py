@@ -49,6 +49,7 @@ from vidxp.upload_service import RemoteUploadService
 MEDIA_ID = "123456781234423481234567890abcde"
 JOB_ID = "223456781234423481234567890abcde"
 IDEMPOTENCY_KEY = "323456781234423481234567890abcde"
+ARTIFACT_ID = "423456781234423481234567890abcde"
 TOKEN = "a" * 32
 
 
@@ -668,6 +669,15 @@ class ApiTests(unittest.TestCase):
                     etag="1" * 64,
                 )
             )
+            context.application.open_artifact_content.return_value = (
+                LocalFileResource(
+                    path=content,
+                    filename="snippet.mp4",
+                    mime_type="video/mp4",
+                    byte_size=10,
+                    etag="1" * 64,
+                )
+            )
             with TestClient(create_app(context=context)) as client:
                 ranged = client.get(
                     f"/api/v1/media/{MEDIA_ID}/content",
@@ -677,6 +687,10 @@ class ApiTests(unittest.TestCase):
                     f"/api/v1/media/{MEDIA_ID}/content",
                     headers={"If-None-Match": f'"{"1" * 64}"'},
                 )
+                artifact = client.get(
+                    f"/api/v1/artifacts/{ARTIFACT_ID}/content",
+                    headers={"Range": "bytes=6-9"},
+                )
 
         self.assertEqual(ranged.status_code, 206)
         self.assertEqual(ranged.content, b"2345")
@@ -684,6 +698,12 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(ranged.headers["etag"], f'"{"1" * 64}"')
         self.assertEqual(cached.status_code, 304)
         self.assertEqual(cached.content, b"")
+        self.assertEqual(artifact.status_code, 206)
+        self.assertEqual(artifact.content, b"6789")
+        self.assertIn(
+            "snippet.mp4",
+            artifact.headers["content-disposition"],
+        )
 
     def test_openapi_is_curated_and_has_unique_operation_ids(self):
         with TemporaryDirectory() as directory:
@@ -710,6 +730,12 @@ class ApiTests(unittest.TestCase):
         upload_schema = schema["paths"]["/api/v1/media"]["post"]
         self.assertIn("multipart/form-data", upload_schema["requestBody"]["content"])
         self.assertNotIn('"format": "path"', str(upload_schema))
+        clip_schema = schema["paths"]["/api/v1/jobs/snippet"]["post"]
+        self.assertIn("downloadable", clip_schema["summary"].lower())
+        artifact_schema = schema["paths"][
+            "/api/v1/artifacts/{artifact_id}/content"
+        ]["get"]
+        self.assertIn("download", artifact_schema["summary"].lower())
 
     def test_openapi_declares_bearer_security_without_securing_health(self):
         with TemporaryDirectory() as directory:

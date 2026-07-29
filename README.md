@@ -162,6 +162,7 @@ vidxp actors list
 vidxp actors render <cluster-id> --json
 vidxp artifacts snippet <media-id> 30 45 --json
 vidxp artifacts show <artifact-id>
+vidxp artifacts download <artifact-id> ./clip.mp4
 ```
 
 `vidxp media list` returns registered filenames and stable IDs. Search and
@@ -176,6 +177,13 @@ indexed videos. `vidxp index list` joins active membership to registered
 filenames and metadata, while `vidxp index status` shows the underlying snapshot
 state. `vidxp index remove <media-id>` removes one item. Use separate named
 repositories when you need separate searchable video collections.
+
+Search and query results include a `media_id` and evidence time range. The HTTP
+API can pass those values to `POST /api/v1/jobs/snippet`, poll the returned job,
+and download the completed artifact from
+`GET /api/v1/artifacts/{artifact_id}/content`. MCP clients use the equivalent
+`create_clip`, `get_job`, and `get_artifact_download` sequence; video bytes are
+read only when the client opens the returned resource link.
 
 Index only selected capabilities or adjust the time-based scene sampling rate:
 

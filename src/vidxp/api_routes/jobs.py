@@ -135,7 +135,12 @@ def submit_query(
     response_model=Job,
     status_code=202,
     operation_id="createSnippet",
-    summary="Create a snippet",
+    summary="Create a downloadable video clip",
+    description=(
+        "Create a durable clip-rendering job from a media ID and time range "
+        "returned by search or query. Poll the job, then download the "
+        "resulting artifact through GET /api/v1/artifacts/{artifact_id}/content."
+    ),
     dependencies=[Depends(write_principal)],
 )
 def submit_snippet(

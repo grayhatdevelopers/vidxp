@@ -48,7 +48,12 @@ def _content(
     "/{artifact_id}/content",
     response_model=None,
     operation_id="getArtifactContent",
-    summary="Download artifact content",
+    summary="Download a generated clip or artifact",
+    description=(
+        "Stream the generated artifact with attachment, byte-range, and ETag "
+        "support. Use the artifact_id returned by a completed snippet or "
+        "actor-overlay job."
+    ),
 )
 def get_artifact_content(
     artifact_id: ArtifactId,

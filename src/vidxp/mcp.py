@@ -16,7 +16,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.server.transport_security import TransportSecurityMiddleware
 from mcp.shared.exceptions import MCPError
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import Icon, ToolAnnotations
+from mcp.types import Icon, ResourceLink, ToolAnnotations
 from pydantic import Field
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -26,6 +26,7 @@ from vidxp.application_models import (
     ApplicationError,
     CapabilityInfo,
     CapabilityList,
+    CreateSnippetCommand,
     CreateIndexCommand,
     ErrorCategory,
     Identifier,
@@ -57,6 +58,7 @@ from vidxp.branding import (
 )
 from vidxp.composition import ControlPlaneContext, HttpApplicationContext
 from vidxp.idempotency import IdempotencyKey, scoped_job_id
+from vidxp.core.identifiers import ArtifactId
 from vidxp.settings import HttpAuthMode
 
 
@@ -351,12 +353,70 @@ def create_mcp_server(
             "media included in the active index snapshot. For search_moments "
             "and query_video, provide command.media_id to restrict work to one "
             "video, or omit it to search/query across every media item in that "
-            "snapshot. Use list_jobs to recover job IDs across agent sessions."
+            "snapshot. To deliver a matching time range, submit create_clip, "
+            "poll get_job, then call get_artifact_download with the completed "
+            "job's artifact_id. Use list_jobs to recover job IDs across agent "
+            "sessions."
         ),
         version=__version__,
         token_verifier=token_verifier,
         auth=auth,
     )
+
+    async def artifact_bytes(
+        artifact_id: ArtifactId,
+        *,
+        expected_mime_type: str,
+    ) -> bytes:
+        resource = await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=lambda _actor: (
+                context.application.open_artifact_content(artifact_id)
+            ),
+        )
+        if resource.mime_type != expected_mime_type:
+            raise MCPError(
+                -32602,
+                "The artifact URI does not match its media type.",
+                {
+                    "code": "artifact_media_type_mismatch",
+                    "category": "validation",
+                    "retryable": False,
+                },
+            )
+        return await anyio.to_thread.run_sync(resource.path.read_bytes)
+
+    @server.resource(
+        "vidxp://artifacts/{artifact_id}/content.mp4",
+        name="vidxp_artifact_mp4",
+        title="VidXP MP4 artifact",
+        description=(
+            "Binary content for a generated VidXP clip or video artifact."
+        ),
+        mime_type="video/mp4",
+    )
+    async def read_mp4_artifact(artifact_id: ArtifactId) -> bytes:
+        return await artifact_bytes(
+            artifact_id,
+            expected_mime_type="video/mp4",
+        )
+
+    @server.resource(
+        "vidxp://artifacts/{artifact_id}/content.mkv",
+        name="vidxp_artifact_matroska",
+        title="VidXP Matroska artifact",
+        description=(
+            "Binary content for a source-profile VidXP clip artifact."
+        ),
+        mime_type="video/x-matroska",
+    )
+    async def read_matroska_artifact(artifact_id: ArtifactId) -> bytes:
+        return await artifact_bytes(
+            artifact_id,
+            expected_mime_type="video/x-matroska",
+        )
 
     @server.tool(
         description="List installed VidXP capabilities.",
@@ -581,6 +641,78 @@ def create_mcp_server(
             default_principal=default_principal,
             permission=RepositoryPermission.read,
             operation=submit,
+        )
+
+    @server.tool(
+        description=(
+            "Create a downloadable clip from a media ID and time range returned "
+            "by search_moments or query_video. Poll get_job, then pass the "
+            "completed result's artifact_id to get_artifact_download."
+        ),
+        annotations=_SUBMIT,
+        structured_output=True,
+    )
+    async def create_clip(
+        command: CreateSnippetCommand,
+        idempotency_key: IdempotencyKey,
+    ) -> Job:
+        def submit(actor: Principal) -> Job:
+            return context.jobs.submit_snippet(
+                command,
+                job_id=scoped_job_id(
+                    principal=actor,
+                    transport="mcp",
+                    operation="snippet",
+                    idempotency_key=idempotency_key,
+                ),
+            )
+
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.write,
+            operation=submit,
+        )
+
+    @server.tool(
+        description=(
+            "Return a readable MCP resource link for a completed clip or video "
+            "artifact. The artifact_id is in the completed create_clip job "
+            "result; clients read the link only when they need the video bytes."
+        ),
+        annotations=_READ_ONLY,
+        structured_output=True,
+    )
+    async def get_artifact_download(
+        artifact_id: ArtifactId,
+    ) -> ResourceLink:
+        artifact = await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=lambda _actor: (
+                context.application.get_artifact(artifact_id)
+            ),
+        )
+        suffix = (
+            "mp4"
+            if artifact.mime_type == "video/mp4"
+            else "mkv"
+        )
+        filename = f"{artifact.kind.value}-{artifact.artifact_id}.{suffix}"
+        return ResourceLink(
+            name=filename,
+            title=f"VidXP {artifact.kind.value.replace('_', ' ')}",
+            uri=(
+                f"vidxp://artifacts/{artifact.artifact_id}/"
+                f"content.{suffix}"
+            ),
+            description=(
+                f"Generated from media {artifact.media_id}; "
+                f"{artifact.byte_size:,} bytes."
+            ),
+            mimeType=artifact.mime_type,
+            size=artifact.byte_size,
         )
 
     @server.tool(
