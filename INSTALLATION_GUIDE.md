@@ -150,12 +150,12 @@ vidxp index create samplevideo.mp4
 vidxp search scene "a yellow taxi on a city street"
 ```
 
-Use fewer capabilities or a larger visual stride when appropriate:
+Use fewer capabilities or adjust the scene sampling rate when appropriate:
 
 ```bash
 vidxp index create samplevideo.mp4 \
   --modality scene \
-  --frame-stride 5
+  --scene-sample-fps 1
 ```
 
 Indexes and manifests live under the configured repository root. Model identity,

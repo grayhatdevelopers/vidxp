@@ -363,7 +363,7 @@ def run_didemo(
     output_root: str | Path = "benchmark_runs",
     annotation_indices: Sequence[int] | None = None,
     media_overrides: Mapping[str, str | Path] | None = None,
-    frame_stride: int = 1,
+    scene_sample_fps: float = 1.0,
     device: str = "cpu",
     split: Literal["validation", "test"] = "test",
     chunk_pooling: Literal["max", "mean"] = "max",
@@ -387,7 +387,9 @@ def run_didemo(
         split=split,
         run_id=run_id,
         enabled_modalities=("scene",),
-        frame_stride=frame_stride,
+        capability_options={
+            "scene": {"sample_fps": scene_sample_fps},
+        },
         device=device,
         output_root=output_root,
     )

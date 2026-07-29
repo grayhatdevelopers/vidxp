@@ -211,6 +211,14 @@ class VidXPApplication(ControlPlaneApplication):
         media = self.media.require_record(command.media_id)
         content = self.media.content(command.media_id)
         self.layout.ensure_local_directories()
+        capability_options = {
+            name: dict(options)
+            for name, options in command.capability_options.items()
+        }
+        if command.scene_sample_fps is not None:
+            capability_options.setdefault("scene", {})["sample_fps"] = (
+                command.scene_sample_fps
+            )
         config = IndexConfig.local(
             video_id=command.media_id,
             enabled_modalities=selected,
@@ -219,7 +227,7 @@ class VidXPApplication(ControlPlaneApplication):
             collection_names=self.registry.collection_names(selected),
             capability_options=self.registry.validate_options(
                 selected,
-                command.capability_options,
+                capability_options,
             ),
             device=self.device,
         )

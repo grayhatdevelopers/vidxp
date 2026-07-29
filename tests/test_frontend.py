@@ -227,6 +227,70 @@ class FrontendTests(unittest.TestCase):
             )
         )
 
+    def test_scene_detail_control_is_conditional_and_defaults_to_balanced(self):
+        with patch.object(
+            frontend.st,
+            "selectbox",
+            return_value=2.0,
+        ) as selectbox:
+            selected = frontend._scene_sample_fps_control(
+                ("dialogue", "scene"),
+                disabled=False,
+            )
+
+        self.assertEqual(selected, 2.0)
+        self.assertEqual(
+            selectbox.call_args.args[:2],
+            ("Scene detail", (0.5, 1.0, 2.0)),
+        )
+        self.assertEqual(selectbox.call_args.kwargs["index"], 1)
+
+        with patch.object(frontend.st, "selectbox") as selectbox:
+            selected = frontend._scene_sample_fps_control(
+                ("dialogue",),
+                disabled=False,
+            )
+
+        self.assertIsNone(selected)
+        selectbox.assert_not_called()
+
+    def test_indexing_submits_selected_scene_sample_rate(self):
+        jobs = Mock()
+        jobs.submit_index.return_value = SimpleNamespace(job_id="job-1")
+        session_state = {frontend.MEDIA_ID_KEY: MEDIA_ID}
+        with (
+            patch.object(frontend, "_configured_service", return_value=Mock()),
+            patch.object(frontend, "_configured_jobs", return_value=jobs),
+            patch.object(frontend.st, "session_state", session_state),
+            patch.object(frontend.st, "query_params", {}),
+            patch.object(frontend.st, "rerun"),
+        ):
+            frontend._run_indexing(
+                None,
+                {},
+                ("scene",),
+                scene_sample_fps=2.0,
+            )
+
+        command = jobs.submit_index.call_args.args[0]
+        self.assertEqual(command.scene_sample_fps, 2.0)
+
+    def test_indexing_omits_scene_sample_rate_without_scene(self):
+        jobs = Mock()
+        jobs.submit_index.return_value = SimpleNamespace(job_id="job-1")
+        session_state = {frontend.MEDIA_ID_KEY: MEDIA_ID}
+        with (
+            patch.object(frontend, "_configured_service", return_value=Mock()),
+            patch.object(frontend, "_configured_jobs", return_value=jobs),
+            patch.object(frontend.st, "session_state", session_state),
+            patch.object(frontend.st, "query_params", {}),
+            patch.object(frontend.st, "rerun"),
+        ):
+            frontend._run_indexing(None, {}, ("dialogue",))
+
+        command = jobs.submit_index.call_args.args[0]
+        self.assertIsNone(command.scene_sample_fps)
+
     def test_search_queues_shared_command_without_loading_models(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

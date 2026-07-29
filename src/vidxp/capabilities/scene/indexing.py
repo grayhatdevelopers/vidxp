@@ -14,6 +14,7 @@ from vidxp.core.contracts import (
     stable_source_id,
 )
 from vidxp.core.indexing_common import ProgressCallback, report_progress
+from vidxp.core.video import FrameSampling
 from vidxp.ports import IndexStore, ModelRuntimePort
 
 
@@ -21,6 +22,13 @@ from vidxp.ports import IndexStore, ModelRuntimePort
 class SceneIndexState:
     provider: SceneModel
     stored_frames: int = 0
+
+
+def scene_sampling(config: IndexConfig, info) -> FrameSampling:
+    return FrameSampling(
+        source_fps=info.fps,
+        target_fps=scene_config(config).sample_fps,
+    )
 
 
 def encode_scene_batch(samples, provider: SceneModel):
@@ -45,10 +53,12 @@ def scene_records(
     config: IndexConfig,
 ) -> list[StorageRecord]:
     records = []
+    sampling = scene_sampling(config, info)
     for sample, vector in zip(samples, vectors):
-        end = min(
-            info.duration,
-            sample.timestamp + config.frame_stride / info.fps,
+        end = sampling.next_sample_timestamp(
+            sample.frame_index,
+            frame_count=info.frame_count,
+            duration=info.duration,
         )
         if end <= sample.timestamp:
             end = sample.timestamp + 1 / info.fps
@@ -102,6 +112,9 @@ def process_scene_samples(
 
 
 class SceneVisualProcessor:
+    def sampling(self, config: IndexConfig, info) -> FrameSampling:
+        return scene_sampling(config, info)
+
     def batch_size(self, config: IndexConfig) -> int:
         return scene_config(config).batch_size
 

@@ -18,7 +18,11 @@ from vidxp.capabilities.dialogue.indexing import (
     build_dialogue_phrases,
     index_dialogue,
 )
-from vidxp.capabilities.scene.indexing import encode_scene_batch
+from vidxp.capabilities.scene.indexing import (
+    encode_scene_batch,
+    scene_records,
+    scene_sampling,
+)
 from vidxp.capabilities.scene.models import SceneModel
 from vidxp.capabilities.registry import (
     CapabilityRegistry,
@@ -230,7 +234,93 @@ class IndexingTests(unittest.TestCase):
         processor.prepare.assert_called_once()
         processor.process.assert_called_once()
 
-    def test_scene_and_actor_share_one_frame_stream(self):
+    def test_scene_sampling_uses_target_fps_and_media_timestamps(self):
+        config = IndexConfig(
+            video_id="video-1",
+            enabled_modalities=("scene",),
+            capability_options={"scene": {"sample_fps": 1.0}},
+        )
+
+        near_below = scene_sampling(
+            config,
+            VideoInfo(1.49, 149, 100.0, 2, 2),
+        )
+        near_above = scene_sampling(
+            config,
+            VideoInfo(1.5, 150, 100.0, 2, 2),
+        )
+        below_indices = [
+            index
+            for index in range(149)
+            if near_below.includes(index, index / 1.49)
+        ]
+        above_indices = [
+            index
+            for index in range(150)
+            if near_above.includes(index, index / 1.5)
+        ]
+
+        self.assertEqual(below_indices[:4], [0, 2, 3, 5])
+        self.assertEqual(above_indices[:4], [0, 2, 3, 5])
+        self.assertEqual(len(below_indices), 100)
+        self.assertEqual(len(above_indices), 100)
+
+        low_fps = scene_sampling(
+            config,
+            VideoInfo(0.5, 5, 10.0, 2, 2),
+        )
+        self.assertEqual(
+            [
+                index
+                for index in range(5)
+                if low_fps.includes(index, index / 0.5)
+            ],
+            [0, 1, 2, 3, 4],
+        )
+
+    def test_scene_record_duration_uses_scene_cadence_not_actor_stride(self):
+        config = IndexConfig(
+            video_id="video-1",
+            enabled_modalities=("scene",),
+            frame_stride=3,
+            capability_options={"scene": {"sample_fps": 2.0}},
+        )
+        info = VideoInfo(30.0, 300, 10.0, 2, 2)
+
+        record = scene_records(
+            [FrameSample(15, 0.5, object())],
+            [[0.1, 0.2]],
+            info,
+            config,
+        )[0]
+
+        self.assertEqual(record.metadata["start"], 0.5)
+        self.assertEqual(record.metadata["end"], 1.0)
+
+    def test_scene_records_end_at_next_selected_sample_without_gaps(self):
+        config = IndexConfig(
+            video_id="video-1",
+            enabled_modalities=("scene",),
+            capability_options={"scene": {"sample_fps": 1.0}},
+        )
+        info = VideoInfo(1.49, 5, 5 / 1.49, 2, 2)
+
+        records = scene_records(
+            [
+                FrameSample(0, 0.0, object()),
+                FrameSample(2, 2 / 1.49, object()),
+                FrameSample(3, 3 / 1.49, object()),
+            ],
+            [[0.1], [0.2], [0.3]],
+            info,
+            config,
+        )
+
+        self.assertEqual(records[0].metadata["end"], 2 / 1.49)
+        self.assertEqual(records[1].metadata["end"], 3 / 1.49)
+        self.assertEqual(records[2].metadata["end"], info.duration)
+
+    def test_scene_and_actor_share_decode_but_keep_independent_cadences(self):
         registry = create_capability_registry()
         scene = registry.executor("scene").index_processor
         actor = registry.executor("actor").index_processor
@@ -240,7 +330,7 @@ class IndexingTests(unittest.TestCase):
         actor.process = Mock()
         scene.batch_size = Mock(return_value=2)
         actor.batch_size = Mock(return_value=1)
-        scene.finalize = Mock(return_value=({"scene_frames": 2}, 2))
+        scene.finalize = Mock(return_value=({"scene_frames": 1}, 1))
         actor.finalize = Mock(
             return_value=(
                 {"actor_frames": 2, "actor_detections": 0, "actor_clusters": 0},
@@ -281,8 +371,19 @@ class IndexingTests(unittest.TestCase):
             )
 
         frame_stream.assert_called_once()
+        samplings = frame_stream.call_args.kwargs["samplings"]
+        self.assertEqual(samplings[0].target_fps, 1.0)
+        self.assertEqual(samplings[1].frame_stride, 1)
+        self.assertEqual(
+            [sample.frame_index for sample in scene.process.call_args.args[0]],
+            [0],
+        )
+        self.assertEqual(
+            [sample.frame_index for sample in actor.process.call_args.args[0]],
+            [0, 1],
+        )
         self.assertEqual(result.summary["processed_frames"], 2)
-        self.assertEqual(result.summary["scene_frames"], 2)
+        self.assertEqual(result.summary["scene_frames"], 1)
         self.assertEqual(result.summary["actor_frames"], 2)
 
     def test_actor_records_preserve_stable_detection_metadata(self):

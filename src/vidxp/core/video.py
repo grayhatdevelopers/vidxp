@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import floor
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Sequence
 
 from vidxp.core.contracts import CancellationToken
 from vidxp.core.indexing_common import ProgressCallback
@@ -30,6 +31,59 @@ class FrameSample:
     frame: object
 
 
+@dataclass(frozen=True)
+class FrameSampling:
+    frame_stride: int | None = None
+    source_fps: float | None = None
+    target_fps: float | None = None
+
+    def __post_init__(self) -> None:
+        frame_based = self.frame_stride is not None
+        time_based = self.source_fps is not None or self.target_fps is not None
+        if frame_based == time_based:
+            raise ValueError(
+                "Frame sampling requires either a stride or a source/target FPS pair."
+            )
+        if frame_based and self.frame_stride <= 0:
+            raise ValueError("frame_stride must be greater than zero.")
+        if time_based and (
+            self.source_fps is None
+            or self.target_fps is None
+            or self.source_fps <= 0
+            or self.target_fps <= 0
+        ):
+            raise ValueError("source_fps and target_fps must be greater than zero.")
+
+    def includes(self, frame_index: int, timestamp: float) -> bool:
+        if self.frame_stride is not None:
+            return frame_index % self.frame_stride == 0
+        assert self.source_fps is not None
+        assert self.target_fps is not None
+        if self.source_fps <= self.target_fps or frame_index == 0:
+            return True
+        previous_timestamp = (frame_index - 1) / self.source_fps
+        return floor(timestamp * self.target_fps) > floor(
+            previous_timestamp * self.target_fps
+        )
+
+    def next_sample_timestamp(
+        self,
+        frame_index: int,
+        *,
+        frame_count: int,
+        duration: float,
+    ) -> float:
+        if self.source_fps is None:
+            raise ValueError(
+                "Next sample timestamps require time-based sampling."
+            )
+        for next_index in range(frame_index + 1, max(0, frame_count)):
+            timestamp = next_index / self.source_fps
+            if self.includes(next_index, timestamp):
+                return min(duration, timestamp)
+        return duration
+
+
 def probe_video(path: str | Path) -> VideoInfo:
     import cv2
 
@@ -53,15 +107,20 @@ def probe_video(path: str | Path) -> VideoInfo:
 def iter_frame_batches(
     path: str | Path,
     *,
-    frame_stride: int,
+    frame_stride: int | None = None,
+    frame_strides: Sequence[int] | None = None,
+    samplings: Sequence[FrameSampling] | None = None,
     batch_size: int,
     cancellation: CancellationToken,
     stats: FrameStreamStats | None = None,
 ) -> Iterator[list[FrameSample]]:
     import cv2
 
-    if frame_stride <= 0:
-        raise ValueError("frame_stride must be greater than zero.")
+    strides = tuple(dict.fromkeys(frame_strides or ()))
+    if frame_stride is not None:
+        strides = tuple(dict.fromkeys((frame_stride, *strides)))
+    if any(stride <= 0 for stride in strides):
+        raise ValueError("frame strides must be greater than zero.")
     if batch_size <= 0:
         raise ValueError("batch_size must be greater than zero.")
 
@@ -70,13 +129,23 @@ def iter_frame_batches(
     if fps <= 0:
         video.release()
         raise ValueError("The selected video has an invalid frame rate.")
+    active_samplings = tuple(samplings or ()) + tuple(
+        FrameSampling(frame_stride=stride) for stride in strides
+    )
+    if not active_samplings:
+        video.release()
+        raise ValueError("At least one frame sampling schedule is required.")
 
     stream_stats = stats or FrameStreamStats()
     batch: list[FrameSample] = []
     frame_index = 0
     try:
         while True:
-            sampled = frame_index % frame_stride == 0
+            timestamp = frame_index / fps
+            sampled = any(
+                sampling.includes(frame_index, timestamp)
+                for sampling in active_samplings
+            )
             if sampled:
                 retrieved, frame = video.read()
             else:
@@ -90,7 +159,7 @@ def iter_frame_batches(
                 batch.append(
                     FrameSample(
                         frame_index=frame_index,
-                        timestamp=frame_index / fps,
+                        timestamp=timestamp,
                         frame=frame,
                     )
                 )

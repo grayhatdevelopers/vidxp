@@ -149,6 +149,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 "command": {
                     "media_id": MEDIA_ID,
                     "modalities": ["scene"],
+                    "scene_sample_fps": 2.0,
                 },
                 "idempotency_key": "agent-request-0001",
             }
@@ -162,6 +163,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         )
         calls = context.jobs.submit_index.call_args_list
         self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0].args[0].scene_sample_fps, 2.0)
         self.assertEqual(
             calls[0].kwargs["job_id"],
             calls[1].kwargs["job_id"],

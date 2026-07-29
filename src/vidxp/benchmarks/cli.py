@@ -140,7 +140,14 @@ def didemo_command(
             help="Pool sampled frame scores within each five-second chunk."
         ),
     ] = "max",
-    frame_stride: Annotated[int, typer.Option(min=1)] = 1,
+    scene_sample_fps: Annotated[
+        float,
+        typer.Option(
+            "--scene-sample-fps",
+            min=0.01,
+            help="Target time-based scene samples per second.",
+        ),
+    ] = 1.0,
     reset: Annotated[bool, typer.Option()] = False,
     json_output: Annotated[
         bool,
@@ -158,7 +165,7 @@ def didemo_command(
         run_id=run_id,
         output_root=output_root,
         annotation_indices=_annotation_indices(annotation_indices),
-        frame_stride=frame_stride,
+        scene_sample_fps=scene_sample_fps,
         split=split,
         chunk_pooling=chunk_pooling,
         reset=reset,

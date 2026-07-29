@@ -15,6 +15,7 @@ from vidxp.core.indexing_common import ProgressCallback, report_progress
 from vidxp.ports import IndexStore, ModelRuntimePort
 from vidxp.core.video import (
     FrameSample,
+    FrameSampling,
     FrameStreamStats,
     iter_frame_batches,
     probe_video,
@@ -22,6 +23,8 @@ from vidxp.core.video import (
 
 
 class VisualProcessor(Protocol):
+    def sampling(self, config: IndexConfig, info: Any) -> FrameSampling: ...
+
     def batch_size(self, config: IndexConfig) -> int: ...
 
     def prepare(
@@ -56,6 +59,7 @@ class _Participant:
     name: str
     processor: VisualProcessor
     state: Any
+    sampling: FrameSampling
 
 
 def _rgb_samples(samples) -> list[FrameSample]:
@@ -74,6 +78,7 @@ def _rgb_samples(samples) -> list[FrameSample]:
 def _participants(
     names: Sequence[str],
     *,
+    info: Any,
     config: IndexConfig,
     registry: CapabilityRegistry,
     runtime: ModelRuntimePort,
@@ -90,8 +95,44 @@ def _participants(
         started = perf_counter()
         state = processor.prepare(config, runtime, progress)
         timings[name] = perf_counter() - started
-        participants.append(_Participant(name, processor, state))
+        sampling_factory = getattr(type(processor), "sampling", None)
+        sampling = (
+            FrameSampling(frame_stride=config.frame_stride)
+            if sampling_factory is None
+            else sampling_factory(processor, config, info)
+        )
+        if not isinstance(sampling, FrameSampling):
+            raise ValueError(
+                f"Capability {name!r} returned invalid frame sampling."
+            )
+        participants.append(_Participant(name, processor, state, sampling))
     return participants
+
+
+def _is_participant_sample(
+    sample: FrameSample,
+    participant: _Participant,
+) -> bool:
+    return participant.sampling.includes(
+        sample.frame_index,
+        sample.timestamp,
+    )
+
+
+def _expected_sample_count(
+    info: Any,
+    participants: Sequence[_Participant],
+) -> int:
+    return sum(
+        any(
+            participant.sampling.includes(
+                frame_index,
+                frame_index / info.fps,
+            )
+            for participant in participants
+        )
+        for frame_index in range(max(0, info.frame_count))
+    )
 
 
 def _consume_visual_stream(
@@ -110,7 +151,9 @@ def _consume_visual_stream(
     stream = iter(
         iter_frame_batches(
             source.path,
-            frame_stride=config.frame_stride,
+            samplings=tuple(
+                participant.sampling for participant in participants
+            ),
             batch_size=max(
                 participant.processor.batch_size(config)
                 for participant in participants
@@ -130,9 +173,16 @@ def _consume_visual_stream(
         timings["frame_stream"] += perf_counter() - stream_started
 
         for participant in participants:
+            participant_samples = [
+                sample
+                for sample in rgb_samples
+                if _is_participant_sample(sample, participant)
+            ]
+            if not participant_samples:
+                continue
             processor_started = perf_counter()
             participant.processor.process(
-                rgb_samples,
+                participant_samples,
                 state=participant.state,
                 info=info,
                 config=config,
@@ -205,20 +255,19 @@ def index_visuals(
 
     started = perf_counter()
     info = probe_video(source.path)
-    expected = (
-        info.frame_count + config.frame_stride - 1
-    ) // config.frame_stride
     timings = {
         "frame_stream": 0.0,
     }
     participants = _participants(
         selected,
+        info=info,
         config=config,
         registry=registry,
         runtime=runtime,
         progress=progress,
         timings=timings,
     )
+    expected = _expected_sample_count(info, participants)
     report_progress(
         progress,
         "visual_indexing",

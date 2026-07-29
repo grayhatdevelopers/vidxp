@@ -444,6 +444,7 @@ class ApplicationTests(unittest.TestCase):
                     media_id=MEDIA_ID,
                     modalities=("scene",),
                     frame_stride=5,
+                    scene_sample_fps=2.0,
                 )
             )
 
@@ -460,6 +461,7 @@ class ApplicationTests(unittest.TestCase):
         config = backend.create.call_args.kwargs["config"]
         self.assertEqual(config.enabled_modalities, ("scene",))
         self.assertEqual(config.frame_stride, 5)
+        self.assertEqual(config.options_for("scene")["sample_fps"], 2.0)
         self.assertEqual(config.device, "cpu")
 
     def test_operation_definition_is_metadata_and_executor_owns_handler(self):

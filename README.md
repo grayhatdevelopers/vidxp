@@ -148,13 +148,18 @@ vidxp artifacts snippet <media-id> 30 45 --json
 vidxp artifacts show <artifact-id>
 ```
 
-Index only selected capabilities or sample fewer visual frames:
+Index only selected capabilities or adjust the time-based scene sampling rate:
 
 ```bash
-vidxp index create <media-id> --modality scene --frame-stride 5
+vidxp index create <media-id> --modality scene --scene-sample-fps 1
 ```
 
 Repeat `--modality` to combine `dialogue`, `scene`, and `actor`.
+Scene sampling is normalized to the source frame rate; lower-FPS videos use
+every available frame without duplicating frames. `--frame-stride` remains the
+independent actor/legacy visual sampling control.
+Scene indexes created before time-based sampling must be rebuilt before adding
+or replacing media under the new sampling profile.
 Indexing, artifact rendering, and model preparation run as durable background
 jobs. Commands wait by default; add `--detach` to return after queueing, then
 inspect or control the job separately:
@@ -227,7 +232,7 @@ curl -F "upload=@samplevideo.mp4" \
 curl -X POST http://127.0.0.1:8000/api/v1/jobs/index \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: 12345678-1234-4234-8123-123456789abc" \
-  -d '{"media_id":"<media-id>","modalities":["scene"]}'
+  -d '{"media_id":"<media-id>","modalities":["scene"],"scene_sample_fps":1.0}'
 ```
 
 Non-loopback and server-mode deployments must configure static bearer or OIDC
@@ -268,7 +273,8 @@ OpenAPI or call the HTTP API internally.
 
 Remote video bytes still use HTTP/tus. Upload and resume the video, wait for a
 `media_id`, and then pass that ID to `start_indexing`. MCP never carries video
-bytes, base64 video, or server file paths.
+bytes, base64 video, or server file paths. The `start_indexing` command accepts
+the same `scene_sample_fps` field as the HTTP API.
 
 Static deployments use the configured bearer token as an MCP request header.
 OIDC deployments must also set the canonical resource URL:
@@ -319,7 +325,7 @@ config = IndexConfig(
     split="local",
     run_id="demo",
     enabled_modalities=("scene",),
-    frame_stride=5,
+    capability_options={"scene": {"sample_fps": 1.0}},
 )
 
 run_index(

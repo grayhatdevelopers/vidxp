@@ -354,6 +354,7 @@ class ApiTests(unittest.TestCase):
                         "media_id": MEDIA_ID,
                         "modalities": ["scene"],
                         "frame_stride": 1,
+                        "scene_sample_fps": 0.5,
                         "capability_options": {},
                     },
                 )
@@ -363,6 +364,7 @@ class ApiTests(unittest.TestCase):
         command = context.jobs.submit_index.call_args.args[0]
         self.assertEqual(command.media_id, MEDIA_ID)
         self.assertEqual(command.modalities, ("scene",))
+        self.assertEqual(command.scene_sample_fps, 0.5)
         expected_job_id = scoped_job_id(
             context,
             context.authenticator.authenticate(None),

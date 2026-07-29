@@ -90,6 +90,53 @@ class PublicPathContractTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             CreateIndexCommand(media_id="1" * 64, modalities=("scene",))
 
+    def test_scene_sampling_requires_a_positive_scene_request(self):
+        with self.assertRaises(ValidationError):
+            CreateIndexCommand(
+                media_id=MEDIA_ID,
+                modalities=("dialogue",),
+                scene_sample_fps=1.0,
+            )
+        with self.assertRaises(ValidationError):
+            CreateIndexCommand(
+                media_id=MEDIA_ID,
+                modalities=("scene",),
+                scene_sample_fps=0,
+            )
+
+    def test_scene_sampling_has_one_canonical_command_field(self):
+        nested = CreateIndexCommand(
+            media_id=MEDIA_ID,
+            modalities=("scene",),
+            capability_options={
+                "scene": {"sample_fps": 2.0, "batch_size": 4},
+            },
+        )
+        explicit = CreateIndexCommand(
+            media_id=MEDIA_ID,
+            modalities=("scene",),
+            scene_sample_fps=2.0,
+            capability_options={"scene": {"batch_size": 4}},
+        )
+
+        self.assertEqual(nested, explicit)
+        self.assertEqual(nested.scene_sample_fps, 2.0)
+        self.assertEqual(
+            nested.capability_options,
+            {"scene": {"batch_size": 4}},
+        )
+        self.assertNotIn(
+            "sample_fps",
+            nested.model_dump(mode="json")["capability_options"]["scene"],
+        )
+        with self.assertRaisesRegex(ValidationError, "conflicts"):
+            CreateIndexCommand(
+                media_id=MEDIA_ID,
+                modalities=("scene",),
+                scene_sample_fps=1.0,
+                capability_options={"scene": {"sample_fps": 2.0}},
+            )
+
     def test_search_metadata_rejects_internal_locations(self):
         with self.assertRaises(ValidationError):
             SearchHit(

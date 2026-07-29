@@ -13,6 +13,7 @@ from vidxp.core.contracts import (
     stable_source_id,
 )
 from vidxp.core.indexing_common import ProgressCallback
+from vidxp.core.video import FrameSampling
 from vidxp.ports import IndexStore, ModelRuntimePort
 
 
@@ -259,6 +260,9 @@ def finalize_actor_index(
 
 
 class ActorVisualProcessor:
+    def sampling(self, config: IndexConfig, info) -> FrameSampling:
+        return FrameSampling(frame_stride=config.frame_stride)
+
     def batch_size(self, config: IndexConfig) -> int:
         return actor_config(config).batch_size
 

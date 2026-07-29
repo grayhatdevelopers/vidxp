@@ -11,7 +11,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import quote
 
 
-INDEX_SCHEMA_VERSION = 5
+INDEX_SCHEMA_VERSION = 6
 MANIFEST_SCHEMA_VERSION = 2
 
 

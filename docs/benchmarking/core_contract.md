@@ -46,10 +46,11 @@ from vidxp.core.runner import run_index
 config = IndexConfig(
     dataset="example",
     split="test",
-    run_id="clip-stride-5",
+    run_id="scene-1fps",
     enabled_modalities=("scene",),
-    frame_stride=5,
-    capability_options={"scene": {"batch_size": 32}},
+    capability_options={
+        "scene": {"batch_size": 32, "sample_fps": 1.0},
+    },
     storage_batch_size=256,
 )
 
@@ -98,12 +99,15 @@ to independently sized scene and actor batches. Actor detections are written
 incrementally; clusters below `actor_min_detections` are removed after clustering
 instead of retaining every detection in process memory.
 
-`frame_stride` controls which frames are retrieved into Python and sent through
-the models. Skipped frames are advanced with the video backend without being
-materialized. Inter-frame codecs may still require backend-internal decoding, so
-stride is not claimed to reduce codec work in direct proportion to the stride.
-Manifests distinguish `source_frames_advanced`, unique `sampled_frames`, and the
-sum of per-modality `frame_operations`.
+Scene `sample_fps` is converted from the probed source FPS into a deterministic
+frame cadence. A source below the requested rate uses every available frame
+without duplication. `frame_stride` independently controls actor and legacy
+visual capability sampling. When scene and actor are both enabled, the decoder
+materializes the union of their required frames once and routes each capability
+only its own cadence. Inter-frame codecs may still require backend-internal
+decoding, so sampling is not claimed to reduce codec work in direct proportion
+to the cadence. Manifests distinguish `source_frames_advanced`, unique
+`sampled_frames`, and the sum of per-modality `frame_operations`.
 
 ## Stored identity and metadata
 

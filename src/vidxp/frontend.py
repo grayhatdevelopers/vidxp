@@ -69,6 +69,13 @@ MEDIA_NOTICE_KEY = "_vidxp_media_notice"
 INDEX_JOB_QUERY_PARAM = "index_job"
 SEARCH_JOB_QUERY_PARAM = "search_job"
 SEARCH_TYPE_QUERY_PARAM = "search_type"
+SCENE_SAMPLE_FPS_DEFAULT = 1.0
+SCENE_DETAIL_PRESETS = (0.5, SCENE_SAMPLE_FPS_DEFAULT, 2.0)
+SCENE_DETAIL_LABELS = {
+    0.5: "Faster — every 2 seconds",
+    1.0: "Balanced — every second",
+    2.0: "Detailed — twice per second",
+}
 
 
 def _remember_job(
@@ -265,7 +272,13 @@ def _finish_index_job(job) -> None:
     st.session_state.pop(INDEX_JOB_ID_KEY, None)
 
 
-def _run_indexing(uploaded_video, status, modalities):
+def _run_indexing(
+    uploaded_video,
+    status,
+    modalities,
+    *,
+    scene_sample_fps: float | None = None,
+):
     service = _configured_service()
     temporary_path = None
     try:
@@ -300,6 +313,7 @@ def _run_indexing(uploaded_video, status, modalities):
             CreateIndexCommand(
                 media_id=media_id,
                 modalities=modalities,
+                scene_sample_fps=scene_sample_fps,
             )
         )
         st.session_state[INDEX_JOB_ID_KEY] = job.job_id
@@ -321,6 +335,28 @@ def _run_indexing(uploaded_video, status, modalities):
             temporary_path.unlink(missing_ok=True)
         st.session_state[INDEX_REQUESTED_KEY] = False
     st.rerun()
+
+
+def _scene_sample_fps_control(
+    modalities: tuple[str, ...],
+    *,
+    disabled: bool,
+) -> float | None:
+    if "scene" not in modalities:
+        return None
+    return float(
+        st.selectbox(
+            "Scene detail",
+            SCENE_DETAIL_PRESETS,
+            index=1,
+            format_func=SCENE_DETAIL_LABELS.__getitem__,
+            disabled=disabled,
+            help=(
+                "More scene detail can improve coverage but takes longer "
+                "to index and uses more storage."
+            ),
+        )
+    )
 
 
 def _run_search(search_type, query, media_id=None):
@@ -786,6 +822,10 @@ def run():
                 help="Install another capability extra to make it available here.",
             )
         )
+        scene_sample_fps = _scene_sample_fps_control(
+            selected_modalities,
+            disabled=busy,
+        )
         if not installed_modalities:
             st.warning(
                 "No indexing capabilities are installed. "
@@ -898,7 +938,12 @@ def run():
         _render_search_result(st.session_state.get(SEARCH_RESULT_KEY))
 
     if requested:
-        _run_indexing(uploaded_video, status, selected_modalities)
+        _run_indexing(
+            uploaded_video,
+            status,
+            selected_modalities,
+            scene_sample_fps=scene_sample_fps,
+        )
 
 
 def main(

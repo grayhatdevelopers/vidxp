@@ -100,12 +100,15 @@ assert cli.benchmark_app is not None
                         str(media),
                         "--run-id",
                         "run-1",
+                        "--scene-sample-fps",
+                        "2",
                     ],
                 )
 
         self.assertEqual(response.exit_code, 0, response.output)
         self.assertEqual(json.loads(response.stdout)["rank_at_1"], 0.5)
         self.assertEqual(run.call_args.kwargs["device"], "cuda")
+        self.assertEqual(run.call_args.kwargs["scene_sample_fps"], 2.0)
 
     def test_missing_adapter_dependencies_fail_with_exact_extra_hint(self):
         registry = Mock()

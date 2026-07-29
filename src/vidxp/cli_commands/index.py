@@ -27,6 +27,7 @@ def create_index(
     *,
     modalities: Iterable[str],
     frame_stride: int,
+    scene_sample_fps: float | None,
     capability_options: dict[str, dict],
     detach: bool = False,
 ) -> dict:
@@ -39,6 +40,7 @@ def create_index(
                 media_id=media_id,
                 modalities=tuple(modalities),
                 frame_stride=frame_stride,
+                scene_sample_fps=scene_sample_fps,
                 capability_options=capability_options,
             ),
         )
@@ -89,9 +91,23 @@ def index_create(
         typer.Option(
             "--frame-stride",
             min=1,
-            help="Materialize every Nth frame for visual modalities.",
+            help=(
+                "Materialize every Nth frame for actor and legacy visual "
+                "indexing."
+            ),
         ),
     ] = 1,
+    scene_sample_fps: Annotated[
+        float | None,
+        typer.Option(
+            "--scene-sample-fps",
+            min=0.01,
+            help=(
+                "Target scene samples per second; lower-FPS media uses every "
+                "available frame."
+            ),
+        ),
+    ] = None,
     capability_options: Annotated[
         list[str] | None,
         typer.Option(
@@ -126,6 +142,7 @@ def index_create(
             indexable,
         ),
         frame_stride=frame_stride,
+        scene_sample_fps=scene_sample_fps,
         capability_options=parse_capability_options(capability_options),
         detach=detach,
     )

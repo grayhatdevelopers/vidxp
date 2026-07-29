@@ -245,6 +245,8 @@ class CliTests(unittest.TestCase):
                 "scene",
                 "--frame-stride",
                 "5",
+                "--scene-sample-fps",
+                "2",
             ]
         )
 
@@ -253,6 +255,7 @@ class CliTests(unittest.TestCase):
         self.assertIsInstance(command, CreateIndexCommand)
         self.assertEqual(command.modalities, ("scene",))
         self.assertEqual(command.frame_stride, 5)
+        self.assertEqual(command.scene_sample_fps, 2.0)
         self.assertEqual(command.media_id, MEDIA_ID)
 
     def test_remove_uses_shared_media_id_command(self):

@@ -514,6 +514,19 @@ handlers do not each load models independently.
 The scheduler applies backpressure to CPU threads, RAM and VRAM. API request
 threadpools are not the GPU scheduler.
 
+### 12.1 Scene sampling delivery boundary
+
+The current scene-indexing deliverable uses deterministic time-based sampling at
+a configured interval. This is the minimal sampling path required to make scene
+indexing predictable and runnable through the complete application; it does not
+claim content-aware or shot-aware frame selection.
+
+Content-aware or shot-boundary sampling is deferred. Before it is considered for
+the default path, benchmark it against time-based sampling for retrieval quality,
+indexing time, materialized frames, and memory use. Add sampling-specific
+backpressure only if those measurements show that bounded model/write batches and
+the existing scheduler do not adequately control resource use.
+
 ## 13. Cross-platform CPU and acceleration
 
 CPU completion is the first platform gate. The supported local targets are:

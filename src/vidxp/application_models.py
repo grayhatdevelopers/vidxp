@@ -345,10 +345,73 @@ class UploadIntent(ApplicationModel):
 class CreateIndexCommand(ApplicationModel):
     media_id: MediaId
     modalities: tuple[str, ...]
-    frame_stride: int = Field(default=1, gt=0)
+    frame_stride: int = Field(
+        default=1,
+        gt=0,
+        description=(
+            "Materialize every Nth frame for actor and legacy visual indexing."
+        ),
+    )
+    scene_sample_fps: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Target scene samples per second. Sources below this rate use "
+            "every available frame without duplication."
+        ),
+    )
     capability_options: Mapping[str, Mapping[str, JsonValue]] = Field(
         default_factory=dict
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _canonicalize_scene_sampling(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        raw_options = payload.get("capability_options")
+        if not isinstance(raw_options, Mapping):
+            return payload
+        raw_scene = raw_options.get("scene")
+        if not isinstance(raw_scene, Mapping) or "sample_fps" not in raw_scene:
+            return payload
+
+        nested_value = raw_scene["sample_fps"]
+        explicit_value = payload.get("scene_sample_fps")
+        if explicit_value is not None:
+            try:
+                conflicts = float(explicit_value) != float(nested_value)
+            except (TypeError, ValueError):
+                conflicts = True
+            if conflicts:
+                raise ValueError(
+                    "scene_sample_fps conflicts with "
+                    "capability_options.scene.sample_fps."
+                )
+        else:
+            payload["scene_sample_fps"] = nested_value
+
+        options = dict(raw_options)
+        scene = dict(raw_scene)
+        scene.pop("sample_fps")
+        if scene:
+            options["scene"] = scene
+        else:
+            options.pop("scene", None)
+        payload["capability_options"] = options
+        return payload
+
+    @model_validator(mode="after")
+    def _scene_sampling_requires_scene(self) -> "CreateIndexCommand":
+        if (
+            self.scene_sample_fps is not None
+            and "scene" not in self.modalities
+        ):
+            raise ValueError(
+                "scene_sample_fps requires the scene modality."
+            )
+        return self
 
 
 class IndexResult(ApplicationModel):

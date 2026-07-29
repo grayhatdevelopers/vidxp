@@ -124,10 +124,16 @@ class CapabilityTests(unittest.TestCase):
 
         options = self.registry.validate_options(
             ("scene",),
-            {"scene": {"batch_size": 4}},
+            {"scene": {"batch_size": 4, "sample_fps": 0.5}},
         )
         self.assertEqual(options["scene"]["batch_size"], 4)
+        self.assertEqual(options["scene"]["sample_fps"], 0.5)
         self.assertNotIn("model", options["scene"])
+        with self.assertRaises(ValidationError):
+            self.registry.validate_options(
+                ("scene",),
+                {"scene": {"sample_fps": 0}},
+            )
         with self.assertRaises(ValidationError):
             self.registry.validate_options(
                 ("scene",),
