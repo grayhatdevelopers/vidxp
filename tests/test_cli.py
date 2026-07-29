@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from typer.testing import CliRunner
 
 from vidxp import cli
+from vidxp.entrypoint import startup_command
 from vidxp.composition import LocalApplicationContext, settings_for_repository
 from vidxp.settings import ApplicationMode
 from vidxp.application_models import (
@@ -98,6 +99,16 @@ class CliTests(unittest.TestCase):
             "prepare",
         ):
             self.assertIn(command, result.output)
+
+    def test_startup_notice_targets_long_interactive_commands(self):
+        self.assertEqual(startup_command(["doctor"]), "doctor")
+        self.assertEqual(
+            startup_command(["media", "import", "video.mp4"]),
+            "media import",
+        )
+        self.assertIsNone(startup_command(["doctor", "--json"]))
+        self.assertIsNone(startup_command(["--quiet", "prepare"]))
+        self.assertIsNone(startup_command(["repositories", "list"]))
 
     def test_snippet_rejects_an_inverted_time_range_before_submission(self):
         result = self.invoke(
@@ -405,11 +416,31 @@ class CliTests(unittest.TestCase):
         def check_dependencies(
             _command,
             *,
-            on_runtime_check_start,
-            on_runtime_check_complete,
+            on_check_start,
+            on_check_complete,
         ):
-            on_runtime_check_start("scene", "Torch import")
-            on_runtime_check_complete(
+            on_check_start(
+                "scene",
+                DependencyKind.distribution,
+                "torch",
+            )
+            on_check_complete(
+                CapabilityDependencyCheck(
+                    capability="scene",
+                    kind=DependencyKind.distribution,
+                    name="torch",
+                    requirement="torch==2.13.0",
+                    installed_version="2.13.0",
+                    ok=True,
+                ),
+                0.01,
+            )
+            on_check_start(
+                "scene",
+                DependencyKind.runtime,
+                "Torch import",
+            )
+            on_check_complete(
                 CapabilityDependencyCheck(
                     capability="scene",
                     kind=DependencyKind.runtime,
@@ -421,7 +452,22 @@ class CliTests(unittest.TestCase):
             return DependencyCheckResult(
                 ok=True,
                 modalities=("scene",),
-                checks=(),
+                checks=(
+                    CapabilityDependencyCheck(
+                        capability="scene",
+                        kind=DependencyKind.distribution,
+                        name="torch",
+                        requirement="torch==2.13.0",
+                        installed_version="2.13.0",
+                        ok=True,
+                    ),
+                    CapabilityDependencyCheck(
+                        capability="scene",
+                        kind=DependencyKind.runtime,
+                        name="Torch import",
+                        ok=True,
+                    ),
+                ),
             )
 
         self.service.check_dependencies.side_effect = check_dependencies
@@ -434,7 +480,7 @@ class CliTests(unittest.TestCase):
             r"\[\d{2}:\d{2}:\d{2}\] Checking \[scene\] Torch import\.\.\.",
         )
         self.assertIn("OK (1.2s)", result.output)
-        self.assertNotIn("OK [scene] Torch import", result.output)
+        self.assertEqual(result.output.count("package torch"), 1)
 
     def test_doctor_prints_install_remedy_for_python_failures(self):
         self.service.check_dependencies.return_value = DependencyCheckResult(

@@ -47,7 +47,7 @@ dependencies = [
 ]
 
 [project.scripts]
-vidxp = "vidxp.cli:main"
+vidxp = "vidxp.entrypoint:main"
 vidxp-api = "vidxp.api_cli:main"
 vidxp-worker = "vidxp.workflow_worker:main"
 vidxp-database = "vidxp.database_cli:main"

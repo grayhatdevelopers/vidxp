@@ -8,6 +8,7 @@ from vidxp.application_models import (
     ApplicationError,
     CapabilityDependencyCheck,
     DependencyCheckCommand,
+    DependencyKind,
     ErrorCategory,
     PrepareModelsCommand,
 )
@@ -52,9 +53,14 @@ def doctor(
     )
     output_format = effective_output_format(state, json_output)
 
-    def show_check_start(capability: str, name: str) -> None:
+    def show_check_start(
+        capability: str,
+        kind: DependencyKind,
+        name: str,
+    ) -> None:
+        label = f"package {name}" if kind == DependencyKind.distribution else name
         emit_progress(
-            f"Checking [{capability}] {name}...",
+            f"Checking [{capability}] {label}...",
             newline=False,
         )
 
@@ -63,8 +69,13 @@ def doctor(
         elapsed_seconds: float,
     ) -> None:
         if check.ok:
+            detail = (
+                f"version {check.installed_version}"
+                if check.kind == DependencyKind.distribution
+                else f"{elapsed_seconds:.1f}s"
+            )
             typer.secho(
-                f" OK ({elapsed_seconds:.1f}s)",
+                f" OK ({detail})",
                 fg=typer.colors.GREEN,
             )
         else:
@@ -75,10 +86,10 @@ def doctor(
 
     result = state.service.check_dependencies(
         DependencyCheckCommand(modalities=selected),
-        on_runtime_check_start=(
+        on_check_start=(
             show_check_start if output_format == OutputFormat.rich else None
         ),
-        on_runtime_check_complete=(
+        on_check_complete=(
             show_check_complete
             if output_format == OutputFormat.rich
             else None
@@ -88,25 +99,6 @@ def doctor(
     if output_format == OutputFormat.json:
         emit_json(payload)
     else:
-        for check in payload["checks"]:
-            if check["kind"] == "runtime":
-                continue
-            owner = check["capability"]
-            if check["provenance"] is not None:
-                owner = (
-                    f"{check['provenance']['distribution']}:"
-                    f"{check['provenance']['entry_point']}"
-                )
-            if check["ok"]:
-                typer.secho(
-                    f"OK [{owner}] {check['name']}",
-                    fg=typer.colors.GREEN,
-                )
-            else:
-                typer.secho(
-                    f"FAILED [{owner}] {check['name']}: {check['error']}",
-                    fg=typer.colors.RED,
-                )
         python_failures = tuple(
             check
             for check in result.checks

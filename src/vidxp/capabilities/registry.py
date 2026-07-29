@@ -349,31 +349,42 @@ class CapabilityRegistry:
         *,
         source: VideoSource | None = None,
         include_runtime_checks: bool = True,
-        on_runtime_check_start: Callable[[str, str], None] | None = None,
-        on_runtime_check_complete: (
+        on_check_start: (
+            Callable[[str, DependencyKind, str], None] | None
+        ) = None,
+        on_check_complete: (
             Callable[[CapabilityDependencyCheck, float], None] | None
         ) = None,
     ) -> tuple[CapabilityDependencyCheck, ...]:
         selected = self.validate_names(names)
         checks = []
         for binding in self._requirement_bindings(selected, source=source):
-            result = inspect_requirement(binding.requirement)
-            checks.append(
-                CapabilityDependencyCheck(
-                    capability=binding.capability,
-                    provenance=binding.provenance,
-                    kind=DependencyKind.distribution,
-                    **result,
+            if on_check_start is not None:
+                on_check_start(
+                    binding.capability,
+                    DependencyKind.distribution,
+                    binding.requirement.name,
                 )
+            started = perf_counter()
+            result = inspect_requirement(binding.requirement)
+            check = CapabilityDependencyCheck(
+                capability=binding.capability,
+                provenance=binding.provenance,
+                kind=DependencyKind.distribution,
+                **result,
             )
+            checks.append(check)
+            if on_check_complete is not None:
+                on_check_complete(check, perf_counter() - started)
         if include_runtime_checks:
             for binding in self._runtime_check_bindings(
                 selected,
                 source=source,
             ):
-                if on_runtime_check_start is not None:
-                    on_runtime_check_start(
+                if on_check_start is not None:
+                    on_check_start(
                         binding.capability,
+                        DependencyKind.runtime,
                         binding.check.label,
                     )
                 started = perf_counter()
@@ -387,8 +398,8 @@ class CapabilityRegistry:
                     error=result["error"],
                 )
                 checks.append(check)
-                if on_runtime_check_complete is not None:
-                    on_runtime_check_complete(
+                if on_check_complete is not None:
+                    on_check_complete(
                         check,
                         perf_counter() - started,
                     )

@@ -247,8 +247,10 @@ class VidXPApplication(ControlPlaneApplication):
         self,
         command: DependencyCheckCommand,
         *,
-        on_runtime_check_start: Callable[[str, str], None] | None = None,
-        on_runtime_check_complete: (
+        on_check_start: (
+            Callable[[str, DependencyKind, str], None] | None
+        ) = None,
+        on_check_complete: (
             Callable[[CapabilityDependencyCheck, float], None] | None
         ) = None,
     ) -> DependencyCheckResult:
@@ -257,13 +259,13 @@ class VidXPApplication(ControlPlaneApplication):
             *self.registry.dependency_checks(
                 selected,
                 include_runtime_checks=command.include_runtime_checks,
-                on_runtime_check_start=on_runtime_check_start,
-                on_runtime_check_complete=on_runtime_check_complete,
+                on_check_start=on_check_start,
+                on_check_complete=on_check_complete,
             ),
             *(
                 self._media_runtime_checks(
-                    on_runtime_check_start=on_runtime_check_start,
-                    on_runtime_check_complete=on_runtime_check_complete,
+                    on_check_start=on_check_start,
+                    on_check_complete=on_check_complete,
                 )
                 if command.include_runtime_checks
                 else ()
@@ -278,8 +280,10 @@ class VidXPApplication(ControlPlaneApplication):
     def _media_runtime_checks(
         self,
         *,
-        on_runtime_check_start: Callable[[str, str], None] | None = None,
-        on_runtime_check_complete: (
+        on_check_start: (
+            Callable[[str, DependencyKind, str], None] | None
+        ) = None,
+        on_check_complete: (
             Callable[[CapabilityDependencyCheck, float], None] | None
         ) = None,
     ) -> tuple[CapabilityDependencyCheck, ...]:
@@ -296,8 +300,8 @@ class VidXPApplication(ControlPlaneApplication):
                 "VIDXP_FFPROBE_EXECUTABLE",
             ),
         ):
-            if on_runtime_check_start is not None:
-                on_runtime_check_start("media", name)
+            if on_check_start is not None:
+                on_check_start("media", DependencyKind.runtime, name)
             started = perf_counter()
             resolved = which(executable)
             check = CapabilityDependencyCheck(
@@ -316,8 +320,8 @@ class VidXPApplication(ControlPlaneApplication):
                 ),
             )
             checks.append(check)
-            if on_runtime_check_complete is not None:
-                on_runtime_check_complete(
+            if on_check_complete is not None:
+                on_check_complete(
                     check,
                     perf_counter() - started,
                 )

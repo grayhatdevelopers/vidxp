@@ -431,7 +431,7 @@ class CapabilityTests(unittest.TestCase):
 
         check = CapabilityRegistry((plugin,)).dependency_checks(
             ("ocr",),
-            on_runtime_check_start=lambda capability, name: events.append(
+            on_check_start=lambda capability, _kind, name: events.append(
                 (capability, name)
             ),
         )[0]

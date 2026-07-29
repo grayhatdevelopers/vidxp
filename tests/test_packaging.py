@@ -187,6 +187,10 @@ class PackagingTests(unittest.TestCase):
         project = tomllib.loads(
             (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         )
+        self.assertEqual(
+            project["project"]["scripts"]["vidxp"],
+            "vidxp.entrypoint:main",
+        )
         manifest = json.loads(
             (ROOT / "desktop" / "runtime-manifest.json").read_text(
                 encoding="utf-8"
