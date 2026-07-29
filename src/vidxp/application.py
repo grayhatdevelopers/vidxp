@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 from shutil import which
+from time import perf_counter
 from typing import Any, Callable, Iterator, Mapping, cast
 
 from pydantic import BaseModel
@@ -247,6 +248,9 @@ class VidXPApplication(ControlPlaneApplication):
         command: DependencyCheckCommand,
         *,
         on_runtime_check_start: Callable[[str, str], None] | None = None,
+        on_runtime_check_complete: (
+            Callable[[CapabilityDependencyCheck, float], None] | None
+        ) = None,
     ) -> DependencyCheckResult:
         selected = self.registry.validate_names(command.modalities)
         checks = (
@@ -254,10 +258,12 @@ class VidXPApplication(ControlPlaneApplication):
                 selected,
                 include_runtime_checks=command.include_runtime_checks,
                 on_runtime_check_start=on_runtime_check_start,
+                on_runtime_check_complete=on_runtime_check_complete,
             ),
             *(
                 self._media_runtime_checks(
-                    on_runtime_check_start=on_runtime_check_start
+                    on_runtime_check_start=on_runtime_check_start,
+                    on_runtime_check_complete=on_runtime_check_complete,
                 )
                 if command.include_runtime_checks
                 else ()
@@ -273,6 +279,9 @@ class VidXPApplication(ControlPlaneApplication):
         self,
         *,
         on_runtime_check_start: Callable[[str, str], None] | None = None,
+        on_runtime_check_complete: (
+            Callable[[CapabilityDependencyCheck, float], None] | None
+        ) = None,
     ) -> tuple[CapabilityDependencyCheck, ...]:
         checks = []
         for name, executable, setting in (
@@ -289,24 +298,29 @@ class VidXPApplication(ControlPlaneApplication):
         ):
             if on_runtime_check_start is not None:
                 on_runtime_check_start("media", name)
+            started = perf_counter()
             resolved = which(executable)
-            checks.append(
-                CapabilityDependencyCheck(
-                    capability="media",
-                    kind=DependencyKind.runtime,
-                    name=name,
-                    ok=resolved is not None,
-                    error=(
-                        None
-                        if resolved is not None
-                        else (
-                            f"{executable!r} is unavailable. Install FFmpeg "
-                            "with the operating-system package manager or set "
-                            f"{setting}; VidXP does not install OS packages."
-                        )
-                    ),
-                )
+            check = CapabilityDependencyCheck(
+                capability="media",
+                kind=DependencyKind.runtime,
+                name=name,
+                ok=resolved is not None,
+                error=(
+                    None
+                    if resolved is not None
+                    else (
+                        f"{executable!r} is unavailable. Install FFmpeg "
+                        "with the operating-system package manager or set "
+                        f"{setting}; VidXP does not install OS packages."
+                    )
+                ),
             )
+            checks.append(check)
+            if on_runtime_check_complete is not None:
+                on_runtime_check_complete(
+                    check,
+                    perf_counter() - started,
+                )
         return tuple(checks)
 
     @application_boundary

@@ -11,7 +11,10 @@ from vidxp.application_models import (
 )
 from vidxp.cli_support import (
     CLIState,
+    OutputFormat,
     effective_output_format,
+    emit_job_progress,
+    emit_progress,
     emit_query,
     state_from_context,
 )
@@ -26,6 +29,10 @@ def run_query(
     top_k: int,
     json_output: bool,
 ) -> QueryAnswer:
+    output_format = effective_output_format(state, json_output)
+    show_progress = not state.quiet and output_format == OutputFormat.rich
+    if show_progress:
+        emit_progress("Starting grounded video query...")
     job = state.jobs.submit_query(
         QueryVideoCommand(
             question=question,
@@ -34,13 +41,16 @@ def run_query(
             top_k=top_k,
         )
     )
-    completed = state.jobs.wait(job.job_id)
+    completed = state.jobs.wait(
+        job.job_id,
+        progress=emit_job_progress if show_progress else None,
+    )
     if not isinstance(completed.result, QueryJobResult):
         raise RuntimeError("The completed query job has no query result.")
     result = completed.result.result
     emit_query(
         result,
-        output_format=effective_output_format(state, json_output),
+        output_format=output_format,
     )
     return result
 

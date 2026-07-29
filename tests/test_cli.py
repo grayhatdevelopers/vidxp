@@ -368,9 +368,56 @@ class CliTests(unittest.TestCase):
         command = self.service.check_dependencies.call_args.args[0]
         self.assertEqual(command.modalities, ("dialogue", "scene"))
 
+    def test_prepare_announces_start_and_subscribes_to_job_progress(self):
+        prepared = PrepareModelsResult(
+            prepared=("scene-model",),
+            modalities=("scene",),
+            runtime={
+                "requested": "cpu",
+                "torch_device": "cpu",
+                "transcription_device": "cpu",
+            },
+        )
+        self.jobs.submit_prepare_models.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.prepare_models,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        self.jobs.wait.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.prepare_models,
+            state=JobState.succeeded,
+            queue=JobQueue.cpu,
+            result=PrepareModelsJobResult(result=prepared),
+        )
+
+        result = self.invoke(["prepare", "--modalities", "scene"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertRegex(
+            result.output,
+            r"\[\d{2}:\d{2}:\d{2}\] Starting model preparation for scene\.",
+        )
+        self.assertTrue(callable(self.jobs.wait.call_args.kwargs["progress"]))
+
     def test_doctor_streams_timestamped_runtime_check_progress(self):
-        def check_dependencies(_command, *, on_runtime_check_start):
+        def check_dependencies(
+            _command,
+            *,
+            on_runtime_check_start,
+            on_runtime_check_complete,
+        ):
             on_runtime_check_start("scene", "Torch import")
+            on_runtime_check_complete(
+                CapabilityDependencyCheck(
+                    capability="scene",
+                    kind=DependencyKind.runtime,
+                    name="Torch import",
+                    ok=True,
+                ),
+                1.25,
+            )
             return DependencyCheckResult(
                 ok=True,
                 modalities=("scene",),
@@ -386,6 +433,8 @@ class CliTests(unittest.TestCase):
             result.output,
             r"\[\d{2}:\d{2}:\d{2}\] Checking \[scene\] Torch import\.\.\.",
         )
+        self.assertIn("OK (1.2s)", result.output)
+        self.assertNotIn("OK [scene] Torch import", result.output)
 
     def test_doctor_prints_install_remedy_for_python_failures(self):
         self.service.check_dependencies.return_value = DependencyCheckResult(

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Annotated
 
 import typer
 
 from vidxp.application_models import (
     ApplicationError,
+    CapabilityDependencyCheck,
     DependencyCheckCommand,
     ErrorCategory,
     PrepareModelsCommand,
@@ -14,7 +14,9 @@ from vidxp.application_models import (
 from vidxp.cli_support import (
     OutputFormat,
     effective_output_format,
+    emit_job_progress,
     emit_json,
+    emit_progress,
     parse_capability_options,
     parse_modalities,
     state_from_context,
@@ -51,16 +53,35 @@ def doctor(
     output_format = effective_output_format(state, json_output)
 
     def show_check_start(capability: str, name: str) -> None:
-        timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
-        typer.secho(
-            f"[{timestamp}] Checking [{capability}] {name}...",
-            fg=typer.colors.BLUE,
+        emit_progress(
+            f"Checking [{capability}] {name}...",
+            newline=False,
         )
+
+    def show_check_complete(
+        check: CapabilityDependencyCheck,
+        elapsed_seconds: float,
+    ) -> None:
+        if check.ok:
+            typer.secho(
+                f" OK ({elapsed_seconds:.1f}s)",
+                fg=typer.colors.GREEN,
+            )
+        else:
+            typer.secho(
+                f" FAILED ({elapsed_seconds:.1f}s): {check.error}",
+                fg=typer.colors.RED,
+            )
 
     result = state.service.check_dependencies(
         DependencyCheckCommand(modalities=selected),
         on_runtime_check_start=(
             show_check_start if output_format == OutputFormat.rich else None
+        ),
+        on_runtime_check_complete=(
+            show_check_complete
+            if output_format == OutputFormat.rich
+            else None
         ),
     )
     payload = result.model_dump(mode="json")
@@ -68,6 +89,8 @@ def doctor(
         emit_json(payload)
     else:
         for check in payload["checks"]:
+            if check["kind"] == "runtime":
+                continue
             owner = check["capability"]
             if check["provenance"] is not None:
                 owner = (
@@ -183,6 +206,12 @@ def prepare(
         if modalities is None
         else parse_modalities(",".join(modalities), preparable)
     )
+    output_format = effective_output_format(state, json_output)
+    show_progress = not state.quiet and output_format == OutputFormat.rich
+    if show_progress:
+        emit_progress(
+            "Starting model preparation for " + ", ".join(selected) + "."
+        )
     job = state.jobs.submit_prepare_models(
         PrepareModelsCommand(
             modalities=selected,
@@ -190,20 +219,11 @@ def prepare(
         )
     )
     if not detach:
-        show_progress = (
-            not state.quiet
-            and effective_output_format(state, json_output)
-            != OutputFormat.json
-        )
         job = state.jobs.wait(
             job.job_id,
-            progress=lambda current: (
-                typer.echo(current.progress.message)
-                if show_progress and current.progress is not None
-                else None
-            ),
+            progress=emit_job_progress if show_progress else None,
         )
-    if effective_output_format(state, json_output) == OutputFormat.json:
+    if output_format == OutputFormat.json:
         emit_json(job.model_dump(mode="json"))
     else:
         typer.secho(
@@ -236,6 +256,11 @@ def ui(
     """Launch Streamlit with the selected repository configuration."""
 
     state = state_from_context(ctx)
+    show_progress = (
+        not state.quiet and state.output_format == OutputFormat.rich
+    )
+    if show_progress:
+        emit_progress("Loading the browser interface...")
     try:
         from vidxp import frontend
     except ModuleNotFoundError as exc:
@@ -244,7 +269,9 @@ def ui(
                 "frontend_unavailable",
                 ErrorCategory.unavailable,
                 "The browser interface is unavailable. "
-                'Install the "frontend" extra.',
+                "In a source checkout, rerun uv sync with all profiles "
+                "you use and include --extra frontend. Published package: "
+                'pip install "vidxp[frontend]".',
             ) from exc
         raise
 
@@ -253,6 +280,8 @@ def ui(
         streamlit_arguments.append(f"--server.address={host}")
     if port is not None:
         streamlit_arguments.append(f"--server.port={port}")
+    if show_progress:
+        emit_progress("Starting the browser interface...")
     frontend.main(
         streamlit_arguments,
         settings=state.settings,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Any, Iterable
 
@@ -76,6 +77,28 @@ def emit_json(payload: Any) -> None:
             sort_keys=True,
         )
     )
+
+
+def emit_progress(
+    message: str,
+    *,
+    updated_at: datetime | None = None,
+    newline: bool = True,
+) -> None:
+    timestamp = (updated_at or datetime.now().astimezone()).astimezone()
+    typer.secho(
+        f"[{timestamp:%H:%M:%S}] {message}",
+        fg=typer.colors.BLUE,
+        nl=newline,
+    )
+
+
+def emit_job_progress(job: Any) -> None:
+    if job.progress is not None:
+        emit_progress(
+            job.progress.message,
+            updated_at=job.progress.updated_at,
+        )
 
 
 def emit_search(

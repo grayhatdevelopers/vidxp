@@ -11,7 +11,9 @@ from vidxp.cli_support import (
     CLIState,
     OutputFormat,
     effective_output_format,
+    emit_job_progress,
     emit_json,
+    emit_progress,
     state_from_context,
 )
 app = typer.Typer(
@@ -176,13 +178,24 @@ def actors_render(
     """Render one actor cluster as a result video."""
 
     state = state_from_context(ctx)
+    output_format = effective_output_format(state, json_output)
+    show_progress = (
+        not detach
+        and not state.quiet
+        and output_format == OutputFormat.rich
+    )
+    if show_progress:
+        emit_progress("Starting actor-overlay rendering...")
     job = state.jobs.submit_actor_overlay(
         CreateActorOverlayCommand(cluster_id=cluster_id)
     )
     if not detach:
-        job = state.jobs.wait(job.job_id)
+        job = state.jobs.wait(
+            job.job_id,
+            progress=emit_job_progress if show_progress else None,
+        )
     payload = job.model_dump(mode="json")
-    if effective_output_format(state, json_output) == OutputFormat.json:
+    if output_format == OutputFormat.json:
         emit_json(payload)
     else:
         typer.secho(

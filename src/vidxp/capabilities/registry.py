@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib.metadata import EntryPoint, entry_points
 from threading import RLock
+from time import perf_counter
 from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping
 
@@ -349,6 +350,9 @@ class CapabilityRegistry:
         source: VideoSource | None = None,
         include_runtime_checks: bool = True,
         on_runtime_check_start: Callable[[str, str], None] | None = None,
+        on_runtime_check_complete: (
+            Callable[[CapabilityDependencyCheck, float], None] | None
+        ) = None,
     ) -> tuple[CapabilityDependencyCheck, ...]:
         selected = self.validate_names(names)
         checks = []
@@ -372,17 +376,22 @@ class CapabilityRegistry:
                         binding.capability,
                         binding.check.label,
                     )
+                started = perf_counter()
                 result = binding.check.inspect()
-                checks.append(
-                    CapabilityDependencyCheck(
-                        capability=binding.capability,
-                        provenance=binding.provenance,
-                        kind=DependencyKind.runtime,
-                        name=result["name"],
-                        ok=result["ok"],
-                        error=result["error"],
-                    )
+                check = CapabilityDependencyCheck(
+                    capability=binding.capability,
+                    provenance=binding.provenance,
+                    kind=DependencyKind.runtime,
+                    name=result["name"],
+                    ok=result["ok"],
+                    error=result["error"],
                 )
+                checks.append(check)
+                if on_runtime_check_complete is not None:
+                    on_runtime_check_complete(
+                        check,
+                        perf_counter() - started,
+                    )
         return tuple(checks)
 
     def require_dependencies(

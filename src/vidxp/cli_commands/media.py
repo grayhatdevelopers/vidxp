@@ -12,6 +12,7 @@ from vidxp.cli_support import (
     OutputFormat,
     effective_output_format,
     emit_json,
+    emit_progress,
     state_from_context,
 )
 
@@ -40,9 +41,12 @@ def import_media(
     """Validate and register a local video, returning its stable media ID."""
 
     state = state_from_context(ctx)
+    output_format = effective_output_format(state, json_output)
+    if not state.quiet and output_format == OutputFormat.rich:
+        emit_progress(f"Importing {path.name} into managed storage...")
     result = state.service.import_media(ImportMediaCommand(path=path))
     payload = result.model_dump(mode="json")
-    if effective_output_format(state, json_output) == OutputFormat.json:
+    if output_format == OutputFormat.json:
         emit_json(payload)
     else:
         typer.secho(
