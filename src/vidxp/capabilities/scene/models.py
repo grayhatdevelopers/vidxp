@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from vidxp.ports import ModelRuntimePort
 from vidxp.model_contracts import loaded_compute_precision
@@ -17,6 +17,9 @@ class SceneModel:
 
 def get_scene_model(
     runtime: ModelRuntimePort,
+    *,
+    download: bool = False,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> SceneModel:
     device = runtime.device_for("scene")
     key = SIGLIP2_MODEL.key(device)
@@ -24,7 +27,19 @@ def get_scene_model(
     def load() -> SceneModel:
         from transformers import AutoModel, AutoProcessor
 
-        snapshot = runtime.resolve_model(SIGLIP2_MODEL)
+        snapshot = runtime.resolve_model(
+            SIGLIP2_MODEL,
+            download=download,
+            progress=progress,
+        )
+        if progress is not None:
+            progress(
+                {
+                    "state": "preparing",
+                    "stage": "loading_model",
+                    "message": f"Loading {SIGLIP2_MODEL.model_id}.",
+                }
+            )
         common = {
             "cache_dir": str(runtime.model_cache),
             "local_files_only": True,

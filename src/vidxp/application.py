@@ -99,6 +99,7 @@ class VidXPApplication(ControlPlaneApplication):
             media=media,
             artifacts=artifacts,
             index_status=index_status,
+            model_cache=settings.model_cache,
         )
         self.settings = settings
 
@@ -163,7 +164,10 @@ class VidXPApplication(ControlPlaneApplication):
             self._index_storage_readiness(),
         )
         dependencies = self.check_dependencies(
-            DependencyCheckCommand(modalities=self.registry.names())
+            DependencyCheckCommand(
+                modalities=self.registry.names(),
+                include_models=True,
+            )
         )
         return RuntimeReadiness(
             ready=(
@@ -269,6 +273,16 @@ class VidXPApplication(ControlPlaneApplication):
                 include_runtime_checks=command.include_runtime_checks,
                 on_check_start=on_check_start,
                 on_check_complete=on_check_complete,
+            ),
+            *(
+                self.registry.model_checks(
+                    selected,
+                    cache=self.settings.model_cache,
+                    on_check_start=on_check_start,
+                    on_check_complete=on_check_complete,
+                )
+                if command.include_models
+                else ()
             ),
             *(
                 self._media_runtime_checks(

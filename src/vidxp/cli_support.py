@@ -95,8 +95,22 @@ def emit_progress(
 
 def emit_job_progress(job: Any) -> None:
     if job.progress is not None:
+        message = job.progress.message
+        if (
+            job.progress.stage == "downloading_model"
+            and job.progress.current is not None
+            and job.progress.total
+        ):
+            gib = 1024**3
+            mib = 1024**2
+            unit = gib if job.progress.total >= gib else mib
+            suffix = "GiB" if unit == gib else "MiB"
+            message += (
+                f" {job.progress.current / unit:.1f} of "
+                f"{job.progress.total / unit:.1f} {suffix}"
+            )
         emit_progress(
-            job.progress.message,
+            message,
             updated_at=job.progress.updated_at,
         )
 

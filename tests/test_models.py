@@ -9,6 +9,7 @@ from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Barrier
+from time import sleep
 from unittest.mock import Mock, call, patch
 
 from packaging.requirements import Requirement
@@ -35,7 +36,11 @@ from vidxp.infrastructure.local_index import (
     LOCAL_INDEX_RUNTIME_CHECKS,
     SERVER_INDEX_RUNTIME_CHECKS,
 )
-from vidxp.model_contracts import ModelArtifactUnavailableError, ModelKey
+from vidxp.model_contracts import (
+    ModelArtifactUnavailableError,
+    ModelKey,
+    model_artifact_path,
+)
 from vidxp.runtime import ModelRuntime, resolve_backends
 from vidxp.settings import VidXPSettings
 
@@ -121,7 +126,7 @@ class ModelTests(unittest.TestCase):
             retrieve = Mock(return_value=str(downloaded))
             fake_pooch = types.SimpleNamespace(retrieve=retrieve)
             with patch.dict(sys.modules, {"pooch": fake_pooch}):
-                result = runtime.resolve_artifact(spec)
+                result = runtime.resolve_artifact(spec, download=True)
 
         self.assertEqual(result, downloaded)
         url = retrieve.call_args.kwargs["url"]
@@ -135,6 +140,79 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(
             runtime.describe()["resolved_models"]["actor.detector"]["model"],
             "yunet",
+        )
+
+    def test_normal_model_resolution_never_downloads_implicitly(self):
+        with TemporaryDirectory() as directory:
+            spec = replace(YUNET_MODEL, filename="missing.onnx")
+            runtime = self.runtime(directory, allowed_specs=(spec,))
+            retrieve = Mock(side_effect=AssertionError("downloaded"))
+            with (
+                patch.dict(
+                    sys.modules,
+                    {"pooch": types.SimpleNamespace(retrieve=retrieve)},
+                ),
+                self.assertRaises(ModelArtifactUnavailableError),
+            ):
+                runtime.resolve_artifact(spec)
+
+        retrieve.assert_not_called()
+
+    def test_model_readiness_checks_the_pinned_cache_without_loading(self):
+        with TemporaryDirectory() as directory:
+            cache = Path(directory) / "models"
+            path = model_artifact_path(cache, YUNET_MODEL)
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b"present")
+            checks = create_capability_registry().model_checks(
+                ("actor",),
+                cache=cache,
+            )
+
+        self.assertEqual(
+            [(check.name, check.ok) for check in checks],
+            [
+                (YUNET_MODEL.model_id, True),
+                (SFACE_MODEL.model_id, False),
+            ],
+        )
+
+    def test_explicit_snapshot_download_reports_bytes(self):
+        with TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "snapshot"
+            events = []
+
+            def download(**options):
+                progress = options["tqdm_class"](
+                    desc="Downloading bytes",
+                    total=1024,
+                    unit="B",
+                )
+                progress.update(512)
+                sleep(0.6)
+                progress.update(512)
+                sleep(0.6)
+                progress.close()
+                return str(snapshot)
+
+            with patch(
+                "huggingface_hub.snapshot_download",
+                side_effect=download,
+            ):
+                resolved = ModelRuntime._download_snapshot(
+                    FASTER_WHISPER_MODEL,
+                    cache=Path(directory),
+                    progress=events.append,
+                )
+
+        self.assertEqual(resolved, snapshot)
+        self.assertTrue(
+            any(
+                event["stage"] == "downloading_model"
+                and event["current"] == 1024
+                and event["total"] == 1024
+                for event in events
+            )
         )
 
     def test_runtime_rejects_specs_not_declared_by_enabled_capabilities(self):

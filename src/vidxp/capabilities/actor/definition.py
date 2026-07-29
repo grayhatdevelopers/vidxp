@@ -46,7 +46,7 @@ def prepare_models(
                 "message": "Preparing OpenCV Zoo YuNet and SFace models.",
             }
         )
-    get_actor_models(context.runtime)
+    get_actor_models(context.runtime, download=True, progress=progress)
     return (YUNET_MODEL.filename, SFACE_MODEL.filename)
 
 

@@ -3,8 +3,10 @@ from __future__ import annotations
 import platform
 import hashlib
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from contextlib import contextmanager
 from threading import BoundedSemaphore, Lock, RLock
+from time import monotonic
 from typing import Any, Callable, Iterator
 from pathlib import Path
 
@@ -159,20 +161,115 @@ class ModelRuntime:
             return self.backends.actor_device
         return self.backends.torch_device
 
-    def resolve_model(self, spec: ModelSpec) -> Path:
+    @staticmethod
+    def _download_snapshot(
+        spec: ModelSpec,
+        *,
+        cache: Path,
+        progress: Callable[[dict[str, Any]], None] | None,
+    ) -> Path:
+        from huggingface_hub import snapshot_download
+        from tqdm.auto import tqdm
+
+        state_lock = Lock()
+        state: dict[str, Any] = {
+            "current": None,
+            "total": None,
+            "message": f"Connecting to download {spec.model_id}.",
+        }
+
+        class ReportingTqdm(tqdm):
+            def display(self, msg=None, pos=None) -> None:
+                return None
+
+            def update(self, n=1):
+                result = super().update(n)
+                if self.unit == "B":
+                    with state_lock:
+                        state.update(
+                            {
+                                "current": int(self.n),
+                                "total": (
+                                    int(self.total)
+                                    if self.total
+                                    else None
+                                ),
+                                "message": f"Downloading {spec.model_id}.",
+                            }
+                        )
+                return result
+
+        def download() -> str:
+            return snapshot_download(
+                repo_id=spec.model_id,
+                revision=spec.revision,
+                cache_dir=str(cache),
+                local_files_only=False,
+                tqdm_class=ReportingTqdm,
+            )
+
+        reported_at = 0.0
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(download)
+            while True:
+                try:
+                    snapshot = future.result(timeout=0.5)
+                    if progress is not None:
+                        with state_lock:
+                            event = dict(state)
+                        progress(
+                            {
+                                "state": "preparing",
+                                "stage": "downloading_model",
+                                **event,
+                            }
+                        )
+                    break
+                except FutureTimeout:
+                    now = monotonic()
+                    if progress is None or now - reported_at < 1:
+                        continue
+                    with state_lock:
+                        event = dict(state)
+                    progress(
+                        {
+                            "state": "preparing",
+                            "stage": "downloading_model",
+                            **event,
+                        }
+                    )
+                    reported_at = now
+        return Path(snapshot)
+
+    def resolve_model(
+        self,
+        spec: ModelSpec,
+        *,
+        download: bool = False,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> Path:
         if spec not in self._allowed_specs:
             raise ModelArtifactUnavailableError(spec.capability)
         from huggingface_hub import snapshot_download
 
         try:
-            snapshot = Path(
-                snapshot_download(
-                    repo_id=spec.model_id,
-                    revision=spec.revision,
-                    cache_dir=str(self.settings.model_cache),
-                    local_files_only=not self.settings.allow_model_downloads,
+            try:
+                snapshot = Path(
+                    snapshot_download(
+                        repo_id=spec.model_id,
+                        revision=spec.revision,
+                        cache_dir=str(self.settings.model_cache),
+                        local_files_only=True,
+                    )
                 )
-            )
+            except Exception:
+                if not download or not self.settings.allow_model_downloads:
+                    raise ModelArtifactUnavailableError(spec.capability)
+                snapshot = self._download_snapshot(
+                    spec,
+                    cache=self.settings.model_cache,
+                    progress=progress,
+                )
             weights = snapshot / spec.weights_file
             if not weights.is_file() or _sha256(weights) != spec.weights_sha256:
                 raise ModelArtifactUnavailableError(spec.capability)
@@ -184,20 +281,29 @@ class ModelRuntime:
             self._resolved_models[spec.capability] = spec.identity(cached=True)
         return snapshot
 
-    def resolve_artifact(self, spec: ArtifactSpec) -> Path:
+    def resolve_artifact(
+        self,
+        spec: ArtifactSpec,
+        *,
+        download: bool = False,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> Path:
         if spec not in self._allowed_specs:
             raise ModelArtifactUnavailableError(spec.capability)
         try:
             destination = self.settings.model_cache / spec.provider
             path = destination / spec.filename
-            if not self.settings.allow_model_downloads:
-                if (
-                    not path.is_file()
-                    or _sha256(path) != spec.sha256
-                ):
+            if not path.is_file() or _sha256(path) != spec.sha256:
+                if not download or not self.settings.allow_model_downloads:
                     raise ModelArtifactUnavailableError(spec.capability)
-                resolved = path
-            else:
+                if progress is not None:
+                    progress(
+                        {
+                            "state": "preparing",
+                            "stage": "downloading_model",
+                            "message": f"Downloading {spec.model_id}.",
+                        }
+                    )
                 import pooch
 
                 resolved = Path(
@@ -209,11 +315,10 @@ class ModelRuntime:
                         progressbar=False,
                     )
                 )
-                if (
-                    not resolved.is_file()
-                    or _sha256(resolved) != spec.sha256
-                ):
-                    raise ModelArtifactUnavailableError(spec.capability)
+            else:
+                resolved = path
+            if not resolved.is_file() or _sha256(resolved) != spec.sha256:
+                raise ModelArtifactUnavailableError(spec.capability)
         except ModelArtifactUnavailableError:
             raise
         except Exception as exc:

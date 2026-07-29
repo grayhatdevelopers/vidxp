@@ -312,9 +312,14 @@ class FrontendTests(unittest.TestCase):
     def test_indexing_submits_selected_scene_sample_rate(self):
         jobs = Mock()
         jobs.submit_index.return_value = SimpleNamespace(job_id="job-1")
+        service = Mock()
         session_state = {frontend.MEDIA_ID_KEY: MEDIA_ID}
         with (
-            patch.object(frontend, "_configured_service", return_value=Mock()),
+            patch.object(
+                frontend,
+                "_configured_service",
+                return_value=service,
+            ),
             patch.object(frontend, "_configured_jobs", return_value=jobs),
             patch.object(frontend.st, "session_state", session_state),
             patch.object(frontend.st, "query_params", {}),
@@ -329,6 +334,7 @@ class FrontendTests(unittest.TestCase):
 
         command = jobs.submit_index.call_args.args[0]
         self.assertEqual(command.scene_sample_fps, 2.0)
+        service.require_models.assert_called_once_with(("scene",))
 
     def test_indexing_omits_scene_sample_rate_without_scene(self):
         jobs = Mock()

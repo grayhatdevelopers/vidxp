@@ -35,7 +35,7 @@ def prepare_models(
                 ),
             }
         )
-    get_scene_model(context.runtime)
+    get_scene_model(context.runtime, download=True, progress=progress)
     return (SIGLIP2_MODEL.model_id,)
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 import re
 from typing import Any
 
@@ -120,3 +121,26 @@ class ArtifactSpec:
         if cached is not None:
             identity["cached"] = cached
         return identity
+
+
+def model_artifact_path(
+    cache: Path,
+    spec: ModelSpec | ArtifactSpec,
+) -> Path:
+    if isinstance(spec, ModelSpec):
+        repository = "models--" + spec.model_id.replace("/", "--")
+        return (
+            cache
+            / repository
+            / "snapshots"
+            / spec.revision
+            / spec.weights_file
+        )
+    return cache / spec.provider / spec.filename
+
+
+def model_artifact_cached(
+    cache: Path,
+    spec: ModelSpec | ArtifactSpec,
+) -> bool:
+    return model_artifact_path(cache, spec).is_file()

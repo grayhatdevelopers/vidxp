@@ -9,11 +9,13 @@ from vidxp.application_models import (
     CapabilityInfo,
     CapabilitySummary,
     ComponentReadiness,
+    DependencyCheckResult,
     IndexStatus,
     InvalidRequestError,
     ListMediaCommand,
     MediaAsset,
     MediaPage,
+    ModelUnavailableError,
     ResourceNotFoundError,
     RuntimeReadiness,
 )
@@ -38,12 +40,14 @@ class ControlPlaneApplication:
         media: MediaService,
         artifacts: ArtifactQueryService,
         index_status: Callable[[], dict | None],
+        model_cache: Path,
     ) -> None:
         self.layout = layout
         self.capabilities = capabilities
         self.media = media
         self.artifacts = artifacts
         self._read_index_status = index_status
+        self.model_cache = model_cache
 
     @application_boundary
     def import_uploaded_media(
@@ -153,11 +157,40 @@ class ControlPlaneApplication:
             )
         return tuple(components)
 
+    def model_readiness(
+        self,
+        modalities: tuple[str, ...] | None = None,
+    ) -> DependencyCheckResult:
+        selected = (
+            self.capabilities.registry.preparable_names()
+            if modalities is None
+            else self.capabilities.registry.validate_names(modalities)
+        )
+        checks = self.capabilities.registry.model_checks(
+            selected,
+            cache=self.model_cache,
+        )
+        return DependencyCheckResult(
+            ok=all(check.ok for check in checks),
+            modalities=selected,
+            checks=checks,
+        )
+
+    def require_models(self, modalities: tuple[str, ...]) -> None:
+        readiness = self.model_readiness(modalities)
+        missing = next((check for check in readiness.checks if not check.ok), None)
+        if missing is not None:
+            raise ModelUnavailableError(missing.capability)
+
     def runtime_readiness(self) -> RuntimeReadiness:
         components = self.control_plane_readiness()
+        models = self.model_readiness()
         return RuntimeReadiness(
-            ready=all(component.ready for component in components),
+            ready=(
+                all(component.ready for component in components)
+                and models.ok
+            ),
             runtime=None,
             components=components,
-            dependencies=None,
+            dependencies=models,
         )

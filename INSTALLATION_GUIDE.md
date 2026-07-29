@@ -98,7 +98,7 @@ source .venv/bin/activate
 uv pip install --torch-backend cpu "vidxp[local-worker,frontend]"
 ```
 
-## Verify providers without downloading models
+## Verify providers and model readiness without downloading
 
 ```bash
 vidxp doctor
@@ -111,8 +111,10 @@ vidxp doctor --modalities scene
 vidxp doctor --modalities dialogue,actor
 ```
 
-The doctor command checks installed distributions and imports each selected
-native provider without constructing models or downloading model weights.
+The doctor command checks installed distributions, imports each selected native
+provider, and reports every pinned model artifact as cached or missing. It never
+constructs models or downloads weights. Missing selected models make the command
+exit unsuccessfully with the exact `vidxp prepare --modalities ...` remedy.
 
 ## Prepare pinned models
 
@@ -127,11 +129,15 @@ Model weights are cached separately from the Python environment:
 | Actor recognition | OpenCV Zoo SFace |
 
 Every model revision and weight checksum is pinned in its capability spec.
-Prepare all selected models before indexing:
+Explicitly prepare all selected models before indexing:
 
 ```bash
 vidxp prepare
 ```
+
+Indexing, API jobs, and MCP tools never download missing models implicitly.
+Preparation is a durable job and reports download bytes plus model-loading
+stages through CLI output or normal job polling.
 
 Prepare a subset when disk or network capacity is limited:
 

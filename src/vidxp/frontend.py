@@ -19,6 +19,7 @@ from vidxp.application_models import (
     ImportMediaCommand,
     JobState,
     ListMediaCommand,
+    PrepareModelsCommand,
     QueryVideoCommand,
     SearchCommand,
 )
@@ -61,12 +62,14 @@ def _settings_from_arguments(
 INDEX_REQUESTED_KEY = "_vidxp_index_requested"
 INDEX_ERROR_KEY = "_vidxp_index_error"
 INDEX_JOB_ID_KEY = "_vidxp_index_job_id"
+PREPARE_JOB_ID_KEY = "_vidxp_prepare_job_id"
 SEARCH_RESULT_KEY = "_vidxp_search_result"
 CANCEL_REQUESTED_KEY = "_vidxp_cancel_requested"
 MEDIA_ID_KEY = "_vidxp_media_id"
 UPLOAD_TOKEN_KEY = "_vidxp_upload_token"
 MEDIA_NOTICE_KEY = "_vidxp_media_notice"
 INDEX_JOB_QUERY_PARAM = "index_job"
+PREPARE_JOB_QUERY_PARAM = "prepare_job"
 SEARCH_JOB_QUERY_PARAM = "search_job"
 SEARCH_TYPE_QUERY_PARAM = "search_type"
 SCENE_SAMPLE_FPS_DEFAULT = 1.0
@@ -99,6 +102,9 @@ def _restore_durable_jobs() -> None:
     if INDEX_JOB_ID_KEY not in st.session_state:
         if job_id := st.query_params.get(INDEX_JOB_QUERY_PARAM):
             st.session_state[INDEX_JOB_ID_KEY] = str(job_id)
+    if PREPARE_JOB_ID_KEY not in st.session_state:
+        if job_id := st.query_params.get(PREPARE_JOB_QUERY_PARAM):
+            st.session_state[PREPARE_JOB_ID_KEY] = str(job_id)
     if SEARCH_RESULT_KEY not in st.session_state:
         if job_id := st.query_params.get(SEARCH_JOB_QUERY_PARAM):
             st.session_state[SEARCH_RESULT_KEY] = {
@@ -146,9 +152,17 @@ def _render_progress(event):
     st.markdown(f"⏳ {event['message']}")
     current, total = event.get("current"), event.get("total")
     if current is not None and total:
+        if event.get("stage") == "downloading_model":
+            gib = 1024**3
+            mib = 1024**2
+            unit = gib if total >= gib else mib
+            suffix = "GiB" if unit == gib else "MiB"
+            text = f"{current / unit:.1f} of {total / unit:.1f} {suffix}"
+        else:
+            text = f"{current:,} of {total:,}"
         st.progress(
             min(current / total, 1.0),
-            text=f"{current:,} of {total:,}",
+            text=text,
         )
 
 
@@ -182,7 +196,7 @@ def _render_index_status(status, active, media_id, request_error=None):
         }
         _render_progress(event)
     elif not status or status.get("state") == "missing":
-        st.caption("First indexing may download missing runtime model weights.")
+        st.caption("Prepare the selected models, then start indexing.")
     elif status["state"] == "ready":
         if _is_search_ready(status, media_id):
             st.success(status.get("message", "The video index is ready."))
@@ -309,6 +323,7 @@ def _run_indexing(
                 media_id = media_ids[0] if len(media_ids) == 1 else None
             if media_id is None:
                 raise ValueError("Select or import media before indexing.")
+        service.require_models(modalities)
         job = _configured_jobs().submit_index(
             CreateIndexCommand(
                 media_id=media_id,
@@ -767,10 +782,51 @@ def run():
             )
         )
     )
+    prepare_job_id = st.session_state.get(PREPARE_JOB_ID_KEY)
+    prepare_error = None
+    try:
+        prepare_job = _get_job(jobs, prepare_job_id)
+    except ApplicationError as exc:
+        prepare_job = None
+        prepare_error = exc
+    if prepare_job_id is not None and prepare_job is None:
+        if prepare_error is None:
+            st.session_state.pop(PREPARE_JOB_ID_KEY, None)
+            _forget_job(PREPARE_JOB_QUERY_PARAM)
+            prepare_job_id = None
+    elif (
+        prepare_job is not None
+        and prepare_job.state not in {JobState.queued, JobState.running}
+    ):
+        st.session_state.pop(PREPARE_JOB_ID_KEY, None)
+        _forget_job(PREPARE_JOB_QUERY_PARAM)
+        prepare_job_id = None
+        if prepare_job.state == JobState.succeeded:
+            st.session_state[MEDIA_NOTICE_KEY] = (
+                "Selected model artifacts are prepared."
+            )
+        elif prepare_job.error is not None:
+            prepare_error = ApplicationError(
+                prepare_job.error.code,
+                prepare_job.error.category,
+                prepare_job.error.message,
+                details=prepare_job.error.details,
+                retryable=prepare_job.error.retryable,
+            )
+    preparing = (
+        prepare_job_id is not None
+        and (
+            prepare_error is not None
+            or (
+                prepare_job is not None
+                and prepare_job.state in {JobState.queued, JobState.running}
+            )
+        )
+    )
     if not active:
         st.session_state.pop(CANCEL_REQUESTED_KEY, None)
     requested = st.session_state.get(INDEX_REQUESTED_KEY, False)
-    busy = active or requested
+    busy = active or requested or preparing
     status = service.index_status().model_dump(mode="json")
     media_id = st.session_state.get(MEDIA_ID_KEY)
     if media_id is None:
@@ -822,21 +878,88 @@ def run():
             selected_modalities,
             disabled=busy,
         )
+        model_readiness = (
+            service.model_readiness(selected_modalities)
+            if selected_modalities
+            else None
+        )
+        missing_models = (
+            tuple(
+                check.name
+                for check in model_readiness.checks
+                if not check.ok
+            )
+            if model_readiness is not None
+            else ()
+        )
         if not installed_modalities:
             st.warning(
                 "No indexing capabilities are installed. "
                 'Install one, for example: pip install "vidxp[scene]"'
             )
+        if missing_models and not preparing:
+            st.warning(
+                "Model artifacts are not prepared: "
+                + ", ".join(missing_models)
+                + "."
+            )
+            if st.button(
+                "Prepare selected models",
+                disabled=busy,
+                help="Download and validate these models before indexing.",
+            ):
+                preparation = jobs.submit_prepare_models(
+                    PrepareModelsCommand(modalities=selected_modalities)
+                )
+                st.session_state[PREPARE_JOB_ID_KEY] = preparation.job_id
+                _remember_job(
+                    job_id=preparation.job_id,
+                    query_param=PREPARE_JOB_QUERY_PARAM,
+                )
+                st.rerun()
+        if preparing:
+
+            @st.fragment(run_every="1s")
+            def poll_model_preparation():
+                try:
+                    latest = _get_job(jobs, prepare_job_id)
+                except ApplicationError as exc:
+                    st.warning(
+                        "Model preparation status is temporarily unavailable. "
+                        f"Retrying: {exc}"
+                    )
+                    return
+                if latest is None:
+                    st.error("The model preparation job is unavailable.")
+                    return
+                if latest.state not in {JobState.queued, JobState.running}:
+                    st.rerun()
+                    return
+                if latest.progress is not None:
+                    _render_progress(
+                        latest.progress.model_dump(mode="json")
+                    )
+                else:
+                    st.markdown("⏳ Model preparation is queued.")
+
+            poll_model_preparation()
+        elif prepare_error is not None:
+            st.error(f"Model preparation failed: {prepare_error}")
         st.button(
             "Index video",
             type="primary",
             disabled=busy
             or not selected_modalities
+            or bool(missing_models)
             or (uploaded_video is None and media_id is None),
             help=(
                 "Indexing is already running."
-                if busy
-                else "Build or replace the index. First use may download model weights."
+                if active or requested
+                else "Model preparation is running."
+                if preparing
+                else "Prepare the selected models before indexing."
+                if missing_models
+                else "Build or replace the index."
             ),
             on_click=_request_indexing,
         )

@@ -367,6 +367,7 @@ def create_control_plane_application(
             store=components.artifact_store,
         ),
         index_status=components.snapshots.status,
+        model_cache=active_settings.model_cache,
     )
     jobs = create_job_service(
         active_settings,

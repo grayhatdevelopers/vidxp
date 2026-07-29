@@ -119,11 +119,20 @@ def transcribe_video(
     cancellation: CancellationToken,
     runtime: ModelRuntimePort,
     progress: ProgressCallback | None,
-) -> tuple[list[Mapping[str, Any]], str]:
+) -> tuple[list[Mapping[str, Any]], str | None]:
+    import av
     from faster_whisper import BatchedInferencePipeline
 
     settings = dialogue_config(config)
     cancellation.raise_if_cancelled()
+    with av.open(str(input_path)) as container:
+        if not container.streams.audio:
+            report_progress(
+                progress,
+                "dialogue_skipped",
+                "No audio stream was found; dialogue indexing was skipped.",
+            )
+            return [], None
     report_progress(
         progress,
         "preparing_transcription_model",

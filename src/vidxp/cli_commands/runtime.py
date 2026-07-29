@@ -58,7 +58,10 @@ def doctor(
         kind: DependencyKind,
         name: str,
     ) -> None:
-        label = f"package {name}" if kind == DependencyKind.distribution else name
+        label = {
+            DependencyKind.distribution: f"package {name}",
+            DependencyKind.model: f"model {name}",
+        }.get(kind, name)
         emit_progress(
             f"Checking [{capability}] {label}...",
             newline=False,
@@ -85,7 +88,10 @@ def doctor(
             )
 
     result = state.service.check_dependencies(
-        DependencyCheckCommand(modalities=selected),
+        DependencyCheckCommand(
+            modalities=selected,
+            include_models=True,
+        ),
         on_check_start=(
             show_check_start if output_format == OutputFormat.rich else None
         ),
@@ -102,7 +108,11 @@ def doctor(
         python_failures = tuple(
             check
             for check in result.checks
-            if not check.ok and check.capability != "media"
+            if (
+                not check.ok
+                and check.capability != "media"
+                and check.kind != DependencyKind.model
+            )
         )
         if python_failures:
             selected_capabilities = {
@@ -140,11 +150,25 @@ def doctor(
                     + " ".join(external_distributions),
                     fg=typer.colors.YELLOW,
                 )
+        missing_models = tuple(
+            dict.fromkeys(
+                check.capability
+                for check in result.checks
+                if not check.ok and check.kind == DependencyKind.model
+            )
+        )
+        if missing_models:
+            command = "vidxp prepare --modalities " + ",".join(missing_models)
+            typer.secho(
+                "REMEDY: Download the selected model artifacts explicitly:",
+                fg=typer.colors.YELLOW,
+            )
+            typer.secho(command, fg=typer.colors.YELLOW)
     if not result.ok:
         raise typer.Exit(1)
     if output_format == OutputFormat.rich:
         typer.secho(
-            "Selected VidXP dependencies are available.",
+            "Selected VidXP dependencies and model artifacts are available.",
             fg=typer.colors.GREEN,
             bold=True,
         )

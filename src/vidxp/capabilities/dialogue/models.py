@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from vidxp.ports import ModelRuntimePort
 from vidxp.model_contracts import loaded_compute_precision
@@ -13,6 +13,9 @@ from vidxp.capabilities.dialogue.specs import (
 
 def get_embedder(
     runtime: ModelRuntimePort,
+    *,
+    download: bool = False,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> Any:
     device = runtime.device_for("dialogue.embedding")
     key = QWEN3_EMBEDDING_MODEL.key(device)
@@ -20,7 +23,21 @@ def get_embedder(
     def load() -> Any:
         from sentence_transformers import SentenceTransformer
 
-        snapshot = runtime.resolve_model(QWEN3_EMBEDDING_MODEL)
+        snapshot = runtime.resolve_model(
+            QWEN3_EMBEDDING_MODEL,
+            download=download,
+            progress=progress,
+        )
+        if progress is not None:
+            progress(
+                {
+                    "state": "preparing",
+                    "stage": "loading_model",
+                    "message": (
+                        f"Loading {QWEN3_EMBEDDING_MODEL.model_id}."
+                    ),
+                }
+            )
         model = SentenceTransformer(
             str(snapshot),
             device=device,
@@ -41,6 +58,9 @@ def get_embedder(
 
 def get_whisper_model(
     runtime: ModelRuntimePort,
+    *,
+    download: bool = False,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> Any:
     device = runtime.device_for("dialogue.transcription")
     compute_type = whisper_compute_type(device)
@@ -49,7 +69,21 @@ def get_whisper_model(
     def load() -> Any:
         from faster_whisper import WhisperModel
 
-        snapshot = runtime.resolve_model(FASTER_WHISPER_MODEL)
+        snapshot = runtime.resolve_model(
+            FASTER_WHISPER_MODEL,
+            download=download,
+            progress=progress,
+        )
+        if progress is not None:
+            progress(
+                {
+                    "state": "preparing",
+                    "stage": "loading_model",
+                    "message": (
+                        f"Loading {FASTER_WHISPER_MODEL.model_id}."
+                    ),
+                }
+            )
         model = WhisperModel(
             str(snapshot),
             device=device.split(":", 1)[0],

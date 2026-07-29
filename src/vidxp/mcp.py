@@ -39,7 +39,9 @@ from vidxp.application_models import (
     MediaId,
     MediaPage,
     Principal,
+    PrepareModelsCommand,
     QueryVideoCommand,
+    RuntimeReadiness,
     SearchCommand,
 )
 from vidxp.authentication import (
@@ -179,7 +181,13 @@ def _application_error(exc: ApplicationError) -> ToolError:
     }
     if detail.correlation_id is not None:
         data["correlation_id"] = detail.correlation_id
-    for key in ("errors", "required_scope"):
+    for key in (
+        "capability",
+        "errors",
+        "install_hint",
+        "remediation",
+        "required_scope",
+    ):
         if key in detail.details:
             data[key] = detail.details[key]
     return ToolError(
@@ -321,10 +329,12 @@ def create_mcp_server(
         title="VidXP",
         description="Index and search registered video media.",
         instructions=(
-            "Discover registered media with list_media. Register and upload "
-            "new video through the HTTP/tus API, then use its media_id with "
-            "the durable indexing and query tools. Use list_jobs to recover "
-            "job IDs across agent sessions."
+            "Call get_runtime_readiness before indexing. If selected model "
+            "artifacts are missing, submit prepare_models and poll get_job "
+            "until it completes. Discover registered media with list_media. "
+            "Register and upload new video through the HTTP/tus API, then use "
+            "its media_id with the durable indexing and query tools. Use "
+            "list_jobs to recover job IDs across agent sessions."
         ),
         version=__version__,
         token_verifier=token_verifier,
@@ -357,6 +367,21 @@ def create_mcp_server(
             default_principal=default_principal,
             permission=RepositoryPermission.read,
             operation=lambda _actor: context.application.get_capability(name),
+        )
+
+    @server.tool(
+        description=(
+            "Check runtime components and whether model artifacts are prepared."
+        ),
+        annotations=_READ_ONLY,
+        structured_output=True,
+    )
+    async def get_runtime_readiness() -> RuntimeReadiness:
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=lambda _actor: context.application.runtime_readiness(),
         )
 
     @server.tool(
@@ -416,12 +441,43 @@ def create_mcp_server(
         idempotency_key: IdempotencyKey,
     ) -> Job:
         def submit(actor: Principal) -> Job:
+            context.application.require_models(command.modalities)
             return context.jobs.submit_index(
                 command,
                 job_id=scoped_job_id(
                     principal=actor,
                     transport="mcp",
                     operation="index",
+                    idempotency_key=idempotency_key,
+                ),
+            )
+
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.write,
+            operation=submit,
+        )
+
+    @server.tool(
+        description=(
+            "Explicitly download and validate selected model artifacts. Poll "
+            "get_job for byte progress and completion before indexing."
+        ),
+        annotations=_SUBMIT,
+        structured_output=True,
+    )
+    async def prepare_models(
+        command: PrepareModelsCommand,
+        idempotency_key: IdempotencyKey,
+    ) -> Job:
+        def submit(actor: Principal) -> Job:
+            return context.jobs.submit_prepare_models(
+                command,
+                job_id=scoped_job_id(
+                    principal=actor,
+                    transport="mcp",
+                    operation="prepare-models",
                     idempotency_key=idempotency_key,
                 ),
             )

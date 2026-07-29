@@ -176,7 +176,9 @@ def _emit_error(exc: Exception, *, json_output: bool) -> None:
 
 def main() -> None:
     try:
-        app(standalone_mode=False)
+        exit_code = app(standalone_mode=False)
+        if isinstance(exit_code, int) and exit_code:
+            raise SystemExit(exit_code)
     except typer.Exit as exc:
         raise SystemExit(exc.exit_code) from None
     except typer.Abort as exc:

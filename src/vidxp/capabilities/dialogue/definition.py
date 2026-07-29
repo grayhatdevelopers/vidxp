@@ -61,14 +61,14 @@ def prepare_models(
         "dialogue_model",
         f"Preparing dialogue model: {QWEN3_EMBEDDING_MODEL.model_id}",
     )
-    get_embedder(context.runtime)
+    get_embedder(context.runtime, download=True, progress=progress)
     prepared.append(QWEN3_EMBEDDING_MODEL.model_id)
     report(
         "transcription_model",
         "Preparing transcription model: faster-whisper "
         f"{FASTER_WHISPER_MODEL.model_id}",
     )
-    get_whisper_model(context.runtime)
+    get_whisper_model(context.runtime, download=True, progress=progress)
     prepared.append(FASTER_WHISPER_MODEL.model_id)
     return tuple(prepared)
 

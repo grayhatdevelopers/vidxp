@@ -247,9 +247,21 @@ class ModelRuntimePort(Protocol):
         loader: Callable[[], Any],
     ) -> Any: ...
 
-    def resolve_model(self, spec: ModelSpec) -> Path: ...
+    def resolve_model(
+        self,
+        spec: ModelSpec,
+        *,
+        download: bool = False,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> Path: ...
 
-    def resolve_artifact(self, spec: ArtifactSpec) -> Path: ...
+    def resolve_artifact(
+        self,
+        spec: ArtifactSpec,
+        *,
+        download: bool = False,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> Path: ...
 
     def record_compute_precision(
         self,

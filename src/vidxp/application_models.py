@@ -183,16 +183,17 @@ class DependencyUnavailableError(ApplicationError):
 
 class ModelUnavailableError(ApplicationError):
     def __init__(self, capability: str) -> None:
+        modality = capability.split(".", 1)[0]
         super().__init__(
             "model_unavailable",
             ErrorCategory.unavailable,
             f"Model artifacts for the {capability} capability are not "
-            "available locally.",
+            "available locally. Run "
+            f"`vidxp prepare --modalities {modality}` before retrying.",
             details={
                 "capability": capability,
                 "remediation": (
-                    "Prepare the capability models before retrying or "
-                    "enable model downloads."
+                    f"vidxp prepare --modalities {modality}"
                 ),
             },
         )
@@ -231,6 +232,7 @@ class CapabilityProvenance(ApplicationModel):
 class DependencyKind(StrEnum):
     distribution = "distribution"
     runtime = "runtime"
+    model = "model"
 
 
 class CapabilityDependencyCheck(ApplicationModel):
@@ -814,6 +816,7 @@ class PrepareModelsCommand(ApplicationModel):
 class DependencyCheckCommand(ApplicationModel):
     modalities: tuple[str, ...]
     include_runtime_checks: bool = True
+    include_models: bool = False
 
 
 class DependencyCheckResult(ApplicationModel):

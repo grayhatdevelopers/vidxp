@@ -364,6 +364,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(command.media_id, MEDIA_ID)
         self.assertEqual(command.modalities, ("scene",))
         self.assertEqual(command.scene_sample_fps, 0.5)
+        context.application.require_models.assert_called_once_with(("scene",))
         expected_job_id = scoped_job_id(
             context,
             context.authenticator.authenticate(None),
@@ -393,6 +394,36 @@ class ApiTests(unittest.TestCase):
                 idempotency_key=IDEMPOTENCY_KEY,
             ),
         )
+
+    def test_missing_models_fail_before_job_submission(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.application.require_models.side_effect = ApplicationError(
+                "model_unavailable",
+                ErrorCategory.unavailable,
+                "Run vidxp prepare --modalities scene.",
+                details={
+                    "capability": "scene",
+                    "remediation": "vidxp prepare --modalities scene",
+                },
+            )
+            with TestClient(create_app(context=context)) as client:
+                response = client.post(
+                    "/api/v1/jobs/index",
+                    headers={"Idempotency-Key": IDEMPOTENCY_KEY},
+                    json={
+                        "media_id": MEDIA_ID,
+                        "modalities": ["scene"],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "model_unavailable")
+        self.assertEqual(
+            response.json()["error"]["details"]["remediation"],
+            "vidxp prepare --modalities scene",
+        )
+        context.jobs.submit_index.assert_not_called()
 
     def test_job_submission_requires_an_idempotency_key(self):
         with TemporaryDirectory() as directory:

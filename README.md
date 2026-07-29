@@ -115,13 +115,20 @@ Linux and Windows published installs require a staged CPU Torch install; plain
 Linux Torch build. The exact commands are in the
 [installation guide](INSTALLATION_GUIDE.md#install-a-published-local-worker).
 
-Confirm the package and prepare the pinned models:
+Confirm package and model readiness, then explicitly prepare any missing pinned
+models:
 
 ```bash
 vidxp --version
 vidxp doctor
 vidxp prepare
 ```
+
+`doctor` does not download anything. It reports missing model artifacts and
+exits unsuccessfully until the selected capabilities are prepared. Indexing,
+API jobs, and MCP tools do not turn a first request into an implicit model
+download; model downloads happen only through `prepare` or the model-preparation
+job.
 
 ## Index and search
 

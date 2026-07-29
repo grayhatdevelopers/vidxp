@@ -115,10 +115,12 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             [
                 "list_capabilities",
                 "get_capability",
+                "get_runtime_readiness",
                 "list_media",
                 "get_media",
                 "get_index_status",
                 "start_indexing",
+                "prepare_models",
                 "search_moments",
                 "query_video",
                 "list_jobs",
@@ -167,6 +169,48 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             calls[0].kwargs["job_id"],
             calls[1].kwargs["job_id"],
         )
+        self.assertEqual(
+            context.application.require_models.call_args.args[0],
+            ("scene",),
+        )
+
+    async def test_missing_models_fail_before_index_submission(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.application.require_models.side_effect = ApplicationError(
+                "model_unavailable",
+                ErrorCategory.unavailable,
+                "Run vidxp prepare --modalities scene.",
+                details={
+                    "capability": "scene",
+                    "remediation": "vidxp prepare --modalities scene",
+                },
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.write"}),
+                ),
+            )
+            async with Client(server) as client:
+                result = await client.call_tool(
+                    "start_indexing",
+                    {
+                        "command": {
+                            "media_id": MEDIA_ID,
+                            "modalities": ["scene"],
+                        },
+                        "idempotency_key": "agent-request-0002",
+                    },
+                )
+
+        self.assertTrue(result.is_error)
+        self.assertIn(
+            '"remediation":"vidxp prepare --modalities scene"',
+            result.content[0].text,
+        )
+        context.jobs.submit_index.assert_not_called()
 
     async def test_query_video_submits_the_shared_durable_command(self):
         with TemporaryDirectory() as directory:
@@ -374,10 +418,12 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             [
                 "list_capabilities",
                 "get_capability",
+                "get_runtime_readiness",
                 "list_media",
                 "get_media",
                 "get_index_status",
                 "start_indexing",
+                "prepare_models",
                 "search_moments",
                 "query_video",
                 "list_jobs",
@@ -437,7 +483,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 12)
+        self.assertEqual(len(discovered.tools), 14)
         self.assertEqual(result.structured_content, {"items": []})
 
     async def test_oidc_verifier_projects_the_shared_validated_token(self):

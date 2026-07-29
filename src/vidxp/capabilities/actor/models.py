@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from vidxp.ports import ModelRuntimePort
 from vidxp.capabilities.actor.specs import (
@@ -17,14 +17,35 @@ class ActorModels:
     recognizer: Any
 
 
-def get_actor_models(runtime: ModelRuntimePort) -> ActorModels:
+def get_actor_models(
+    runtime: ModelRuntimePort,
+    *,
+    download: bool = False,
+    progress: Callable[[dict[str, Any]], None] | None = None,
+) -> ActorModels:
     key = actor_model_key(runtime.device_for("actor"))
 
     def load() -> ActorModels:
         import cv2
 
-        detector_path = runtime.resolve_artifact(YUNET_MODEL)
-        recognizer_path = runtime.resolve_artifact(SFACE_MODEL)
+        detector_path = runtime.resolve_artifact(
+            YUNET_MODEL,
+            download=download,
+            progress=progress,
+        )
+        recognizer_path = runtime.resolve_artifact(
+            SFACE_MODEL,
+            download=download,
+            progress=progress,
+        )
+        if progress is not None:
+            progress(
+                {
+                    "state": "preparing",
+                    "stage": "loading_model",
+                    "message": "Loading OpenCV Zoo YuNet and SFace models.",
+                }
+            )
         models = ActorModels(
             detector=cv2.FaceDetectorYN.create(
                 str(detector_path),

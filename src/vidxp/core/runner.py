@@ -487,10 +487,7 @@ def index_video(
         {
             "state": "indexing",
             "stage": "initializing",
-            "message": (
-                "Preparing the selected indexing modalities. "
-                "Missing model weights will download before their first use."
-            ),
+            "message": "Preparing the selected indexing modalities.",
         }
     )
     try:

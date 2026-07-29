@@ -511,6 +511,12 @@ cannot drift.
 Model construction and caching belong to `ModelRuntime`. Adapters and capability
 handlers do not each load models independently.
 
+Model downloads are explicit preparation jobs. Doctor/readiness checks inspect
+the pinned cache without constructing models or downloading, and ordinary
+indexing or query work fails fast with `model_unavailable` when required
+artifacts are absent. Preparation publishes byte progress and model-loading
+stages through the shared durable job contract.
+
 The scheduler bounds concurrent model work. Local execution does not reject work
 based on a fixed free-RAM threshold; allocation failures come from the runtime
 that attempted the actual operation. API request threadpools are not the model

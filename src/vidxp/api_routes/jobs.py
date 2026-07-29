@@ -45,6 +45,7 @@ def submit_index(
     actor: Annotated[Principal, Depends(write_principal)],
     idempotency_key: HttpIdempotencyKey,
 ) -> Job:
+    service.application.require_models(command.modalities)
     return accepted(
         response,
         service.jobs.submit_index(

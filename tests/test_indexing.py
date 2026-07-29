@@ -1,4 +1,6 @@
 import unittest
+from contextlib import nullcontext
+import sys
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -17,6 +19,7 @@ from vidxp.capabilities.contracts import (
 from vidxp.capabilities.dialogue.indexing import (
     build_dialogue_phrases,
     index_dialogue,
+    transcribe_video,
 )
 from vidxp.capabilities.scene.indexing import (
     encode_scene_batch,
@@ -173,6 +176,43 @@ class IndexingTests(unittest.TestCase):
 
         self.assertEqual([len(batch) for batch in encoder.batches], [2, 1])
         self.assertEqual(stats["dialogue_phrases"], 3)
+
+    def test_silent_video_skips_dialogue_before_loading_whisper(self):
+        events = []
+        fake_av = SimpleNamespace(
+            open=Mock(
+                return_value=nullcontext(
+                    SimpleNamespace(
+                        streams=SimpleNamespace(audio=()),
+                    )
+                )
+            )
+        )
+        pipeline = Mock(side_effect=AssertionError("whisper was loaded"))
+        fake_whisper = SimpleNamespace(BatchedInferencePipeline=pipeline)
+
+        with patch.dict(
+            sys.modules,
+            {
+                "av": fake_av,
+                "faster_whisper": fake_whisper,
+            },
+        ):
+            segments, language = transcribe_video(
+                "silent.mp4",
+                config=IndexConfig(
+                    video_id="video-1",
+                    enabled_modalities=("dialogue",),
+                ),
+                cancellation=CancellationToken(),
+                runtime=self.runtime(),
+                progress=events.append,
+            )
+
+        self.assertEqual(segments, [])
+        self.assertIsNone(language)
+        self.assertEqual(events[-1]["stage"], "dialogue_skipped")
+        pipeline.assert_not_called()
 
     def test_visual_stream_uses_registered_processor_without_name_switches(self):
         processor = Mock()

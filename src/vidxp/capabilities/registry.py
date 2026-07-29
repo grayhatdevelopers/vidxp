@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib.metadata import EntryPoint, entry_points
+from pathlib import Path
 from threading import RLock
 from time import perf_counter
 from types import MappingProxyType
@@ -34,6 +35,7 @@ from vidxp.dependencies import (
     packaged_requirements,
 )
 from vidxp.model_contracts import ArtifactSpec, ModelSpec
+from vidxp.model_contracts import model_artifact_cached
 
 
 ENTRY_POINT_GROUP = "vidxp.capabilities"
@@ -137,6 +139,45 @@ class CapabilityRegistry:
                 for spec in self.get(name).model_specs
             )
         )
+
+    def model_checks(
+        self,
+        names: Iterable[str],
+        *,
+        cache: Path,
+        on_check_start: (
+            Callable[[str, DependencyKind, str], None] | None
+        ) = None,
+        on_check_complete: (
+            Callable[[CapabilityDependencyCheck, float], None] | None
+        ) = None,
+    ) -> tuple[CapabilityDependencyCheck, ...]:
+        selected = self.validate_names(names)
+        checks = []
+        for name in selected:
+            for spec in self.get(name).model_specs:
+                if on_check_start is not None:
+                    on_check_start(name, DependencyKind.model, spec.model_id)
+                started = perf_counter()
+                cached = model_artifact_cached(cache, spec)
+                check = CapabilityDependencyCheck(
+                    capability=name,
+                    kind=DependencyKind.model,
+                    name=spec.model_id,
+                    ok=cached,
+                    error=(
+                        None
+                        if cached
+                        else (
+                            "model artifacts are not prepared; run "
+                            f"vidxp prepare --modalities {name}"
+                        )
+                    ),
+                )
+                checks.append(check)
+                if on_check_complete is not None:
+                    on_check_complete(check, perf_counter() - started)
+        return tuple(checks)
 
     def get(self, name: str) -> CapabilityDefinition:
         try:

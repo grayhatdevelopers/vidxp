@@ -356,6 +356,9 @@ class CliTests(unittest.TestCase):
             self.service.check_dependencies.call_args.args[0].modalities,
             ("scene",),
         )
+        self.assertTrue(
+            self.service.check_dependencies.call_args.args[0].include_models
+        )
         self.assertEqual(
             self.jobs.submit_prepare_models.call_args.args[0].modalities,
             ("scene",),
@@ -513,6 +516,30 @@ class CliTests(unittest.TestCase):
             'pip install "vidxp[scene]"',
             result.output,
         )
+
+    def test_doctor_reports_missing_models_and_prepare_command(self):
+        self.service.check_dependencies.return_value = DependencyCheckResult(
+            ok=False,
+            modalities=("scene",),
+            checks=(
+                CapabilityDependencyCheck(
+                    capability="scene",
+                    kind=DependencyKind.model,
+                    name="google/siglip2-base-patch16-224",
+                    ok=False,
+                    error="model artifacts are not prepared",
+                ),
+            ),
+        )
+
+        result = self.invoke(["doctor", "--modalities", "scene"])
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn(
+            "vidxp prepare --modalities scene",
+            result.output,
+        )
+        self.assertNotIn("pip install", result.output)
 
     def test_invalid_capability_is_a_cli_parameter_error(self):
         result = self.invoke(

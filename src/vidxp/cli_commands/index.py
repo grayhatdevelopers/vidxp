@@ -34,11 +34,13 @@ def create_index(
     show_progress = (
         not state.quiet and state.output_format == OutputFormat.rich
     )
+    selected = tuple(modalities)
+    state.service.require_models(selected)
     with IndexProgress(show_progress) as progress:
         job = state.jobs.submit_index(
             CreateIndexCommand(
                 media_id=media_id,
-                modalities=tuple(modalities),
+                modalities=selected,
                 frame_stride=frame_stride,
                 scene_sample_fps=scene_sample_fps,
                 capability_options=capability_options,
