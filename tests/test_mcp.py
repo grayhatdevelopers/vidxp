@@ -70,7 +70,6 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         settings = VidXPSettings(
             repository_root=root,
             runtime_backend="cpu",
-            minimum_available_memory_mb=0,
             http_auth_mode="static" if static_token is not None else "none",
             http_static_bearer_token=static_token,
             http_trusted_hosts=http_trusted_hosts,

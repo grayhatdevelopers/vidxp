@@ -61,7 +61,6 @@ class VidXPSettings(BaseSettings):
         gt=0,
         le=256,
     )
-    minimum_available_memory_mb: int = Field(default=1024, ge=0)
     max_local_import_bytes: int = Field(
         default=50 * 1024 * 1024 * 1024,
         gt=0,
@@ -599,7 +598,6 @@ class LocalExecutionSettings(BaseModel):
     max_concurrent_inference: int
     workflow_poll_interval_seconds: float
     cpu_thread_budget: int
-    minimum_available_memory_mb: int
     max_local_import_bytes: int
     max_snippet_duration_seconds: float
     trusted_local_import_roots: tuple[Path, ...]

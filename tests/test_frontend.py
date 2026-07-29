@@ -1,4 +1,5 @@
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -124,7 +125,6 @@ class FrontendTests(unittest.TestCase):
                 max_concurrent_indexing=2,
                 max_concurrent_inference=3,
                 cpu_thread_budget=6,
-                minimum_available_memory_mb=2048,
                 external_capabilities=True,
                 capability_allowlist=("acme:ocr",),
             )
@@ -186,6 +186,61 @@ class FrontendTests(unittest.TestCase):
             MEDIA_ID,
         )
         self.assertIsNone(frontend._default_media_id("missing", assets))
+
+    def test_busy_video_layout_keeps_controls_and_preview_stable(self):
+        service = Mock()
+        service.open_media_content.return_value = SimpleNamespace(
+            path=Path("video.mp4")
+        )
+        media_page = SimpleNamespace(
+            items=(
+                SimpleNamespace(
+                    media_id=MEDIA_ID,
+                    original_filename="video.mp4",
+                    duration_seconds=27.2,
+                ),
+            ),
+            next_cursor=None,
+        )
+        with (
+            patch.object(
+                frontend,
+                "_configured_service",
+                return_value=service,
+            ),
+            patch.object(frontend.st, "session_state", {}),
+            patch.object(frontend.st, "subheader"),
+            patch.object(
+                frontend.st,
+                "selectbox",
+                return_value=MEDIA_ID,
+            ) as selectbox,
+            patch.object(
+                frontend.st,
+                "expander",
+                return_value=nullcontext(),
+            ),
+            patch.object(frontend.st, "caption"),
+            patch.object(frontend.st, "text_input", return_value=""),
+            patch.object(frontend.st, "button", return_value=False),
+            patch.object(
+                frontend.st,
+                "file_uploader",
+                return_value=None,
+            ) as uploader,
+            patch.object(frontend.st, "video") as video,
+        ):
+            uploaded, media_id = frontend._select_video(
+                True,
+                MEDIA_ID,
+                media_page,
+            )
+
+        self.assertIsNone(uploaded)
+        self.assertEqual(media_id, MEDIA_ID)
+        self.assertTrue(selectbox.call_args.kwargs["disabled"])
+        self.assertTrue(uploader.call_args.kwargs["disabled"])
+        video.assert_called_once_with("video.mp4", width=560)
 
     def test_local_path_import_uses_the_shared_application_command(self):
         service = Mock()

@@ -610,7 +610,7 @@ def _select_video(busy, media_id, media_page):
     else:
         st.session_state.pop(MEDIA_ID_KEY, None)
 
-    if not busy and assets:
+    if assets:
         asset_by_id = {asset.media_id: asset for asset in assets}
         selected_media_id = st.selectbox(
             "Registered video",
@@ -624,6 +624,7 @@ def _select_video(busy, media_id, media_page):
                 f"{asset_by_id[value].original_filename} "
                 f"({asset_by_id[value].duration_seconds:.1f}s)"
             ),
+            disabled=busy,
         )
         if selected_media_id != media_id:
             st.session_state.pop(SEARCH_RESULT_KEY, None)
@@ -661,19 +662,14 @@ def _select_video(busy, media_id, media_page):
                 )
                 st.rerun()
 
-    upload_slot = st.empty()
-    has_session_upload = st.session_state.get("video_upload") is not None
-    if busy and not has_session_upload and media_id is not None:
-        uploaded_video = None
+    uploaded_video = st.file_uploader(
+        "Upload an MP4, MOV, or AVI video",
+        type=["mp4", "mov", "avi"],
+        disabled=busy,
+        key="video_upload",
+    )
+    if busy and uploaded_video is None and media_id is not None:
         st.caption("Indexing the registered video.")
-    else:
-        with upload_slot:
-            uploaded_video = st.file_uploader(
-                "Upload an MP4, MOV, or AVI video",
-                type=["mp4", "mov", "avi"],
-                disabled=busy,
-                key="video_upload",
-            )
 
     if uploaded_video is not None:
         st.video(uploaded_video, width=560)

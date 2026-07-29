@@ -134,8 +134,12 @@ class LocalWorkerSupervisorTests(unittest.TestCase):
         self.assertEqual(worker_settings.http_auth_mode, "none")
         wait.assert_called_once()
         if sys.platform == "win32":
-            self.assertTrue(
-                options["creationflags"] & subprocess.DETACHED_PROCESS
+            self.assertEqual(
+                options["creationflags"],
+                (
+                    subprocess.CREATE_NEW_PROCESS_GROUP
+                    | subprocess.CREATE_NO_WINDOW
+                ),
             )
         else:
             self.assertTrue(options["start_new_session"])

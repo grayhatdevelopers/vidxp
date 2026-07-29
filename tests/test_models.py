@@ -36,7 +36,6 @@ from vidxp.infrastructure.local_index import (
     SERVER_INDEX_RUNTIME_CHECKS,
 )
 from vidxp.model_contracts import ModelArtifactUnavailableError, ModelKey
-from vidxp.ports import ResourceLimitError
 from vidxp.runtime import ModelRuntime, resolve_backends
 from vidxp.settings import VidXPSettings
 
@@ -88,27 +87,6 @@ class ModelTests(unittest.TestCase):
             runtime.describe()["compute_precision"]["dialogue.embedding"],
             "bfloat16",
         )
-
-    def test_scheduler_rejects_work_below_memory_admission_floor(self):
-        with TemporaryDirectory() as directory:
-            runtime = ModelRuntime(
-                VidXPSettings(
-                    repository_root=directory,
-                    runtime_backend="cpu",
-                    minimum_available_memory_mb=1024,
-                )
-            )
-            fake_psutil = types.SimpleNamespace(
-                virtual_memory=lambda: types.SimpleNamespace(
-                    available=512 * 1024 * 1024
-                )
-            )
-            with (
-                patch.dict(sys.modules, {"psutil": fake_psutil}),
-                self.assertRaises(ResourceLimitError),
-                runtime.scheduler.inference(),
-            ):
-                pass
 
     def test_unrelated_model_loads_do_not_hold_the_global_cache_lock(self):
         runtime = self.runtime("unused")

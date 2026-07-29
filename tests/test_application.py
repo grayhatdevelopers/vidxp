@@ -77,7 +77,6 @@ class ApplicationTests(unittest.TestCase):
         settings = VidXPSettings(
             repository_root=Path(root),
             runtime_backend="cpu",
-            minimum_available_memory_mb=0,
         )
         runtime = ModelRuntime(settings)
         active_backend = backend or Mock()

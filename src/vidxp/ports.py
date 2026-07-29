@@ -44,10 +44,6 @@ from vidxp.core.media import (
 from vidxp.model_contracts import ArtifactSpec, ModelKey, ModelSpec
 
 
-class ResourceLimitError(RuntimeError):
-    """Raised when configured host capacity cannot admit model work."""
-
-
 class InvalidJobBackendRequestError(ValueError):
     """Raised when a durable job identifier or cursor is malformed."""
 

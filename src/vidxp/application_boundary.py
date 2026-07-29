@@ -43,9 +43,6 @@ from vidxp.media_service import (
     MediaIdempotencyConflictError,
     MediaImportNotAllowedError,
 )
-from vidxp.ports import ResourceLimitError
-
-
 def _validation_details(
     exc: ValidationError,
 ) -> list[dict[str, JsonValue]]:
@@ -110,13 +107,6 @@ def application_boundary(handler: Callable) -> Callable:
                 "operation_cancelled",
                 ErrorCategory.cancelled,
                 "The operation was cancelled.",
-            ) from exc
-        except ResourceLimitError as exc:
-            raise ApplicationError(
-                "resource_limit",
-                ErrorCategory.resource_limit,
-                "The worker does not currently have enough host capacity.",
-                retryable=True,
             ) from exc
         except ValidationError as exc:
             raise InvalidRequestError(

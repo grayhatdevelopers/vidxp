@@ -15,7 +15,6 @@ from vidxp.model_contracts import (
     ModelKey,
     ModelSpec,
 )
-from vidxp.ports import ResourceLimitError
 from vidxp.settings import VidXPSettings
 
 
@@ -94,33 +93,18 @@ class ResourceScheduler:
         *,
         indexing_slots: int,
         inference_slots: int,
-        minimum_available_memory_mb: int,
     ) -> None:
         self._indexing = BoundedSemaphore(indexing_slots)
         self._inference = BoundedSemaphore(inference_slots)
-        self._minimum_available_memory_mb = minimum_available_memory_mb
-
-    def _check_memory(self) -> None:
-        try:
-            import psutil
-        except ModuleNotFoundError:
-            return
-        available = int(psutil.virtual_memory().available / (1024 * 1024))
-        if available < self._minimum_available_memory_mb:
-            raise ResourceLimitError(
-                "The configured host-memory admission floor is not available."
-            )
 
     @contextmanager
     def indexing(self) -> Iterator[None]:
         with self._indexing:
-            self._check_memory()
             yield
 
     @contextmanager
     def inference(self) -> Iterator[None]:
         with self._inference:
-            self._check_memory()
             yield
 
 
@@ -139,9 +123,6 @@ class ModelRuntime:
         self.scheduler = ResourceScheduler(
             indexing_slots=settings.max_concurrent_indexing,
             inference_slots=settings.max_concurrent_inference,
-            minimum_available_memory_mb=(
-                settings.minimum_available_memory_mb
-            ),
         )
         self._resources: OrderedDict[ModelKey, Any] = OrderedDict()
         self._resolved_models: dict[str, dict[str, Any]] = {}
@@ -311,9 +292,6 @@ class ModelRuntime:
                     self.settings.max_concurrent_inference
                 ),
                 "cpu_thread_budget": self.settings.cpu_thread_budget,
-                "minimum_available_memory_mb": (
-                    self.settings.minimum_available_memory_mb
-                ),
             },
             "resolved_models": dict(self._resolved_models),
             "compute_precision": dict(self._compute_precision),

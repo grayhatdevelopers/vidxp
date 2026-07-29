@@ -511,8 +511,10 @@ cannot drift.
 Model construction and caching belong to `ModelRuntime`. Adapters and capability
 handlers do not each load models independently.
 
-The scheduler applies backpressure to CPU threads, RAM and VRAM. API request
-threadpools are not the GPU scheduler.
+The scheduler bounds concurrent model work. Local execution does not reject work
+based on a fixed free-RAM threshold; allocation failures come from the runtime
+that attempted the actual operation. API request threadpools are not the model
+scheduler.
 
 ### 12.1 Scene sampling delivery boundary
 

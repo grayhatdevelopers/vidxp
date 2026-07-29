@@ -116,7 +116,6 @@ class LocalWorkerSupervisor:
             if sys.platform == "win32":
                 options["creationflags"] = (
                     subprocess.CREATE_NEW_PROCESS_GROUP
-                    | subprocess.DETACHED_PROCESS
                     | subprocess.CREATE_NO_WINDOW
                 )
             else:

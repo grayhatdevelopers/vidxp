@@ -100,7 +100,6 @@ class ApiTests(unittest.TestCase):
         settings = VidXPSettings(
             repository_root=root,
             runtime_backend="cpu",
-            minimum_available_memory_mb=0,
             http_auth_mode=auth,
             http_static_bearer_token=TOKEN if auth == HttpAuthMode.static else None,
             http_oidc_issuer=(
@@ -846,7 +845,6 @@ class ApiTests(unittest.TestCase):
             settings = VidXPSettings(
                 repository_root=Path(directory),
                 runtime_backend="cpu",
-                minimum_available_memory_mb=0,
             )
             with patch(
                 "vidxp.composition.ModelRuntime",
