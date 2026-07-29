@@ -267,7 +267,10 @@ def _available_index_modalities() -> tuple[str, ...]:
 def _available_query_modalities(
     configured: tuple[str, ...],
 ) -> tuple[str, ...]:
-    def supports_query(capability) -> bool:
+    service = _configured_service()
+
+    def supports_query(capability_name: str) -> bool:
+        capability = service.get_capability(capability_name)
         operations = {
             operation.name for operation in capability.operations
         }
@@ -278,9 +281,9 @@ def _available_query_modalities(
 
     return tuple(
         capability.name
-        for capability in _configured_service().list_capabilities()
+        for capability in service.list_capabilities()
         if capability.name in configured
-        if supports_query(capability)
+        if supports_query(capability.name)
     )
 
 

@@ -20,6 +20,8 @@ from vidxp.application_models import (
 )
 from vidxp.capabilities.registry import create_capability_registry
 from vidxp.capability_service import CapabilityService
+from vidxp.control_plane import ControlPlaneApplication
+from vidxp.repository_layout import RepositoryLayout
 from vidxp.settings import LocalExecutionSettings, VidXPSettings
 
 
@@ -68,34 +70,31 @@ class FrontendTests(unittest.TestCase):
             },
         )
 
-    def test_query_modalities_derive_from_capability_operations(self):
-        service = Mock()
-        service.list_capabilities.return_value = (
-            SimpleNamespace(
-                name="visual-plugin",
-                operations=(SimpleNamespace(name="search"),),
-            ),
-            SimpleNamespace(
-                name="people-plugin",
-                operations=(
-                    SimpleNamespace(name="clusters"),
-                    SimpleNamespace(name="detections"),
+    def test_query_modalities_use_real_capability_service_contracts(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = ControlPlaneApplication(
+                layout=RepositoryLayout(root=root),
+                capabilities=CapabilityService(
+                    create_capability_registry()
                 ),
-            ),
-            SimpleNamespace(name="index-only", operations=()),
-        )
-        with patch.object(
-            frontend,
-            "_configured_service",
-            return_value=service,
-        ):
-            available = frontend._available_query_modalities(
-                ("visual-plugin", "people-plugin", "index-only"),
+                media=Mock(),
+                artifacts=Mock(),
+                index_status=lambda: None,
+                model_cache=root / "models",
             )
+            with patch.object(
+                frontend,
+                "_configured_service",
+                return_value=service,
+            ):
+                available = frontend._available_query_modalities(
+                    ("dialogue", "scene", "actor"),
+                )
 
         self.assertEqual(
             available,
-            ("visual-plugin", "people-plugin"),
+            ("dialogue", "scene", "actor"),
         )
 
     def tearDown(self):
@@ -108,9 +107,9 @@ class FrontendTests(unittest.TestCase):
         service.layout.artifacts = root / "artifacts"
         service.layout.root = root
         service.registry = create_capability_registry()
-        service.list_capabilities.return_value = CapabilityService(
-            service.registry
-        ).list()
+        capabilities = CapabilityService(service.registry)
+        service.list_capabilities.side_effect = capabilities.list
+        service.get_capability.side_effect = capabilities.get
         return service
 
     def test_service_is_composed_lazily_and_cached(self):
