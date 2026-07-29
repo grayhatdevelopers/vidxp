@@ -1,0 +1,1 @@
+Add optional DiDeMo and HiREST benchmark commands with dataset adapters, evaluator integration, scene-cadence controls, and invocation-time checks that name the exact missing benchmark extra instead of breaking unrelated commands.

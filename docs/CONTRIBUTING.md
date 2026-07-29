@@ -67,22 +67,20 @@ override `--data-dir`.
 
 ## Project map
 
-| Product/application | Interfaces and deployment | Execution and storage |
-|---|---|---|
-| `application.py`, `control_plane.py`, `application_models.py` | `cli.py`, `cli_commands/`, `frontend.py` | `job_service.py`, `workflow_*`, `execution.py` |
-| `capabilities/` | `api.py`, `api_routes/`, `mcp.py` | `core/`, `infrastructure/`, `ports.py` |
-| `media_service.py`, `artifact_service.py`, `query_service.py` | `Dockerfile`, `compose*.yaml`, `desktop/` | `migrations/`, `repository_layout.py`, `settings.py` |
-
-Supporting areas:
-
-| Path | Purpose |
-|---|---|
-| `tests/` | Unit, contract, adapter, integration, and regression tests |
-| `src/vidxp/benchmarks/` | Benchmark loaders, adapters, and evaluator calls |
-| `docs/benchmarking/` | Benchmark scope, validation, and published results |
-| `docs/deployment/` | Server/Coolify and deferred GPU design |
-| `src/vidxp/requirements/` | Composable optional dependency groups |
-| `changes/` | Pending public release notes |
+- Product operations and contracts live in `application.py`,
+  `control_plane.py`, `application_models.py`, and the media, artifact, and
+  query services.
+- Capability-specific indexing and retrieval live in `capabilities/`.
+- CLI, Streamlit, HTTP, and MCP adapters live in `cli.py`, `cli_commands/`,
+  `frontend.py`, `api.py`, `api_routes/`, and `mcp.py`.
+- Durable execution and storage live in `job_service.py`, `workflow_*`,
+  `execution.py`, `core/`, `infrastructure/`, and `ports.py`.
+- Deployment and desktop packaging live in `Dockerfile`, `compose*.yaml`, and
+  `desktop/`.
+- Tests are under `tests/`; benchmark adapters and documentation are under
+  `src/vidxp/benchmarks/` and `docs/benchmarking/`.
+- Optional dependency groups are under `src/vidxp/requirements/`; pending
+  public release notes are under `changes/`.
 
 Generated environments, model weights, media, indexes, artifacts,
 `benchmark_runs/`, build outputs, and local data do not belong in commits.
@@ -180,7 +178,19 @@ boundary, say so.
 
 ## Pull requests
 
-Use a clear title and a compact description:
+The repository's
+[pull request template](../.github/pull_request_template.md) is the required
+starting point. GitHub loads it automatically for new pull requests. Complete
+all three sections:
+
+- **Summary:** describe the user-facing outcome and important compatibility or
+  migration behavior.
+- **Validation:** list the exact commands and real boundaries exercised. Do not
+  replace results with “tests passed.”
+- **Changelog:** add the correct fragment, or explain why the change is
+  dependency-only/internal and should receive `skip-changelog`.
+
+Keep the description compact, but include:
 
 - what users can do after the change;
 - why the change is needed;
@@ -202,14 +212,12 @@ docs: clarify local installation profiles
 Every user-visible pull request normally adds one
 `changes/<pr-number>.<type>.md` file. Supported types are:
 
-| Type | Use it for |
-|---|---|
-| `breaking` | Incompatible public behavior or API changes |
-| `feature` | New user-visible behavior |
-| `bugfix` | Behavior that was wrong in the latest public release |
-| `deprecation` | Public behavior scheduled for removal |
-| `docs` | Material user-facing documentation changes |
-| `security` | Security fixes or hardening users should know about |
+- `breaking` for incompatible public behavior or API changes.
+- `feature` for new user-visible behavior.
+- `bugfix` for behavior that was wrong in the latest public release.
+- `deprecation` for public behavior scheduled for removal.
+- `docs` for material user-facing documentation changes.
+- `security` for security fixes or hardening users should know about.
 
 Write for users, not for the implementation history.
 

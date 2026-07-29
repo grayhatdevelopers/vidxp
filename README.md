@@ -7,11 +7,15 @@
 <h1 align="center">VidXP</h1>
 
 <p align="center">
-  <strong>Search video by what was said, what appeared, and who was on screen.</strong>
+  <em>Search video by what was said, what appeared on screen, and recurring faces.</em>
 </p>
 
 <p align="center">
-  Local-first video indexing for people, applications, and AI agents.
+  A local-first video indexing and search engine for people, applications, and AI agents.
+</p>
+
+<p align="center">
+  <strong>CLI · Browser UI · Desktop preview · Python API · HTTP API · MCP · Docker</strong>
 </p>
 
 <p align="center">
@@ -22,90 +26,70 @@
   <a href="https://grayhat.studio/discord"><img src="https://img.shields.io/discord/867124708473700363?logo=discord&logoColor=white" alt="Discord"></a>
 </p>
 
-## What VidXP does
+## Why VidXP
 
-VidXP turns one video or a whole local collection into a persistent,
-searchable index. Models run on the worker rather than in the browser, API, or
-MCP process, and model downloads happen only after explicit confirmation.
+Finding one moment should not require scrubbing through an entire video.
+VidXP builds a persistent index from three kinds of evidence:
 
-| Dialogue | Scenes | Actors |
-|---|---|---|
-| Transcribes speech and indexes timestamped phrases | Samples video at a source-aware cadence and embeds frames | Detects faces and groups similar appearances within a video |
-| Search by meaning, not only exact words | Search with descriptions such as “a red car at night” | Inspect clusters and render highlighted actor-overlay videos |
+- **Dialogue:** transcribes speech and searches timestamped phrases by meaning,
+  not only exact words.
+- **Scenes:** samples at a source-aware cadence and finds visually similar
+  moments from descriptions such as “a red car at night.”
+- **Actors:** detects faces, groups recurring appearances within each video,
+  and can render a highlighted overlay for a selected cluster.
 
-The same repository is available through every supported surface:
+Index one video or a whole collection. Search across every indexed video for
+the best matches, or provide a `media_id` to stay within one video.
 
-| CLI | Browser and desktop | HTTP API and MCP | Docker |
-|---|---|---|---|
-| Import, index, search, query, jobs, and clips | Guided local workflow with visible preparation and job progress | Typed control plane for applications and agents | Local all-in-one image or separated server control/worker images |
+Use the same repository in the form that fits the job:
 
-Other product-level behavior includes:
+- People can use the CLI, browser interface, or desktop preview.
+- Applications can embed the Python layer or call the versioned HTTP API.
+- Agents can connect through local stdio MCP or authenticated remote MCP.
+- Deployments can use the all-in-one local image or separated control and
+  CPU-worker images.
 
-- multi-video snapshots with cross-video top-k search;
-- optional `media_id` filtering for one-video search;
-- durable indexing, search, model-preparation, and artifact jobs;
-- managed media, actor overlays, and downloadable video clips;
-- grounded natural-language answers that retain timestamped evidence; and
-- named repositories for separate searchable collections.
+VidXP also provides durable jobs, atomic multi-video snapshots, named
+repositories, grounded answers with timestamped evidence, and downloadable
+video clips or actor overlays.
 
 [![VidXP browser interface](./docs/images/video-screenshot.jpeg)](https://www.linkedin.com/feed/update/urn:li:activity:7343569473720725505/)
 
-## Start here: local browser app
+## Quick start
 
-This is the native end-user sequence. It installs the CPU worker and browser
-interface from PyPI into an isolated virtual environment. Install
-[uv](https://docs.astral.sh/uv/getting-started/installation/) first, then verify
-it is available:
+Install [uv 0.12 or newer](https://docs.astral.sh/uv/getting-started/installation/),
+then let uv create and manage VidXP's isolated tool environment:
 
 ```bash
 uv --version
+uv tool install --python 3.14 --torch-backend cpu "vidxp[local-worker,frontend]"
 ```
 
-### 1. Create and activate the environment
-
-```bash
-uv venv --python 3.14
-```
-
-| Windows PowerShell | macOS or Linux |
-|---|---|
-| `.venv\Scripts\Activate.ps1` | `source .venv/bin/activate` |
-
-### 2. Install VidXP
-
-```bash
-uv pip install --torch-backend cpu "vidxp[local-worker,frontend]"
-```
-
-### 3. Initialize and prepare
+No virtual environment needs to be created or activated manually. If the
+installed command is not immediately found, run `uv tool update-shell` once
+and reopen the terminal.
 
 ```bash
 vidxp init
 vidxp prepare
 vidxp doctor
-```
-
-- `init` verifies FFmpeg, ffprobe, `libx264`, and `aac`. If FFmpeg is missing,
-  it shows the exact supported package-manager command and asks before running
-  it.
-- `prepare` lists each missing model, download size, cache location, and total
-  additional space before asking for confirmation.
-- `doctor` is read-only. It installs and downloads nothing.
-
-### 4. Launch
-
-```bash
 vidxp ui
 ```
 
-Open `http://localhost:8501` if it does not open automatically. VidXP stores
-its repository and model cache in the operating system’s per-user application
-data directory, not in the directory where the command was run.
+- `init` checks FFmpeg and offers a confirmed package-manager command when it
+  is missing.
+- `prepare` discloses the missing models, download sizes, cache location, and
+  maximum additional space before asking.
+- `doctor` is read-only and downloads nothing.
+- `ui` opens the browser interface at `http://localhost:8501`.
 
-See the [installation guide](INSTALLATION_GUIDE.md) for a CLI-only worker,
-MCP, a local API, Docker, macOS-specific installation, and troubleshooting.
+Media, indexes, jobs, artifacts, and models live in the operating system's
+per-user VidXP data directory—not the directory where the command was run.
 
-## Start here: Docker
+See the [installation guide](INSTALLATION_GUIDE.md) for CLI-only, MCP, API,
+Docker, desktop, embedding, and server deployment profiles.
+
+### Docker instead
 
 The local image contains the CPU worker, browser UI, and FFmpeg, but no model
 weights.
@@ -123,36 +107,21 @@ media, indexes, jobs, and models across container replacement.
 
 ## Installation profiles
 
-Install only the surfaces that belong in the same process environment.
+Install only the surfaces you intend to run together.
 
-| Profile or extra | Adds | Use it for |
-|---|---|---|
-| Base `vidxp` | Lightweight CLI, typed contracts, repository configuration, `init` | Version/configuration commands or building a custom client; not local indexing |
-| `storage` | Embedded Chroma and host monitoring | Custom local storage integrations |
-| `dialogue` | Storage, faster-whisper, sentence-transformers | Dialogue-only local indexing |
-| `scene` | Storage, PyTorch, Transformers, OpenCV, Pillow | Scene-only local indexing |
-| `actor` | Storage, OpenCV, YuNet/SFace support | Actor-only local indexing |
-| `all` | Dialogue, scene, and actor providers | A custom full worker without the query-model client |
-| `local-worker` | All providers plus the optional grounded-query client | Recommended complete local worker |
-| `frontend` | Streamlit | Browser UI; combine with a local worker |
-| `mcp` | MCP SDK | Local stdio MCP; combine with a local worker |
-| `server` | FastAPI, remote MCP, PostgreSQL control-plane dependencies | API/MCP control image or a local API when combined with `local-worker` |
-| `server-worker` | Server storage client plus every CPU provider | Separated server worker image |
-| `benchmarks` | DiDeMo and HiREST adapter dependencies | Evaluation and benchmark development |
-| `test` | Pytest and HTTP test client | Contributor validation only |
-
-Common combinations:
-
-| Goal | Package selection | Start command |
-|---|---|---|
-| Local CLI worker | `vidxp[local-worker]` | `vidxp --help` |
-| Local browser app | `vidxp[local-worker,frontend]` | `vidxp ui` |
-| Local stdio MCP | `vidxp[local-worker,mcp]` | `vidxp-mcp` |
-| Local API + remote MCP | `vidxp[local-worker,server]` | `vidxp-api` |
-| Everything local | `vidxp[local-worker,frontend,server]` | `vidxp ui` or `vidxp-api` |
+| Goal | Package profile | What it adds | Start |
+|---|---|---|---|
+| CLI indexing | `vidxp[local-worker]` | Dialogue, scene, actor, storage, local worker | `vidxp --help` |
+| Browser app | `vidxp[local-worker,frontend]` | Complete local worker + Streamlit | `vidxp ui` |
+| Local agent tools | `vidxp[local-worker,mcp]` | Complete local worker + stdio MCP | `vidxp-mcp` |
+| Local application server | `vidxp[local-worker,server]` | Complete local worker + HTTP/remote MCP | `vidxp-api` |
+| UI and server | `vidxp[local-worker,frontend,server]` | Browser, API, and both MCP transports | `vidxp ui` or `vidxp-api` |
 
 Python package installation never changes operating-system packages. Run
-`vidxp init` explicitly for guided FFmpeg setup.
+`vidxp init` explicitly for guided FFmpeg setup. The
+[installation guide](INSTALLATION_GUIDE.md#optional-dependency-extras)
+documents individual capability, storage, server-worker, benchmark, and test
+extras.
 
 ## Index and search from the CLI
 
@@ -217,7 +186,7 @@ Install the local worker and MCP extra in the same environment, prepare the
 models, and print client-ready configuration:
 
 ```bash
-uv pip install --torch-backend cpu "vidxp[local-worker,mcp]"
+uv tool install --python 3.14 --torch-backend cpu "vidxp[local-worker,mcp]"
 vidxp init
 vidxp prepare
 vidxp mcp-config
@@ -243,7 +212,7 @@ paths.
 For a local API backed by the same local worker:
 
 ```bash
-uv pip install --torch-backend cpu "vidxp[local-worker,server]"
+uv tool install --python 3.14 --torch-backend cpu "vidxp[local-worker,server]"
 vidxp init
 vidxp prepare
 vidxp-api
@@ -309,7 +278,8 @@ publication is still under release validation. See
 ## Python API
 
 VidXP can also be embedded as a Python indexing/retrieval layer. Install only
-the capability extras your application uses:
+the capability extras your application uses inside that application's own
+Python environment:
 
 ```bash
 uv pip install --torch-backend cpu "vidxp[scene]"
@@ -352,6 +322,12 @@ Pinned model downloads are disclosed before preparation:
 
 Actual installed and cached disk use can be higher. `vidxp prepare` calculates
 what is missing on the current machine and asks before downloading it.
+
+These providers replace the earlier WhisperX `large-v2` +
+`all-MiniLM-L6-v2`, OpenAI CLIP `ViT-B/32`, and
+`face_recognition`/dlib stack. Their embeddings, face thresholds, and provider
+manifests are not index-compatible. Re-index videos created with an earlier
+VidXP release after preparing the new models.
 
 Local repositories and models are independent of the shell’s current
 directory and Python environment:

@@ -22,21 +22,17 @@ Local model work requires a capability or worker extra.
 
 ## Requirements
 
-| Requirement | Supported |
-|---|---|
-| Python | 3.11 through 3.14 |
-| Windows | x86-64 |
-| Linux | x86-64 |
-| macOS | Apple Silicon, macOS 14 or newer |
-| Local runtime | CPU |
-| Media tools | FFmpeg, ffprobe, `libx264`, and `aac` |
-| GPU | Deferred; not a supported installation profile |
+- Python 3.11 through 3.14.
+- Windows x86-64, Linux x86-64, or Apple Silicon macOS 14 and newer.
+- FFmpeg, ffprobe, `libx264`, and `aac` for media operations.
+- CPU execution. **GPU remains explicitly deferred and is not a supported
+  installation profile.**
 
 Python wheels never install operating-system packages. `vidxp init` is the
 explicit, guided FFmpeg setup command; `vidxp doctor` is always read-only.
 Native installation uses
-[uv](https://docs.astral.sh/uv/getting-started/installation/) and begins with
-`uv --version`; Docker users do not need a host Python or uv installation.
+[uv 0.12 or newer](https://docs.astral.sh/uv/getting-started/installation/).
+Docker users do not need a host Python or uv installation.
 
 ## Fastest local setup: Docker
 
@@ -71,34 +67,39 @@ intentionally want to remove all persisted VidXP data.
 
 ## Native local setup
 
-The native sequence uses uv for Python selection, environment creation, and
-CPU-aware PyTorch resolution.
+uv installs VidXP as an isolated command-line tool, selects Python, and
+resolves CPU PyTorch. Users do not need to create or activate a virtual
+environment.
 
-### 1. Create an isolated environment
+### 1. Install the profile you need
 
 ```bash
-uv venv --python 3.14
+uv --version
+uv tool install --python 3.14 --torch-backend cpu "vidxp[local-worker,frontend]"
 ```
 
-| Windows PowerShell | macOS or Linux |
+The command above installs the complete local browser app. Replace its bracketed
+extras when you need another surface:
+
+| Goal | Install this package profile |
 |---|---|
-| `.venv\Scripts\Activate.ps1` | `source .venv/bin/activate` |
+| CLI indexing | `vidxp[local-worker]` |
+| Browser UI | `vidxp[local-worker,frontend]` |
+| Local stdio MCP | `vidxp[local-worker,mcp]` |
+| Local API + remote MCP | `vidxp[local-worker,server]` |
+| UI + API + both MCP transports | `vidxp[local-worker,frontend,server]` |
 
-### 2. Install the profile you need
+For example, install the local MCP profile with:
 
-| Goal | Command |
-|---|---|
-| CLI worker | `uv pip install --torch-backend cpu "vidxp[local-worker]"` |
-| Browser UI | `uv pip install --torch-backend cpu "vidxp[local-worker,frontend]"` |
-| Local stdio MCP | `uv pip install --torch-backend cpu "vidxp[local-worker,mcp]"` |
-| Local API + remote MCP | `uv pip install --torch-backend cpu "vidxp[local-worker,server]"` |
-| UI + API + both MCP transports | `uv pip install --torch-backend cpu "vidxp[local-worker,frontend,server]"` |
+```bash
+uv tool install --python 3.14 --torch-backend cpu "vidxp[local-worker,mcp]"
+```
 
-The explicit CPU backend prevents Linux and Windows from resolving the much
-larger CUDA-enabled PyTorch distribution. Apple Silicon uses its native PyPI
-wheel.
+`--torch-backend cpu` prevents an unintended CUDA dependency set on Linux and
+keeps the supported runtime consistent across platforms. If `vidxp` is not
+found after installation, run `uv tool update-shell` and reopen the terminal.
 
-### 3. Initialize FFmpeg
+### 2. Initialize FFmpeg
 
 ```bash
 vidxp init
@@ -136,7 +137,7 @@ uvx vidxp init
 Because the paths are stored in per-user configuration, a later permanent
 installation can reuse initialization performed by `uvx`.
 
-### 4. Prepare models
+### 3. Prepare models
 
 ```bash
 vidxp prepare
@@ -168,7 +169,21 @@ vidxp prepare --modalities scene --yes
 Indexing, API jobs, and MCP tools never turn the first request into a hidden
 model download.
 
-### 5. Verify
+#### Upgrading from the previous model stack
+
+This release replaces:
+
+- WhisperX `large-v2` and `all-MiniLM-L6-v2` with faster-whisper
+  `large-v3-turbo` and Qwen3 Embedding 0.6B;
+- OpenAI CLIP `ViT-B/32` with SigLIP2 base patch16-224; and
+- `face_recognition`/dlib with OpenCV Zoo YuNet and SFace.
+
+The resulting embeddings, actor thresholds, and provider manifests are not
+compatible with indexes built by the earlier stack. Prepare the new models,
+then re-index the registered videos you want in the active snapshot. Keep the
+old repository until the replacement index has been validated.
+
+### 4. Verify
 
 ```bash
 vidxp doctor
@@ -185,14 +200,12 @@ vidxp doctor --modalities scene
 vidxp doctor --modalities dialogue,actor
 ```
 
-### 6. Start the selected surface
+### 5. Start the selected surface
 
-| Surface | Command |
-|---|---|
-| CLI | `vidxp --help` |
-| Browser UI | `vidxp ui` |
-| Local HTTP API + remote MCP | `vidxp-api` |
-| Local stdio MCP | `vidxp-mcp` |
+- CLI: `vidxp --help`
+- Browser UI: `vidxp ui`
+- Local HTTP API and remote MCP: `vidxp-api`
+- Local stdio MCP: `vidxp-mcp`
 
 ## First CLI index
 
@@ -401,9 +414,8 @@ single-location overrides. Docker uses its declared volumes instead.
 
 ### `vidxp` is not found
 
-- Activate the virtual environment created above.
-- For a uv tool installation, run `uv tool update-shell`, restart the shell,
-  and try again.
+- Run `uv tool update-shell`, restart the shell, and try again.
+- Confirm the installation with `uv tool list`.
 
 ### FFmpeg or a codec is missing
 
@@ -416,10 +428,11 @@ Review the displayed package-manager command before approving it. Rerun
 
 ### Linux or Windows starts resolving NVIDIA packages
 
-Recreate the environment and retain the explicit CPU option:
+Reinstall the managed tool with the explicit CPU option:
 
 ```bash
-uv pip install --torch-backend cpu "vidxp[local-worker,frontend]"
+uv tool install --force --python 3.14 --torch-backend cpu \
+  "vidxp[local-worker,frontend]"
 ```
 
 Do not use plain `pip install "vidxp[local-worker]"` on Linux unless you have
@@ -432,7 +445,8 @@ hardlink to each other. Installation falls back to copying and remains valid.
 Suppress the warning when that layout is intentional:
 
 ```bash
-uv sync --link-mode copy
+uv tool install --link-mode copy --python 3.14 --torch-backend cpu \
+  "vidxp[local-worker,frontend]"
 ```
 
 or set `UV_LINK_MODE=copy`.
