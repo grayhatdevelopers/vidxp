@@ -1,0 +1,1 @@
+Add a production-oriented single-node Compose/Coolify topology with separate control and CPU-worker images, PostgreSQL, Chroma, resumable tus uploads, persistent volumes, health gates, and optional explicitly prepared grounded-query models.

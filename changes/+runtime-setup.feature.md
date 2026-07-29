@@ -1,0 +1,1 @@
+Add explicit FFmpeg and model preparation with disclosed download sizes, confirmation, live progress, per-user application-data defaults, actionable readiness checks, and no hidden first-request downloads.

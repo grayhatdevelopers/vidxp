@@ -1,0 +1,1 @@
+Protect public HTTP and MCP transports with static bearer or OIDC authentication, scoped authorization, trusted Host and Origin policies, bounded request bodies, safe error envelopes, and confined media/artifact delivery.

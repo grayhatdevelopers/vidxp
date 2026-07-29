@@ -1,0 +1,1 @@
+Turn VidXP into a persistent multi-video search library with managed media, immutable index snapshots, dialogue/scene/actor retrieval, cross-video ranking, grounded questions, durable jobs, and downloadable overlay or clip artifacts.

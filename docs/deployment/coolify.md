@@ -50,6 +50,43 @@ Video bytes do not travel through MCP. Create and resume the upload through the
 HTTP/tus endpoints, wait for its `media_id`, and then use that ID with
 `start_indexing`.
 
+## Prepare worker models
+
+Start the stack, then explicitly prepare the model set before accepting
+indexing requests. Submit preparation through the authenticated API so the
+durable job executes on the worker and writes to the shared model volume:
+
+| Selected models | Maximum pinned download |
+|---|---:|
+| Dialogue + scene + actor | Approximately 4.11 GiB |
+
+The request below is the operator's explicit authorization for those
+downloads. Ensure the `model-cache` volume has enough additional capacity:
+
+```bash
+curl --fail-with-body \
+  --request POST \
+  "https://${VIDXP_PUBLIC_API_HOST}/api/v1/jobs/model-preparation" \
+  --header "Authorization: Bearer ${VIDXP_HTTP_STATIC_BEARER_TOKEN}" \
+  --header "Idempotency-Key: initial-cpu-models-v1" \
+  --header "Content-Type: application/json" \
+  --data '{"modalities":["dialogue","scene","actor"],"capability_options":{}}'
+```
+
+The `202 Accepted` response contains the durable `job_id` and a `Location`
+header. Poll that location until the job succeeds:
+
+```bash
+curl --fail-with-body \
+  --header "Authorization: Bearer ${VIDXP_HTTP_STATIC_BEARER_TOKEN}" \
+  "https://${VIDXP_PUBLIC_API_HOST}/api/v1/jobs/<job-id>"
+```
+
+The Streamable HTTP MCP `prepare_models` and `get_job` tools expose the same
+operation for an authenticated agent client. Check
+`/api/v1/runtime/readiness` afterward; `/ready` covers control-plane
+availability and does not claim that every optional model is prepared.
+
 ## Optional grounded query model
 
 Grounded retrieval works without a language model and returns timestamped
