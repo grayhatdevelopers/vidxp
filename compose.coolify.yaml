@@ -11,6 +11,7 @@ x-vidxp-environment: &vidxp-environment
   VIDXP_HTTP_AUTH_MODE: static
   VIDXP_HTTP_STATIC_BEARER_TOKEN: ${VIDXP_HTTP_STATIC_BEARER_TOKEN:?Set a bearer token of at least 32 characters}
   VIDXP_HTTP_TRUSTED_HOSTS: '["127.0.0.1","localhost","${VIDXP_PUBLIC_API_HOST:?Set the public API host}"]'
+  VIDXP_MCP_ALLOWED_HOSTS: '["127.0.0.1:*","localhost:*","${VIDXP_PUBLIC_API_HOST:?Set the public API host}"]'
   VIDXP_UPLOAD_PUBLIC_ENDPOINT: ${VIDXP_UPLOAD_PUBLIC_ENDPOINT:?Set the public tusd endpoint ending in /uploads/}
   VIDXP_UPLOAD_INTERNAL_ENDPOINT: http://tusd:8080/uploads/
   VIDXP_UPLOAD_CLEANUP_TOKEN: ${VIDXP_UPLOAD_CLEANUP_TOKEN:?Set a cleanup token of at least 32 characters}

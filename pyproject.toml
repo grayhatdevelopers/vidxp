@@ -52,6 +52,7 @@ vidxp-api = "vidxp.api_cli:main"
 vidxp-worker = "vidxp.workflow_worker:main"
 vidxp-database = "vidxp.database_cli:main"
 vidxp-hooks = "vidxp.hook_cli:main"
+vidxp-mcp = "vidxp.mcp_cli:main"
 
 [project.urls]
 Repository = "https://github.com/grayhatdevelopers/vidxp"
@@ -100,7 +101,11 @@ local-worker = { file = [
   "src/vidxp/capabilities/scene/requirements.txt",
   "src/vidxp/capabilities/actor/requirements.txt",
 ] }
-server = { file = ["src/vidxp/requirements/server.txt"] }
+mcp = { file = ["src/vidxp/requirements/mcp.txt"] }
+server = { file = [
+  "src/vidxp/requirements/server.txt",
+  "src/vidxp/requirements/mcp.txt",
+] }
 server-worker = { file = [
   "src/vidxp/requirements/server.txt",
   "src/vidxp/requirements/server-storage.txt",

@@ -23,7 +23,7 @@
     <li>From the command line</li>
     <li>Through its browser interface</li>
     <li>As an indexing and retrieval layer inside another application</li>
-    <li>Through the HTTP API, with MCP and desktop interfaces on the roadmap</li>
+    <li>Through the HTTP API or MCP, with a desktop interface on the roadmap</li>
   </ul>
 
 <p align="center">
@@ -203,10 +203,8 @@ Its OpenAPI document and interactive reference are available at
 The API process is a model-free control plane. Under `/api/v1`, it exposes
 bounded media import and delivery, capability metadata, index status, durable
 job submission and control, artifact delivery, and authenticated readiness.
-Indexing and other model work execute only through DBOS workers. Synchronous
-search is intentionally not mounted in this phase because it would perform
-model work in the API process; the remote query boundary is added with the
-search/MCP phases.
+Indexing and other model work execute only through DBOS workers. Remote search
+is submitted as a durable job so model work never runs in the API/MCP process.
 
 Large remote media uses an upload intent plus the deployment profile's `tusd`
 service. Create the intent at `/api/v1/media/uploads`, then use the returned
@@ -242,13 +240,45 @@ VIDXP_HTTP_BIND_HOST=0.0.0.0
 VIDXP_HTTP_AUTH_MODE=static
 VIDXP_HTTP_STATIC_BEARER_TOKEN=<random-secret-of-at-least-32-characters>
 VIDXP_HTTP_TRUSTED_HOSTS=["api.example.com"]
+VIDXP_MCP_ALLOWED_HOSTS=["api.example.com"]
 ```
 
 Use `Authorization: Bearer <token>` for every route except `/health` and
 `/ready`. Configure `VIDXP_HTTP_ALLOWED_ORIGINS` only for browser origins that
-must call `/api/*`; that CORS policy does not apply to the reserved MCP
-namespace. Authenticated profiles keep the interactive `/docs` UI disabled, while
-the protected `/openapi.json` contract remains available to authenticated clients.
+must call `/api/*`; MCP has its own Host and Origin policy. Authenticated profiles
+keep the interactive `/docs` UI disabled, while the protected `/openapi.json`
+contract remains available to authenticated clients.
+
+## MCP
+
+The server profile exposes a curated Streamable HTTP endpoint at `/mcp`. Its
+tools list capabilities, inspect index state, submit idempotent indexing and
+search jobs, poll jobs, and explicitly cancel jobs. The MCP adapter calls the
+same application and durable-job services as the CLI and API; it does not mirror
+OpenAPI or call the HTTP API internally.
+
+Remote video bytes still use HTTP/tus. Upload and resume the video, wait for a
+`media_id`, and then pass that ID to `start_indexing`. MCP never carries video
+bytes, base64 video, or server file paths.
+
+Static deployments use the configured bearer token as an MCP request header.
+OIDC deployments must also set the canonical resource URL:
+
+```text
+VIDXP_MCP_PUBLIC_URL=https://api.example.com/mcp
+VIDXP_MCP_ALLOWED_HOSTS=["api.example.com"]
+VIDXP_MCP_ALLOWED_ORIGINS=[]
+```
+
+For adjacent local agents, install the MCP extra and use stdio:
+
+```bash
+pipx install "vidxp[all,mcp]"
+vidxp-mcp --repository default
+```
+
+The stdio process owns its local repository/job lifecycle and exits cleanly when
+the client closes the transport.
 
 ## Container
 

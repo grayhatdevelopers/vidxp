@@ -4,7 +4,6 @@ from typing import Literal
 
 from vidxp.application_models import (
     ApplicationModel,
-    CapabilityInfo,
     ErrorDetail,
     UploadIntent,
 )
@@ -21,10 +20,6 @@ class HealthResponse(ApplicationModel):
 class ReadinessResponse(ApplicationModel):
     ready: bool
     status: Literal["ready", "not_ready"]
-
-
-class CapabilityList(ApplicationModel):
-    items: tuple[CapabilityInfo, ...] = ()
 
 
 class UploadIntentResponse(ApplicationModel):

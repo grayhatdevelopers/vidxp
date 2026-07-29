@@ -188,9 +188,16 @@ def _host_name(header: str) -> str:
 
 
 class BearerAuthenticationMiddleware:
-    def __init__(self, app: ASGIApp, *, authenticator: Authenticator) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        authenticator: Authenticator,
+        delegated_paths: tuple[str, ...] = (),
+    ) -> None:
         self.app = app
         self.authenticator = authenticator
+        self.delegated_paths = frozenset(delegated_paths)
 
     async def __call__(
         self,
@@ -201,6 +208,7 @@ class BearerAuthenticationMiddleware:
         if (
             scope["type"] != "http"
             or str(scope.get("path", "")) in PUBLIC_HTTP_PATHS
+            or str(scope.get("path", "")) in self.delegated_paths
         ):
             await self.app(scope, receive, send)
             return
@@ -230,10 +238,12 @@ class RequestBodyLimitMiddleware:
         *,
         json_limit: int,
         upload_limit: int,
+        delegated_paths: tuple[str, ...] = (),
     ) -> None:
         self.app = app
         self.json_limit = json_limit
         self.upload_limit = upload_limit
+        self.delegated_paths = frozenset(delegated_paths)
 
     async def __call__(
         self,
@@ -242,6 +252,9 @@ class RequestBodyLimitMiddleware:
         send: Send,
     ) -> None:
         if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        if str(scope.get("path", "")) in self.delegated_paths:
             await self.app(scope, receive, send)
             return
         limit = (

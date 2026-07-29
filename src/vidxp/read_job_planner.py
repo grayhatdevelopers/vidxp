@@ -26,7 +26,7 @@ class LocalReadJobPlanner:
         self.index = index or LocalIndexReader(layout)
 
     def _active(self):
-        config, _ = self.index.active_config(
+        config = self.index.active_config(
             self.layout.indexes,
             device="cpu",
         )

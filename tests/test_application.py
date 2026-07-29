@@ -19,6 +19,7 @@ from vidxp.application_models import (
     DependencyUnavailableError,
     IndexResult,
     IndexSnapshotReference,
+    ModelUnavailableError,
     PrepareModelsCommand,
     RemoveIndexCommand,
     SearchCommand,
@@ -26,6 +27,7 @@ from vidxp.application_models import (
 from vidxp.core.media import MediaUnavailableError
 from vidxp.core.contracts import IndexConfig, IndexSchemaError
 from vidxp.infrastructure.local_index import LocalIndexBackend
+from vidxp.model_contracts import ModelArtifactUnavailableError
 from vidxp.capabilities.contracts import (
     CapabilityDefinition,
     CapabilityExecutor,
@@ -125,12 +127,9 @@ class ApplicationTests(unittest.TestCase):
             "unused",
             registry=registry,
         )
-        backend.active_config.return_value = (
-            IndexConfig.local(
-                enabled_modalities=("indexed",),
-                collection_names={"indexed": "indexed"},
-            ),
-            {},
+        backend.active_config.return_value = IndexConfig.local(
+            enabled_modalities=("indexed",),
+            collection_names={"indexed": "indexed"},
         )
         backend.open_store.return_value = manager
         return application
@@ -590,12 +589,9 @@ class ApplicationTests(unittest.TestCase):
 
     def test_open_store_dependency_failure_is_stable(self):
         application, backend = self.application("unused")
-        backend.active_config.return_value = (
-            IndexConfig.local(
-                enabled_modalities=("scene",),
-                collection_names={"scene": "scene"},
-            ),
-            {},
+        backend.active_config.return_value = IndexConfig.local(
+            enabled_modalities=("scene",),
+            collection_names={"scene": "scene"},
         )
         backend.open_store.side_effect = ModuleNotFoundError("chromadb")
 
@@ -653,6 +649,31 @@ class ApplicationTests(unittest.TestCase):
 
         self.assertNotIn(
             "provider.internal",
+            json.dumps(raised.exception.to_dict()),
+        )
+
+    def test_missing_model_is_not_misclassified_as_a_package_dependency(self):
+        application, backend = self.application("unused")
+        application.media.require_record.return_value = Mock(
+            original_filename="video.mp4",
+            sha256="1" * 64,
+        )
+        application.media.content.return_value = Mock(
+            path=Path("video.mp4")
+        )
+        backend.create.side_effect = ModelArtifactUnavailableError("scene")
+
+        with self.assertRaises(ModelUnavailableError) as raised:
+            application.create_index(
+                CreateIndexCommand(
+                    media_id=MEDIA_ID,
+                    modalities=("scene",),
+                )
+            )
+
+        self.assertEqual(raised.exception.code, "model_unavailable")
+        self.assertNotIn(
+            "pip install",
             json.dumps(raised.exception.to_dict()),
         )
 

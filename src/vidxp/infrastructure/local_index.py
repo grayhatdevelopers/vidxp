@@ -30,24 +30,31 @@ from vidxp.repository_layout import RepositoryLayout
 from vidxp.runtime import ModelRuntime
 
 
-LOCAL_INDEX_RUNTIME_CHECKS = (
-    RuntimeCheckBinding(
-        capability="storage",
-        check=module_import_check(
-            "Chroma storage import",
-            "chromadb",
-            "PersistentClient",
+def _index_runtime_checks(
+    chroma_client: str,
+) -> tuple[RuntimeCheckBinding, ...]:
+    return (
+        RuntimeCheckBinding(
+            capability="storage",
+            check=module_import_check(
+                "Chroma storage import",
+                "chromadb",
+                chroma_client,
+            ),
         ),
-    ),
-    RuntimeCheckBinding(
-        capability="storage",
-        check=module_import_check(
-            "Host resource monitor import",
-            "psutil",
-            "virtual_memory",
+        RuntimeCheckBinding(
+            capability="storage",
+            check=module_import_check(
+                "Host resource monitor import",
+                "psutil",
+                "virtual_memory",
+            ),
         ),
-    ),
-)
+    )
+
+
+LOCAL_INDEX_RUNTIME_CHECKS = _index_runtime_checks("PersistentClient")
+SERVER_INDEX_RUNTIME_CHECKS = _index_runtime_checks("HttpClient")
 
 
 class LocalIndexReader:
@@ -77,17 +84,10 @@ class LocalIndexReader:
         index_directory: Path,
         *,
         device: str,
-    ) -> tuple[IndexConfig, dict[str, Any]]:
+    ) -> IndexConfig:
         self._require_index_directory(index_directory)
-        config, snapshot = self.repository.active_config(device=device)
-        return config, {
-            "snapshot_id": snapshot.snapshot_id,
-            "generation_ids": [
-                reference.generation_id
-                for reference in snapshot.generations.values()
-            ],
-            "media_ids": sorted(snapshot.generations),
-        }
+        config, _snapshot = self.repository.active_config(device=device)
+        return config
 
     def config_for_snapshot(
         self,

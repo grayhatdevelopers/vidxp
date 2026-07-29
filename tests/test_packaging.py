@@ -111,8 +111,10 @@ class PackagingTests(unittest.TestCase):
     def test_install_profiles_keep_server_free_of_ml_dependencies(self):
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn("local-worker = { file = [", pyproject)
+        self.assertIn("mcp = { file = [", pyproject)
+        self.assertIn("server = { file = [", pyproject)
         self.assertIn(
-            'server = { file = ["src/vidxp/requirements/server.txt"] }',
+            '"src/vidxp/requirements/mcp.txt"',
             pyproject,
         )
         server = (
@@ -138,6 +140,12 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn("fastapi-mcp", server)
         self.assertNotIn("\nmcp", server)
         self.assertNotIn("httpx2", server)
+        mcp_requirements = (
+            ROOT / "src" / "vidxp" / "requirements" / "mcp.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("mcp>=2.0,<3", mcp_requirements)
+        self.assertNotIn("fastmcp", mcp_requirements)
+        self.assertNotIn("fastapi-mcp", mcp_requirements)
         test_requirements = (
             ROOT / "src" / "vidxp" / "requirements" / "test.txt"
         ).read_text(encoding="utf-8")

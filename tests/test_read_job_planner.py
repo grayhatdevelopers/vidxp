@@ -27,10 +27,7 @@ class LocalReadJobPlannerTests(unittest.TestCase):
             collection_names={"scene": "scene", "actor": "actor"},
         )
         self.index = Mock()
-        self.index.active_config.return_value = (
-            self.config,
-            {"snapshot_id": SNAPSHOT_ID},
-        )
+        self.index.active_config.return_value = self.config
         self.planner = LocalReadJobPlanner(
             layout=self.layout,
             index=self.index,

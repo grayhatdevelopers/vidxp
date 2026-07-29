@@ -25,8 +25,15 @@ from vidxp.capabilities.actor.specs import SFACE_MODEL, YUNET_MODEL
 from vidxp.capabilities.registry import create_capability_registry
 from vidxp.application_models import DependencyKind
 from vidxp.core.contracts import IndexConfig, VideoSource
-from vidxp.dependencies import inspect_requirement
-from vidxp.infrastructure.local_index import LOCAL_INDEX_RUNTIME_CHECKS
+from vidxp.dependencies import (
+    active_requirements,
+    inspect_requirement,
+    packaged_requirements,
+)
+from vidxp.infrastructure.local_index import (
+    LOCAL_INDEX_RUNTIME_CHECKS,
+    SERVER_INDEX_RUNTIME_CHECKS,
+)
 from vidxp.model_contracts import ModelArtifactUnavailableError, ModelKey
 from vidxp.ports import ResourceLimitError
 from vidxp.runtime import ModelRuntime, resolve_backends
@@ -334,6 +341,25 @@ class ModelTests(unittest.TestCase):
                 "Host resource monitor import",
             ],
         )
+
+    def test_server_storage_checks_match_the_remote_chroma_client(self):
+        registry = create_capability_registry(
+            platform_runtime_checks=SERVER_INDEX_RUNTIME_CHECKS,
+            storage_requirements=active_requirements(
+                packaged_requirements(
+                    "vidxp",
+                    "requirements/server-storage.txt",
+                )
+            ),
+        )
+
+        requirements = {
+            requirement.name
+            for requirement in registry.requirements_for(("scene",))
+        }
+
+        self.assertIn("chromadb-client", requirements)
+        self.assertNotIn("chromadb", requirements)
 
     def test_transcript_only_excludes_transcription_provider(self):
         registry = create_capability_registry()

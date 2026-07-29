@@ -17,8 +17,10 @@ from vidxp.capabilities.registry import (
     create_capability_registry,
 )
 from vidxp.control_plane import ControlPlaneApplication
+from vidxp.dependencies import active_requirements, packaged_requirements
 from vidxp.infrastructure.local_index import (
     LOCAL_INDEX_RUNTIME_CHECKS,
+    SERVER_INDEX_RUNTIME_CHECKS,
     LocalIndexBackend,
     LocalIndexReader,
 )
@@ -99,12 +101,10 @@ class LocalApplicationContext:
             jobs.close()
 
 
-@dataclass(frozen=True)
-class HttpApplicationContext:
+@dataclass(frozen=True, kw_only=True)
+class ControlPlaneContext:
     application: ControlPlaneApplication
     jobs: JobService
-    readiness: ReadinessService
-    authenticator: Authenticator
     authorization: AuthorizationPolicy
     settings: VidXPSettings
     catalog: SQLCatalog | None = None
@@ -114,6 +114,12 @@ class HttpApplicationContext:
         self.jobs.close()
         if self.catalog is not None:
             self.catalog.close()
+
+
+@dataclass(frozen=True, kw_only=True)
+class HttpApplicationContext(ControlPlaneContext):
+    readiness: ReadinessService
+    authenticator: Authenticator
 
 
 @dataclass(frozen=True)
@@ -149,10 +155,25 @@ def _create_control_plane_components(
     ):
         raise ValueError("Server applications require a remote Chroma URL.")
     settings.layout.ensure_local_directories()
+    server_mode = settings.mode == ApplicationMode.server
     registry = create_capability_registry(
         external=settings.external_capabilities,
         allowlist=settings.capability_allowlist,
-        platform_runtime_checks=LOCAL_INDEX_RUNTIME_CHECKS,
+        platform_runtime_checks=(
+            SERVER_INDEX_RUNTIME_CHECKS
+            if server_mode
+            else LOCAL_INDEX_RUNTIME_CHECKS
+        ),
+        storage_requirements=(
+            active_requirements(
+                packaged_requirements(
+                    "vidxp",
+                    "requirements/server-storage.txt",
+                )
+            )
+            if server_mode
+            else None
+        ),
     )
     catalog = (
         SQLCatalog(
@@ -314,11 +335,10 @@ def create_job_service(
     )
 
 
-def create_http_application(
+def create_control_plane_application(
     settings: VidXPSettings | None = None,
-) -> HttpApplicationContext:
+) -> ControlPlaneContext:
     active_settings = settings or VidXPSettings()
-    active_settings.validate_http_server()
     components = _create_control_plane_components(active_settings)
     application = ControlPlaneApplication(
         layout=active_settings.layout,
@@ -345,20 +365,36 @@ def create_http_application(
         if active_settings.mode == ApplicationMode.server
         else None
     )
-    authenticator = create_authenticator(active_settings)
-    return HttpApplicationContext(
+    return ControlPlaneContext(
         application=application,
         jobs=jobs,
-        readiness=ReadinessService(
-            application=application,
-            jobs=jobs,
-            authenticator=authenticator,
-        ),
-        authenticator=authenticator,
         authorization=AuthorizationPolicy(),
         settings=active_settings,
         catalog=components.catalog,
         uploads=uploads,
+    )
+
+
+def create_http_application(
+    settings: VidXPSettings | None = None,
+) -> HttpApplicationContext:
+    active_settings = settings or VidXPSettings()
+    active_settings.validate_http_server()
+    control = create_control_plane_application(active_settings)
+    authenticator = create_authenticator(active_settings)
+    return HttpApplicationContext(
+        application=control.application,
+        jobs=control.jobs,
+        authorization=control.authorization,
+        settings=control.settings,
+        catalog=control.catalog,
+        uploads=control.uploads,
+        readiness=ReadinessService(
+            application=control.application,
+            jobs=control.jobs,
+            authenticator=authenticator,
+        ),
+        authenticator=authenticator,
     )
 
 

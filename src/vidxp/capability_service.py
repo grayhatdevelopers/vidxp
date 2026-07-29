@@ -3,6 +3,7 @@ from __future__ import annotations
 from vidxp.application_models import (
     CapabilityInfo,
     CapabilityOperationInfo,
+    CapabilitySummary,
 )
 from vidxp.capabilities.registry import CapabilityRegistry
 
@@ -13,20 +14,27 @@ class CapabilityService:
     def __init__(self, registry: CapabilityRegistry) -> None:
         self.registry = registry
 
-    def list(self) -> tuple[CapabilityInfo, ...]:
-        return tuple(self._info(name) for name in self.registry.names())
+    def list(self) -> tuple[CapabilitySummary, ...]:
+        return tuple(self._summary(name) for name in self.registry.names())
 
     def get(self, name: str) -> CapabilityInfo:
         return self._info(name)
 
-    def _info(self, name: str) -> CapabilityInfo:
+    def _summary(self, name: str) -> CapabilitySummary:
         definition = self.registry.get(name)
-        return CapabilityInfo(
+        return CapabilitySummary(
             name=definition.name,
             description=definition.description,
             install_extra=definition.extra,
             supports_indexing=definition.collection_name is not None,
             prepares_models=definition.prepares_models,
+            provenance=self.registry.provenance(name),
+        )
+
+    def _info(self, name: str) -> CapabilityInfo:
+        definition = self.registry.get(name)
+        return CapabilityInfo(
+            **self._summary(name).model_dump(),
             operations=tuple(
                 CapabilityOperationInfo(
                     name=operation_name,
@@ -37,5 +45,4 @@ class CapabilityService:
                 for operation_name, operation in definition.operations.items()
                 if operation.public
             ),
-            provenance=self.registry.provenance(name),
         )

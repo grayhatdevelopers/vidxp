@@ -7,6 +7,7 @@ from vidxp.application_boundary import application_boundary
 from vidxp.application_models import (
     Artifact,
     CapabilityInfo,
+    CapabilitySummary,
     ComponentReadiness,
     IndexStatus,
     InvalidRequestError,
@@ -64,7 +65,7 @@ class ControlPlaneApplication:
         )
 
     @application_boundary
-    def list_capabilities(self) -> tuple[CapabilityInfo, ...]:
+    def list_capabilities(self) -> tuple[CapabilitySummary, ...]:
         return self.capabilities.list()
 
     @application_boundary

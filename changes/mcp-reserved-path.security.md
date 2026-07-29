@@ -1,2 +1,2 @@
-Keep reserved MCP paths behind the active HTTP authentication and request-size
-policies until the sibling MCP application installs its own validated boundary.
+Protect MCP paths with static bearer or SDK-native OIDC resource-server
+authentication plus independent request-size, Host, and Origin policies.

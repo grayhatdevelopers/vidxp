@@ -22,7 +22,11 @@ from vidxp.core.snapshots import (
     GenerationReference,
     IndexSnapshot,
 )
-from vidxp.index_state import IndexNotReadyError, IndexingInProgressError
+from vidxp.index_state import (
+    IndexNotReadyError,
+    IndexingInProgressError,
+    bounded_media_ids,
+)
 from vidxp.repository_layout import RepositoryLayout
 
 
@@ -493,7 +497,7 @@ class LocalSnapshotRepository:
                 "index_schema_version": INDEX_SCHEMA_VERSION,
                 "snapshot_id": snapshot.snapshot_id,
                 "media_count": len(media_ids),
-                "media_ids": media_ids,
+                **bounded_media_ids(media_ids),
                 "modalities": tuple(
                     snapshot.configuration.get("enabled_modalities", ())
                 ),

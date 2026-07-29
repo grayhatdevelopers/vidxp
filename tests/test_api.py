@@ -10,6 +10,8 @@ from unittest.mock import Mock
 from unittest.mock import patch
 
 import httpx
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from vidxp.api import create_app
@@ -90,6 +92,7 @@ class ApiTests(unittest.TestCase):
         auth: HttpAuthMode = HttpAuthMode.none,
         upload_limit: int = 256 * 1024 * 1024,
         json_limit: int = 4 * 1024 * 1024,
+        mcp_limit: int = 4 * 1024 * 1024,
         allowed_origins: tuple[str, ...] = (),
         remote_uploads: bool = False,
     ) -> HttpApplicationContext:
@@ -99,8 +102,34 @@ class ApiTests(unittest.TestCase):
             minimum_available_memory_mb=0,
             http_auth_mode=auth,
             http_static_bearer_token=TOKEN if auth == HttpAuthMode.static else None,
+            http_oidc_issuer=(
+                "https://issuer.example"
+                if auth == HttpAuthMode.oidc
+                else None
+            ),
+            http_oidc_audience=(
+                "https://api.example"
+                if auth == HttpAuthMode.oidc
+                else None
+            ),
+            http_oidc_jwks_url=(
+                "https://issuer.example/jwks"
+                if auth == HttpAuthMode.oidc
+                else None
+            ),
+            http_required_scopes=(
+                ("vidxp.read",)
+                if auth == HttpAuthMode.oidc
+                else ()
+            ),
+            mcp_public_url=(
+                "https://api.example/mcp"
+                if auth == HttpAuthMode.oidc
+                else None
+            ),
             http_max_small_upload_bytes=upload_limit,
             http_max_json_body_bytes=json_limit,
+            mcp_max_request_body_bytes=mcp_limit,
             http_allowed_origins=allowed_origins,
             upload_public_endpoint=(
                 "http://localhost:8080/uploads/"
@@ -799,18 +828,25 @@ class ApiTests(unittest.TestCase):
             finally:
                 context.close()
 
-    def test_reserved_mcp_namespace_uses_api_auth_and_body_policy(self):
+    def test_mcp_namespace_uses_static_auth_and_sdk_body_policy(self):
         with TemporaryDirectory() as directory:
             context = self.context(
                 Path(directory),
                 auth=HttpAuthMode.static,
-                json_limit=32,
+                mcp_limit=32,
             )
             with TestClient(create_app(context=context)) as client:
-                unauthorized = client.post("/mcp", content=b"x" * 64)
+                unauthorized = client.post(
+                    "/mcp",
+                    headers={"Content-Type": "application/json"},
+                    content=b"{}",
+                )
                 oversized = client.post(
                     "/mcp",
-                    headers=self.auth(),
+                    headers={
+                        **self.auth(),
+                        "Content-Type": "application/json",
+                    },
                     content=b"x" * 64,
                 )
                 metadata = client.get(
@@ -823,15 +859,121 @@ class ApiTests(unittest.TestCase):
             "authentication_required",
         )
         self.assertEqual(oversized.status_code, 413)
-        self.assertEqual(
-            oversized.json()["error"]["code"],
-            "request_body_too_large",
-        )
         self.assertEqual(metadata.status_code, 401)
         self.assertEqual(
             metadata.json()["error"]["code"],
             "authentication_required",
         )
+
+    def test_oidc_mcp_metadata_is_public_and_sdk_auth_challenges(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(
+                Path(directory),
+                auth=HttpAuthMode.oidc,
+            )
+            with TestClient(create_app(context=context)) as client:
+                metadata = client.get(
+                    "/.well-known/oauth-protected-resource/mcp"
+                )
+                challenged = client.post(
+                    "/mcp",
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json, text/event-stream",
+                    },
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2026-07-28",
+                            "capabilities": {},
+                            "clientInfo": {
+                                "name": "test",
+                                "version": "1",
+                            },
+                        },
+                    },
+                )
+
+        self.assertEqual(metadata.status_code, 200)
+        self.assertEqual(
+            metadata.json()["resource"],
+            "https://api.example/mcp",
+        )
+        self.assertEqual(
+            metadata.json()["authorization_servers"],
+            ["https://issuer.example"],
+        )
+        self.assertEqual(challenged.status_code, 401)
+        self.assertIn(
+            "/.well-known/oauth-protected-resource/mcp",
+            challenged.headers["www-authenticate"],
+        )
+
+    def test_oidc_mcp_valid_token_with_missing_scope_returns_403(self):
+        private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048,
+        )
+        public_jwk = jwt.PyJWK.from_dict(
+            {
+                **jwt.algorithms.RSAAlgorithm.to_jwk(
+                    private_key.public_key(),
+                    as_dict=True,
+                ),
+                "kid": "mcp-key",
+                "alg": "RS256",
+                "use": "sig",
+            }
+        )
+        now = datetime.now(timezone.utc)
+        token = jwt.encode(
+            {
+                "sub": "user-1",
+                "iss": "https://issuer.example",
+                "aud": "https://api.example/mcp",
+                "scope": "other",
+                "iat": now,
+                "exp": now.replace(year=now.year + 1),
+            },
+            private_key,
+            algorithm="RS256",
+            headers={"kid": "mcp-key"},
+        )
+        with TemporaryDirectory() as directory:
+            context = self.context(
+                Path(directory),
+                auth=HttpAuthMode.oidc,
+            )
+            context.authenticator._jwks = Mock()
+            context.authenticator._jwks.get_signing_key_from_jwt.return_value = (
+                public_jwk
+            )
+            with TestClient(create_app(context=context)) as client:
+                response = client.post(
+                    "/mcp",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                        "Accept": "application/json, text/event-stream",
+                    },
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2026-07-28",
+                            "capabilities": {},
+                            "clientInfo": {
+                                "name": "test",
+                                "version": "1",
+                            },
+                        },
+                    },
+                )
+
+        self.assertEqual(response.status_code, 403)
 
     def test_typed_application_error_status_mapping(self):
         with TemporaryDirectory() as directory:

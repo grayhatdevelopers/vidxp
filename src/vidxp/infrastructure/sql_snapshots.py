@@ -17,7 +17,11 @@ from vidxp.core.contracts import INDEX_SCHEMA_VERSION, IndexConfig, IndexSchemaE
 from vidxp.core.generations import CompletedGenerationManifest
 from vidxp.core.manifest import MANIFEST_FILE, sha256_file
 from vidxp.core.snapshots import GenerationReference, IndexSnapshot
-from vidxp.index_state import IndexNotReadyError, IndexingInProgressError
+from vidxp.index_state import (
+    IndexNotReadyError,
+    IndexingInProgressError,
+    bounded_media_ids,
+)
 from vidxp.infrastructure.local_snapshots import LocalSnapshotRepository
 from vidxp.infrastructure.sql_tables import (
     index_generations,
@@ -426,7 +430,7 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
                 "index_schema_version": INDEX_SCHEMA_VERSION,
                 "snapshot_id": snapshot.snapshot_id,
                 "media_count": len(media_ids),
-                "media_ids": media_ids,
+                **bounded_media_ids(media_ids),
                 "modalities": tuple(
                     snapshot.configuration.get("enabled_modalities", ())
                 ),

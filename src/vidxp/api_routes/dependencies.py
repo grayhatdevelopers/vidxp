@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import os
 import tempfile
-from hashlib import sha256
 from pathlib import Path
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import Header, Request, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -19,16 +17,18 @@ from vidxp.application_models import (
 from vidxp.composition import HttpApplicationContext
 from vidxp.authorization import AuthorizationPolicy, RepositoryPermission
 from vidxp.core.media import safe_media_suffix
+from vidxp.idempotency import (
+    IdempotencyKey,
+    scoped_job_id as derive_scoped_job_id,
+    scoped_request_key as derive_scoped_request_key,
+)
 from vidxp.ports import LocalFileResource
 
 
 HttpIdempotencyKey = Annotated[
-    str,
+    IdempotencyKey,
     Header(
         alias="Idempotency-Key",
-        min_length=8,
-        max_length=200,
-        pattern=r"^[\x21-\x7e]+$",
     ),
 ]
 
@@ -86,16 +86,13 @@ def scoped_job_id(
 ) -> str:
     """Derive a non-reversible DBOS workflow ID from an HTTP request key."""
 
-    digest = scoped_request_key(
-        service,
-        actor,
+    return derive_scoped_job_id(
+        repository_id=service.settings.repository_id,
+        principal=actor,
+        transport="http",
         operation=operation,
         idempotency_key=idempotency_key,
     )
-    value = bytearray(bytes.fromhex(digest)[:16])
-    value[6] = (value[6] & 0x0F) | 0x40
-    value[8] = (value[8] & 0x3F) | 0x80
-    return UUID(bytes=bytes(value)).hex
 
 
 def scoped_request_key(
@@ -105,16 +102,13 @@ def scoped_request_key(
     operation: str,
     idempotency_key: str,
 ) -> str:
-    material = "\0".join(
-        (
-            "vidxp-http-request-v1",
-            service.settings.repository_id,
-            actor.subject,
-            operation,
-            idempotency_key,
-        )
-    ).encode()
-    return sha256(material).hexdigest()
+    return derive_scoped_request_key(
+        repository_id=service.settings.repository_id,
+        principal=actor,
+        transport="http",
+        operation=operation,
+        idempotency_key=idempotency_key,
+    )
 
 
 def _etag_matches(request: Request, etag: str) -> bool:

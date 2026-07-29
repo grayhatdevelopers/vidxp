@@ -79,6 +79,21 @@ class CapabilityTests(unittest.TestCase):
         self.assertIn("clusters", operations)
         self.assertIn("detections", operations)
 
+    def test_capability_list_is_summary_only(self):
+        service = CapabilityService(self.registry)
+
+        summaries = service.list()
+        detail = service.get("scene")
+
+        self.assertEqual(
+            tuple(summary.name for summary in summaries),
+            self.registry.names(),
+        )
+        self.assertTrue(detail.operations)
+        self.assertTrue(
+            all(not hasattr(summary, "operations") for summary in summaries)
+        )
+
     def test_executor_handlers_match_declared_operations(self):
         for name, definition in self.registry.definitions.items():
             self.assertEqual(

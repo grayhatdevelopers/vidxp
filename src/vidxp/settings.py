@@ -116,6 +116,23 @@ class VidXPSettings(BaseSettings):
         gt=0,
         le=256 * 1024 * 1024,
     )
+    mcp_public_url: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2048,
+    )
+    mcp_max_request_body_bytes: int = Field(
+        default=4 * 1024 * 1024,
+        gt=0,
+        le=16 * 1024 * 1024,
+    )
+    mcp_allowed_hosts: tuple[str, ...] = (
+        "127.0.0.1:*",
+        "[::1]:*",
+        "localhost:*",
+        "testserver",
+    )
+    mcp_allowed_origins: tuple[str, ...] = ()
     upload_public_endpoint: str | None = Field(
         default=None,
         min_length=1,
@@ -191,6 +208,8 @@ class VidXPSettings(BaseSettings):
         "http_required_scopes",
         "http_trusted_hosts",
         "http_allowed_origins",
+        "mcp_allowed_hosts",
+        "mcp_allowed_origins",
     )
     @classmethod
     def _clean_http_lists(cls, values: tuple[str, ...]) -> tuple[str, ...]:
@@ -218,6 +237,58 @@ class VidXPSettings(BaseSettings):
                     "Trusted-host wildcards must use *.example.com."
                 )
         return normalized
+
+    @field_validator("mcp_allowed_hosts")
+    @classmethod
+    def _validate_mcp_hosts(
+        cls,
+        values: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        normalized = tuple(value.lower() for value in values)
+        for value in normalized:
+            if "*" in value and not value.endswith(":*"):
+                raise ValueError(
+                    "MCP host wildcards are supported only as host:*."
+                )
+            if "/" in value or "://" in value:
+                raise ValueError(
+                    "MCP allowed hosts must be Host header values."
+                )
+        return normalized
+
+    @field_validator("mcp_allowed_origins")
+    @classmethod
+    def _validate_mcp_origins(
+        cls,
+        values: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        for value in values:
+            candidate = value[:-2] if value.endswith(":*") else value
+            parsed = urlsplit(candidate)
+            if (
+                value == "null"
+                or parsed.scheme not in {"http", "https"}
+                or parsed.hostname is None
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError(
+                    "MCP allowed origins must be serialized HTTP origins."
+                )
+            try:
+                parsed.port
+            except ValueError as exc:
+                raise ValueError(
+                    "An MCP allowed origin contains an invalid port."
+                ) from exc
+            if "*" in value and not value.endswith(":*"):
+                raise ValueError(
+                    "MCP origin wildcards are supported only as origin:*."
+                )
+        return values
 
     @field_validator("http_oidc_algorithms")
     @classmethod
@@ -339,6 +410,36 @@ class VidXPSettings(BaseSettings):
             raise ValueError(f"{info.field_name} must end with a slash.")
         return value
 
+    @field_validator("mcp_public_url")
+    @classmethod
+    def _validate_mcp_public_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value != value.strip() or "\\" in value:
+            raise ValueError("mcp_public_url contains unsafe characters.")
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path.rstrip("/") != "/mcp"
+        ):
+            raise ValueError(
+                "mcp_public_url must be a plain HTTP URL ending in /mcp."
+            )
+        if (
+            parsed.scheme != "https"
+            and parsed.hostname.lower()
+            not in {"localhost", "127.0.0.1", "::1"}
+        ):
+            raise ValueError(
+                "mcp_public_url must use HTTPS outside loopback."
+            )
+        return value.rstrip("/")
+
     @field_validator("trusted_local_import_roots")
     @classmethod
     def _clean_import_roots(
@@ -436,6 +537,15 @@ class VidXPSettings(BaseSettings):
             )
         if not self.http_trusted_hosts:
             raise ValueError("At least one trusted HTTP host is required.")
+        if not self.mcp_allowed_hosts:
+            raise ValueError("At least one allowed MCP host is required.")
+        if (
+            self.http_auth_mode == HttpAuthMode.oidc
+            and self.mcp_public_url is None
+        ):
+            raise ValueError(
+                "OIDC MCP authentication requires mcp_public_url."
+            )
 
     @property
     def layout(self) -> RepositoryLayout:

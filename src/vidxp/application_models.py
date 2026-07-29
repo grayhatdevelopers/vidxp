@@ -43,6 +43,7 @@ from vidxp.core.media import (
     validate_display_filename,
 )
 from vidxp.core.uploads import UploadState
+from vidxp.index_state import INDEX_STATUS_MEDIA_ID_LIMIT
 
 T = TypeVar("T")
 SearchQuery: TypeAlias = Annotated[
@@ -180,6 +181,23 @@ class DependencyUnavailableError(ApplicationError):
         )
 
 
+class ModelUnavailableError(ApplicationError):
+    def __init__(self, capability: str) -> None:
+        super().__init__(
+            "model_unavailable",
+            ErrorCategory.unavailable,
+            f"Model artifacts for the {capability} capability are not "
+            "available locally.",
+            details={
+                "capability": capability,
+                "remediation": (
+                    "Prepare the capability models before retrying or "
+                    "enable model downloads."
+                ),
+            },
+        )
+
+
 class InvalidRequestError(ApplicationError):
     def __init__(
         self,
@@ -233,14 +251,21 @@ class CapabilityOperationInfo(ApplicationModel):
     output_schema: dict[str, JsonValue]
 
 
-class CapabilityInfo(ApplicationModel):
+class CapabilitySummary(ApplicationModel):
     name: str = Field(min_length=1)
     description: str = Field(min_length=1)
     install_extra: str = Field(min_length=1)
     supports_indexing: bool
     prepares_models: bool
-    operations: tuple[CapabilityOperationInfo, ...] = ()
     provenance: CapabilityProvenance | None = None
+
+
+class CapabilityInfo(CapabilitySummary):
+    operations: tuple[CapabilityOperationInfo, ...] = ()
+
+
+class CapabilityList(ApplicationModel):
+    items: tuple[CapabilitySummary, ...] = ()
 
 
 class ComponentReadiness(ApplicationModel):
@@ -394,8 +419,24 @@ class IndexStatusSummary(ApplicationModel):
     index_schema_version: int = Field(ge=1)
     snapshot_id: IndexSnapshotId
     media_count: int = Field(ge=0)
-    media_ids: tuple[MediaId, ...] = ()
+    media_ids: tuple[MediaId, ...] = Field(
+        default=(),
+        max_length=INDEX_STATUS_MEDIA_ID_LIMIT,
+    )
+    media_ids_truncated: bool = False
     modalities: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_media_id_window(self) -> "IndexStatusSummary":
+        if self.media_count < len(self.media_ids):
+            raise ValueError("media_count must cover every returned media ID")
+        if self.media_ids_truncated != (
+            self.media_count > len(self.media_ids)
+        ):
+            raise ValueError(
+                "media_ids_truncated must reflect the returned media-ID window"
+            )
+        return self
 
 
 class SearchCommand(ApplicationModel):

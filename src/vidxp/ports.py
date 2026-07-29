@@ -321,7 +321,7 @@ class IndexBackend(Protocol):
         index_directory: Path,
         *,
         device: str,
-    ) -> tuple[IndexConfig, dict[str, Any]]: ...
+    ) -> IndexConfig: ...
 
     def config_for_snapshot(
         self,

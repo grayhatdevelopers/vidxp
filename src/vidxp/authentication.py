@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from hmac import compare_digest
-from typing import Protocol
+from typing import Any, Protocol
 
 from vidxp.application_models import (
     ApplicationError,
@@ -16,6 +17,14 @@ class Authenticator(Protocol):
     def authenticate(self, token: str | None) -> Principal: ...
 
     def readiness(self) -> ComponentReadiness: ...
+
+
+@dataclass(frozen=True)
+class AuthenticatedBearer:
+    principal: Principal
+    expires_at: int | None
+    resource: str | None
+    claims: dict[str, Any]
 
 
 def _ready() -> ComponentReadiness:
@@ -77,6 +86,7 @@ class OIDCBearerAuthenticator:
         jwks_url: str,
         algorithms: tuple[str, ...],
         required_scopes: tuple[str, ...],
+        jwks_client: Any | None = None,
     ) -> None:
         import jwt
 
@@ -85,15 +95,41 @@ class OIDCBearerAuthenticator:
         self._audience = audience
         self._algorithms = algorithms
         self._required_scopes = frozenset(required_scopes)
-        self._jwks = jwt.PyJWKClient(
-            jwks_url,
-            cache_keys=True,
-            cache_jwk_set=True,
-            lifespan=300,
-            timeout=5,
+        self._jwks = (
+            jwks_client
+            if jwks_client is not None
+            else jwt.PyJWKClient(
+                jwks_url,
+                cache_keys=True,
+                cache_jwk_set=True,
+                lifespan=300,
+                timeout=5,
+            )
+        )
+        self._jwks_url = jwks_url
+
+    def for_audience(
+        self,
+        audience: str,
+        *,
+        required_scopes: tuple[str, ...] = (),
+    ) -> "OIDCBearerAuthenticator":
+        return OIDCBearerAuthenticator(
+            issuer=self._issuer,
+            audience=audience,
+            jwks_url=self._jwks_url,
+            algorithms=self._algorithms,
+            required_scopes=required_scopes,
+            jwks_client=self._jwks,
         )
 
     def authenticate(self, token: str | None) -> Principal:
+        return self.authenticate_bearer(token).principal
+
+    def authenticate_bearer(
+        self,
+        token: str | None,
+    ) -> AuthenticatedBearer:
         if token is None:
             raise _authentication_error()
         try:
@@ -122,10 +158,24 @@ class OIDCBearerAuthenticator:
         if not self._required_scopes.issubset(scopes):
             raise _authorization_error()
         client_id = claims.get("client_id")
-        return Principal(
+        principal = Principal(
             subject=subject,
             client_id=client_id if isinstance(client_id, str) else None,
             scopes=scopes,
+        )
+        expires_at = claims.get("exp")
+        resource = claims.get("aud")
+        return AuthenticatedBearer(
+            principal=principal,
+            expires_at=(
+                expires_at if isinstance(expires_at, int) else None
+            ),
+            resource=(
+                resource
+                if isinstance(resource, str)
+                else self._audience
+            ),
+            claims=dict(claims),
         )
 
     def readiness(self) -> ComponentReadiness:
@@ -183,7 +233,12 @@ def _token_scopes(claims: dict) -> frozenset[str]:
     return frozenset(value for value in values if value)
 
 
-def create_authenticator(settings: VidXPSettings) -> Authenticator:
+def create_authenticator(
+    settings: VidXPSettings,
+    *,
+    audience: str | None = None,
+    required_scopes: tuple[str, ...] | None = None,
+) -> Authenticator:
     if settings.http_auth_mode == HttpAuthMode.none:
         return LocalAuthenticator()
     if settings.http_auth_mode == HttpAuthMode.static:
@@ -196,8 +251,12 @@ def create_authenticator(settings: VidXPSettings) -> Authenticator:
     assert settings.http_oidc_jwks_url is not None
     return OIDCBearerAuthenticator(
         issuer=settings.http_oidc_issuer,
-        audience=settings.http_oidc_audience,
+        audience=audience or settings.http_oidc_audience,
         jwks_url=settings.http_oidc_jwks_url,
         algorithms=settings.http_oidc_algorithms,
-        required_scopes=settings.http_required_scopes,
+        required_scopes=(
+            settings.http_required_scopes
+            if required_scopes is None
+            else required_scopes
+        ),
     )

@@ -20,6 +20,7 @@ from vidxp.api_models import HealthResponse, ReadinessResponse
 from vidxp.api_routes import create_api_router
 from vidxp.api_routes.dependencies import context
 from vidxp.composition import HttpApplicationContext, create_http_application
+from vidxp.mcp import MCPTransportSecurityBoundary, create_remote_mcp
 from vidxp.settings import VidXPSettings
 
 
@@ -42,12 +43,29 @@ def create_app(
     active_settings = active_context.settings
     active_settings.validate_http_server()
     owns_context = context is None
+    try:
+        remote_mcp = create_remote_mcp(active_context)
+    except Exception:
+        if owns_context:
+            active_context.close()
+        raise
+    mcp_paths = ("/mcp", "/mcp/")
+    delegated_auth_paths = (
+        (
+            *mcp_paths,
+            "/.well-known/oauth-protected-resource/mcp",
+            "/.well-known/oauth-protected-resource/mcp/",
+        )
+        if remote_mcp.owns_authentication
+        else ()
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         try:
             active_context.jobs.start()
-            yield
+            async with remote_mcp.server.session_manager.run():
+                yield
         finally:
             if owns_context:
                 active_context.close()
@@ -101,6 +119,7 @@ def create_app(
         create_api_router(),
         dependencies=api_dependencies,
     )
+    app.mount("/", remote_mcp.app)
     app.add_exception_handler(
         RequestBodyTooLarge,
         _request_body_too_large_response,
@@ -109,10 +128,12 @@ def create_app(
         RequestBodyLimitMiddleware,
         json_limit=active_settings.http_max_json_body_bytes,
         upload_limit=active_settings.http_max_small_upload_bytes,
+        delegated_paths=mcp_paths,
     )
     app.add_middleware(
         BearerAuthenticationMiddleware,
         authenticator=active_context.authenticator,
+        delegated_paths=delegated_auth_paths,
     )
     if active_settings.http_allowed_origins:
         app.add_middleware(
@@ -126,6 +147,10 @@ def create_app(
     app.add_middleware(
         CorrelationIdMiddleware,
         header_name="X-Request-ID",
+    )
+    app.add_middleware(
+        MCPTransportSecurityBoundary,
+        settings=remote_mcp.transport_security,
     )
     return app
 

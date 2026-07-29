@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
+from pydantic import ValidationError
 
 from vidxp.application_models import ApplicationError
 from vidxp.authentication import (
@@ -233,6 +234,62 @@ class AuthenticationTests(unittest.TestCase):
             settings.http_oidc_issuer,
             "HTTPS://issuer.example",
         )
+
+    def test_oidc_http_server_requires_canonical_mcp_resource(self):
+        settings = VidXPSettings(
+            runtime_backend="cpu",
+            http_auth_mode="oidc",
+            http_oidc_issuer="https://issuer.example",
+            http_oidc_audience="https://api.example",
+            http_oidc_jwks_url="https://issuer.example/jwks",
+            http_required_scopes=("vidxp.read",),
+        )
+
+        with self.assertRaisesRegex(ValueError, "mcp_public_url"):
+            settings.validate_http_server()
+
+    def test_mcp_public_resource_and_host_policy_are_strict(self):
+        with self.assertRaisesRegex(ValidationError, "ending in /mcp"):
+            VidXPSettings(mcp_public_url="https://api.example/not-mcp")
+        with self.assertRaisesRegex(
+            ValidationError,
+            "host wildcards",
+        ):
+            VidXPSettings(mcp_allowed_hosts=("*.example.com",))
+        for origin in (
+            "null",
+            "file://local",
+            "https://user@example.com",
+            "https://client.example/path",
+            "https://client.example?query",
+        ):
+            with self.subTest(origin=origin), self.assertRaisesRegex(
+                ValidationError,
+                "serialized HTTP origins",
+            ):
+                VidXPSettings(mcp_allowed_origins=(origin,))
+
+        settings = VidXPSettings(
+            mcp_public_url="https://api.example/mcp/",
+            mcp_allowed_hosts=("API.EXAMPLE.COM",),
+            mcp_allowed_origins=("http://localhost:*",),
+        )
+        self.assertEqual(
+            settings.mcp_public_url,
+            "https://api.example/mcp",
+        )
+        self.assertEqual(
+            settings.mcp_allowed_hosts,
+            ("api.example.com",),
+        )
+        self.assertEqual(
+            settings.mcp_allowed_origins,
+            ("http://localhost:*",),
+        )
+
+        disabled = VidXPSettings(mcp_allowed_hosts=())
+        with self.assertRaisesRegex(ValueError, "allowed MCP host"):
+            disabled.validate_http_server()
 
     def test_oidc_rejects_empty_query_and_fragment_delimiters(self):
         for field, value in (

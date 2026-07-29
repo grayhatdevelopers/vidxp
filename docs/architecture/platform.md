@@ -219,22 +219,24 @@ Initial categories:
 - internal
 
 FastAPI maps categories to HTTP statuses and a consistent error envelope. MCP maps
-them to controlled protocol errors. CLI maps them to exit codes and terminal
-messages. No adapter infers product meaning from broad built-in exceptions.
+expected application failures to controlled tool-execution errors. CLI maps them
+to exit codes and terminal messages. No adapter infers product meaning from broad
+built-in exceptions.
 
 Every MCP tool is registered through one wrapper that catches expected application
-errors and raises a public SDK `MCPError` with:
+errors and raises the SDK's public `ToolError` with a compact safe JSON payload:
 
 - an assigned safe protocol integer code
 - a safe public message
-- the stable VidXP application code and correlation ID in `data`
+- the stable VidXP application code, retryability, and correlation ID
+- safe validation details or the required repository scope when applicable
 
 The wrapper catches every other exception, logs the cause with correlation data, and
 raises only a generic internal `MCPError`. `MCPServer` re-raises `MCPError` without
 converting the underlying exception to text, so the SDK's default
-`str(exception)` leakage path is not used. Errors remain outside the Pydantic success
-schema; directly returned `CallToolResult(isError=True)` values are not used because
-the high-level SDK validates returned values against that success schema.
+`str(exception)` leakage path is not used. Expected errors become
+`CallToolResult(isError=True)` through the SDK's normal execution-error path and
+remain outside the Pydantic success schema.
 
 ## 8. Repository layout
 
@@ -873,11 +875,15 @@ Initial curated tools:
 - `get_capability`
 - `get_index_status`
 - `start_indexing`
-- `get_index_job`
-- `cancel_index_job`
 - `search_moments`
-- paginated actor-cluster inspection
-- `query_video` when its application service exists
+- `get_job`
+- `cancel_job`
+
+Generic job polling/cancellation covers both indexing and search without
+duplicating tool contracts. Actor inspection is added only after its existing
+index-read logic is extracted behind a model-free application service; MCP must
+not construct `ModelRuntime` merely to inspect clusters. `query_video` is added
+when its Phase 9 application service exists.
 
 Tool results use real output schemas and structured content. Descriptions remain
 short and agent-oriented; full API response schemas are not embedded as prose.
@@ -1351,6 +1357,14 @@ Validated on 2026-07-28:
   mount lifespan, root metadata path, token audience validation, safe errors,
   streaming cancellation, host/origin policy, and the MCP-specific body limit are
   incorporated above.
+- **External FastMCP 3.4.5:** rejected for this phase because its server extra
+  requires MCP SDK `<2`. The similarly named high-level server in official SDK v2
+  is now `MCPServer`; it supplies typed schemas, structured results, Streamable
+  HTTP, stdio, OAuth resource-server behavior, transport security, and request
+  limits without generating tools from HTTP routes.
+- **fastapi-mcp 0.4:** rejected because it generates an OpenAPI mirror and invokes
+  the FastAPI application through an internal ASGI HTTP client. That duplicates
+  transport contracts instead of using VidXP's shared application services.
 - **DBOS 2.28:** accepted as durable queue/workflow state, not as process isolation.
   A Windows/Python 3.13 probe exercised SQLite queue, progress, stable-executor
   crash recovery, and a separate local worker process. Postgres 16 API-client plus

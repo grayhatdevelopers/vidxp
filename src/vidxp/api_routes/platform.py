@@ -2,9 +2,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from vidxp.api_models import CapabilityList
 from vidxp.api_routes.dependencies import context, read_principal
-from vidxp.application_models import CapabilityInfo, RuntimeReadiness
+from vidxp.application_models import (
+    CapabilityInfo,
+    CapabilityList,
+    RuntimeReadiness,
+)
 from vidxp.composition import HttpApplicationContext
 
 

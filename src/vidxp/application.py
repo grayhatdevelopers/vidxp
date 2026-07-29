@@ -22,6 +22,7 @@ from vidxp.application_models import (
     ImportMediaCommand,
     IndexSnapshotReference,
     MediaAsset,
+    ModelUnavailableError,
     PrepareModelsCommand,
     PrepareModelsResult,
     RemoveIndexCommand,
@@ -105,11 +106,9 @@ class VidXPApplication(ControlPlaneApplication):
                 capabilities,
                 self.registry.install_hint(capabilities),
             ) from exc
-        except (
-            ModuleNotFoundError,
-            CapabilityDependencyError,
-            ModelArtifactUnavailableError,
-        ) as exc:
+        except ModelArtifactUnavailableError as exc:
+            raise ModelUnavailableError(exc.capability) from exc
+        except (ModuleNotFoundError, CapabilityDependencyError) as exc:
             raise DependencyUnavailableError(
                 capabilities,
                 self.registry.install_hint(capabilities),
@@ -124,7 +123,7 @@ class VidXPApplication(ControlPlaneApplication):
         return self.runtime.backends.torch_device
 
     @application_boundary
-    def _active_config(self) -> tuple[IndexConfig, dict[str, Any]]:
+    def _active_config(self) -> IndexConfig:
         return self.index_backend.active_config(
             self.index_directory,
             device=self.device,
@@ -306,7 +305,7 @@ class VidXPApplication(ControlPlaneApplication):
         request = contract.input_model.model_validate(payload)
         config = None
         if contract.requires_index:
-            config, _ = self._active_config()
+            config = self._active_config()
             self._require_indexed_capability(capability, config)
 
         with self._capability_dependencies((capability,)):
@@ -497,7 +496,7 @@ class VidXPApplication(ControlPlaneApplication):
         config = (
             self._config_for_snapshot(snapshot)
             if snapshot is not None
-            else self._active_config()[0]
+            else self._active_config()
         )
         self._require_indexed_capability("actor", config)
         detections = []

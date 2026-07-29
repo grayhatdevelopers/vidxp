@@ -53,6 +53,7 @@ class CapabilityRegistry:
         plugins: Iterable[CapabilityPlugin],
         *,
         platform_runtime_checks: Iterable[RuntimeCheckBinding] = (),
+        storage_requirements: Iterable[Requirement] | None = None,
     ) -> None:
         indexed: dict[str, CapabilityPlugin] = {}
         for plugin in plugins:
@@ -74,6 +75,16 @@ class CapabilityRegistry:
             indexed[name] = plugin
         self._plugins = MappingProxyType(indexed)
         self._platform_runtime_checks = tuple(platform_runtime_checks)
+        self._storage_requirements = tuple(
+            storage_requirements
+            if storage_requirements is not None
+            else active_requirements(
+                packaged_requirements(
+                    "vidxp",
+                    "requirements/storage.txt",
+                )
+            )
+        )
         self._executors: dict[str, CapabilityExecutor] = {}
         self._executor_lock = RLock()
 
@@ -225,16 +236,8 @@ class CapabilityRegistry:
         selected = self.validate_names(names)
         bindings = [
             _RequirementBinding("storage", None, requirement)
-            for requirement in (
-                active_requirements(
-                    packaged_requirements(
-                        "vidxp",
-                        "requirements/storage.txt",
-                    )
-                )
-                if any(self.get(name).collection_name for name in selected)
-                else ()
-            )
+            for requirement in self._storage_requirements
+            if any(self.get(name).collection_name for name in selected)
         ]
         for name in selected:
             plugin = self._plugins[name]
@@ -450,6 +453,7 @@ def create_capability_registry(
     external: bool = False,
     allowlist: tuple[str, ...] = (),
     platform_runtime_checks: tuple[RuntimeCheckBinding, ...] = (),
+    storage_requirements: Iterable[Requirement] | None = None,
 ) -> CapabilityRegistry:
     plugins = list(_builtin_plugins())
     if external:
@@ -499,4 +503,5 @@ def create_capability_registry(
     return CapabilityRegistry(
         plugins,
         platform_runtime_checks=platform_runtime_checks,
+        storage_requirements=storage_requirements,
     )
