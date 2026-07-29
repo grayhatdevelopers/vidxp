@@ -168,11 +168,31 @@ class VidXPSettings(BaseSettings):
         min_length=1,
         max_length=2048,
     )
+    slm_base_url: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2048,
+    )
+    slm_model: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+    )
+    slm_timeout_seconds: float = Field(default=60, gt=0, le=600)
+    slm_output_retries: int = Field(default=1, ge=0, le=3)
     trusted_local_import_roots: tuple[Path, ...] = ()
     ffprobe_executable: str = Field(default="ffprobe", min_length=1)
     ffmpeg_executable: str = Field(default="ffmpeg", min_length=1)
     external_capabilities: bool = False
     capability_allowlist: tuple[str, ...] = ()
+
+    @field_validator("slm_base_url", "slm_model", mode="before")
+    @classmethod
+    def _normalize_empty_optional_slm(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        return None if value == "" else value
 
     @field_validator("runtime_backend")
     @classmethod
@@ -362,6 +382,7 @@ class VidXPSettings(BaseSettings):
         "upload_public_endpoint",
         "upload_internal_endpoint",
         "chroma_server_url",
+        "slm_base_url",
     )
     @classmethod
     def _validate_service_url(
@@ -406,7 +427,17 @@ class VidXPSettings(BaseSettings):
             and parsed.path not in {"", "/"}
         ):
             raise ValueError("chroma_server_url must not contain a path.")
-        if info.field_name != "chroma_server_url" and not value.endswith("/"):
+        if info.field_name == "slm_base_url":
+            if parsed.path.rstrip("/") != "/v1":
+                raise ValueError("slm_base_url must end with /v1.")
+            if parsed.hostname.lower() in {"ollama.com", "www.ollama.com"}:
+                raise ValueError(
+                    "slm_base_url must use a self-hosted Ollama service."
+                )
+        if (
+            info.field_name not in {"chroma_server_url", "slm_base_url"}
+            and not value.endswith("/")
+        ):
             raise ValueError(f"{info.field_name} must end with a slash.")
         return value
 
@@ -517,6 +548,12 @@ class VidXPSettings(BaseSettings):
                     "Remote uploads require an internal tusd endpoint and "
                     "a cleanup token of at least 32 characters."
                 )
+        if (self.slm_base_url is None) != (self.slm_model is None):
+            raise ValueError(
+                "slm_base_url and slm_model must be configured together."
+            )
+        if self.slm_model is not None and self.slm_model.endswith("-cloud"):
+            raise ValueError("slm_model must be a self-hosted Ollama model.")
         return self
 
     def validate_http_server(self) -> None:
@@ -582,6 +619,10 @@ class LocalExecutionSettings(BaseModel):
     ffmpeg_executable: str
     external_capabilities: bool
     capability_allowlist: tuple[str, ...]
+    slm_base_url: str | None
+    slm_model: str | None
+    slm_timeout_seconds: float
+    slm_output_retries: int
 
     @classmethod
     def from_settings(

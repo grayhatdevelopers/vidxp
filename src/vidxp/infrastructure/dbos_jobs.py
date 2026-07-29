@@ -28,9 +28,12 @@ from vidxp.application_models import (
     MediaImportJobResult,
     PrepareModelsJobResult,
     PrepareModelsResult,
+    QueryAnswer,
+    QueryJobResult,
     SearchJobResult,
-    SearchResult,
+    FusedSearchResult,
 )
+from vidxp.capabilities.schemas import SearchResult
 from vidxp.core.identifiers import JobId
 from vidxp.core.cursors import (
     MAX_CURSOR_OFFSET,
@@ -43,6 +46,7 @@ from vidxp.ports import (
     InvalidJobBackendRequestError,
     JobIdempotencyConflictError,
 )
+from vidxp.search_fusion import fuse_search_results
 from vidxp.workflow_contracts import (
     ERROR_EVENT,
     PROGRESS_EVENT,
@@ -52,11 +56,11 @@ from vidxp.workflow_contracts import (
     WORKFLOW_INSTANCE_NAME,
     WORKFLOW_KINDS,
     WORKFLOW_NAMES,
+    decode_workflow_request,
 )
 
 
 _JOB_ID_ADAPTER = TypeAdapter(JobId)
-_JOB_REQUEST_ADAPTER = TypeAdapter(JobRequest)
 _LIST_SCOPE = "vidxp:jobs"
 _WINDOW_END_FIELD = "window_end_ms"
 _STATUS_STATES = {
@@ -87,6 +91,19 @@ def _timestamp(value: int | None) -> datetime | None:
 
 def _now_ms() -> int:
     return time_ns() // 1_000_000
+
+
+def _decode_search_result(output: Any) -> FusedSearchResult:
+    try:
+        return FusedSearchResult.model_validate(output)
+    except ValidationError:
+        legacy = SearchResult.model_validate(output)
+        return fuse_search_results(
+            query=legacy.query,
+            requested_modalities=(legacy.modality,),
+            results=(legacy,),
+            top_k=max(1, len(legacy.hits)),
+        )
 
 
 def _window_end_iso(value: int) -> str:
@@ -224,9 +241,7 @@ class DBOSJobBackend:
 
     def _idempotent_job(self, status: Any, request: JobRequest) -> Job:
         try:
-            stored = _JOB_REQUEST_ADAPTER.validate_python(
-                status.input["args"][0]
-            )
+            stored = decode_workflow_request(status.input["args"][0])
         except (KeyError, IndexError, TypeError, ValidationError) as exc:
             raise JobIdempotencyConflictError from exc
         if (
@@ -314,14 +329,12 @@ class DBOSJobBackend:
         current = self.get(job_id)
         if current is None:
             return None
-        if retry_id is not None:
-            status = self._status(current.job_id, load_input=True)
-            if status is None:
-                return None
+        status = self._status(current.job_id, load_input=True)
+        if status is None:
+            return None
+        if retry_id is not None or status.name == "vidxp.search.v1":
             try:
-                request = _JOB_REQUEST_ADAPTER.validate_python(
-                    status.input["args"][0]
-                )
+                request = decode_workflow_request(status.input["args"][0])
             except (KeyError, IndexError, TypeError, ValidationError) as exc:
                 raise InvalidJobBackendRequestError from exc
             return self.submit(
@@ -391,7 +404,11 @@ class DBOSJobBackend:
                 )
             elif kind == JobKind.search:
                 result = SearchJobResult(
-                    result=SearchResult.model_validate(status.output)
+                    result=_decode_search_result(status.output)
+                )
+            elif kind == JobKind.query:
+                result = QueryJobResult(
+                    result=QueryAnswer.model_validate(status.output)
                 )
             elif kind in {JobKind.snippet, JobKind.actor_overlay}:
                 result = ArtifactJobResult(

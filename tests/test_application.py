@@ -17,10 +17,13 @@ from vidxp.application_models import (
     DependencyCheckCommand,
     DependencyCheckResult,
     DependencyUnavailableError,
+    FusedSearchResult,
     IndexResult,
     IndexSnapshotReference,
     ModelUnavailableError,
     PrepareModelsCommand,
+    QueryAnswerMode,
+    QueryVideoCommand,
     RemoveIndexCommand,
     SearchCommand,
 )
@@ -42,6 +45,8 @@ from vidxp.capabilities.schemas import SearchInput, SearchResult
 from vidxp.capabilities.actor.schemas import (
     ActorClusterInput,
     ActorClusterSummary,
+    ActorClustersInput,
+    ActorClustersOutput,
     ActorDetection,
     ActorDetectionsInput,
     ActorDetectionsOutput,
@@ -249,7 +254,7 @@ class ApplicationTests(unittest.TestCase):
         backend.config_for_snapshot.return_value = pinned
 
         result = application.search(
-            SearchCommand(modality="indexed", query="query"),
+            SearchCommand(modalities=("indexed",), query="query"),
             snapshot=IndexSnapshotReference(
                 snapshot_id=SNAPSHOT_ID,
                 snapshot_sha256=SNAPSHOT_SHA256,
@@ -266,6 +271,44 @@ class ApplicationTests(unittest.TestCase):
         )
         backend.open_store.assert_called_once_with(pinned)
         self.assertIs(contexts[0].storage, manager.__enter__.return_value)
+
+    def test_query_reuses_one_pinned_store_and_preserves_media_scope(self):
+        requests = []
+
+        def handler(_context, request):
+            requests.append(request)
+            return SearchResult(
+                query_id="indexed:query",
+                query=request.query,
+                modality="indexed",
+            )
+
+        manager = MagicMock()
+        manager.__enter__.return_value = Mock(spec=IndexStore)
+        application = self.indexed_application(handler, manager)
+        pinned = IndexConfig.local(
+            enabled_modalities=("indexed",),
+            collection_names={"indexed": "indexed"},
+            snapshot_id=SNAPSHOT_ID,
+            snapshot_sha256=SNAPSHOT_SHA256,
+        )
+        application.index_backend.config_for_snapshot.return_value = pinned
+
+        result = application.query_video(
+            QueryVideoCommand(
+                question="What happens?",
+                media_id=MEDIA_ID,
+                modalities=("indexed",),
+            ),
+            snapshot=IndexSnapshotReference(
+                snapshot_id=SNAPSHOT_ID,
+                snapshot_sha256=SNAPSHOT_SHA256,
+            ),
+        )
+
+        self.assertEqual(result.mode, QueryAnswerMode.no_evidence)
+        self.assertEqual(requests[0].media_id, MEDIA_ID)
+        application.index_backend.open_store.assert_called_once_with(pinned)
 
     def test_actor_render_reuses_one_pinned_store_and_context(self):
         contexts = []
@@ -458,29 +501,126 @@ class ApplicationTests(unittest.TestCase):
 
         self.assertEqual(result.query, "bundle")
 
-    def test_search_is_only_a_typed_projection_over_execute(self):
-        application, _ = self.application("unused")
-        expected = SearchResult(
-            query_id="scene:1",
-            query="yellow taxi",
-            modality="scene",
-        )
-        application.execute = Mock(return_value=expected)
+    def test_search_reuses_the_registered_capability_operation(self):
+        calls = []
+
+        def handler(context, request):
+            calls.append((context, request))
+            return SearchResult(
+                query_id="indexed:1",
+                query=request.query,
+                modality="indexed",
+            )
+
+        manager = MagicMock()
+        manager.__enter__.return_value = Mock(spec=IndexStore)
+        application = self.indexed_application(handler, manager)
 
         result = application.search(
             SearchCommand(
-                modality="scene",
+                modalities=("indexed",),
                 query="yellow taxi",
                 top_k=7,
             )
         )
 
-        self.assertIs(result, expected)
-        application.execute.assert_called_once_with(
-            "scene",
-            "search",
-            {"query": "yellow taxi", "top_k": 7},
+        self.assertIsInstance(result, FusedSearchResult)
+        self.assertEqual(result.modalities, ("indexed",))
+        self.assertEqual(calls[0][1].query, "yellow taxi")
+        self.assertEqual(calls[0][1].top_k, 7)
+        self.assertIs(
+            calls[0][0].storage,
+            manager.__enter__.return_value,
         )
+
+    def test_default_search_filters_indexed_non_search_capabilities(self):
+        searched: list[str] = []
+
+        def search_plugin(name: str) -> CapabilityPlugin:
+            definition = CapabilityDefinition(
+                name=name,
+                description=f"{name} search.",
+                extra=name,
+                collection_name=name,
+                index_stage=name,
+                execution_group=name,
+                operations={
+                    "search": OperationDefinition(
+                        input_model=SearchInput,
+                        output_model=SearchResult,
+                    )
+                },
+            )
+
+            def handler(_context, request):
+                searched.append(name)
+                return SearchResult(
+                    query_id=f"{name}:query",
+                    query=request.query,
+                    modality=name,
+                )
+
+            return CapabilityPlugin(
+                definition=definition,
+                executor_factory=lambda: CapabilityExecutor(
+                    indexer=Mock(),
+                    operations={"search": handler},
+                ),
+            )
+
+        actor = CapabilityPlugin(
+            definition=CapabilityDefinition(
+                name="actor",
+                description="Actor clusters.",
+                extra="actor",
+                collection_name="actor",
+                index_stage="actor",
+                execution_group="actor",
+                operations={
+                    "clusters": OperationDefinition(
+                        input_model=ActorClustersInput,
+                        output_model=ActorClustersOutput,
+                    )
+                },
+            ),
+            executor_factory=lambda: CapabilityExecutor(
+                indexer=Mock(),
+                operations={
+                    "clusters": Mock(
+                        side_effect=AssertionError(
+                            "Search must not execute actor clusters."
+                        )
+                    )
+                },
+            ),
+        )
+        registry = CapabilityRegistry(
+            (
+                search_plugin("scene"),
+                search_plugin("dialogue"),
+                actor,
+            )
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = Mock(spec=IndexStore)
+        application, backend = self.application(
+            "repository",
+            registry=registry,
+        )
+        backend.active_config.return_value = IndexConfig.local(
+            enabled_modalities=("scene", "dialogue", "actor"),
+            collection_names={
+                "scene": "scene",
+                "dialogue": "dialogue",
+                "actor": "actor",
+            },
+        )
+        backend.open_store.return_value = manager
+
+        result = application.search(SearchCommand(query="taxi"))
+
+        self.assertEqual(searched, ["scene", "dialogue"])
+        self.assertEqual(result.modalities, ("scene", "dialogue"))
 
     def test_application_boundary_returns_stable_validation_error(self):
         application, _ = self.application("unused")

@@ -18,6 +18,7 @@ from vidxp.application_models import (
     DependencyCheckResult,
     DependencyUnavailableError,
     ErrorCategory,
+    FusedSearchResult,
     IndexResult,
     ImportMediaCommand,
     IndexSnapshotReference,
@@ -28,7 +29,10 @@ from vidxp.application_models import (
     RemoveIndexCommand,
     ResourceNotFoundError,
     RuntimeReadiness,
+    QueryAnswer,
+    QueryVideoCommand,
     SearchCommand,
+    SearchMomentsPlanStep,
 )
 from vidxp.capabilities.actor.schemas import (
     ActorClusterSummary,
@@ -48,7 +52,9 @@ from vidxp.core.contracts import (
     IndexConfig,
 )
 from vidxp.execution import ExecutionContext, execution_context
-from vidxp.ports import IndexBackend, ModelRuntimePort
+from vidxp.ports import IndexBackend, ModelRuntimePort, QueryModelPort
+from vidxp.query_service import GroundedQueryService
+from vidxp.search_fusion import fuse_search_results
 from vidxp.model_contracts import ModelArtifactUnavailableError
 from vidxp.repository_layout import RepositoryLayout
 from vidxp.settings import VidXPSettings
@@ -76,10 +82,12 @@ class VidXPApplication(ControlPlaneApplication):
         artifacts: ArtifactService,
         index_status: Callable[[], dict[str, Any] | None],
         completed_upload_importer: Callable[[str], MediaAsset] | None = None,
+        query_model: QueryModelPort | None = None,
     ) -> None:
         self.registry = registry
         self.runtime = runtime
         self.index_backend = index_backend
+        self.query = GroundedQueryService(query_model)
         self._completed_upload_importer = completed_upload_importer
         super().__init__(
             layout=layout,
@@ -391,37 +399,212 @@ class VidXPApplication(ControlPlaneApplication):
         command: SearchCommand,
         *,
         snapshot: IndexSnapshotReference | None = None,
-    ) -> SearchResult:
-        if snapshot is None:
-            return cast(
-                SearchResult,
-                self.execute(
-                    command.modality,
-                    "search",
-                    {"query": command.query, "top_k": command.top_k},
-                ),
-            )
-        config = self._config_for_snapshot(snapshot)
-        self._require_indexed_capability(command.modality, config)
-        with self._capability_dependencies((command.modality,)):
+    ) -> FusedSearchResult:
+        config = (
+            self._config_for_snapshot(snapshot)
+            if snapshot is not None
+            else self._active_config()
+        )
+        selected, _ = self._resolve_query_capabilities(
+            command.modalities,
+            config,
+            include_actor=False,
+        )
+        with self._capability_dependencies(selected):
             with self.index_backend.open_store(config) as storage:
+                context = CapabilityContext(
+                    config=config,
+                    runtime=self.runtime,
+                    storage=storage,
+                )
                 with self.runtime.scheduler.inference():
-                    return cast(
-                        SearchResult,
-                        self._invoke_operation(
-                            command.modality,
-                            "search",
-                            {
-                                "query": command.query,
-                                "top_k": command.top_k,
-                            },
-                            context=CapabilityContext(
-                                config=config,
-                                runtime=self.runtime,
-                                storage=storage,
-                            ),
-                        ),
+                    results = tuple(
+                        self._search_capability(
+                            modality,
+                            query=command.query,
+                            media_id=command.media_id,
+                            top_k=command.top_k,
+                            context=context,
+                        )
+                        for modality in selected
                     )
+        return fuse_search_results(
+            query=command.query,
+            requested_modalities=selected,
+            results=results,
+            media_id=command.media_id,
+            top_k=command.top_k,
+        )
+
+    def _resolve_query_capabilities(
+        self,
+        requested: tuple[str, ...],
+        config: IndexConfig,
+        *,
+        include_actor: bool,
+    ) -> tuple[tuple[str, ...], bool]:
+        explicit = bool(requested)
+        candidates = (
+            self.registry.validate_names(requested)
+            if explicit
+            else tuple(config.enabled_modalities)
+        )
+        unavailable = tuple(
+            name
+            for name in candidates
+            if name not in config.enabled_modalities
+        )
+        if unavailable:
+            raise CapabilityRequestError(
+                "Query capabilities are not present in the pinned index: "
+                + ", ".join(unavailable)
+                + "."
+            )
+
+        searchable = tuple(
+            name
+            for name in candidates
+            if "search" in self.registry.get(name).operations
+        )
+        actor_overview = (
+            include_actor
+            and "actor" in candidates
+            and "clusters" in self.registry.get("actor").operations
+        )
+        supported = set(searchable)
+        if actor_overview:
+            supported.add("actor")
+        unsupported = tuple(
+            name for name in candidates if name not in supported
+        )
+        if explicit and unsupported:
+            operation = "Query" if include_actor else "Search"
+            raise CapabilityRequestError(
+                f"{operation} does not support these indexed capabilities: "
+                + ", ".join(unsupported)
+                + "."
+            )
+        if not searchable and not actor_overview:
+            raise CapabilityRequestError(
+                "The pinned index has no queryable capabilities."
+            )
+        return searchable, actor_overview
+
+    def _search_capability(
+        self,
+        modality: str,
+        *,
+        query: str,
+        media_id: str | None,
+        top_k: int,
+        context: CapabilityContext,
+    ) -> SearchResult:
+        return cast(
+            SearchResult,
+            self._invoke_operation(
+                modality,
+                "search",
+                {
+                    "query": query,
+                    "media_id": media_id,
+                    "top_k": top_k,
+                },
+                context=context,
+            ),
+        )
+
+    @application_boundary
+    def query_video(
+        self,
+        command: QueryVideoCommand,
+        *,
+        snapshot: IndexSnapshotReference,
+        execution: ExecutionContext | None = None,
+    ) -> QueryAnswer:
+        active_execution = execution_context(execution)
+        config = self._config_for_snapshot(snapshot)
+        search_modalities, actor_overview = (
+            self._resolve_query_capabilities(
+                command.modalities,
+                config,
+                include_actor=True,
+            )
+        )
+        if len(search_modalities) + int(actor_overview) > 8:
+            raise CapabilityRequestError(
+                "Query supports at most eight capability operations."
+            )
+
+        active_execution.checkpoint()
+        plan, planning_fallback = self.query.plan(
+            command,
+            search_modalities=search_modalities,
+            actor_overview=actor_overview,
+        )
+        active_execution.checkpoint()
+        results: list[SearchResult] = []
+        actors: tuple[ActorClusterSummary, ...] = ()
+        dependencies = search_modalities + (
+            ("actor",) if actor_overview else ()
+        )
+        with self._capability_dependencies(dependencies):
+            with self.index_backend.open_store(config) as storage:
+                context = CapabilityContext(
+                    config=config,
+                    runtime=self.runtime,
+                    storage=storage,
+                )
+                with self.runtime.scheduler.inference():
+                    for step in plan.steps:
+                        active_execution.checkpoint()
+                        if isinstance(step, SearchMomentsPlanStep):
+                            results.append(
+                                self._search_capability(
+                                    step.modality,
+                                    query=step.query,
+                                    media_id=command.media_id,
+                                    top_k=command.top_k,
+                                    context=context,
+                                )
+                            )
+                        else:
+                            page = cast(
+                                ActorClustersOutput,
+                                self._invoke_operation(
+                                    "actor",
+                                    "clusters",
+                                    {
+                                        "page_size": min(command.top_k, 100),
+                                        "media_id": command.media_id,
+                                    },
+                                    context=context,
+                                ),
+                            )
+                            actors = page.clusters
+                        active_execution.checkpoint()
+        atomic = tuple(results)
+        fused = fuse_search_results(
+            query=command.question,
+            requested_modalities=search_modalities,
+            results=atomic,
+            media_id=command.media_id,
+            top_k=command.top_k,
+        )
+        evidence = self.query.evidence(
+            snapshot=snapshot,
+            fused=fused,
+            actors=actors,
+        )
+        active_execution.checkpoint()
+        answer = self.query.answer(
+            command,
+            plan=plan,
+            planning_fallback=planning_fallback,
+            evidence=evidence,
+            fused=fused,
+        )
+        active_execution.checkpoint()
+        return answer
 
     @application_boundary
     def actor_clusters(
@@ -429,13 +612,18 @@ class VidXPApplication(ControlPlaneApplication):
         *,
         page_size: int = 50,
         cursor: str | None = None,
+        media_id: str | None = None,
     ) -> ActorClustersOutput:
         return cast(
             ActorClustersOutput,
             self.execute(
                 "actor",
                 "clusters",
-                {"page_size": page_size, "cursor": cursor},
+                {
+                    "page_size": page_size,
+                    "cursor": cursor,
+                    "media_id": media_id,
+                },
             ),
         )
 

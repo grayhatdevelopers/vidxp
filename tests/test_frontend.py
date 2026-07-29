@@ -10,10 +10,12 @@ from vidxp.application_models import (
     DependencyCheckResult,
     CreateActorOverlayCommand,
     ErrorCategory,
+    FusedMoment,
+    FusedSearchResult,
+    FusionProvenance,
     IndexStatus,
     JobState,
     SearchHit,
-    SearchResult,
 )
 from vidxp.capabilities.registry import create_capability_registry
 from vidxp.capability_service import CapabilityService
@@ -216,7 +218,7 @@ class FrontendTests(unittest.TestCase):
 
         self.assertEqual(result["job_id"], "job-1")
         command = jobs.submit_search.call_args.args[0]
-        self.assertEqual(command.modality, "scene")
+        self.assertEqual(command.modalities, ("scene",))
         self.assertEqual(command.query, "taxi")
         service.search.assert_not_called()
 
@@ -434,23 +436,36 @@ class FrontendTests(unittest.TestCase):
         rerun.assert_called_once_with()
 
     def test_search_poll_persists_the_best_typed_hit(self):
-        completed = SearchResult(
-            query_id="scene:taxi",
-            query="taxi",
+        hit = SearchHit(
+            rank=1,
+            media_id=MEDIA_ID,
+            video_id=MEDIA_ID,
+            generation_id=GENERATION_ID,
+            start=12.5,
+            end=13.0,
+            score=-0.1,
+            raw_distance=0.1,
             modality="scene",
-            hits=(
-                SearchHit(
+            source_id="scene:1",
+        )
+        completed = FusedSearchResult(
+            query_id="fused:taxi",
+            query="taxi",
+            modalities=("scene",),
+            moments=(
+                FusedMoment(
                     rank=1,
+                    score=1 / 61,
                     media_id=MEDIA_ID,
-                    video_id=MEDIA_ID,
-                    generation_id=GENERATION_ID,
                     start=12.5,
                     end=13.0,
-                    score=-0.1,
-                    raw_distance=0.1,
-                    modality="scene",
-                    source_id="scene:1",
+                    modalities=("scene",),
+                    hits=(hit,),
                 ),
+            ),
+            fusion=FusionProvenance(
+                requested_modalities=("scene",),
+                searched_modalities=("scene",),
             ),
         )
         job = Mock(state=JobState.succeeded, error=None)
@@ -471,10 +486,14 @@ class FrontendTests(unittest.TestCase):
         rerun.assert_called_once_with()
 
     def test_restored_search_uses_completed_query_when_no_hit_exists(self):
-        completed = SearchResult(
-            query_id="scene:taxi",
+        completed = FusedSearchResult(
+            query_id="fused:taxi",
             query="yellow taxi",
-            modality="scene",
+            modalities=("scene",),
+            fusion=FusionProvenance(
+                requested_modalities=("scene",),
+                searched_modalities=("scene",),
+            ),
         )
         job = Mock(state=JobState.succeeded, error=None)
         job.result.result = completed

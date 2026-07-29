@@ -3,6 +3,7 @@ from unittest.mock import Mock
 
 from vidxp.application_models import (
     CreateActorOverlayCommand,
+    QueryVideoCommand,
     SearchCommand,
 )
 from vidxp.core.contracts import IndexConfig
@@ -35,7 +36,7 @@ class LocalReadJobPlannerTests(unittest.TestCase):
 
     def test_search_job_carries_only_the_logical_snapshot_reference(self):
         request = self.planner.plan_search(
-            SearchCommand(modality="scene", query="a taxi"),
+            SearchCommand(modalities=("scene",), query="a taxi"),
         )
 
         self.assertEqual(request.snapshot.snapshot_id, SNAPSHOT_ID)
@@ -52,6 +53,19 @@ class LocalReadJobPlannerTests(unittest.TestCase):
         )
 
         self.assertEqual(request.snapshot.snapshot_id, SNAPSHOT_ID)
+        self.index.open_store.assert_not_called()
+
+    def test_query_job_carries_the_same_logical_snapshot_reference(self):
+        request = self.planner.plan_query(
+            QueryVideoCommand(
+                question="What happens?",
+                modalities=("scene",),
+            )
+        )
+
+        self.assertEqual(request.command.modalities, ("scene",))
+        self.assertEqual(request.snapshot.snapshot_id, SNAPSHOT_ID)
+        self.assertEqual(request.snapshot.snapshot_sha256, "a" * 64)
         self.index.open_store.assert_not_called()
 
 

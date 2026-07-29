@@ -19,6 +19,7 @@ from vidxp.cli_commands.artifacts import app as artifacts_app
 from vidxp.cli_commands.repositories import app as repositories_app
 from vidxp.cli_commands.runtime import doctor, prepare, ui
 from vidxp.cli_commands.search import search
+from vidxp.cli_commands.query import query
 from vidxp.cli_support import CLIState, OutputFormat
 from vidxp.composition import create_local_application
 
@@ -32,6 +33,7 @@ app.add_typer(jobs_app, name="jobs")
 app.add_typer(media_app, name="media")
 app.add_typer(artifacts_app, name="artifacts")
 app.command("search")(search)
+app.command("query")(query)
 app.add_typer(repositories_app, name="repositories")
 app.add_typer(actor_app, name="actors")
 

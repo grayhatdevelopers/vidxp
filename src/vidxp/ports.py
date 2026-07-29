@@ -12,11 +12,16 @@ from typing import (
 )
 
 from vidxp.application_models import (
+    DraftAnswer,
     Job,
     JobPage,
     JobQueue,
     JobRequest,
     ListJobsCommand,
+    QueryModelIdentity,
+    QueryPlan,
+    QueryPlanningRequest,
+    QuerySynthesisRequest,
     RuntimeProfile,
 )
 from vidxp.core.artifacts import (
@@ -49,6 +54,20 @@ class InvalidJobBackendRequestError(ValueError):
 
 class JobIdempotencyConflictError(RuntimeError):
     """Raised when one workflow ID is reused for a different request."""
+
+
+class QueryProviderError(RuntimeError):
+    """Raised when the optional language-model provider cannot respond."""
+
+
+@runtime_checkable
+class QueryModelPort(Protocol):
+    @property
+    def identity(self) -> QueryModelIdentity: ...
+
+    def plan(self, request: QueryPlanningRequest) -> QueryPlan: ...
+
+    def synthesize(self, request: QuerySynthesisRequest) -> DraftAnswer: ...
 
 
 class LocalFileResource:

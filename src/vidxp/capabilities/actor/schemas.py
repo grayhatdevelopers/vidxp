@@ -14,6 +14,7 @@ from vidxp.core.identifiers import (
 class ActorClustersInput(CapabilityInput):
     page_size: int = Field(default=50, gt=0, le=100)
     cursor: str | None = Field(default=None, min_length=1, max_length=512)
+    media_id: MediaId | None = None
 
 
 class ActorClusterInput(CapabilityInput):

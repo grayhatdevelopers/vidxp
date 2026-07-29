@@ -18,6 +18,7 @@ from vidxp.application_models import (
     ErrorCategory,
     ImportMediaCommand,
     JobState,
+    QueryVideoCommand,
     SearchCommand,
 )
 from vidxp.composition import create_application, create_job_service
@@ -320,7 +321,7 @@ def _run_indexing(uploaded_video, status, modalities):
     st.rerun()
 
 
-def _run_search(search_type, query):
+def _run_search(search_type, query, media_id=None):
     service = _configured_service()
     try:
         status = service.index_status().model_dump(mode="json")
@@ -341,13 +342,23 @@ def _run_search(search_type, query):
                 "job_id": job.job_id,
             }
 
-        job = _configured_jobs().submit_search(
-            SearchCommand(
-                modality=search_type,
-                query=query,
-                top_k=1,
+        if search_type == "natural-language":
+            job = _configured_jobs().submit_query(
+                QueryVideoCommand(
+                    question=query,
+                    media_id=media_id,
+                    top_k=10,
+                )
             )
-        )
+        else:
+            job = _configured_jobs().submit_search(
+                SearchCommand(
+                    modalities=(search_type,),
+                    query=query,
+                    media_id=media_id,
+                    top_k=1,
+                )
+            )
         _remember_job(
             job_id=job.job_id,
             query_param=SEARCH_JOB_QUERY_PARAM,
@@ -381,6 +392,8 @@ def _render_search_result(result):
             label = (
                 "actor overlay"
                 if result["type"] == "actor"
+                else "natural-language query"
+                if result["type"] == "natural-language"
                 else f"{result['type']} search"
             )
             try:
@@ -435,26 +448,68 @@ def _render_search_result(result):
                     "query": result["query"],
                     "artifact_id": completed.artifact_id,
                 }
-            elif not completed.hits:
+            elif result["type"] == "natural-language":
+                first_moment = (
+                    completed.moments[0] if completed.moments else None
+                )
+                first_evidence = (
+                    completed.evidence[0] if completed.evidence else None
+                )
+                resolved = {
+                    "type": result["type"],
+                    "query": completed.question,
+                    "answer": completed.model_dump(mode="json"),
+                    "media_id": (
+                        first_moment.media_id
+                        if first_moment is not None
+                        else getattr(first_evidence, "media_id", None)
+                    ),
+                    "timestamp": (
+                        first_moment.start
+                        if first_moment is not None
+                        else getattr(first_evidence, "start", 0)
+                    ),
+                }
+            elif not completed.moments:
                 resolved = {
                     "type": result["type"],
                     "query": completed.query,
                     "error": f"No {result['type']} match was found.",
                 }
             else:
-                hit = completed.hits[0]
+                moment = completed.moments[0]
                 resolved = {
                     "type": result["type"],
                     "query": completed.query,
-                    "timestamp": hit.start,
-                    "hit": hit.to_dict(),
-                    "media_id": hit.media_id,
+                    "timestamp": moment.start,
+                    "moment": moment.model_dump(mode="json"),
+                    "media_id": moment.media_id,
                 }
             st.session_state[SEARCH_RESULT_KEY] = resolved
             st.rerun()
 
         poll_search_job()
         return
+
+    if result["type"] == "natural-language":
+        answer = result["answer"]
+        if answer["claims"]:
+            for claim in answer["claims"]:
+                st.markdown(f"- {claim['text']}")
+                st.caption(
+                    "Evidence: " + ", ".join(claim["evidence_ids"])
+                )
+        elif answer["evidence"]:
+            st.info(
+                "The query returned evidence without generating unsupported "
+                "claims."
+            )
+        else:
+            st.info("No supporting evidence was found.")
+        if answer.get("fallback_reason"):
+            st.caption(f"Fallback: {answer['fallback_reason']}")
+        if result.get("media_id") is None:
+            return
 
     service = _configured_service()
     try:
@@ -541,15 +596,23 @@ def _search_controls(ready, uploaded_video, available_modalities):
     with type_column:
         search_type = st.selectbox(
             "Search type",
-            list(available_modalities),
+            ["natural-language", *available_modalities],
             disabled=not ready,
         )
     with query_column:
         query = st.text_input(
-            "Actor cluster ID" if search_type == "actor" else "Search query",
+            (
+                "Actor cluster ID"
+                if search_type == "actor"
+                else "Question"
+                if search_type == "natural-language"
+                else "Search query"
+            ),
             placeholder=(
                 "For example: 1"
                 if search_type == "actor"
+                else "For example: What happens after the taxi arrives?"
+                if search_type == "natural-language"
                 else "For example: Chef makes pizza and cuts it up."
             ),
             disabled=not ready,
@@ -738,7 +801,11 @@ def run():
             available_modalities,
         )
         if search_clicked:
-            st.session_state[SEARCH_RESULT_KEY] = _run_search(search_type, query)
+            st.session_state[SEARCH_RESULT_KEY] = _run_search(
+                search_type,
+                query,
+                selected_media_id,
+            )
         _render_search_result(st.session_state.get(SEARCH_RESULT_KEY))
 
     if requested:

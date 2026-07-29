@@ -5,7 +5,7 @@ from typing import Annotated
 import typer
 
 from vidxp.application_models import SearchCommand, SearchJobResult
-from vidxp.capabilities.schemas import SearchResult
+from vidxp.application_models import FusedSearchResult
 from vidxp.cli_support import (
     CLIState,
     effective_output_format,
@@ -21,10 +21,10 @@ def run_search(
     *,
     top_k: int,
     json_output: bool,
-) -> SearchResult:
+) -> FusedSearchResult:
     job = state.jobs.submit_search(
         SearchCommand(
-            modality=capability,
+            modalities=(capability,),
             query=query,
             top_k=top_k,
         )

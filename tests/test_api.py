@@ -27,6 +27,7 @@ from vidxp.application_models import (
     MediaAsset,
     Principal,
     SearchCommand,
+    QueryVideoCommand,
     UploadIntent,
 )
 from vidxp.composition import (
@@ -420,7 +421,7 @@ class ApiTests(unittest.TestCase):
                     "/api/v1/jobs/search",
                     headers={"Idempotency-Key": IDEMPOTENCY_KEY},
                     json={
-                        "modality": "scene",
+                        "modalities": ["scene"],
                         "query": "yellow taxi",
                         "top_k": 3,
                     },
@@ -432,9 +433,40 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(
             command,
             SearchCommand(
-                modality="scene",
+                modalities=("scene",),
                 query="yellow taxi",
                 top_k=3,
+            ),
+        )
+
+    def test_grounded_query_submission_uses_the_durable_boundary(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.jobs.submit_query.return_value = queued_job().model_copy(
+                update={"kind": JobKind.query}
+            )
+            with TestClient(create_app(context=context)) as client:
+                response = client.post(
+                    "/api/v1/jobs/query",
+                    headers={"Idempotency-Key": IDEMPOTENCY_KEY},
+                    json={
+                        "question": "What happens after the taxi arrives?",
+                        "media_id": MEDIA_ID,
+                        "modalities": ["scene", "dialogue"],
+                        "top_k": 5,
+                    },
+                )
+
+        self.assertEqual(response.status_code, 202)
+        context.jobs.submit_query.assert_called_once()
+        command = context.jobs.submit_query.call_args.args[0]
+        self.assertEqual(
+            command,
+            QueryVideoCommand(
+                question="What happens after the taxi arrives?",
+                media_id=MEDIA_ID,
+                modalities=("scene", "dialogue"),
+                top_k=5,
             ),
         )
 

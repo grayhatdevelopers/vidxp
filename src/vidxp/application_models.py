@@ -97,6 +97,7 @@ class JobKind(StrEnum):
     media_import = "media_import"
     index = "index"
     search = "search"
+    query = "query"
     snippet = "snippet"
     actor_overlay = "actor_overlay"
     prepare_models = "prepare_models"
@@ -439,10 +440,25 @@ class IndexStatusSummary(ApplicationModel):
         return self
 
 
+class FusionProfile(StrEnum):
+    reciprocal_rank = "rrf_v1"
+
+
 class SearchCommand(ApplicationModel):
-    modality: Identifier
     query: SearchQuery
+    modalities: tuple[Identifier, ...] = ()
+    media_id: MediaId | None = None
     top_k: int = Field(default=10, gt=0, le=100)
+
+    @field_validator("modalities")
+    @classmethod
+    def _unique_modalities(
+        cls,
+        values: tuple[Identifier, ...],
+    ) -> tuple[Identifier, ...]:
+        if len(values) != len(set(values)):
+            raise ValueError("Search modalities must be unique.")
+        return values
 
 
 class SearchHit(ApplicationModel):
@@ -516,6 +532,216 @@ class SearchResult(ApplicationModel):
         }
 
 
+class FusionProvenance(ApplicationModel):
+    profile: Literal[FusionProfile.reciprocal_rank] = (
+        FusionProfile.reciprocal_rank
+    )
+    rank_constant: int = Field(default=60, gt=0)
+    overlap_rule: Literal["connected_intervals"] = "connected_intervals"
+    requested_modalities: tuple[Identifier, ...] = ()
+    searched_modalities: tuple[Identifier, ...] = ()
+
+
+class FusedMoment(ApplicationModel):
+    rank: int = Field(gt=0)
+    score: float = Field(gt=0)
+    media_id: MediaId
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    modalities: tuple[Identifier, ...]
+    hits: tuple[SearchHit, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_fused_moment(self) -> "FusedMoment":
+        if self.end <= self.start:
+            raise ValueError("end must be greater than start")
+        if any(hit.media_id != self.media_id for hit in self.hits):
+            raise ValueError("Fused moment hits must belong to one media item.")
+        if set(self.modalities) != {hit.modality for hit in self.hits}:
+            raise ValueError("Fused moment modalities must match its hits.")
+        return self
+
+
+class FusedSearchResult(ApplicationModel):
+    schema_version: int = INDEX_SCHEMA_VERSION
+    query_id: str = Field(min_length=1)
+    query: SearchQuery
+    modalities: tuple[Identifier, ...]
+    moments: tuple[FusedMoment, ...] = ()
+    fusion: FusionProvenance
+
+
+class QueryVideoCommand(ApplicationModel):
+    question: SearchQuery
+    media_id: MediaId | None = None
+    modalities: tuple[Identifier, ...] = Field(default=(), max_length=8)
+    top_k: int = Field(default=10, gt=0, le=50)
+
+    @field_validator("modalities")
+    @classmethod
+    def _unique_modalities(
+        cls,
+        values: tuple[Identifier, ...],
+    ) -> tuple[Identifier, ...]:
+        if len(values) != len(set(values)):
+            raise ValueError("Query modalities must be unique.")
+        return values
+
+
+class SearchMomentsPlanStep(ApplicationModel):
+    kind: Literal["search_moments"] = "search_moments"
+    modality: Identifier
+    query: SearchQuery
+
+
+class ActorOverviewPlanStep(ApplicationModel):
+    kind: Literal["actor_overview"] = "actor_overview"
+
+
+QueryPlanStep = Annotated[
+    SearchMomentsPlanStep | ActorOverviewPlanStep,
+    Field(discriminator="kind"),
+]
+
+
+class QueryPlan(ApplicationModel):
+    steps: tuple[QueryPlanStep, ...] = Field(min_length=1, max_length=8)
+
+
+class QueryPlanningRequest(ApplicationModel):
+    question: SearchQuery
+    allowed_modalities: tuple[Identifier, ...]
+    actor_overview_allowed: bool = False
+
+
+class QueryModelIdentity(ApplicationModel):
+    provider: Literal["ollama"]
+    model: str = Field(min_length=1, max_length=255)
+
+
+class MomentEvidence(ApplicationModel):
+    kind: Literal["moment"] = "moment"
+    evidence_id: Sha256
+    snapshot_id: IndexSnapshotId
+    media_id: MediaId
+    generation_id: IndexGenerationId
+    modality: Identifier
+    source_id: str = Field(min_length=1, max_length=512)
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    display_text: str | None = Field(default=None, max_length=4096)
+    hit: SearchHit
+
+    @model_validator(mode="after")
+    def _validate_hit_identity(self) -> "MomentEvidence":
+        if (
+            self.media_id != self.hit.media_id
+            or self.generation_id != self.hit.generation_id
+            or self.modality != self.hit.modality
+            or self.source_id != self.hit.source_id
+            or self.start != self.hit.start
+            or self.end != self.hit.end
+        ):
+            raise ValueError("Evidence identity must match its search hit.")
+        return self
+
+
+class ActorEvidence(ApplicationModel):
+    kind: Literal["actor"] = "actor"
+    evidence_id: Sha256
+    snapshot_id: IndexSnapshotId
+    media_id: MediaId
+    generation_id: IndexGenerationId
+    modality: Literal["actor"] = "actor"
+    cluster_id: ActorClusterId
+    start: float = Field(ge=0)
+    end: float = Field(ge=0)
+    detection_count: int = Field(ge=0)
+    display_text: str = Field(min_length=1, max_length=4096)
+
+
+Evidence = Annotated[
+    MomentEvidence | ActorEvidence,
+    Field(discriminator="kind"),
+]
+
+
+class DraftClaim(ApplicationModel):
+    text: str = Field(min_length=1, max_length=4096)
+    evidence_ids: tuple[Sha256, ...] = Field(min_length=1, max_length=10)
+
+    @field_validator("evidence_ids")
+    @classmethod
+    def _unique_evidence_ids(
+        cls,
+        values: tuple[Sha256, ...],
+    ) -> tuple[Sha256, ...]:
+        if len(values) != len(set(values)):
+            raise ValueError("Draft evidence IDs must be unique.")
+        return values
+
+
+class DraftAnswer(ApplicationModel):
+    claims: tuple[DraftClaim, ...] = Field(min_length=1, max_length=20)
+
+
+class QuerySynthesisRequest(ApplicationModel):
+    question: SearchQuery
+    evidence: tuple[Evidence, ...] = Field(min_length=1, max_length=200)
+
+
+class GroundedClaim(ApplicationModel):
+    text: str = Field(min_length=1, max_length=4096)
+    evidence_ids: tuple[Sha256, ...] = Field(min_length=1, max_length=10)
+
+    @field_validator("evidence_ids")
+    @classmethod
+    def _unique_evidence_ids(
+        cls,
+        values: tuple[Sha256, ...],
+    ) -> tuple[Sha256, ...]:
+        if len(values) != len(set(values)):
+            raise ValueError("Claim evidence IDs must be unique.")
+        return values
+
+
+class QueryAnswerMode(StrEnum):
+    generated = "generated"
+    evidence_only = "evidence_only"
+    no_evidence = "no_evidence"
+
+
+class QueryAnswer(ApplicationModel):
+    schema_version: int = INDEX_SCHEMA_VERSION
+    question: SearchQuery
+    mode: QueryAnswerMode
+    plan: QueryPlan
+    model: QueryModelIdentity | None = None
+    claims: tuple[GroundedClaim, ...] = ()
+    evidence: tuple[Evidence, ...] = Field(default=(), max_length=200)
+    moments: tuple[FusedMoment, ...] = ()
+    fusion: FusionProvenance
+    fallback_reason: str | None = Field(default=None, max_length=512)
+
+    @model_validator(mode="after")
+    def _validate_answer_grounding(self) -> "QueryAnswer":
+        evidence_ids = {item.evidence_id for item in self.evidence}
+        cited_ids = {
+            evidence_id
+            for claim in self.claims
+            for evidence_id in claim.evidence_ids
+        }
+        if not cited_ids.issubset(evidence_ids):
+            raise ValueError("Every claim citation must resolve to evidence.")
+        if self.mode == QueryAnswerMode.generated and not self.claims:
+            raise ValueError("Generated answers require grounded claims.")
+        if self.mode != QueryAnswerMode.generated and self.claims:
+            raise ValueError("Fallback answers must not contain generated claims.")
+        if self.mode == QueryAnswerMode.no_evidence and self.evidence:
+            raise ValueError("No-evidence answers cannot contain evidence.")
+        return self
+
+
 class PrepareModelsCommand(ApplicationModel):
     modalities: tuple[str, ...]
     capability_options: Mapping[str, Mapping[str, JsonValue]] = Field(
@@ -540,7 +766,8 @@ class PrepareModelsResult(ApplicationModel):
     runtime: RuntimeProfile
 
 
-JOB_SCHEMA_VERSION = 1
+JOB_SCHEMA_VERSION = 2
+JOB_PROGRESS_SCHEMA_VERSION = 1
 
 
 class IndexSnapshotReference(ApplicationModel):
@@ -564,6 +791,12 @@ class SearchJobRequest(ApplicationModel):
     snapshot: IndexSnapshotReference
 
 
+class QueryJobRequest(ApplicationModel):
+    kind: Literal[JobKind.query] = JobKind.query
+    command: QueryVideoCommand
+    snapshot: IndexSnapshotReference
+
+
 class SnippetJobRequest(ApplicationModel):
     kind: Literal[JobKind.snippet] = JobKind.snippet
     command: CreateSnippetCommand
@@ -584,6 +817,7 @@ JobRequest = Annotated[
     MediaImportJobRequest
     | IndexJobRequest
     | SearchJobRequest
+    | QueryJobRequest
     | SnippetJobRequest
     | ActorOverlayJobRequest
     | PrepareModelsJobRequest,
@@ -603,7 +837,12 @@ class MediaImportJobResult(ApplicationModel):
 
 class SearchJobResult(ApplicationModel):
     kind: Literal[JobKind.search] = JobKind.search
-    result: SearchResult
+    result: FusedSearchResult
+
+
+class QueryJobResult(ApplicationModel):
+    kind: Literal[JobKind.query] = JobKind.query
+    result: QueryAnswer
 
 
 class ArtifactJobResult(ApplicationModel):
@@ -620,6 +859,7 @@ JobResult = Annotated[
     MediaImportJobResult
     | IndexJobResult
     | SearchJobResult
+    | QueryJobResult
     | ArtifactJobResult
     | PrepareModelsJobResult,
     Field(discriminator="kind"),
@@ -627,7 +867,9 @@ JobResult = Annotated[
 
 
 class JobProgress(ApplicationModel):
-    schema_version: Literal[JOB_SCHEMA_VERSION] = JOB_SCHEMA_VERSION
+    schema_version: Literal[JOB_PROGRESS_SCHEMA_VERSION] = (
+        JOB_PROGRESS_SCHEMA_VERSION
+    )
     stage: str = Field(min_length=1, max_length=128)
     message: str = Field(min_length=1, max_length=512)
     current: int | None = Field(default=None, ge=0)

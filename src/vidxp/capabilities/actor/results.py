@@ -145,14 +145,20 @@ def actor_clusters(
     storage: IndexReader,
     page_size: int,
     cursor: str | None,
+    media_id: str | None = None,
 ) -> ActorClustersOutput:
-    scope = f"actor:clusters:{_snapshot_scope(config)}"
+    scope = (
+        f"actor:clusters:{_snapshot_scope(config)}:"
+        f"{media_id or '*'}"
+    )
     offset = _decode_cursor(cursor, scope)
+    media_scope = {"video_id": media_id} if media_id is not None else {}
     records = storage.records(
         "actor",
         filters={"record_kind": "cluster_summary"},
         limit=page_size + 1,
         offset=offset,
+        **media_scope,
     )
     if records:
         has_more = len(records) > page_size
@@ -183,6 +189,7 @@ def actor_clusters(
             "actor",
             limit=1000,
             offset=storage_offset,
+            **media_scope,
         )
         for record in records:
             cluster_id = str(record["cluster_id"])

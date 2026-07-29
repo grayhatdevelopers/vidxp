@@ -146,11 +146,40 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("mcp>=2.0,<3", mcp_requirements)
         self.assertNotIn("fastmcp", mcp_requirements)
         self.assertNotIn("fastapi-mcp", mcp_requirements)
+        slm_requirements = (
+            ROOT / "src" / "vidxp" / "requirements" / "slm.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "pydantic-ai-slim[openai]>=2.13,<3",
+            slm_requirements,
+        )
+        self.assertNotIn("pydantic-ai", server)
         test_requirements = (
             ROOT / "src" / "vidxp" / "requirements" / "test.txt"
         ).read_text(encoding="utf-8")
         self.assertIn("httpx>=0.28.1,<0.29", test_requirements)
         self.assertNotIn("httpx2", test_requirements)
+
+    def test_optional_ollama_profile_never_pulls_a_model_implicitly(self):
+        compose = (ROOT / "compose.coolify.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "ollama/ollama:0.32.5@sha256:"
+            "4dea9fb511947e24a84237bb636b0203abcb2ff0d3fbc7b4ff865deb91362131",
+            compose,
+        )
+        self.assertIn('profiles: ["slm"]', compose)
+        self.assertIn(
+            "VIDXP_SLM_BASE_URL: ${VIDXP_SLM_BASE_URL:-}",
+            compose,
+        )
+        self.assertIn(
+            "VIDXP_SLM_MODEL: ${VIDXP_SLM_MODEL:-}",
+            compose,
+        )
+        self.assertNotIn("ollama pull", compose.lower())
 
 
 if __name__ == "__main__":

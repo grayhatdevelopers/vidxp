@@ -21,6 +21,7 @@ from vidxp.application_models import (
     MediaImportJobRequest,
     SnippetJobRequest,
     PrepareModelsJobRequest,
+    QueryJobRequest,
     SearchJobRequest,
 )
 from vidxp.core.contracts import CancellationToken
@@ -32,6 +33,7 @@ from vidxp.workflow_contracts import (
     WORKFLOW_CLASS_NAME,
     WORKFLOW_INSTANCE_NAME,
     WORKFLOW_NAMES,
+    decode_workflow_request,
 )
 
 
@@ -211,10 +213,11 @@ class VidXPWorkerWorkflows(DBOSConfiguredInstance):
 
         return _step_boundary(execute)
 
-    @DBOS.step(name="vidxp.run_search.v1")
-    def run_search_step(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _run_search(self, payload: dict[str, Any]) -> dict[str, Any]:
         def execute() -> dict[str, Any]:
-            request = SearchJobRequest.model_validate(payload)
+            request = decode_workflow_request(payload)
+            if not isinstance(request, SearchJobRequest):
+                raise ValueError("A search workflow requires a search request.")
             execution = _execution()
             _publish_progress(
                 {
@@ -232,6 +235,47 @@ class VidXPWorkerWorkflows(DBOSConfiguredInstance):
                 {
                     "stage": "complete",
                     "message": "Search results are ready.",
+                    "current": 1,
+                    "total": 1,
+                }
+            )
+            return result.model_dump(mode="json")
+
+        return _step_boundary(execute)
+
+    @DBOS.step(name="vidxp.run_search.v1")
+    def run_legacy_search_step(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._run_search(payload)
+
+    @DBOS.step(name="vidxp.run_search.v2")
+    def run_search_step(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._run_search(payload)
+
+    @DBOS.step(name="vidxp.run_query.v1")
+    def run_query_step(self, payload: dict[str, Any]) -> dict[str, Any]:
+        def execute() -> dict[str, Any]:
+            request = QueryJobRequest.model_validate(payload)
+            execution = _execution()
+            _publish_progress(
+                {
+                    "stage": "querying",
+                    "message": "Querying the committed index.",
+                }
+            )
+            execution.checkpoint()
+            result = self.application.query_video(
+                request.command,
+                snapshot=request.snapshot,
+                execution=execution,
+            )
+            execution.checkpoint()
+            _publish_progress(
+                {
+                    "stage": "complete",
+                    "message": "The grounded query result is ready.",
                     "current": 1,
                     "total": 1,
                 }
@@ -288,6 +332,17 @@ class VidXPWorkerWorkflows(DBOSConfiguredInstance):
     @DBOS.workflow(name=WORKFLOW_NAMES[JobKind.search])
     def search_workflow(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.run_search_step(payload)
+
+    @DBOS.workflow(name="vidxp.search.v1")
+    def legacy_search_workflow(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.run_legacy_search_step(payload)
+
+    @DBOS.workflow(name=WORKFLOW_NAMES[JobKind.query])
+    def query_workflow(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.run_query_step(payload)
 
     @DBOS.workflow(name=WORKFLOW_NAMES[JobKind.actor_overlay])
     def actor_overlay_workflow(

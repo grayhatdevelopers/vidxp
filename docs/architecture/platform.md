@@ -689,17 +689,18 @@ Flow:
 2. Ask an injected local SLM planner for a strictly typed `QueryPlan`.
 3. Validate that the plan uses registered operations and safe parameters only.
 4. Execute retrieval through application search/capability operations.
-5. Normalize, fuse and optionally rerank evidence.
+5. Fuse overlapping intervals with deterministic reciprocal-rank fusion.
 6. Ask the answer synthesizer for a grounded answer.
 7. Return `QueryAnswer` with timestamped citations and supporting hits.
 
 Pydantic AI is the selected typed-call layer. The first local provider is self-hosted
-Ollama >=0.5, pinned to a tested image digest, through pinned
+Ollama 0.32.5, pinned to a tested multi-architecture image digest, through
 `pydantic-ai-slim[openai]` and `OllamaModel`. Ollama Cloud is excluded because it
-does not enforce the local JSON-Schema path required here. `QueryPlan` and
-`QueryAnswer` use `NativeOutput`, strict Pydantic models, a bounded request/output
-retry budget, and explicit time/token limits. The model receives no executable
-tools. Pydantic AI does not replace VidXP's capability registry or search storage.
+does not enforce the local JSON-Schema path required here. `QueryPlan` and the
+model-only `DraftAnswer` use `NativeOutput`, strict Pydantic models, a bounded
+request/output retry budget, and explicit time/token limits. VidXP validates the
+draft and constructs `QueryAnswer`; the model receives no executable tools.
+Pydantic AI does not replace VidXP's capability registry or search storage.
 
 When the SLM is unavailable or produces an invalid plan, a deterministic fallback
 searches applicable modalities and returns evidence. Generated text can never become
@@ -711,10 +712,11 @@ the retrieved hit ID, media ID, generation, and time interval. Missing, invented
 out-of-range citations invalidate the generated answer and trigger the deterministic
 evidence fallback. Typed JSON alone is never treated as proof of grounding.
 
-The result records planner/model version and plan for reproducibility.
+The result records the configured provider/model identity and plan for
+reproducibility.
 
-The exact SLM model ID, immutable revision/digest, and quantization are intentionally
-blocked until candidate models pass:
+The default SLM model ID, immutable revision/digest, and quantization are
+intentionally unset until candidate models pass:
 
 - both output schemas
 - adversarial-plan rejection

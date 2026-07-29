@@ -138,6 +138,7 @@ Search the completed index:
 ```bash
 vidxp search dialogue "the bread just came out of the oven"
 vidxp search scene "a yellow taxi on a city street" --top-k 5
+vidxp query "What happens after the taxi arrives?" --media-id <media-id>
 vidxp actors list
 vidxp actors render <cluster-id> --json
 vidxp artifacts snippet <media-id> 30 45 --json
@@ -204,7 +205,9 @@ The API process is a model-free control plane. Under `/api/v1`, it exposes
 bounded media import and delivery, capability metadata, index status, durable
 job submission and control, artifact delivery, and authenticated readiness.
 Indexing and other model work execute only through DBOS workers. Remote search
-is submitted as a durable job so model work never runs in the API/MCP process.
+and grounded natural-language queries are submitted as durable jobs so model
+work never runs in the API/MCP process. `POST /api/v1/jobs/query` uses the same
+typed command and result as `vidxp query` and the MCP `query_video` tool.
 
 Large remote media uses an upload intent plus the deployment profile's `tusd`
 service. Create the intent at `/api/v1/media/uploads`, then use the returned

@@ -139,6 +139,8 @@ services:
     environment:
       <<: *vidxp-environment
       VIDXP_ALLOW_MODEL_DOWNLOADS: ${VIDXP_ALLOW_MODEL_DOWNLOADS:-true}
+      VIDXP_SLM_BASE_URL: ${VIDXP_SLM_BASE_URL:-}
+      VIDXP_SLM_MODEL: ${VIDXP_SLM_MODEL:-}
     command: ["vidxp-worker", "--role", "cpu"]
     volumes:
       - content-data:/var/lib/vidxp/data
@@ -149,6 +151,18 @@ services:
         condition: service_completed_successfully
       chroma-ready:
         condition: service_completed_successfully
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:0.32.5@sha256:4dea9fb511947e24a84237bb636b0203abcb2ff0d3fbc7b4ff865deb91362131
+    profiles: ["slm"]
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
   tusd:
@@ -200,3 +214,4 @@ volumes:
   content-data:
   upload-quarantine:
   model-cache:
+  ollama-models:

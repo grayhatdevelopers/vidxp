@@ -24,6 +24,8 @@ from vidxp.application_models import (
     MediaImportJobRequest,
     PrepareModelsCommand,
     PrepareModelsJobRequest,
+    QueryJobRequest,
+    QueryVideoCommand,
     ResourceNotFoundError,
     SearchCommand,
     SearchJobRequest,
@@ -41,6 +43,8 @@ class ReadJobPlanner(Protocol):
     """Resolve immutable index identities before durable read jobs enqueue."""
 
     def plan_search(self, command: SearchCommand) -> SearchJobRequest: ...
+
+    def plan_query(self, command: QueryVideoCommand) -> QueryJobRequest: ...
 
     def plan_actor_overlay(
         self,
@@ -125,6 +129,19 @@ class JobService:
     ) -> Job:
         return self.backend.submit(
             self._read_job_planner().plan_search(command),
+            queue=self._model_queue(),
+            job_id=job_id,
+        )
+
+    @job_boundary
+    def submit_query(
+        self,
+        command: QueryVideoCommand,
+        *,
+        job_id: str | None = None,
+    ) -> Job:
+        return self.backend.submit(
+            self._read_job_planner().plan_query(command),
             queue=self._model_queue(),
             job_id=job_id,
         )

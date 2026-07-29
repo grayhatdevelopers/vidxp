@@ -13,6 +13,8 @@ from vidxp.composition import LocalApplicationContext, settings_for_repository
 from vidxp.application_models import (
     CreateIndexCommand,
     DependencyCheckResult,
+    FusedSearchResult,
+    FusionProvenance,
     IndexJobResult,
     IndexResult,
     IndexStatus,
@@ -23,14 +25,19 @@ from vidxp.application_models import (
     MediaAsset,
     PrepareModelsResult,
     PrepareModelsJobResult,
+    QueryAnswer,
+    QueryAnswerMode,
+    QueryJobResult,
+    QueryPlan,
+    QueryVideoCommand,
     RemoveIndexCommand,
     SearchCommand,
     SearchJobResult,
+    SearchMomentsPlanStep,
 )
 from vidxp.core.media import MediaState, MediaStream
 from vidxp.capabilities.registry import create_capability_registry
 from vidxp.capability_service import CapabilityService
-from vidxp.capabilities.schemas import SearchResult
 from vidxp.repositories import RepositoryConfig, RepositoryRegistry
 
 
@@ -100,10 +107,14 @@ class CliTests(unittest.TestCase):
         self.jobs.submit_snippet.assert_not_called()
 
     def test_search_constructs_shared_command(self):
-        search_result = SearchResult(
-            query_id="scene:1",
+        search_result = FusedSearchResult(
+            query_id="fused:1",
             query="yellow taxi",
-            modality="scene",
+            modalities=("scene",),
+            fusion=FusionProvenance(
+                requested_modalities=("scene",),
+                searched_modalities=("scene",),
+            ),
         )
         self.jobs.submit_search.return_value = Job(
             job_id=JOB_ID,
@@ -126,12 +137,66 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.jobs.submit_search.assert_called_once_with(
             SearchCommand(
-                modality="scene",
+                modalities=("scene",),
                 query="yellow taxi",
                 top_k=7,
             )
         )
         self.assertEqual(json.loads(result.output)["query"], "yellow taxi")
+
+    def test_query_constructs_shared_command_and_emits_typed_answer(self):
+        answer = QueryAnswer(
+            question="What happens?",
+            mode=QueryAnswerMode.no_evidence,
+            plan=QueryPlan(
+                steps=(
+                    SearchMomentsPlanStep(
+                        modality="scene",
+                        query="What happens?",
+                    ),
+                )
+            ),
+            fusion=FusionProvenance(
+                requested_modalities=("scene",),
+                searched_modalities=("scene",),
+            ),
+            fallback_reason="no_evidence",
+        )
+        self.jobs.submit_query.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.query,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        self.jobs.wait.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.query,
+            state=JobState.succeeded,
+            queue=JobQueue.cpu,
+            result=QueryJobResult(result=answer),
+        )
+
+        result = self.invoke(
+            [
+                "query",
+                "What happens?",
+                "--media-id",
+                MEDIA_ID,
+                "--modality",
+                "scene",
+                "--json",
+            ]
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.jobs.submit_query.assert_called_once_with(
+            QueryVideoCommand(
+                question="What happens?",
+                media_id=MEDIA_ID,
+                modalities=("scene",),
+            )
+        )
+        self.assertEqual(json.loads(result.output)["mode"], "no_evidence")
 
     def test_index_constructs_shared_command(self):
         result_value = IndexResult(

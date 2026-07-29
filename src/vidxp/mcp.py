@@ -32,6 +32,7 @@ from vidxp.application_models import (
     Job,
     JobId,
     Principal,
+    QueryVideoCommand,
     SearchCommand,
 )
 from vidxp.authentication import (
@@ -407,6 +408,37 @@ def create_mcp_server(
                     principal=actor,
                     transport="mcp",
                     operation="search",
+                    idempotency_key=idempotency_key,
+                ),
+            )
+
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=submit,
+        )
+
+    @server.tool(
+        description=(
+            "Submit a durable grounded natural-language query over indexed "
+            "moments and actor evidence."
+        ),
+        annotations=_SUBMIT,
+        structured_output=True,
+    )
+    async def query_video(
+        command: QueryVideoCommand,
+        idempotency_key: IdempotencyKey,
+    ) -> Job:
+        def submit(actor: Principal) -> Job:
+            return context.jobs.submit_query(
+                command,
+                job_id=scoped_job_id(
+                    repository_id=settings.repository_id,
+                    principal=actor,
+                    transport="mcp",
+                    operation="query",
                     idempotency_key=idempotency_key,
                 ),
             )

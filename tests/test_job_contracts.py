@@ -19,6 +19,8 @@ from vidxp.application_models import (
     InvalidRequestError,
     IndexSnapshotReference,
     ListJobsCommand,
+    QueryJobRequest,
+    QueryVideoCommand,
     SearchCommand,
     SearchJobRequest,
 )
@@ -57,7 +59,14 @@ class JobContractTests(unittest.TestCase):
             )
 
     def test_public_job_contract_has_no_path_or_storage_fields(self):
+        job = Job(
+            job_id=JOB_ID,
+            kind=JobKind.index,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
         schema = json.dumps(Job.model_json_schema())
+        self.assertEqual(job.schema_version, 2)
         self.assertNotIn("storage_key", schema)
         self.assertNotIn('"path"', schema)
         self.assertNotIn("model_cache", schema)
@@ -102,7 +111,7 @@ class JobContractTests(unittest.TestCase):
         backend = Mock()
         planner = Mock()
         command = SearchCommand(
-            modality="scene",
+            modalities=("scene",),
             query="taxi",
             top_k=2,
         )
@@ -134,6 +143,43 @@ class JobContractTests(unittest.TestCase):
         self.assertEqual(request.kind, JobKind.search)
         self.assertEqual(request.snapshot.snapshot_id, SNAPSHOT_ID)
         planner.plan_search.assert_called_once_with(command)
+        self.assertEqual(
+            backend.submit.call_args.kwargs["queue"],
+            JobQueue.gpu,
+        )
+
+    def test_query_uses_the_same_pinned_model_worker_boundary(self):
+        backend = Mock()
+        planner = Mock()
+        command = QueryVideoCommand(question="What happens next?")
+        planner.plan_query.return_value = QueryJobRequest(
+            command=command,
+            snapshot=IndexSnapshotReference(
+                snapshot_id=SNAPSHOT_ID,
+                snapshot_sha256=SNAPSHOT_SHA256,
+            ),
+        )
+        backend.submit.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.query,
+            state=JobState.queued,
+            queue=JobQueue.gpu,
+        )
+        service = JobService(
+            settings=VidXPSettings(
+                repository_root=Path("repository"),
+                runtime_backend="cuda:0",
+            ),
+            backend=backend,
+            read_planner=planner,
+        )
+
+        service.submit_query(command)
+
+        request = backend.submit.call_args.args[0]
+        self.assertEqual(request.kind, JobKind.query)
+        self.assertEqual(request.snapshot.snapshot_id, SNAPSHOT_ID)
+        planner.plan_query.assert_called_once_with(command)
         self.assertEqual(
             backend.submit.call_args.kwargs["queue"],
             JobQueue.gpu,
@@ -173,16 +219,16 @@ class JobContractTests(unittest.TestCase):
 
     def test_search_and_actor_identifiers_are_bounded(self):
         command = SearchCommand(
-            modality=" scene ",
+            modalities=(" scene ",),
             query="  a chef prepares pizza  ",
         )
-        self.assertEqual(command.modality, "scene")
+        self.assertEqual(command.modalities, ("scene",))
         self.assertEqual(command.query, "a chef prepares pizza")
 
         for values in (
-            {"modality": "scene/video", "query": "taxi"},
-            {"modality": "scene", "query": "x" * 4097},
-            {"modality": "scene", "query": "   "},
+            {"modalities": ["scene/video"], "query": "taxi"},
+            {"modalities": ["scene"], "query": "x" * 4097},
+            {"modalities": ["scene"], "query": "   "},
         ):
             with self.assertRaises(ValidationError):
                 SearchCommand(**values)

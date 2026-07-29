@@ -20,6 +20,7 @@ from vidxp.application_models import (
     ListJobsCommand,
     Principal,
     PrepareModelsCommand,
+    QueryVideoCommand,
     SearchCommand,
 )
 from vidxp.composition import HttpApplicationContext
@@ -81,6 +82,35 @@ def submit_search(
                 service,
                 actor,
                 operation="search",
+                idempotency_key=idempotency_key,
+            ),
+        ),
+    )
+
+
+@router.post(
+    "/query",
+    response_model=Job,
+    status_code=202,
+    operation_id="queryVideo",
+    summary="Ask a grounded question about indexed media",
+    dependencies=[Depends(read_principal)],
+)
+def submit_query(
+    command: QueryVideoCommand,
+    response: Response,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+    actor: Annotated[Principal, Depends(read_principal)],
+    idempotency_key: HttpIdempotencyKey,
+) -> Job:
+    return accepted(
+        response,
+        service.jobs.submit_query(
+            command,
+            job_id=scoped_job_id(
+                service,
+                actor,
+                operation="query",
                 idempotency_key=idempotency_key,
             ),
         ),

@@ -36,6 +36,7 @@ def clusters_operation(
         storage=context.require_storage(),
         page_size=_request.page_size,
         cursor=_request.cursor,
+        media_id=_request.media_id,
     )
 
 

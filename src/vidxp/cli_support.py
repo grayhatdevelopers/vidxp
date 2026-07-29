@@ -16,7 +16,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from vidxp.capabilities.schemas import SearchResult
+from vidxp.application_models import FusedSearchResult, QueryAnswer
 from vidxp.repositories import RepositoryConfig, RepositoryRegistry
 from typing import TYPE_CHECKING
 
@@ -79,31 +79,58 @@ def emit_json(payload: Any) -> None:
 
 
 def emit_search(
-    result: SearchResult,
+    result: FusedSearchResult,
     *,
     output_format: OutputFormat,
 ) -> None:
     if output_format == OutputFormat.json:
-        emit_json(result.to_dict())
+        emit_json(result.model_dump(mode="json"))
         return
-    if not result.hits:
-        typer.echo(f"No {result.modality} matches found.")
+    if not result.moments:
+        typer.echo("No matching moments found.")
         return
-    table = Table(title=f"{result.modality.title()} search results")
+    table = Table(title="Fused search results")
     table.add_column("Rank", justify="right")
     table.add_column("Start", justify="right")
     table.add_column("End", justify="right")
     table.add_column("Score", justify="right")
     table.add_column("Video")
-    for hit in result.hits:
+    table.add_column("Modalities")
+    for moment in result.moments:
         table.add_row(
-            str(hit.rank),
-            f"{hit.start:.3f}s",
-            f"{hit.end:.3f}s",
-            f"{hit.score:.6f}",
-            hit.video_id,
+            str(moment.rank),
+            f"{moment.start:.3f}s",
+            f"{moment.end:.3f}s",
+            f"{moment.score:.6f}",
+            moment.media_id,
+            ", ".join(moment.modalities),
         )
     Console().print(table)
+
+
+def emit_query(
+    result: QueryAnswer,
+    *,
+    output_format: OutputFormat,
+) -> None:
+    if output_format == OutputFormat.json:
+        emit_json(result.model_dump(mode="json"))
+        return
+    console = Console()
+    console.print(f"Mode: {result.mode.value}")
+    if result.claims:
+        for claim in result.claims:
+            console.print(f"• {claim.text}")
+            console.print(f"  Evidence: {', '.join(claim.evidence_ids)}")
+    elif result.evidence:
+        console.print(
+            f"No generated answer; returning {len(result.evidence)} "
+            "evidence item(s)."
+        )
+    else:
+        console.print("No supporting evidence found.")
+    if result.fallback_reason:
+        console.print(f"Fallback: {result.fallback_reason}")
 
 
 def emit_status(

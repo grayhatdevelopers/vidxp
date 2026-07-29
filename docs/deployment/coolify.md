@@ -10,8 +10,8 @@ contexts and does not download models in the API process.
   Chroma server.
 - `VIDXP_WORKER_IMAGE`: the VidXP `worker` target with CPU capabilities and
   Chroma's HTTP-only client.
-- PostgreSQL 18.3, Chroma 1.5.9, and tusd 2.10.0 are pinned by digest in the
-  Compose file.
+- PostgreSQL 18.3, Chroma 1.5.9, tusd 2.10.0, and the optional self-hosted
+  Ollama 0.32.5 service are pinned by digest in the Compose file.
 
 Use immutable VidXP release tags or digests for both first-party image variables.
 
@@ -45,6 +45,29 @@ an upstream proxy.
 Video bytes do not travel through MCP. Create and resume the upload through the
 HTTP/tus endpoints, wait for its `media_id`, and then use that ID with
 `start_indexing`.
+
+## Optional grounded query model
+
+Grounded retrieval works without a language model and returns timestamped
+evidence. To enable generated claims, choose a model only after evaluating its
+schema adherence, resource use, license, and grounding behavior. Set both:
+
+```dotenv
+VIDXP_SLM_BASE_URL=http://ollama:11434/v1
+VIDXP_SLM_MODEL=<evaluated-local-model>
+```
+
+Then start the optional service and explicitly prepare the selected model:
+
+```bash
+docker compose -f compose.coolify.yaml --profile slm up -d ollama
+docker compose -f compose.coolify.yaml --profile slm exec ollama \
+  ollama pull <evaluated-local-model>
+docker compose -f compose.coolify.yaml up -d worker
+```
+
+The Compose deployment never pulls an SLM implicitly. Ollama is internal and
+should not be published through the proxy.
 
 ## Start and verify
 

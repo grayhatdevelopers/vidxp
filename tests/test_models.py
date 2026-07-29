@@ -1,4 +1,5 @@
 import hashlib
+import os
 import sys
 import types
 import unittest
@@ -429,6 +430,50 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(settings.runtime_backend, "cuda:0")
         with self.assertRaises(ValidationError):
             VidXPSettings(chroma_server_url="http://localhost:8000/prefix")
+        with self.assertRaises(ValidationError):
+            VidXPSettings(slm_base_url="http://localhost:11434/v1")
+        with self.assertRaises(ValidationError):
+            VidXPSettings(
+                slm_base_url="https://ollama.com/v1",
+                slm_model="qwen3",
+            )
+        with self.assertRaises(ValidationError):
+            VidXPSettings(
+                slm_base_url="http://localhost:11434/v1",
+                slm_model="qwen3-cloud",
+            )
+        slm = VidXPSettings(
+            slm_base_url="http://localhost:11434/v1",
+            slm_model="evaluated-model",
+        )
+        self.assertEqual(slm.slm_model, "evaluated-model")
+
+    def test_only_optional_slm_environment_values_ignore_empty_strings(self):
+        with patch.dict(
+            os.environ,
+            {
+                "VIDXP_SLM_BASE_URL": "",
+                "VIDXP_SLM_MODEL": "",
+            },
+            clear=True,
+        ):
+            settings = VidXPSettings(_env_file=None)
+
+        self.assertIsNone(settings.slm_base_url)
+        self.assertIsNone(settings.slm_model)
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "VIDXP_HTTP_AUTH_MODE": "static",
+                    "VIDXP_HTTP_STATIC_BEARER_TOKEN": "",
+                },
+                clear=True,
+            ),
+            self.assertRaises(ValidationError),
+        ):
+            VidXPSettings(_env_file=None)
 
     def test_auto_runtime_remains_cpu_until_acceleration_parity_is_enabled(self):
         with patch(

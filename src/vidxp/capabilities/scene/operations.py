@@ -86,7 +86,7 @@ def search_operation(
         request.query,
         config=config,
         top_k=request.top_k,
-        video_id=config.video_id,
+        video_id=request.media_id or config.video_id,
         runtime=context.runtime,
         storage=context.require_storage(),
     )

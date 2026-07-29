@@ -97,11 +97,13 @@ all = { file = [
 ] }
 local-worker = { file = [
   "src/vidxp/requirements/storage.txt",
+  "src/vidxp/requirements/slm.txt",
   "src/vidxp/capabilities/dialogue/requirements.txt",
   "src/vidxp/capabilities/scene/requirements.txt",
   "src/vidxp/capabilities/actor/requirements.txt",
 ] }
 mcp = { file = ["src/vidxp/requirements/mcp.txt"] }
+slm = { file = ["src/vidxp/requirements/slm.txt"] }
 server = { file = [
   "src/vidxp/requirements/server.txt",
   "src/vidxp/requirements/mcp.txt",
@@ -109,6 +111,7 @@ server = { file = [
 server-worker = { file = [
   "src/vidxp/requirements/server.txt",
   "src/vidxp/requirements/server-storage.txt",
+  "src/vidxp/requirements/slm.txt",
   "src/vidxp/capabilities/dialogue/requirements.txt",
   "src/vidxp/capabilities/scene/requirements.txt",
   "src/vidxp/capabilities/actor/requirements.txt",

@@ -23,6 +23,7 @@ from vidxp.application_models import (
     JobQueue,
     JobState,
     Principal,
+    QueryVideoCommand,
 )
 from vidxp.authentication import (
     AuthenticatedBearer,
@@ -77,7 +78,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         application = Mock(spec=ControlPlaneApplication)
         application.list_capabilities.return_value = ()
         application.index_status.return_value = IndexStatus(
-            schema_version=1,
+            schema_version=2,
             state="missing",
             stage="status",
             message="No index.",
@@ -116,6 +117,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 "get_index_status",
                 "start_indexing",
                 "search_moments",
+                "query_video",
                 "get_job",
                 "cancel_job",
             ],
@@ -157,6 +159,47 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             calls[0].kwargs["job_id"],
             calls[1].kwargs["job_id"],
+        )
+
+    async def test_query_video_submits_the_shared_durable_command(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.jobs.submit_query.return_value = queued_job().model_copy(
+                update={"kind": JobKind.query}
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.read"}),
+                ),
+            )
+            async with Client(server) as client:
+                result = await client.call_tool(
+                    "query_video",
+                    {
+                        "command": {
+                            "question": "What happens after the taxi arrives?",
+                            "media_id": MEDIA_ID,
+                            "modalities": ["scene", "dialogue"],
+                        },
+                        "idempotency_key": "agent-query-0001",
+                    },
+                )
+
+        self.assertFalse(result.is_error)
+        command = context.jobs.submit_query.call_args.args[0]
+        self.assertEqual(
+            command,
+            QueryVideoCommand(
+                question="What happens after the taxi arrives?",
+                media_id=MEDIA_ID,
+                modalities=("scene", "dialogue"),
+            ),
+        )
+        self.assertIn(
+            "job_id",
+            context.jobs.submit_query.call_args.kwargs,
         )
 
     async def test_application_errors_are_machine_readable_and_safe(self):
@@ -258,6 +301,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 "get_index_status",
                 "start_indexing",
                 "search_moments",
+                "query_video",
                 "get_job",
                 "cancel_job",
             ],
@@ -313,7 +357,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 7)
+        self.assertEqual(len(discovered.tools), 8)
         self.assertEqual(result.structured_content, {"items": []})
 
     async def test_oidc_verifier_projects_the_shared_validated_token(self):

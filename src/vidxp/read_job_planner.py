@@ -5,6 +5,8 @@ from vidxp.application_models import (
     ActorOverlayJobRequest,
     CreateActorOverlayCommand,
     IndexSnapshotReference,
+    QueryJobRequest,
+    QueryVideoCommand,
     SearchCommand,
     SearchJobRequest,
 )
@@ -49,8 +51,16 @@ class LocalReadJobPlanner:
     @application_boundary
     def plan_search(self, command: SearchCommand) -> SearchJobRequest:
         config, reference = self._active()
-        self._require_capability(command.modality, config)
+        for capability in command.modalities:
+            self._require_capability(capability, config)
         return SearchJobRequest(command=command, snapshot=reference)
+
+    @application_boundary
+    def plan_query(self, command: QueryVideoCommand) -> QueryJobRequest:
+        config, reference = self._active()
+        for capability in command.modalities:
+            self._require_capability(capability, config)
+        return QueryJobRequest(command=command, snapshot=reference)
 
     @application_boundary
     def plan_actor_overlay(

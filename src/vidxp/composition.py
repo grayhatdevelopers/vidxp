@@ -267,6 +267,19 @@ def create_application(
         if active_settings.mode == ApplicationMode.server
         else None
     )
+    query_model = None
+    if (
+        active_settings.slm_base_url is not None
+        and active_settings.slm_model is not None
+    ):
+        from vidxp.infrastructure.ollama_query import OllamaQueryModel
+
+        query_model = OllamaQueryModel(
+            base_url=active_settings.slm_base_url,
+            model_name=active_settings.slm_model,
+            timeout_seconds=active_settings.slm_timeout_seconds,
+            output_retries=active_settings.slm_output_retries,
+        )
     return VidXPApplication(
         settings=active_settings,
         layout=active_settings.layout,
@@ -281,6 +294,7 @@ def create_application(
             if upload_service is not None
             else None
         ),
+        query_model=query_model,
     )
 
 

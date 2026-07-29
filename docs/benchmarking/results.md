@@ -17,6 +17,24 @@ Detailed artifacts, hashes, commands, and evaluator behavior remain in the
 | HiREST | Official validation: 193 known-video searches | R@0.5 **78.24%**, R@0.7 **44.56%** | Validation result; the prediction-window setting was selected on this same validation set |
 | HiREST | Released test: 776 known-video searches | Predictions generated, no score | Public test boundaries are placeholders, so local scoring would be meaningless |
 
+## Multimodal comparison contract
+
+Natural-language answer prose is not an official benchmark prediction format.
+Benchmark runs continue to preserve atomic scene and dialogue hits, raw
+distances, and the existing dataset serializers. When a dataset contains both
+eligible modalities, reports must show three fixed rows:
+
+| Retrieval path | What is compared |
+|---|---|
+| Scene only | The existing visual retrieval output |
+| Dialogue only | The existing transcript retrieval output |
+| Fixed RRF fusion | Overlap-connected intervals ranked with `rrf_v1`, `k=60` |
+
+No fused benchmark score is reported until the same frozen dataset inputs and
+evaluator used by the atomic rows have been run. Generated `QueryAnswer` claims
+remain a separate grounding evaluation and cannot replace these retrieval
+comparisons.
+
 ## What the measurements mean
 
 ### Rank@1 and Rank@5
