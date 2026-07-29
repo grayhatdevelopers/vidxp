@@ -483,6 +483,12 @@ class VidXPSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_explicit_server_backend(self) -> "VidXPSettings":
+        if self.mode == ApplicationMode.remote:
+            raise ValueError(
+                "Remote client mode is not available in this release. "
+                "Connect agents to the remote MCP endpoint or use the HTTP "
+                "API directly."
+            )
         if (
             self.mode == ApplicationMode.server
             and not re.fullmatch(r"(cpu|cuda(?::[0-9]+)?)", self.runtime_backend)

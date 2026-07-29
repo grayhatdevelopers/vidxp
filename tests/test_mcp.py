@@ -20,8 +20,10 @@ from vidxp.application_models import (
     IndexStatus,
     Job,
     JobKind,
+    JobPage,
     JobQueue,
     JobState,
+    MediaPage,
     Principal,
     QueryVideoCommand,
 )
@@ -114,11 +116,15 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             [
                 "list_capabilities",
                 "get_capability",
+                "list_media",
+                "get_media",
                 "get_index_status",
                 "start_indexing",
                 "search_moments",
                 "query_video",
+                "list_jobs",
                 "get_job",
+                "retry_job",
                 "cancel_job",
             ],
         )
@@ -200,6 +206,75 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             "job_id",
             context.jobs.submit_query.call_args.kwargs,
+        )
+
+    async def test_discovery_tools_use_shared_media_and_job_pages(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.application.list_media.return_value = MediaPage(total=0)
+            context.jobs.list.return_value = JobPage()
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.read"}),
+                ),
+            )
+            async with Client(server) as client:
+                media = await client.call_tool(
+                    "list_media",
+                    {"page_size": 7},
+                )
+                jobs = await client.call_tool(
+                    "list_jobs",
+                    {"page_size": 9},
+                )
+
+        self.assertFalse(media.is_error)
+        self.assertFalse(jobs.is_error)
+        self.assertEqual(
+            media.structured_content,
+            {"items": [], "total": 0, "next_cursor": None},
+        )
+        self.assertEqual(
+            jobs.structured_content,
+            {"items": [], "next_cursor": None},
+        )
+        self.assertEqual(
+            context.application.list_media.call_args.args[0].page_size,
+            7,
+        )
+        self.assertEqual(context.jobs.list.call_args.args[0].page_size, 9)
+
+    async def test_retry_job_uses_shared_stable_idempotency(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.jobs.retry.return_value = queued_job()
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.write"}),
+                ),
+            )
+            arguments = {
+                "job_id": JOB_ID,
+                "idempotency_key": "agent-retry-0001",
+            }
+            async with Client(server) as client:
+                first = await client.call_tool("retry_job", arguments)
+                second = await client.call_tool("retry_job", arguments)
+
+        self.assertFalse(first.is_error)
+        self.assertEqual(
+            first.structured_content,
+            second.structured_content,
+        )
+        calls = context.jobs.retry.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(
+            calls[0].kwargs["retry_id"],
+            calls[1].kwargs["retry_id"],
         )
 
     async def test_application_errors_are_machine_readable_and_safe(self):
@@ -298,11 +373,15 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             [
                 "list_capabilities",
                 "get_capability",
+                "list_media",
+                "get_media",
                 "get_index_status",
                 "start_indexing",
                 "search_moments",
                 "query_video",
+                "list_jobs",
                 "get_job",
+                "retry_job",
                 "cancel_job",
             ],
         )
@@ -357,7 +436,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 8)
+        self.assertEqual(len(discovered.tools), 12)
         self.assertEqual(result.structured_content, {"items": []})
 
     async def test_oidc_verifier_projects_the_shared_validated_token(self):

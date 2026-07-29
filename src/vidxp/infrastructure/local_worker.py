@@ -29,6 +29,7 @@ class LocalWorkerSupervisor:
     """Start one detached repository-scoped worker without owning job state."""
 
     _retry_delay_seconds = 5.0
+    _startup_timeout_seconds = 15.0
 
     def __init__(self, settings: VidXPSettings) -> None:
         self.settings = settings
@@ -131,6 +132,7 @@ class LocalWorkerSupervisor:
                     worker_lock,
                     ready_path,
                     fingerprint=bootstrap.fingerprint,
+                    timeout_seconds=self._startup_timeout_seconds,
                 )
             except Exception:
                 if process is not None:
@@ -244,7 +246,7 @@ class LocalWorkerSupervisor:
         ready_path: Path,
         *,
         fingerprint: str,
-        timeout_seconds: float = 5,
+        timeout_seconds: float = _startup_timeout_seconds,
     ) -> bool:
         deadline = monotonic() + timeout_seconds
         while monotonic() < deadline:
@@ -273,7 +275,7 @@ class LocalWorkerSupervisor:
         ready_path: Path,
         *,
         fingerprint: str,
-        timeout_seconds: float = 5,
+        timeout_seconds: float = _startup_timeout_seconds,
     ) -> None:
         deadline = monotonic() + timeout_seconds
         while monotonic() < deadline:

@@ -344,6 +344,27 @@ class CliTests(unittest.TestCase):
             ("scene",),
         )
 
+    def test_doctor_accepts_repeated_modality_options(self):
+        self.service.check_dependencies.return_value = DependencyCheckResult(
+            ok=True,
+            modalities=("dialogue", "scene"),
+            checks=(),
+        )
+        result = self.invoke(
+            [
+                "doctor",
+                "--modalities",
+                "dialogue",
+                "--modalities",
+                "scene",
+                "--json",
+            ],
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        command = self.service.check_dependencies.call_args.args[0]
+        self.assertEqual(command.modalities, ("dialogue", "scene"))
+
     def test_invalid_capability_is_a_cli_parameter_error(self):
         result = self.invoke(
             ["doctor", "--modalities", "unknown", "--json"]

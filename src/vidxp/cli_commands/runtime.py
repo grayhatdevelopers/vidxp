@@ -22,11 +22,14 @@ from vidxp.cli_support import (
 def doctor(
     ctx: typer.Context,
     modalities: Annotated[
-        str | None,
+        list[str] | None,
         typer.Option(
             "--modalities",
             "-m",
-            help="Only validate dependencies for these modalities.",
+            help=(
+                "Only validate dependencies for these modalities. "
+                "Accepts comma-separated values or repeated options."
+            ),
         ),
     ] = None,
     json_output: Annotated[
@@ -43,7 +46,7 @@ def doctor(
     selected = (
         available
         if modalities is None
-        else parse_modalities(modalities, available)
+        else parse_modalities(",".join(modalities), available)
     )
     result = state.service.check_dependencies(
         DependencyCheckCommand(modalities=selected)
@@ -82,11 +85,14 @@ def doctor(
 def prepare(
     ctx: typer.Context,
     modalities: Annotated[
-        str | None,
+        list[str] | None,
         typer.Option(
             "--modalities",
             "-m",
-            help="Only prepare models for these modalities.",
+            help=(
+                "Only prepare models for these modalities. "
+                "Accepts comma-separated values or repeated options."
+            ),
         ),
     ] = None,
     capability_options: Annotated[
@@ -122,7 +128,7 @@ def prepare(
     selected = (
         preparable
         if modalities is None
-        else parse_modalities(modalities, preparable)
+        else parse_modalities(",".join(modalities), preparable)
     )
     job = state.jobs.submit_prepare_models(
         PrepareModelsCommand(

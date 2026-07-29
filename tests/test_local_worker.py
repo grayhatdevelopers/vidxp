@@ -91,6 +91,11 @@ class LocalWorkerSupervisorTests(unittest.TestCase):
 
         command = popen.call_args.args[0]
         options = popen.call_args.kwargs
+        self.assertEqual(
+            wait.call_args.kwargs["timeout_seconds"],
+            supervisor._startup_timeout_seconds,
+        )
+        self.assertGreaterEqual(supervisor._startup_timeout_seconds, 10)
         self.assertEqual(command[:3], [sys.executable, "-m", "vidxp.workflow_worker"])
         self.assertIn("--lock-file", command)
         lock_file = command[command.index("--lock-file") + 1]

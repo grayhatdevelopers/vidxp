@@ -163,6 +163,43 @@ class FrontendTests(unittest.TestCase):
                 self.assertTrue(frontend._is_search_ready(matching, MEDIA_ID))
                 self.assertFalse(frontend._is_search_ready(stale, MEDIA_ID))
 
+    def test_single_registered_media_is_selected_before_indexing(self):
+        asset = SimpleNamespace(media_id=MEDIA_ID)
+
+        self.assertEqual(
+            frontend._default_media_id(None, (asset,)),
+            MEDIA_ID,
+        )
+        self.assertEqual(
+            frontend._default_media_id("missing", (asset,)),
+            MEDIA_ID,
+        )
+
+    def test_multiple_registered_media_preserves_only_valid_selection(self):
+        assets = (
+            SimpleNamespace(media_id=MEDIA_ID),
+            SimpleNamespace(media_id="323456781234423481234567890abcde"),
+        )
+
+        self.assertEqual(
+            frontend._default_media_id(MEDIA_ID, assets),
+            MEDIA_ID,
+        )
+        self.assertIsNone(frontend._default_media_id("missing", assets))
+
+    def test_local_path_import_uses_the_shared_application_command(self):
+        service = Mock()
+        service.import_media.return_value = SimpleNamespace(media_id=MEDIA_ID)
+
+        result = frontend._import_local_video(
+            service,
+            "  sample.mp4  ",
+        )
+
+        self.assertEqual(result.media_id, MEDIA_ID)
+        command = service.import_media.call_args.args[0]
+        self.assertEqual(command.path, Path("sample.mp4"))
+
     def test_available_modalities_use_application_dependency_commands(self):
         with TemporaryDirectory() as directory:
             service = self.service(Path(directory))

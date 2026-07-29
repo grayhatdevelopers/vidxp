@@ -151,6 +151,7 @@ services:
         condition: service_completed_successfully
       chroma-ready:
         condition: service_completed_successfully
+    stop_grace_period: 40s
     restart: unless-stopped
 
   ollama:
@@ -195,6 +196,7 @@ services:
     depends_on:
       hooks:
         condition: service_healthy
+    stop_grace_period: 35s
     healthcheck:
       test:
         - CMD

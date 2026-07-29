@@ -875,17 +875,21 @@ Initial curated tools:
 
 - `list_capabilities`
 - `get_capability`
+- `list_media`
+- `get_media`
 - `get_index_status`
 - `start_indexing`
 - `search_moments`
+- `query_video`
+- `list_jobs`
 - `get_job`
+- `retry_job`
 - `cancel_job`
 
-Generic job polling/cancellation covers both indexing and search without
-duplicating tool contracts. Actor inspection is added only after its existing
-index-read logic is extracted behind a model-free application service; MCP must
-not construct `ModelRuntime` merely to inspect clusters. `query_video` is added
-when its Phase 9 application service exists.
+Media and job discovery let an agent recover registered assets and durable work
+without carrying IDs across sessions. Generic job polling, retry, and cancellation
+cover indexing, search, and query without duplicating operation contracts. Video
+bytes remain on the HTTP/tus ingestion boundary rather than crossing MCP.
 
 Tool results use real output schemas and structured content. Descriptions remain
 short and agent-oriented; full API response schemas are not embedded as prose.
@@ -977,20 +981,19 @@ The same command and result contracts support three composition profiles:
    with a local worker, DBOS SQLite, embedded Chroma, and a platform app-data
    repository. Media can be imported from allowlisted local paths. This is the
    default Apple Silicon experience and does not require Docker.
-2. **Remote client:** a thin CLI, UI, desktop, or agent connects to a self-hosted
-   VidXP deployment. It contains no indexing models or local vector database.
-   Media crosses the boundary through the resumable upload flow and is subsequently
-   referenced by `media_id`. Human-facing clients use the HTTP API; agents use the
-   remote MCP Streamable HTTP endpoint.
+2. **Remote client (planned):** a thin CLI, UI, or desktop adapter will connect
+   to a self-hosted VidXP deployment without local models or a vector database.
+   The current release rejects `VIDXP_MODE=remote` instead of silently composing
+   local storage. Remote agents are supported now through the Streamable HTTP MCP
+   endpoint, and other clients can use the authenticated HTTP/tus APIs directly.
 3. **Self-hosted server:** API/MCP, workers, workflow state, media ingestion, and
    vector search run as the Coolify stack. The same server also supports ordinary
    Compose outside Coolify.
 
-Client configuration is limited to server base URL, authentication, repository,
-timeouts, and local upload source. Selecting remote mode changes composition, not
-business behavior. A client transport implements the same client-facing command
-interface as the native application facade; it does not duplicate validation,
-indexing, search, or artifact policy.
+The planned client configuration is limited to server base URL, authentication,
+repository, timeouts, and local upload source. Its transport must implement the
+same client-facing command interface as the native application facade without
+duplicating validation, indexing, search, or artifact policy.
 
 The distributable Python package has a lightweight client/core installation and
 explicit local/server extras. Installing the thin client must not install PyTorch,

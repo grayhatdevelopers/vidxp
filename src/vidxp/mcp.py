@@ -5,7 +5,7 @@ import json
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, TypeVar
+from typing import Annotated, Callable, TypeVar
 
 import anyio
 from mcp.server import MCPServer
@@ -17,6 +17,7 @@ from mcp.server.transport_security import TransportSecurityMiddleware
 from mcp.shared.exceptions import MCPError
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from pydantic import Field
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -31,6 +32,12 @@ from vidxp.application_models import (
     IndexStatus,
     Job,
     JobId,
+    JobPage,
+    ListJobsCommand,
+    ListMediaCommand,
+    MediaAsset,
+    MediaId,
+    MediaPage,
     Principal,
     QueryVideoCommand,
     SearchCommand,
@@ -314,8 +321,10 @@ def create_mcp_server(
         title="VidXP",
         description="Index and search registered video media.",
         instructions=(
-            "Register and upload video through the HTTP/tus API first. "
-            "Use the resulting media_id with these durable MCP tools."
+            "Discover registered media with list_media. Register and upload "
+            "new video through the HTTP/tus API, then use its media_id with "
+            "the durable indexing and query tools. Use list_jobs to recover "
+            "job IDs across agent sessions."
         ),
         version=__version__,
         token_verifier=token_verifier,
@@ -348,6 +357,40 @@ def create_mcp_server(
             default_principal=default_principal,
             permission=RepositoryPermission.read,
             operation=lambda _actor: context.application.get_capability(name),
+        )
+
+    @server.tool(
+        description="List registered video metadata without transferring bytes.",
+        annotations=_READ_ONLY,
+        structured_output=True,
+    )
+    async def list_media(
+        page_size: Annotated[int, Field(gt=0, le=100)] = 50,
+        cursor: Annotated[
+            str | None,
+            Field(min_length=1, max_length=512),
+        ] = None,
+    ) -> MediaPage:
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=lambda _actor: context.application.list_media(
+                ListMediaCommand(page_size=page_size, cursor=cursor)
+            ),
+        )
+
+    @server.tool(
+        description="Get metadata for one registered video.",
+        annotations=_READ_ONLY,
+        structured_output=True,
+    )
+    async def get_media(media_id: MediaId) -> MediaAsset:
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=lambda _actor: context.application.get_media(media_id),
         )
 
     @server.tool(
@@ -451,6 +494,27 @@ def create_mcp_server(
         )
 
     @server.tool(
+        description="List durable jobs so work can be recovered across sessions.",
+        annotations=_READ_ONLY,
+        structured_output=True,
+    )
+    async def list_jobs(
+        page_size: Annotated[int, Field(gt=0, le=100)] = 50,
+        cursor: Annotated[
+            str | None,
+            Field(min_length=1, max_length=512),
+        ] = None,
+    ) -> JobPage:
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=lambda _actor: context.jobs.list(
+                ListJobsCommand(page_size=page_size, cursor=cursor)
+            ),
+        )
+
+    @server.tool(
         description="Poll a durable VidXP job and its typed result.",
         annotations=_READ_ONLY,
         structured_output=True,
@@ -461,6 +525,34 @@ def create_mcp_server(
             default_principal=default_principal,
             permission=RepositoryPermission.read,
             operation=lambda _actor: context.jobs.get(job_id),
+        )
+
+    @server.tool(
+        description="Retry a failed or cancelled durable job.",
+        annotations=_SUBMIT,
+        structured_output=True,
+    )
+    async def retry_job(
+        job_id: JobId,
+        idempotency_key: IdempotencyKey,
+    ) -> Job:
+        def retry(actor: Principal) -> Job:
+            return context.jobs.retry(
+                job_id,
+                retry_id=scoped_job_id(
+                    repository_id=settings.repository_id,
+                    principal=actor,
+                    transport="mcp",
+                    operation=f"retry:{job_id}",
+                    idempotency_key=idempotency_key,
+                ),
+            )
+
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.write,
+            operation=retry,
         )
 
     @server.tool(

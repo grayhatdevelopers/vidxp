@@ -84,3 +84,9 @@ hooks, worker, and tusd should report healthy; Chroma is checked by the complete
 This profile is intentionally single-node. Its named content, upload, model, and
 Chroma volumes are not a multi-replica storage design. Back up the PostgreSQL and
 named data volumes before replacing a release.
+
+Treat each deployed stack as one repository boundary. The current PostgreSQL
+catalog tables and Chroma collection names are deployment-scoped rather than
+repository-namespaced, so multiple repository IDs must not share the same
+PostgreSQL database and Chroma service. Deploy another stack (and volumes) for a
+separate repository.

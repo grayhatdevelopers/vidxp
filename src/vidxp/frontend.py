@@ -18,6 +18,7 @@ from vidxp.application_models import (
     ErrorCategory,
     ImportMediaCommand,
     JobState,
+    ListMediaCommand,
     QueryVideoCommand,
     SearchCommand,
 )
@@ -64,6 +65,7 @@ SEARCH_RESULT_KEY = "_vidxp_search_result"
 CANCEL_REQUESTED_KEY = "_vidxp_cancel_requested"
 MEDIA_ID_KEY = "_vidxp_media_id"
 UPLOAD_TOKEN_KEY = "_vidxp_upload_token"
+MEDIA_NOTICE_KEY = "_vidxp_media_notice"
 INDEX_JOB_QUERY_PARAM = "index_job"
 SEARCH_JOB_QUERY_PARAM = "search_job"
 SEARCH_TYPE_QUERY_PARAM = "search_type"
@@ -547,9 +549,82 @@ def _render_search_result(result):
     )
 
 
-def _select_video(busy, media_id):
+def _default_media_id(media_id, assets):
+    available_ids = {asset.media_id for asset in assets}
+    if media_id in available_ids:
+        return media_id
+    if len(assets) == 1:
+        return assets[0].media_id
+    return None
+
+
+def _import_local_video(service, raw_path):
+    return service.import_media(
+        ImportMediaCommand(path=Path(raw_path.strip()).expanduser())
+    )
+
+
+def _select_video(busy, media_id, media_page):
     service = _configured_service()
     st.subheader("Video")
+    assets = tuple(media_page.items) if media_page is not None else ()
+    media_id = _default_media_id(media_id, assets)
+    if media_id is not None:
+        st.session_state[MEDIA_ID_KEY] = media_id
+    else:
+        st.session_state.pop(MEDIA_ID_KEY, None)
+
+    if not busy and assets:
+        asset_by_id = {asset.media_id: asset for asset in assets}
+        selected_media_id = st.selectbox(
+            "Registered video",
+            tuple(asset_by_id),
+            index=(
+                tuple(asset_by_id).index(media_id)
+                if media_id is not None
+                else 0
+            ),
+            format_func=lambda value: (
+                f"{asset_by_id[value].original_filename} "
+                f"({asset_by_id[value].duration_seconds:.1f}s)"
+            ),
+        )
+        if selected_media_id != media_id:
+            st.session_state.pop(SEARCH_RESULT_KEY, None)
+        media_id = selected_media_id
+        st.session_state[MEDIA_ID_KEY] = media_id
+        if media_page.next_cursor is not None:
+            st.caption(
+                "Showing the first 100 registered videos. "
+                "Use the CLI or API to inspect the full catalog."
+            )
+
+    with st.expander("Import a large local video"):
+        st.caption(
+            "Use a local path to avoid sending large files through the "
+            "browser uploader."
+        )
+        local_path = st.text_input(
+            "Local video path",
+            disabled=busy,
+            placeholder="C:\\Videos\\example.mp4 or /Users/me/Videos/example.mp4",
+        )
+        if st.button(
+            "Register local video",
+            disabled=busy or not local_path.strip(),
+        ):
+            try:
+                imported = _import_local_video(service, local_path)
+            except ApplicationError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state[MEDIA_ID_KEY] = imported.media_id
+                st.session_state.pop(SEARCH_RESULT_KEY, None)
+                st.session_state[MEDIA_NOTICE_KEY] = (
+                    f"Registered {imported.original_filename}."
+                )
+                st.rerun()
+
     upload_slot = st.empty()
     has_session_upload = st.session_state.get("video_upload") is not None
     if busy and not has_session_upload and media_id is not None:
@@ -575,7 +650,7 @@ def _select_video(busy, media_id):
             if not busy:
                 st.caption("Using the registered video.")
             st.video(str(resource.path), width=560)
-    return uploaded_video
+    return uploaded_video, media_id
 
 
 def _search_controls(ready, uploaded_video, available_modalities):
@@ -627,6 +702,8 @@ def run():
     st.title("VidXP")
     st.caption("Index and search video by dialogue, scene, and actor.")
     st.caption(f"Index repository: {service.layout.root}")
+    if notice := st.session_state.pop(MEDIA_NOTICE_KEY, None):
+        st.success(notice)
 
     jobs = _configured_jobs()
     _restore_durable_jobs()
@@ -669,6 +746,14 @@ def run():
         if len(indexed_media) == 1:
             media_id = indexed_media[0]
             st.session_state[MEDIA_ID_KEY] = media_id
+    try:
+        media_page = service.list_media(ListMediaCommand(page_size=100))
+    except ApplicationError:
+        media_page = None
+        st.warning(
+            "Registered videos are temporarily unavailable. "
+            "The current index remains usable."
+        )
     installed_modalities = _available_index_modalities()
     video_column, workflow_column = st.columns(
         [0.95, 1.05],
@@ -677,7 +762,11 @@ def run():
     )
 
     with video_column:
-        uploaded_video = _select_video(busy, media_id)
+        uploaded_video, media_id = _select_video(
+            busy,
+            media_id,
+            media_page,
+        )
     selected_media_id = (
         media_id
         if uploaded_video is None

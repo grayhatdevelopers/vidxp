@@ -1,7 +1,22 @@
 from __future__ import annotations
 
+import argparse
+from collections.abc import Sequence
 
-def main() -> None:
+
+def _arguments(values: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run the VidXP HTTP API and remote MCP server. "
+            "Configure the service with VIDXP_* environment variables."
+        )
+    )
+    parser.parse_args(values)
+
+
+def main(arguments: Sequence[str] | None = None) -> None:
+    _arguments(arguments)
+
     import uvicorn
 
     from vidxp.api import create_app
