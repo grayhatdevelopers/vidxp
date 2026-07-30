@@ -202,7 +202,7 @@ jobs:
           trap 'docker rm --force vidxp-ci >/dev/null 2>&1 || true' EXIT
 
           docker exec vidxp-ci vidxp --version
-          docker exec vidxp-ci vidxp doctor --json
+          docker exec vidxp-ci vidxp init --json
           docker exec vidxp-ci python -c \
             'import chromadb, cv2, faster_whisper, huggingface_hub, pooch, psutil, sentence_transformers, torch, transformers; assert psutil.virtual_memory().available > 0'
           docker exec vidxp-ci python -c \

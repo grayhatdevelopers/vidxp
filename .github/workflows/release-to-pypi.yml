@@ -178,7 +178,7 @@ jobs:
           trap 'docker rm --force vidxp-release >/dev/null 2>&1 || true' EXIT
 
           docker exec vidxp-release vidxp --version
-          docker exec vidxp-release vidxp doctor --json
+          docker exec vidxp-release vidxp init --json
           docker exec vidxp-release python -c \
             'import chromadb, cv2, faster_whisper, huggingface_hub, pooch, psutil, sentence_transformers, torch, transformers; assert psutil.virtual_memory().available > 0'
           docker exec vidxp-release python -c \
@@ -210,7 +210,9 @@ jobs:
           worker="ghcr.io/${{ github.repository }}:${{ needs.release.outputs.version }}-worker"
           docker run --rm "$control" vidxp-api --help
           docker run --rm "$control" vidxp-mcp --help
-          docker run --rm "$worker" vidxp doctor --json
+          docker run --rm "$worker" vidxp init --json
+          docker run --rm "$worker" python -c \
+            'import chromadb, cv2, faster_whisper, huggingface_hub, pooch, psutil, sentence_transformers, torch, transformers; assert psutil.virtual_memory().available > 0'
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
