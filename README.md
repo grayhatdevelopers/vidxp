@@ -28,215 +28,191 @@
 
 ## Find the moment, not the timestamp
 
-VidXP turns one video or a whole collection into a persistent, searchable
-library. Search by meaning instead of filenames, tags, or exact words:
+VidXP makes one video—or an entire collection—searchable by meaning:
 
-- **Dialogue:** find what was said from timestamped transcripts.
-- **Scenes:** describe what appeared on screen and retrieve matching moments.
-- **Actors:** group recurring faces within a video and export a highlighted
-  overlay for a selected group.
+- **Dialogue search:** type what you remember someone saying and jump to the
+  matching moments.
+- **Scene search:** describe what appeared on screen and find the closest
+  visual matches.
+- **Actor matching:** find recurring faces within a video and export a
+  highlighted video for a selected group.
 
-Use it to find relatives across years of wedding videos, add semantic video
-search to an editing application, or give an AI agent a grounded way to
-understand a video library.
-
-Processing and search run locally after the selected models have been
-downloaded.
+Use it to search years of family videos, add video search to an editing
+workflow, or let an AI agent answer questions using evidence from your own
+video library. Your videos can stay on your machine.
 
 [![VidXP browser interface](./docs/images/video-screenshot.jpeg)](https://www.linkedin.com/feed/update/urn:li:activity:7343569473720725505/)
 
-## Install and run VidXP
+## Start here
 
-### 1. Native CLI and MCP
+Choose the setup that fits how you want to use VidXP.
 
-For scripts, local agent tools, and direct control over indexing and search,
-install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
+### 1. CLI and MCP
+
+For direct use, scripts, and local AI agents, install
+[uv](https://docs.astral.sh/uv/getting-started/installation/), then run:
 
 ```bash
-# Install isolated CPU runtime
+# Install the CPU edition
 uv tool install --python 3.14 --torch-backend cpu "vidxp[local-worker,mcp]"
 
-# Check required system tools
+# Set up FFmpeg
 vidxp init
 
-# Review and download models
+# Download search models
 vidxp prepare
 
-# Verify the installation
+# Check everything
 vidxp doctor
 
-# Print MCP client config
+# Connect an MCP client
 vidxp mcp-config
 ```
 
-The CLI works without MCP. To include the local browser app as well, install
-`vidxp[local-worker,mcp,frontend]` and run `vidxp ui`.
+`uv` installs and manages Python for VidXP. `vidxp init` checks FFmpeg and
+shows an operating-system install command if it is missing.
 
-If `vidxp` is not immediately available after installation, run
-`uv tool update-shell` once and reopen the terminal.
+The CLI works without MCP. Add the browser app with:
+
+```bash
+uv tool install --python 3.14 --torch-backend cpu \
+  "vidxp[local-worker,mcp,frontend]"
+vidxp ui
+```
+
+If the `vidxp` command is not found, run `uv tool update-shell` once and reopen
+the terminal.
 
 ### 2. Desktop app
 
-For a managed local installation, download VidXP from
-[GitHub Releases](https://github.com/grayhatdevelopers/vidxp/releases). The
-desktop app owns its Python environment, CPU dependencies, model preparation,
-and local worker; the user does not need to install Python or uv.
+Download the installer for Windows, Apple Silicon macOS, or Linux from
+[GitHub Releases](https://github.com/grayhatdevelopers/vidxp/releases).
 
-Installers for Windows x86-64, Apple Silicon macOS, and Linux x86-64 are
-published with each release. On first launch, VidXP checks the machine and
-configures only the capabilities and interfaces selected by the user. The
-browser interface and its Python dependencies can be omitted for a
-processing-only runtime.
+The desktop installer manages Python, VidXP, and the local worker for you. On
+first launch, choose the search capabilities you want, where model files should
+live, and whether to download them immediately. Python and uv do not need to be
+installed separately.
 
-After configuration, the desktop supervisor runs in the system tray.
-**Open VidXP** opens or reuses the local browser interface, and **Quit VidXP**
-stops its owned processes. See [Desktop application](docs/desktop.md) for
-behavior and source builds.
+After setup, VidXP can stay available from the system tray. The browser
+interface is optional and can be left out of the installed VidXP runtime.
 
-### 3. Docker for servers
+### 3. Docker for a server
 
-Stable releases publish three Linux/amd64 images to the
-[VidXP GitHub Container Registry](https://github.com/grayhatdevelopers/vidxp/pkgs/container/vidxp):
-
-| Image tag | Purpose |
-|---|---|
-| `ghcr.io/grayhatdevelopers/vidxp:<release>` | All-in-one CPU worker and browser app |
-| `ghcr.io/grayhatdevelopers/vidxp:<release>-control` | HTTP API, remote MCP, migrations, and upload hooks |
-| `ghcr.io/grayhatdevelopers/vidxp:<release>-worker` | CPU model worker for the server deployment |
-
-The supported [Coolify deployment](docs/deployment/coolify.md) uses the
-published `control` and `worker` images with `compose.coolify.yaml`; it does not
-build VidXP from a repository checkout. The deployment includes PostgreSQL,
-Chroma, resumable uploads, persistent media and model volumes, and static
-bearer or OIDC authentication.
-
-Use immutable release tags or image digests for a server. The all-in-one image
-is available when one machine only needs the local browser product:
+Run the published all-in-one image on a home server or another single machine:
 
 ```bash
 docker run --rm --init \
   -p 8501:8501 \
   -v vidxp-data:/var/lib/vidxp \
-  ghcr.io/grayhatdevelopers/vidxp:<release>
+  ghcr.io/grayhatdevelopers/vidxp:latest
 ```
 
-## Use VidXP your way
+For a long-lived server, pin a published version instead of `latest`. For a
+Coolify deployment, use the published `-control` and `-worker` images with
+[`compose.coolify.yaml`](compose.coolify.yaml)—no repository build is required.
+See the [Coolify guide](docs/deployment/coolify.md) for the complete setup.
 
-| Surface | What it is for |
-|---|---|
-| Browser app | Import videos, prepare models, index, search, inspect progress, and download results |
-| Desktop app | A managed local runtime, optional browser interface, and worker |
-| CLI | Scriptable media, indexing, search, job, repository, and artifact workflows |
-| Python API | Embed selected indexing and retrieval capabilities in another application |
-| HTTP API | Build applications on a versioned service contract |
-| MCP | Let local or remote agents discover media, index it, search it, and create clips |
-| Containers | Run the local browser product or a separated API/worker deployment |
+## What you can do today
 
-All of these surfaces use the same application layer and repository contracts;
-they are not separate implementations.
-
-## What is available now
-
-- Persistent libraries containing one video or many.
-- Semantic dialogue search with timestamped evidence.
-- Text-to-scene retrieval across indexed videos.
-- Within-video face grouping and highlighted actor overlays.
-- Cross-video top-k search with optional single-video filtering.
-- Durable jobs with progress, cancellation, recovery, and retained results.
-- Atomic index snapshots, so a failed rebuild does not replace a working one.
-- Managed media, downloadable clips, overlays, and artifact metadata.
-- Named repositories for keeping collections separate.
-- Browser, CLI, Python, HTTP, MCP, desktop, and container interfaces.
-- Local CPU execution and a separated self-hosted server topology.
+- Build a reusable search library from one video or a whole collection.
+- Search dialogue by meaning, even when you do not remember the exact words.
+- Find visual moments by describing the scene you are looking for.
+- Group recurring faces in a video and render a highlighted actor overlay.
+- Search one selected video or every video in the active library.
+- Open matching timestamps and export downloadable clips and overlays.
+- Keep personal, client, or project libraries separate.
+- Follow long indexing jobs, cancel them, and keep the last working index if a
+  later run fails.
+- Use the browser app, automate the CLI, connect an MCP agent, or integrate
+  VidXP into another application.
 
 ## A first search
 
-The browser app provides the guided workflow. The equivalent CLI flow is:
+The browser app guides you through importing and indexing. The same flow from
+the command line is:
 
 ```bash
+# Add a video
 vidxp media import samplevideo.mp4 --json
+
+# Index the returned media ID
 vidxp index create <media-id>
+
+# Find a visual moment
 vidxp search scene "a yellow taxi on a city street"
+
+# Find something that was said
 vidxp search dialogue "the bread just came out of the oven"
 ```
 
-Searches return ranked moments with video identity, timestamps, scores, and
-capability-specific evidence. Use `--media-id` to stay within one video or omit
-it to search the active collection.
+Results include the source video, timestamps, match score, and the evidence
+used to find the moment. Add `--media-id <media-id>` to search only one video.
 
-Run `vidxp --help` or `vidxp <command> --help` for the complete CLI reference.
+Run `vidxp --help` or `vidxp <command> --help` for the full command reference.
 
-## For applications and agents
+## For applications and AI agents
 
-Applications can embed individual capabilities through the Python package or
-run VidXP as a local or authenticated remote service. Agents can connect over
-stdio MCP on the same machine or Streamable HTTP MCP on a server.
+Use the Python package to add selected VidXP capabilities directly to an
+application, or use the HTTP API when VidXP runs as a service.
 
-The MCP surface can register or discover media, create indexes, search dialogue,
-scenes, and actors, ask grounded questions, create clips and overlays, poll
-durable jobs, and retrieve artifact download links.
+MCP clients can add and discover videos, start indexing, search dialogue and
+scenes, ask questions about a library, and create clips or actor overlays.
+Local agents can connect over stdio; remote agents can connect to a
+self-hosted VidXP server.
 
-- [Python installation and capability extras](INSTALLATION_GUIDE.md#optional-dependency-extras)
-- [HTTP and MCP installation profiles](INSTALLATION_GUIDE.md)
-- [OpenAPI and MCP transport behavior](docs/architecture/platform.md)
-- [Coolify and server deployment](docs/deployment/coolify.md)
+- [Python, HTTP, and MCP installation](INSTALLATION_GUIDE.md)
+- [Optional capability packages](INSTALLATION_GUIDE.md#optional-dependency-extras)
+- [Coolify server setup](docs/deployment/coolify.md)
 
-## Models and local data
+## Downloads and storage
 
-Model weights are not hidden inside the Python package or container image. The
-browser app and `vidxp prepare` disclose what is missing, the download size,
-the cache location, and available disk space before downloading.
+First setup downloads only the models needed for the capabilities you select.
+VidXP shows the download size and destination before it starts.
 
-| Capability | Models | Approximate download |
-|---|---|---:|
-| Dialogue | Qwen3 Embedding 0.6B + faster-whisper large-v3-turbo | 2.64 GiB |
-| Scene | SigLIP2 base patch16-224 | 1.43 GiB |
-| Actor | OpenCV Zoo YuNet + SFace | 37 MiB |
+| Capability | Approximate model download |
+|---|---:|
+| Dialogue search | 2.64 GiB |
+| Scene search | 1.43 GiB |
+| Actor matching | 37 MiB |
 
-Actual installed and cached disk use is higher because the Python runtime,
-PyTorch, provider packages, indexes, source media, and generated artifacts are
-separate from model weights.
+Leave additional space for the VidXP runtime, indexes, source videos, and
+exported results.
 
-Local data lives in the operating system's per-user VidXP directory, not in
-the shell's current directory:
+By default, the CLI and desktop app share the same VidXP data directory:
 
-| Platform | Default data root |
+| Platform | Default location |
 |---|---|
 | Windows | `%LOCALAPPDATA%\VidXP` |
 | macOS | `~/Library/Application Support/VidXP` |
 | Linux | `${XDG_DATA_HOME:-~/.local/share}/VidXP` |
 
-CLI and desktop installations share this data root by default. The desktop
-keeps its managed Python environment and launcher state in a separate private
-application-data directory.
+Docker keeps the same data in the `vidxp-data` volume shown above.
 
-Docker stores the same product data in the declared `vidxp-data` volume.
+## Product roadmap
 
-## What is next
+The next product improvements are focused on:
 
-The current product work is focused on:
+- labeling actor groups and matching the same person across different videos;
+- more reliable face tracking across angle, lighting, motion, and occlusion;
+- connecting visible people with the dialogue they are speaking;
+- better search ranking, time ranges, and natural-language questions across a
+  whole library;
+- richer previews, timelines, filters, saved searches, and result playback;
+- easier organization for large personal and project video collections;
+- faster indexing and supported GPU acceleration; and
+- smoother desktop updates, repair, and model management.
 
-- signing and notarizing downloadable desktop packages;
-- improving desktop runtime repair and configuration controls;
-- evaluating supported GPU worker and desktop profiles;
-- richer result playback, previews, timelines, and actor-labeling workflows;
-- stronger collection organization and search filtering;
-- benchmark-backed retrieval and ranking improvements; and
-- scaling the server topology beyond its current single-node deployment.
+VidXP is in beta. Feedback about search quality, actor workflows, and real
+video-library use cases is especially useful.
 
-VidXP is beta software. Current boundaries are documented rather than hidden:
-CPU is the supported runtime today, actor matching groups appearances within a
-video rather than identifying real people, and the published server topology
-does not yet claim multi-replica failover.
+## Help and project links
 
-## Documentation
-
-| Use or deploy VidXP | Build or evaluate VidXP |
-|---|---|
-| [Installation guide](INSTALLATION_GUIDE.md) | [Contribution guide](docs/CONTRIBUTING.md) |
-| [Desktop application](docs/desktop.md) | [Adding a capability](docs/adding-a-capability.md) |
-| [Coolify deployment](docs/deployment/coolify.md) | [Architecture](docs/architecture/platform.md) |
-| [Changelog](CHANGELOG.md) | [Benchmarking](docs/benchmarking/README.md) |
+- [Installation and troubleshooting](INSTALLATION_GUIDE.md)
+- [Desktop application](docs/desktop.md)
+- [Coolify deployment](docs/deployment/coolify.md)
+- [Changelog](CHANGELOG.md)
+- [Issue tracker](https://github.com/grayhatdevelopers/vidxp/issues)
+- [MIT license](LICENSE)
 
 ## Contributing
 
