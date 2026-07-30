@@ -110,6 +110,46 @@ def _pair_file(path: Path | None) -> list[tuple[str, str]] | None:
     return pairs
 
 
+def _media_override_file(path: Path | None) -> dict[str, Path] | None:
+    if path is None:
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            "The DiDeMo media override file must contain valid readable JSON.",
+            param_hint="--media-overrides",
+        ) from exc
+    if not isinstance(payload, dict) or not payload:
+        raise typer.BadParameter(
+            "The DiDeMo media override file must be a non-empty JSON object.",
+            param_hint="--media-overrides",
+        )
+    overrides: dict[str, Path] = {}
+    for video_name, replacement in payload.items():
+        if (
+            not isinstance(video_name, str)
+            or not video_name.strip()
+            or not isinstance(replacement, str)
+            or not replacement.strip()
+        ):
+            raise typer.BadParameter(
+                "Each DiDeMo media override must map a video name to a path.",
+                param_hint="--media-overrides",
+            )
+        candidate = Path(replacement)
+        if not candidate.is_absolute():
+            candidate = path.parent / candidate
+        candidate = candidate.resolve()
+        if not candidate.is_file():
+            raise typer.BadParameter(
+                f"DiDeMo replacement media was not found: {candidate}",
+                param_hint="--media-overrides",
+            )
+        overrides[video_name] = candidate
+    return overrides
+
+
 @app.command("didemo")
 def didemo_command(
     ctx: typer.Context,
@@ -132,6 +172,17 @@ def didemo_command(
                 "Comma-separated zero-based annotation indices. "
                 "Omit for the full selected split."
             )
+        ),
+    ] = None,
+    media_overrides: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            dir_okay=False,
+            help=(
+                "JSON object mapping an official video name to documented "
+                "replacement media. Relative paths resolve beside the file."
+            ),
         ),
     ] = None,
     chunk_pooling: Annotated[
@@ -165,6 +216,7 @@ def didemo_command(
         run_id=run_id,
         output_root=output_root,
         annotation_indices=_annotation_indices(annotation_indices),
+        media_overrides=_media_override_file(media_overrides),
         scene_sample_fps=scene_sample_fps,
         split=split,
         chunk_pooling=chunk_pooling,

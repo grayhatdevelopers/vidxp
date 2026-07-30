@@ -13,6 +13,8 @@ from typing import Any, Literal, Mapping, Sequence
 
 from vidxp.benchmarks.common import (
     append_failure,
+    benchmark_generation_id,
+    benchmark_media_id,
     ensure_adapter_outputs,
     record_adapter_manifest,
     run_logged_evaluator,
@@ -297,7 +299,7 @@ def _transcript_sources(
             )
         sources.append(
             VideoSource(
-                video_id=video,
+                video_id=benchmark_media_id("hirest", video),
                 source_name=asr_path.name,
                 transcript=parse_srt(asr_path),
                 checksum=sha256_file(asr_path),
@@ -326,11 +328,12 @@ def _generate_predictions(
     }
     predictions: dict[str, dict[str, dict[str, list[float]]]] = {}
     for prompt, video in ordered_pairs:
+        media_id = benchmark_media_id("hirest", video)
         hits = search_dialogue(
             prompt,
             config=config,
-            top_k=dialogue_counts[video],
-            video_id=video,
+            top_k=dialogue_counts[media_id],
+            video_id=media_id,
             query_id=f"{prompt}\0{video}",
             runtime=runtime,
             storage=storage,
@@ -439,6 +442,7 @@ def run_hirest(
         enabled_modalities=("dialogue",),
         device=device,
         output_root=output_root,
+        generation_id=benchmark_generation_id("hirest", split, run_id),
     )
     run_directory = config.run_directory
     registry = create_capability_registry(
@@ -521,6 +525,9 @@ def run_hirest(
             "temporal_window_fraction": temporal_window_fraction,
             "transcription_provider": "supplied-transcript",
             "video_decode_used": False,
+            "media_id_mapping": (
+                "deterministic_uuid4_from_benchmark_and_official_video_id"
+            ),
         }
         if split == "test":
             summary = {

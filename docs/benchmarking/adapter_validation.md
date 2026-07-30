@@ -4,9 +4,14 @@ This ledger records the implementation and executable validation of the first
 two benchmark adapters. Subset runs are smoke tests of the complete data,
 indexing, serialization, and evaluator path. Their metrics are not paper scores.
 
-For the current scores, metric definitions, and plain-language interpretation,
+For the recorded results, metric definitions, and plain-language interpretation,
 start with [current benchmark results](results.md). This ledger is the technical
 reproduction record.
+
+The full-corpus scores below are the retained 2026-07-27 legacy-provider
+results. The 2026-07-30 SigLIP2/Qwen3 runs are bounded execution smokes, not
+replacement quality scores. Both generations used the same physical laptop;
+the model and protocol differences are recorded explicitly.
 
 ## Pinned official artifacts
 
@@ -76,8 +81,9 @@ command, working directory, compatibility note, output, and return code.
    released SRT cues do not contain word timestamps, phrase bounds are
    interpolated linearly within the real cue bounds and disclosed in the run
    manifest.
-5. Submit the timestamped phrases to the dialogue-only VidXP core. The run uses
-   MiniLM and does not load WhisperX or decode video.
+5. Submit the timestamped phrases to the dialogue-only VidXP core. The legacy
+   full run used MiniLM; the current smoke used Qwen3 Embedding. Neither path
+   loads a transcription model or decodes video.
 6. Search each prompt only within its known video and retrieve every stored
    dialogue phrase. Project phrase scores onto one-second bins, assign uncovered
    seconds an explicit absence penalty, and rank duration-relative windows by
@@ -109,9 +115,10 @@ logic remain unchanged, and the shim is disclosed in `evaluator.log`.
 These choices were made only on official validation data. Test annotations were
 not used to select either setting.
 
-For DiDeMo, a declared 15-annotation validation subset over four downloadable
-official videos was indexed at frame stride `30`. Both alternatives used the
-same stored CLIP frame scores and the pinned official evaluator:
+For the legacy DiDeMo run, a declared 15-annotation validation subset over four
+downloadable official videos was indexed at frame stride `30`. Both
+alternatives used the same stored CLIP frame scores and the pinned official
+evaluator:
 
 | Within-chunk pooling | Rank@1 | Rank@5 | mIoU |
 |---|---:|---:|---:|
@@ -124,11 +131,11 @@ seconds inside the human-selected chunk, but mean pooling diluted it enough to
 rank chunk 3 first. This is why the change is an aggregation correction rather
 than a label-specific test patch.
 
-For HiREST, all 193 official validation moment pairs were indexed from released
-ASR. The released cues contain no word timestamps, so the repaired core first
-created the configured five-word phrases using linear interpolation inside each
-real cue. The same stored MiniLM scores were then evaluated over this declared
-duration-fraction grid:
+For the legacy HiREST run, all 193 official validation moment pairs were
+indexed from released ASR. The released cues contain no word timestamps, so the
+repaired core first created the configured five-word phrases using linear
+interpolation inside each real cue. The same stored MiniLM scores were then
+evaluated over this declared duration-fraction grid:
 
 | Window fraction | R@0.5 | R@0.7 |
 |---:|---:|---:|
@@ -182,6 +189,66 @@ size match the archive record. The manifest therefore classifies this as an
 official test result with a documented media substitution, not an untouched
 official-media run.
 
+## 2026-07-30 current-provider regression runs
+
+These checks used the current CPU providers after the product model swap. They
+were intentionally bounded after the integration path was proven; they are not
+full benchmark replacements.
+
+### Hardware and runtime
+
+| Item | Recorded current setup |
+|---|---|
+| Laptop | HP ENVY Laptop 16-h0xxx; the same physical hardware used for the legacy runs |
+| CPU | Intel Core i7-12700H; 14 cores, 20 logical processors |
+| Memory | 15.72 GiB |
+| GPU | NVIDIA GeForce RTX 3060 Laptop GPU, 4 GiB; present but unused |
+| Runtime | Windows 11; Python 3.14.0; PyTorch 2.13.0+cpu |
+| Libraries | Transformers 5.14.1; Sentence Transformers 5.6.1; ChromaDB 1.5.9 |
+
+HiREST used `Qwen/Qwen3-Embedding-0.6B` at immutable revision
+`97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`. DiDeMo used
+`google/siglip2-base-patch16-224` at
+`75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2`. HiREST consumed the released
+SRTs, so the configured faster-whisper model was not loaded or evaluated.
+
+### Real execution results
+
+| Run | Declared subset | Result | Runtime evidence |
+|---|---|---|---|
+| `hirest-qwen3-generation-smoke-20260730` | Two validation prompt/video pairs, including `Make Oatmeal Pancake Mix` / `5V3dI2zp1xA.mp4` | Official evaluator: R@0.5 `50.0`, R@0.7 `50.0`; classification `validation_smoke_test_not_paper_score` | Both media items remained searchable in the run generation; 64.923 recorded stage seconds; 2,593,096-byte store; empty failure log |
+| `didemo-siglip2-sample-20260730` | Official test annotation index `0`; one video; 1.0 sample/sec; max chunk pooling | Official evaluator: Rank@1 `0.0`, Rank@5 `1.0`, mIoU `0.0`; classification `smoke_test_not_paper_score` | 29.359 recorded stage seconds; 747,684-byte store; all 21 candidates serialized; empty failure log |
+
+Prediction SHA-256 values were
+`c2cee45eb7802e2c19adb4aec876a8fe2c203c59dde4bb20b41634b83d050afd`
+for HiREST and
+`4a38ff2c307833393f96fc0af48107a12581ecd9be734d8c0b906b2448a6fd33`
+for DiDeMo. The runs were made from commit
+`880da785825e95c46bfe050763be42afb02e844f` with the documented uncommitted
+benchmark repairs, whose implementation fingerprint was
+`afe0ee120f1c7b7daabe6d2c51e320a67a1368158fc5215acc34b7dd3e4e245e`.
+
+### Defects exposed and fixed
+
+The first current-provider attempt completed all 193 HiREST indexing
+checkpoints but failed before predictions because benchmark records lacked the
+generation identity now required by the search contract. Adding a shared
+generation then exposed that the multi-video runner deleted the entire
+generation before each video, leaving only the final video's records. A
+two-video real smoke also caught official dataset filenames being passed into
+the product's UUID4-only media ID fields.
+
+The final adapter behavior now:
+
+- derives stable UUID4-shaped internal media and generation IDs;
+- retains official dataset video names at the file/evaluator boundary;
+- removes only the current video's records when retrying inside a generation;
+- supports documented DiDeMo media substitutions through the public CLI; and
+- covers the generation/media-ID boundary in regression tests.
+
+The temporary 1,037-video corpus, model-run indexes, repository clones, and ASR
+copy were removed after recording the evidence above.
+
 ## Commands
 
 Install the optional adapters with the capabilities they evaluate:
@@ -197,12 +264,16 @@ vidxp benchmark didemo `
   --annotations <LocalizingMoments>/data/test_data.json `
   --evaluator <LocalizingMoments>/utils/eval.py `
   --media-directory <didemo-videos> `
+  --media-overrides <media-overrides.json> `
   --split test `
   --annotation-indices 0,1,2 `
   --run-id didemo-smoke
 ```
 
 Omit `--annotation-indices` for the full official test split.
+`--media-overrides` is a JSON object mapping an official annotation filename to
+a documented replacement path. Relative replacement paths resolve beside the
+JSON file, and the run manifest records that a substitution was used.
 
 For HiREST, a smoke pair file is a JSON list:
 
@@ -252,7 +323,7 @@ They also retain `ground_truth.subset.json`, the core completion marker, and
 per-video checkpoints. Validation runs add `metrics.json`; held-out HiREST test
 runs add `submission.summary.json`. Empty failure logs are created deliberately.
 
-## 2026-07-27 executable smoke results
+## 2026-07-27 legacy-provider executable smoke results
 
 | Adapter | Declared subset | Actual path exercised | Official evaluator result |
 |---|---|---|---|

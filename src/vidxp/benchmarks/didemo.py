@@ -11,6 +11,8 @@ from typing import Any, Literal, Mapping, Sequence
 
 from vidxp.benchmarks.common import (
     append_failure,
+    benchmark_generation_id,
+    benchmark_media_id,
     ensure_adapter_outputs,
     record_adapter_manifest,
     run_logged_evaluator,
@@ -258,7 +260,7 @@ def _video_sources(
 ) -> list[VideoSource]:
     return [
         VideoSource(
-            video_id=video_name,
+            video_id=benchmark_media_id("didemo", video_name),
             path=resolve_media(
                 media_directory,
                 video_name,
@@ -285,7 +287,10 @@ def _generate_predictions(
     }
     predictions = []
     for annotation in annotations:
-        video_id = str(annotation["video"])
+        video_id = benchmark_media_id(
+            "didemo",
+            str(annotation["video"]),
+        )
         result = search_scene(
             str(annotation["description"]),
             config=config,
@@ -392,6 +397,7 @@ def run_didemo(
         },
         device=device,
         output_root=output_root,
+        generation_id=benchmark_generation_id("didemo", split, run_id),
     )
     run_directory = config.run_directory
     registry = create_capability_registry(
@@ -476,6 +482,9 @@ def run_didemo(
                 "chunk_pooling": chunk_pooling,
                 "media_override_count": len(media_overrides or {}),
                 "media_override_video_ids": sorted(media_overrides or {}),
+                "media_id_mapping": (
+                    "deterministic_uuid4_from_benchmark_and_official_video_id"
+                ),
                 "result_classification": _result_classification(
                     split=split,
                     full_split=annotation_indices is None,

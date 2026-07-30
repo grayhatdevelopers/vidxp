@@ -49,6 +49,7 @@ config = IndexConfig(
     dataset="example",
     split="test",
     run_id="scene-1fps",
+    generation_id="123456781234423481234567890abcde",
     enabled_modalities=("scene",),
     capability_options={
         "scene": {"batch_size": 32, "sample_fps": 1.0},
@@ -58,18 +59,24 @@ config = IndexConfig(
 
 manifest = run_index(
     [
-        VideoSource(video_id="video-001", path="videos/001.mp4"),
-        VideoSource(video_id="video-002", path="videos/002.mp4"),
+        VideoSource(
+            video_id="223456781234423481234567890abcde",
+            path="videos/001.mp4",
+        ),
+        VideoSource(
+            video_id="323456781234423481234567890abcde",
+            path="videos/002.mp4",
+        ),
     ],
     config,
 )
 ```
 
-Released timestamped ASR can be indexed without WhisperX or video decoding:
+Released timestamped ASR can be indexed without running a transcription model or decoding video:
 
 ```python
 source = VideoSource(
-    video_id="video-001",
+    video_id="223456781234423481234567890abcde",
     transcript=(
         {"text": "first timestamped span", "start": 0.0, "end": 2.4},
         {"text": "second timestamped span", "start": 2.4, "end": 5.0},
@@ -80,20 +87,22 @@ config = IndexConfig(
     dataset="example",
     split="test",
     run_id="released-asr",
+    generation_id="423456781234423481234567890abcde",
     enabled_modalities=("dialogue",),
 )
 
 run_index([source], config)
 ```
 
-Scene-only runs do not load WhisperX or face recognition. Supplied-transcript
+Scene-only runs do not load a transcription or actor model. Supplied-transcript
 dialogue runs load the dialogue encoder but do not decode video. Actor-only runs
-do not load CLIP or WhisperX. CLIP inference, dialogue encoding, and Chroma writes
-use their configured batch sizes. Cancellation is cooperative and is checked
-between batches. The Streamlit process exposes cancellation for indexing workers
-it started and reports that the current batch must finish first. The shared file
-lock also lets the UI detect an active CLI or separate-process run, although one
-process cannot cancel a run owned by another process.
+do not load scene or transcription models. Scene inference, dialogue encoding,
+and Chroma writes use their configured batch sizes. Cancellation is cooperative
+and is checked between batches. The Streamlit process exposes cancellation for
+indexing workers it started and reports that the current batch must finish
+first. The shared file lock also lets the UI detect an active CLI or
+separate-process run, although one process cannot cancel a run owned by another
+process.
 
 Scene and actor indexing share one video probe and one sampled-frame stream when
 both are enabled. Each materialized frame is converted to RGB once and then fed
@@ -113,14 +122,17 @@ to the cadence. Manifests distinguish `source_frames_advanced`, unique
 
 ## Stored identity and metadata
 
-Every record has a deterministic escaped source ID:
+Generation-aware records have a deterministic escaped source ID:
 
 ```text
-run_id:video_id:modality:local_id
+generation_id:run_id:video_id:modality:local_id
 ```
 
 Each component is encoded before joining, so a colon or Unicode character inside
-an official ID cannot collide with the separator.
+source metadata cannot collide with the separator. Product media and generation
+IDs are lowercase UUID4 hex. Dataset adapters retain official video keys at
+their input/evaluator boundary and deterministically map them to valid internal
+IDs.
 
 - Dialogue records store text, start/end, phrase ID, video ID, modality, source
   ID, dataset, split, and run ID.
@@ -152,7 +164,7 @@ for hit in result.hits:
     )
 ```
 
-Passing `video_id="video-001"` restricts retrieval to one video; omitting it
+Passing a media UUID through `video_id` restricts retrieval to one video; omitting it
 searches the run corpus. Results are deterministically ordered by raw distance and
 then source ID. Scene vectors and, by default, dialogue vectors are normalized
 before the explicitly configured Chroma distance (`vector_distance`, default

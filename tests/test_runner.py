@@ -107,6 +107,17 @@ class FakeStorage:
     def delete_video(self, modality, video_id):
         self.deleted.append((modality, video_id))
 
+    def delete_records(
+        self,
+        modality,
+        *,
+        video_id,
+        filters=None,
+    ):
+        self.deleted.append(
+            (modality, video_id, dict(filters or {}))
+        )
+
     def size_bytes(self):
         return self.size
 
@@ -177,6 +188,66 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(
                 storage.deleted,
                 [("scene", "video-1"), ("scene", "video-2")],
+            )
+
+    def test_generation_cleanup_is_scoped_to_each_video(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first.mp4"
+            second = root / "second.mp4"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            config = IndexConfig(
+                dataset="sample",
+                split="test",
+                run_id="run-1",
+                enabled_modalities=("scene",),
+                output_root=root,
+                generation_id="generation-1",
+            )
+            storage = FakeStorage()
+
+            with (
+                patch("vidxp.core.runner.require_dependencies"),
+                patch(
+                    "vidxp.capabilities.visual.index_visuals",
+                    return_value=visual_result(
+                        {
+                            "scene_frames": 1,
+                            "decoded_frames": 1,
+                            "duration": 1.0,
+                            "fps": 1.0,
+                        }
+                    ),
+                ),
+                patch(
+                    "vidxp.core.manifest.execution_state",
+                    return_value=EXECUTION_STATE,
+                ),
+            ):
+                run_index(
+                    [
+                        VideoSource(video_id="video-1", path=first),
+                        VideoSource(video_id="video-2", path=second),
+                    ],
+                    config,
+                    storage=storage,
+                )
+
+            self.assertEqual(
+                storage.deleted,
+                [
+                    (
+                        "scene",
+                        "video-1",
+                        {"generation_id": "generation-1"},
+                    ),
+                    (
+                        "scene",
+                        "video-2",
+                        {"generation_id": "generation-1"},
+                    ),
+                ],
             )
 
     def test_scene_and_actor_are_dispatched_as_one_visual_pipeline(self):

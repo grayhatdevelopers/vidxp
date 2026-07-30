@@ -1,11 +1,16 @@
 import hashlib
 import json
 import unittest
+from uuid import UUID
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from vidxp.benchmarks.common import verify_artifact
+from vidxp.benchmarks.common import (
+    benchmark_generation_id,
+    benchmark_media_id,
+    verify_artifact,
+)
 from vidxp.benchmarks.didemo import (
     DIDEMO_MOMENTS,
     _result_classification as didemo_result_classification,
@@ -63,6 +68,34 @@ def timed_hit(start, end, score, rank=1):
 
 
 class BenchmarkCommonTests(unittest.TestCase):
+    def test_generation_identity_is_stable_and_run_scoped(self):
+        first = benchmark_generation_id("hirest", "validation", "run-1")
+
+        self.assertEqual(
+            first,
+            benchmark_generation_id("hirest", "validation", "run-1"),
+        )
+        self.assertEqual(len(first), 32)
+        self.assertEqual(UUID(hex=first).version, 4)
+        self.assertNotEqual(
+            first,
+            benchmark_generation_id("hirest", "validation", "run-2"),
+        )
+        self.assertNotEqual(
+            first,
+            benchmark_generation_id("didemo", "validation", "run-1"),
+        )
+
+    def test_official_video_key_maps_to_stable_media_id(self):
+        first = benchmark_media_id("hirest", "video.mp4")
+
+        self.assertEqual(first, benchmark_media_id("hirest", "video.mp4"))
+        self.assertEqual(UUID(hex=first).version, 4)
+        self.assertNotEqual(
+            first,
+            benchmark_media_id("didemo", "video.mp4"),
+        )
+
     def test_artifact_checksum_is_verified(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "artifact.json"
@@ -213,11 +246,11 @@ class HiRESTAdapterTests(unittest.TestCase):
                 patch(
                     "vidxp.benchmarks.hirest.run_index",
                     return_value={},
-                ),
+                ) as run_index,
                 patch(
                     "vidxp.benchmarks.hirest._generate_predictions",
                     return_value=predictions,
-                ),
+                ) as generate_predictions,
                 patch(
                     "vidxp.benchmarks.hirest._evaluate_predictions"
                 ) as evaluate_predictions,
@@ -241,6 +274,22 @@ class HiRESTAdapterTests(unittest.TestCase):
             )
             self.assertFalse((run_directory / "metrics.json").exists())
             evaluate_predictions.assert_not_called()
+            index_config = run_index.call_args.args[1]
+            prediction_config = (
+                generate_predictions.call_args.kwargs["config"]
+            )
+            self.assertEqual(
+                index_config.generation_id,
+                benchmark_generation_id(
+                    "hirest",
+                    "test",
+                    "test-submission",
+                ),
+            )
+            self.assertEqual(
+                prediction_config.generation_id,
+                index_config.generation_id,
+            )
 
     @patch("vidxp.benchmarks.hirest.run_logged_evaluator")
     def test_official_evaluator_is_forced_to_utf8(

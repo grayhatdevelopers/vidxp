@@ -57,9 +57,16 @@ assert cli.benchmark_app is not None
             annotations = root / "annotations.json"
             evaluator = root / "evaluator.py"
             media = root / "media"
+            replacement = root / "replacement.webm"
+            overrides = root / "media-overrides.json"
             annotations.write_text("[]", encoding="utf-8")
             evaluator.write_text("", encoding="utf-8")
             media.mkdir()
+            replacement.write_bytes(b"replacement")
+            overrides.write_text(
+                json.dumps({"broken.mp4": replacement.name}),
+                encoding="utf-8",
+            )
             with (
                 patch.object(
                     cli,
@@ -100,6 +107,8 @@ assert cli.benchmark_app is not None
                         str(media),
                         "--run-id",
                         "run-1",
+                        "--media-overrides",
+                        str(overrides),
                         "--scene-sample-fps",
                         "2",
                     ],
@@ -109,6 +118,10 @@ assert cli.benchmark_app is not None
         self.assertEqual(json.loads(response.stdout)["rank_at_1"], 0.5)
         self.assertEqual(run.call_args.kwargs["device"], "cuda")
         self.assertEqual(run.call_args.kwargs["scene_sample_fps"], 2.0)
+        self.assertEqual(
+            run.call_args.kwargs["media_overrides"],
+            {"broken.mp4": replacement.resolve()},
+        )
 
     def test_missing_adapter_dependencies_fail_with_exact_extra_hint(self):
         registry = Mock()
@@ -185,6 +198,20 @@ assert cli.benchmark_app is not None
 
         self.assertIn("valid readable JSON", str(raised.exception))
         self.assertEqual(raised.exception.param_hint, "--pairs")
+
+    def test_invalid_didemo_media_override_is_reported_as_input_error(self):
+        with TemporaryDirectory() as directory:
+            overrides = Path(directory) / "media-overrides.json"
+            overrides.write_text(
+                json.dumps({"broken.mp4": "missing.webm"}),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(typer.BadParameter) as raised:
+                benchmark_cli._media_override_file(overrides)
+
+        self.assertIn("was not found", str(raised.exception))
+        self.assertEqual(raised.exception.param_hint, "--media-overrides")
 
     def test_hirest_rejects_closed_temporal_fraction_before_dependencies(self):
         runner = CliRunner()

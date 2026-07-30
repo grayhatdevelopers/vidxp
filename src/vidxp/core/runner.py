@@ -302,7 +302,12 @@ def _process_video(
         )
         stage = "preparing_storage"
         if config.generation_id is not None:
-            storage.delete_generation(config.generation_id)
+            for modality in config.enabled_modalities:
+                storage.delete_records(
+                    modality,
+                    video_id=video_id,
+                    filters={"generation_id": config.generation_id},
+                )
         else:
             for modality in config.enabled_modalities:
                 storage.delete_video(modality, video_id)
