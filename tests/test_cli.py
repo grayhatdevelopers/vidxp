@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from vidxp import cli
@@ -456,7 +457,7 @@ class CliTests(unittest.TestCase):
         result = self.invoke(["search", "--help"])
 
         self.assertEqual(result.exit_code, 0, result.output)
-        normalized = " ".join(result.output.split())
+        normalized = " ".join(unstyle(result.output).split())
         self.assertIn("every media item in the active", normalized)
         self.assertIn("index snapshot.", normalized)
 
