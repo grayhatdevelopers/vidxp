@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    io::Write,
+    io::{self, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
@@ -16,7 +16,13 @@ use std::{
 use atomic_write_file::AtomicWriteFile;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager, RunEvent};
+use tauri::{
+    AppHandle, Manager, RunEvent, WindowEvent,
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::{
     ShellExt,
     process::{Command as ShellCommand, CommandChild, CommandEvent},
@@ -24,12 +30,22 @@ use tauri_plugin_shell::{
 use wait_timeout::ChildExt;
 
 const RUNTIME_MANIFEST_BYTES: &[u8] = include_bytes!("../../runtime-manifest.json");
+const RUNTIME_CONSTRAINTS_BYTES: &[u8] = include_bytes!("../../runtime-constraints.txt");
+const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
 
 #[derive(Clone, Deserialize, Serialize)]
 struct CapabilitySpec {
     extra: String,
     modality: String,
     label: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct SurfaceSpec {
+    extra: String,
+    label: String,
+    description: String,
+    default: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -46,9 +62,10 @@ struct RuntimeManifest {
     package_name: String,
     package_version: String,
     dependency_index: String,
+    dependency_constraints_sha256: String,
     python_version: String,
     uv_version: String,
-    always_install_extras: Vec<String>,
+    surfaces: BTreeMap<String, SurfaceSpec>,
     capabilities: BTreeMap<String, CapabilitySpec>,
     media_runtime: MediaRuntimeSpec,
 }
@@ -56,13 +73,17 @@ struct RuntimeManifest {
 #[derive(Deserialize)]
 struct InstallRequest {
     capabilities: Vec<String>,
+    surfaces: Vec<String>,
     prepare_models: bool,
+    model_directory: Option<String>,
 }
 
 #[derive(Serialize)]
 struct InstallResult {
     package_version: String,
     capabilities: Vec<String>,
+    surfaces: Vec<String>,
+    model_directory: String,
     prepared: bool,
 }
 
@@ -71,6 +92,8 @@ struct RuntimeStatus {
     ready: bool,
     package_version: String,
     capabilities: Vec<String>,
+    surfaces: Vec<String>,
+    model_directory: String,
     detail: String,
 }
 
@@ -104,9 +127,14 @@ struct ActiveRuntime {
     profile: String,
     package_version: String,
     capabilities: Vec<String>,
+    #[serde(default)]
+    surfaces: Vec<String>,
+    #[serde(default)]
+    model_directory: PathBuf,
 }
 
 struct DesktopPaths {
+    private_data: PathBuf,
     data: PathBuf,
     cache: PathBuf,
     repository: PathBuf,
@@ -116,8 +144,13 @@ struct DesktopPaths {
     active_runtime: PathBuf,
 }
 
+struct ManagedUi {
+    process: Child,
+    url: String,
+}
+
 struct DesktopState {
-    ui_process: Mutex<Option<Child>>,
+    ui_process: Mutex<Option<ManagedUi>>,
     operation_process: Mutex<Option<CommandChild>>,
     operation_worker_runtime: Mutex<Option<PathBuf>>,
     operation_active: AtomicBool,
@@ -147,8 +180,16 @@ impl Drop for OperationGuard<'_> {
 }
 
 fn manifest() -> Result<RuntimeManifest, String> {
-    serde_json::from_slice(RUNTIME_MANIFEST_BYTES)
-        .map_err(|error| format!("The embedded runtime manifest is invalid: {error}"))
+    let manifest: RuntimeManifest = serde_json::from_slice(RUNTIME_MANIFEST_BYTES)
+        .map_err(|error| format!("The embedded runtime manifest is invalid: {error}"))?;
+    let actual = hex::encode(Sha256::digest(RUNTIME_CONSTRAINTS_BYTES));
+    if actual != manifest.dependency_constraints_sha256 {
+        return Err(format!(
+            "The embedded runtime constraints have digest {actual}; expected {}.",
+            manifest.dependency_constraints_sha256
+        ));
+    }
+    Ok(manifest)
 }
 
 fn manifest_digest() -> String {
@@ -156,23 +197,97 @@ fn manifest_digest() -> String {
 }
 
 fn desktop_paths(app: &AppHandle) -> Result<DesktopPaths, String> {
-    let data = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|error| format!("Could not resolve the application data directory: {error}"))?;
+    let private_data = app.path().app_local_data_dir().map_err(|error| {
+        format!("Could not resolve the private application data directory: {error}")
+    })?;
+    let local_data = app.path().local_data_dir().map_err(|error| {
+        format!("Could not resolve the operating-system data directory: {error}")
+    })?;
     let cache = app
         .path()
         .app_cache_dir()
         .map_err(|error| format!("Could not resolve the application cache directory: {error}"))?;
-    Ok(DesktopPaths {
+    Ok(desktop_paths_from_roots(&private_data, &cache, &local_data))
+}
+
+fn desktop_paths_from_roots(private_data: &Path, cache: &Path, local_data: &Path) -> DesktopPaths {
+    let data = local_data.join(PRODUCT_DATA_DIRECTORY_NAME);
+    DesktopPaths {
         repository: data.join("repositories").join("default"),
-        runtimes: data.join("runtimes"),
-        python: data.join("python"),
-        active_runtime: data.join("active-runtime.json"),
+        runtimes: private_data.join("runtimes"),
+        python: private_data.join("python"),
+        active_runtime: private_data.join("active-runtime.json"),
         models: data.join("models"),
+        private_data: private_data.to_path_buf(),
         data,
-        cache,
-    })
+        cache: cache.to_path_buf(),
+    }
+}
+
+fn move_legacy_shared_directory(source: &Path, destination: &Path) -> Result<bool, String> {
+    if !source.exists() {
+        return Ok(false);
+    }
+    if destination.exists() {
+        log::warn!(
+            "Leaving legacy VidXP data at {} because {} already exists",
+            source.display(),
+            destination.display()
+        );
+        return Ok(false);
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory", destination.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create {}: {error}", parent.display()))?;
+    fs::rename(source, destination).map_err(|error| {
+        format!(
+            "Could not move legacy VidXP data from {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    Ok(true)
+}
+
+fn migrate_legacy_shared_data(app: &AppHandle) -> Result<(), String> {
+    let paths = desktop_paths(app)?;
+    let legacy_models = paths.private_data.join("models");
+    let legacy_repositories = paths.private_data.join("repositories");
+    let shared_repositories = paths
+        .repository
+        .parent()
+        .expect("the default repository always has a parent");
+    let moved_models = move_legacy_shared_directory(&legacy_models, &paths.models)?;
+    move_legacy_shared_directory(&legacy_repositories, shared_repositories)?;
+
+    if moved_models && paths.active_runtime.exists() {
+        let contents = fs::read(&paths.active_runtime).map_err(|error| {
+            format!("Could not read the active runtime during migration: {error}")
+        })?;
+        let mut active: ActiveRuntime = serde_json::from_slice(&contents)
+            .map_err(|error| format!("The active runtime pointer is invalid: {error}"))?;
+        if active.model_directory == legacy_models {
+            active.model_directory = paths.models.clone();
+            write_active_runtime(&paths, &active)?;
+        }
+    }
+    Ok(())
+}
+
+fn model_directory(paths: &DesktopPaths, requested: Option<&str>) -> Result<PathBuf, String> {
+    let Some(requested) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(paths.models.clone());
+    };
+    let directory = PathBuf::from(requested);
+    if !directory.is_absolute() {
+        return Err("The model directory must be an absolute path.".into());
+    }
+    if directory.is_file() {
+        return Err("The selected model location is a file, not a directory.".into());
+    }
+    Ok(directory)
 }
 
 fn selected_capabilities(
@@ -192,11 +307,30 @@ fn selected_capabilities(
     Ok(selected.into_iter().collect())
 }
 
-fn package_specification(manifest: &RuntimeManifest, capabilities: &[String]) -> String {
-    let extras: BTreeSet<_> = manifest
-        .always_install_extras
+fn selected_surfaces(
+    manifest: &RuntimeManifest,
+    requested: &[String],
+) -> Result<Vec<String>, String> {
+    let selected: BTreeSet<_> = requested.iter().cloned().collect();
+    if let Some(unknown) = selected
         .iter()
-        .cloned()
+        .find(|name| !manifest.surfaces.contains_key(*name))
+    {
+        return Err(format!("Unknown desktop surface: {unknown}"));
+    }
+    Ok(selected.into_iter().collect())
+}
+
+fn package_specification(
+    manifest: &RuntimeManifest,
+    capabilities: &[String],
+    surfaces: &[String],
+) -> String {
+    let extras: BTreeSet<_> = manifest
+        .surfaces
+        .iter()
+        .filter(|(name, _)| surfaces.contains(name))
+        .map(|(_, surface)| surface.extra.clone())
         .chain(
             capabilities
                 .iter()
@@ -242,7 +376,9 @@ fn package_acquisition_arguments(manifest: &RuntimeManifest, python: &Path) -> V
 fn dependency_installation_arguments(
     manifest: &RuntimeManifest,
     capabilities: &[String],
+    surfaces: &[String],
     python: &Path,
+    constraints: &Path,
     cpu_torch: bool,
 ) -> Vec<String> {
     let mut arguments = vec![
@@ -255,11 +391,13 @@ fn dependency_installation_arguments(
         manifest.dependency_index.clone(),
         "--index-strategy".into(),
         "first-index".into(),
+        "--constraints".into(),
+        constraints.to_string_lossy().into_owned(),
     ];
     if cpu_torch {
         arguments.extend(["--torch-backend".into(), "cpu".into()]);
     }
-    arguments.push(package_specification(manifest, capabilities));
+    arguments.push(package_specification(manifest, capabilities, surfaces));
     arguments
 }
 
@@ -542,12 +680,25 @@ fn clean_environment(paths: &DesktopPaths) -> Vec<(String, String)> {
 
 fn configured_command(executable_path: &Path, paths: &DesktopPaths) -> Command {
     let mut command = Command::new(executable_path);
+    hide_child_console(&mut command);
     command.env_clear();
     command.envs(clean_environment(paths));
     command
 }
 
+#[cfg(windows)]
+fn hide_child_console(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_child_console(_command: &mut Command) {}
+
 fn checked_output(mut command: Command, operation: &str) -> Result<Output, String> {
+    hide_child_console(&mut command);
     let output = command
         .output()
         .map_err(|error| format!("{operation} could not start: {error}"))?;
@@ -562,10 +713,10 @@ fn checked_output(mut command: Command, operation: &str) -> Result<Output, Strin
 
 fn active_runtime(paths: &DesktopPaths) -> Result<ActiveRuntime, String> {
     let contents = fs::read(&paths.active_runtime)
-        .map_err(|_| "VidXP has not been installed by this desktop app.".to_string())?;
+        .map_err(|_| "Local video processing has not been configured yet.".to_string())?;
     let active: ActiveRuntime = serde_json::from_slice(&contents)
         .map_err(|error| format!("The active runtime pointer is invalid: {error}"))?;
-    if active.schema_version != 1 || active.manifest_sha256 != manifest_digest() {
+    if active.schema_version != 2 || active.manifest_sha256 != manifest_digest() {
         return Err("The desktop runtime needs to be installed for this app version.".into());
     }
     if !active
@@ -721,6 +872,22 @@ fn media_runtime_status() -> MediaRuntimeStatus {
 }
 
 #[tauri::command]
+fn choose_model_directory(app: AppHandle) -> Result<Option<String>, String> {
+    let selection = app
+        .dialog()
+        .file()
+        .set_title("Choose where VidXP stores model files")
+        .blocking_pick_folder();
+    selection
+        .map(|path| {
+            path.into_path()
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|error| format!("The selected model directory is invalid: {error}"))
+        })
+        .transpose()
+}
+
+#[tauri::command]
 async fn install_media_runtime(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
@@ -741,10 +908,33 @@ async fn install_media_runtime(
     };
     let plan = system_install_plan().ok_or("No supported system package manager was found.")?;
     if !plan.automatic {
-        return Err(format!(
-            "Run this command in a system terminal, then retry: {}",
+        let instruction = format!(
+            "VidXP needs FFmpeg and ffprobe.\n\nRun this command in a terminal, then return to VidXP:\n\n{}",
             display_command(&plan.command)
-        ));
+        );
+        app.dialog()
+            .message(&instruction)
+            .title("FFmpeg is required")
+            .kind(MessageDialogKind::Warning)
+            .blocking_show();
+        return Err(instruction);
+    }
+    let approved = app
+        .dialog()
+        .message(format!(
+            "VidXP needs FFmpeg and ffprobe for video processing.\n\nInstall them with {}?\n\n{}",
+            plan.manager,
+            display_command(&plan.command)
+        ))
+        .title("Install FFmpeg")
+        .kind(MessageDialogKind::Info)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Install".into(),
+            "Not now".into(),
+        ))
+        .blocking_show();
+    if !approved {
+        return Err("FFmpeg setup was deferred.".into());
     }
     let command = app
         .shell()
@@ -769,12 +959,15 @@ async fn install_media_runtime(
 #[tauri::command]
 fn runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
     let manifest = manifest()?;
-    let paths = desktop_paths(&app)?;
+    let mut paths = desktop_paths(&app)?;
+    let default_model_directory = paths.models.to_string_lossy().into_owned();
     if let Err(detail) = verified_media_runtime() {
         return Ok(RuntimeStatus {
             ready: false,
             package_version: manifest.package_version,
             capabilities: Vec::new(),
+            surfaces: Vec::new(),
+            model_directory: default_model_directory,
             detail,
         });
     }
@@ -785,10 +978,13 @@ fn runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
                 ready: false,
                 package_version: manifest.package_version,
                 capabilities: Vec::new(),
+                surfaces: Vec::new(),
+                model_directory: default_model_directory,
                 detail,
             });
         }
     };
+    paths.models = active.model_directory.clone();
     let runtime = runtime_directory(&paths, &active);
     let version = run_vidxp(
         &runtime,
@@ -811,9 +1007,11 @@ fn runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
         ready: version.is_ok(),
         package_version: active.package_version,
         capabilities: active.capabilities,
+        surfaces: active.surfaces,
+        model_directory: active.model_directory.to_string_lossy().into_owned(),
         detail: version
             .err()
-            .unwrap_or_else(|| "The desktop runtime is ready.".into()),
+            .unwrap_or_else(|| "Local video processing is ready.".into()),
     })
 }
 
@@ -835,8 +1033,10 @@ async fn install_runtime(
     };
     let manifest = manifest()?;
     let capabilities = selected_capabilities(&manifest, &request.capabilities)?;
+    let surfaces = selected_surfaces(&manifest, &request.surfaces)?;
     let media_runtime = verified_media_runtime()?;
-    let paths = desktop_paths(&app)?;
+    let mut paths = desktop_paths(&app)?;
+    paths.models = model_directory(&paths, request.model_directory.as_deref())?;
     for directory in [
         &paths.data,
         &paths.cache,
@@ -850,11 +1050,12 @@ async fn install_runtime(
     }
 
     let profile_seed = format!(
-        "{}:{}:{}:{}",
+        "{}:{}:{}:{}:{}",
         manifest_digest(),
         std::env::consts::OS,
         std::env::consts::ARCH,
-        capabilities.join(",")
+        capabilities.join(","),
+        surfaces.join(",")
     );
     let profile_hash = hex::encode(Sha256::digest(profile_seed.as_bytes()));
     let timestamp = SystemTime::now()
@@ -865,6 +1066,9 @@ async fn install_runtime(
     let staging = paths.runtimes.join(&staging_name);
     fs::create_dir(&staging)
         .map_err(|error| format!("Could not create the staged runtime: {error}"))?;
+    let constraints = staging.join("runtime-constraints.txt");
+    fs::write(&constraints, RUNTIME_CONSTRAINTS_BYTES)
+        .map_err(|error| format!("Could not write runtime constraints: {error}"))?;
 
     let install_result = async {
         uv_output(
@@ -899,7 +1103,9 @@ async fn install_runtime(
             dependency_installation_arguments(
                 &manifest,
                 &capabilities,
+                &surfaces,
                 &executable(&staging, "python"),
+                &constraints,
                 !cfg!(target_os = "macos"),
             ),
             "VidXP package installation",
@@ -978,37 +1184,48 @@ async fn install_runtime(
     fs::rename(&staging, &runtime)
         .map_err(|error| format!("Could not finalize the validated runtime: {error}"))?;
     let active = ActiveRuntime {
-        schema_version: 1,
+        schema_version: 2,
         manifest_sha256: manifest_digest(),
         profile,
         package_version: manifest.package_version.clone(),
         capabilities: capabilities.clone(),
+        surfaces: surfaces.clone(),
+        model_directory: paths.models.clone(),
     };
     write_active_runtime(&paths, &active)?;
 
     Ok(InstallResult {
         package_version: manifest.package_version,
         capabilities,
+        surfaces,
+        model_directory: paths.models.to_string_lossy().into_owned(),
         prepared: request.prepare_models,
     })
 }
 
-#[tauri::command]
-fn launch_ui(app: AppHandle, state: tauri::State<'_, DesktopState>) -> Result<String, String> {
-    let paths = desktop_paths(&app)?;
+fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
+    let mut paths = desktop_paths(&app)?;
     let active = active_runtime(&paths)?;
+    if !active.surfaces.iter().any(|surface| surface == "browser") {
+        return Err(
+            "The browser interface is not installed. Reconfigure VidXP and select Browser interface."
+                .into(),
+        );
+    }
+    paths.models = active.model_directory.clone();
     let runtime = runtime_directory(&paths, &active);
     let mut active_process = state
         .ui_process
         .lock()
         .map_err(|_| "The desktop process supervisor is unavailable.".to_string())?;
-    if let Some(process) = active_process.as_mut() {
-        if process
+    if let Some(ui) = active_process.as_mut() {
+        if ui
+            .process
             .try_wait()
             .map_err(|error| format!("Could not inspect the interface process: {error}"))?
             .is_none()
         {
-            return Err("The VidXP interface is already running.".into());
+            return Ok(ui.url.clone());
         }
         *active_process = None;
     }
@@ -1045,8 +1262,12 @@ fn launch_ui(app: AppHandle, state: tauri::State<'_, DesktopState>) -> Result<St
             ));
         }
         if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
-            *active_process = Some(process);
-            return Ok(format!("http://127.0.0.1:{port}"));
+            let url = format!("http://127.0.0.1:{port}");
+            *active_process = Some(ManagedUi {
+                process,
+                url: url.clone(),
+            });
+            return Ok(url);
         }
         thread::sleep(Duration::from_millis(100));
     }
@@ -1055,7 +1276,133 @@ fn launch_ui(app: AppHandle, state: tauri::State<'_, DesktopState>) -> Result<St
     Err("The VidXP interface did not become ready in 30 seconds.".into())
 }
 
+fn hide_main_window(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("The VidXP desktop window is unavailable.")?;
+    window
+        .hide()
+        .map_err(|error| format!("Could not hide VidXP to the system tray: {error}"))
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn configured_runtime(app: &AppHandle) -> bool {
+    desktop_paths(app)
+        .and_then(|paths| active_runtime(&paths))
+        .is_ok()
+}
+
+fn browser_surface_configured(app: &AppHandle) -> bool {
+    desktop_paths(app)
+        .and_then(|paths| active_runtime(&paths))
+        .is_ok_and(|active| active.surfaces.iter().any(|surface| surface == "browser"))
+}
+
+fn open_ui_in_browser(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
+    let url = start_ui(app, state)?;
+    app.opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|error| format!("Could not open VidXP in the default browser: {error}"))?;
+    hide_main_window(app)
+}
+
+fn open_or_show(app: &AppHandle) {
+    if !browser_surface_configured(app) {
+        show_main_window(app);
+        return;
+    }
+    let app = app.clone();
+    thread::spawn(move || {
+        let state = app.state::<DesktopState>();
+        if let Err(error) = open_ui_in_browser(&app, &state) {
+            show_main_window(&app);
+            app.dialog()
+                .message(error)
+                .title("VidXP could not open")
+                .kind(MessageDialogKind::Error)
+                .blocking_show();
+        }
+    });
+}
+
+fn begin_shutdown(app: &AppHandle) {
+    if app
+        .state::<DesktopState>()
+        .shutdown_started
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+    log::info!("VidXP supervised shutdown requested");
+    shutdown(app);
+    log::info!("VidXP supervised shutdown completed");
+    std::process::exit(0);
+}
+
+#[tauri::command]
+fn launch_ui(app: AppHandle, state: tauri::State<'_, DesktopState>) -> Result<(), String> {
+    open_ui_in_browser(&app, &state)
+}
+
+#[tauri::command]
+fn hide_to_tray(app: AppHandle) -> Result<(), String> {
+    if !configured_runtime(&app) {
+        return Err("Local video processing has not been configured yet.".into());
+    }
+    hide_main_window(&app)
+}
+
+fn create_tray(app: &tauri::App) -> tauri::Result<()> {
+    let open = MenuItem::with_id(app, "open", "Open VidXP", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit VidXP", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let mut tray = TrayIconBuilder::with_id("vidxp")
+        .tooltip("VidXP")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "open" => open_or_show(app),
+            "quit" => begin_shutdown(app),
+            _ => {}
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
+fn stop_worker(runtime: &Path, paths: &DesktopPaths) {
+    let mut command = configured_command(&executable(runtime, "vidxp"), paths);
+    command
+        .arg("--index-dir")
+        .arg(&paths.repository)
+        .args(["jobs", "stop-worker"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let Ok(mut process) = command.spawn() else {
+        return;
+    };
+    match process.wait_timeout(Duration::from_secs(5)) {
+        Ok(Some(_)) => {}
+        _ => {
+            let _ = process.kill();
+            let _ = process.wait_timeout(Duration::from_secs(1));
+        }
+    }
+}
+
 fn shutdown(app: &AppHandle) {
+    log::info!("Stopping active VidXP processes");
     let state = app.state::<DesktopState>();
     if let Ok(mut active_operation) = state.operation_process.lock()
         && let Some(process) = active_operation.take()
@@ -1063,79 +1410,97 @@ fn shutdown(app: &AppHandle) {
         let _ = process.kill();
     }
     if let Ok(mut active_process) = state.ui_process.lock()
-        && let Some(mut process) = active_process.take()
+        && let Some(mut ui) = active_process.take()
     {
-        let _ = process.kill();
-        match process.wait_timeout(Duration::from_secs(5)) {
+        let _ = ui.process.kill();
+        match ui.process.wait_timeout(Duration::from_secs(5)) {
             Ok(Some(_)) => {}
             _ => {
-                let _ = process.kill();
-                let _ = process.wait_timeout(Duration::from_secs(1));
+                let _ = ui.process.kill();
+                let _ = ui.process.wait_timeout(Duration::from_secs(1));
             }
         }
     }
-    let Ok(paths) = desktop_paths(app) else {
+    let Ok(mut paths) = desktop_paths(app) else {
+        log::warn!("Could not resolve desktop paths during shutdown");
         return;
     };
     if let Ok(mut operation_worker) = state.operation_worker_runtime.lock()
         && let Some(runtime) = operation_worker.take()
     {
-        let _ = run_vidxp(
-            &runtime,
-            &paths,
-            &["jobs".into(), "stop-worker".into()],
-            "VidXP preparation worker shutdown",
-        );
+        stop_worker(&runtime, &paths);
     }
     let Ok(active) = active_runtime(&paths) else {
+        log::info!("No active VidXP runtime needs worker shutdown");
         return;
     };
+    paths.models = active.model_directory.clone();
     let runtime = runtime_directory(&paths, &active);
-    let _ = run_vidxp(
-        &runtime,
-        &paths,
-        &["jobs".into(), "stop-worker".into()],
-        "VidXP worker shutdown",
-    );
+    stop_worker(&runtime, &paths);
+    log::info!("Active VidXP worker shutdown finished");
 }
 
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            open_or_show(app);
         }))
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .manage(DesktopState::default())
+        .setup(|app| {
+            migrate_legacy_shared_data(app.handle()).map_err(io::Error::other)?;
+            create_tray(app)?;
+            if !configured_runtime(app.handle()) {
+                show_main_window(app.handle());
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             runtime_manifest,
             media_runtime_status,
+            choose_model_directory,
             install_media_runtime,
             runtime_status,
             install_runtime,
-            launch_ui
+            launch_ui,
+            hide_to_tray
         ]);
     let app = builder
         .build(tauri::generate_context!())
         .expect("could not initialize VidXP desktop");
-    app.run(|app_handle, event| {
-        if let RunEvent::ExitRequested { api, .. } = event
-            && app_handle
+    app.run(|app_handle, event| match event {
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "main" => {
+            if app_handle
                 .state::<DesktopState>()
                 .shutdown_started
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
+                .load(Ordering::Acquire)
+            {
+                return;
+            }
+            api.prevent_close();
+            if configured_runtime(app_handle) {
+                let _ = hide_main_window(app_handle);
+            } else {
+                begin_shutdown(app_handle);
+            }
+        }
+        RunEvent::ExitRequested { api, .. }
+            if !app_handle
+                .state::<DesktopState>()
+                .shutdown_started
+                .load(Ordering::Acquire) =>
         {
             api.prevent_exit();
-            let cleanup_handle = app_handle.clone();
-            std::thread::spawn(move || {
-                shutdown(&cleanup_handle);
-                cleanup_handle.exit(0);
-            });
+            begin_shutdown(app_handle);
         }
+        _ => {}
     });
 }
 
@@ -1143,11 +1508,36 @@ pub fn run() {
 mod tests {
     use super::{
         base_package_specification, capability_command_arguments,
-        dependency_installation_arguments, display_command, manifest,
+        dependency_installation_arguments, desktop_paths_from_roots, display_command, manifest,
         package_acquisition_arguments, package_index, package_specification,
-        required_encoder_missing, selected_capabilities,
+        required_encoder_missing, selected_capabilities, selected_surfaces,
     };
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn desktop_runtime_is_private_while_product_data_is_shared() {
+        let paths =
+            desktop_paths_from_roots(Path::new("private"), Path::new("cache"), Path::new("local"));
+
+        assert_eq!(paths.data, PathBuf::from("local").join("VidXP"));
+        assert_eq!(
+            paths.repository,
+            PathBuf::from("local")
+                .join("VidXP")
+                .join("repositories")
+                .join("default")
+        );
+        assert_eq!(
+            paths.models,
+            PathBuf::from("local").join("VidXP").join("models")
+        );
+        assert_eq!(paths.runtimes, PathBuf::from("private").join("runtimes"));
+        assert_eq!(paths.python, PathBuf::from("private").join("python"));
+        assert_eq!(
+            paths.active_runtime,
+            PathBuf::from("private").join("active-runtime.json")
+        );
+    }
 
     #[test]
     fn capability_selection_is_sorted_and_rejects_unknown_values() {
@@ -1168,18 +1558,39 @@ mod tests {
 
         assert_eq!(base_package_specification(&manifest), "vidxp==0.2.1-b.1");
         assert_eq!(
-            package_specification(&manifest, &["scene".into(), "dialogue".into()]),
+            package_specification(
+                &manifest,
+                &["scene".into(), "dialogue".into()],
+                &["browser".into()],
+            ),
             "vidxp[dialogue,frontend,scene]==0.2.1-b.1"
         );
+        assert_eq!(
+            package_specification(&manifest, &["scene".into()], &[]),
+            "vidxp[scene]==0.2.1-b.1"
+        );
+        assert_eq!(
+            selected_surfaces(&manifest, &["browser".into(), "browser".into()])
+                .expect("surface selection"),
+            ["browser"]
+        );
+        assert!(selected_surfaces(&manifest, &["unknown".into()]).is_err());
     }
 
     #[test]
     fn prerelease_package_and_dependencies_use_separate_indexes() {
         let manifest = manifest().expect("manifest");
         let python = Path::new("managed-python");
+        let constraints = Path::new("runtime-constraints.txt");
         let acquisition = package_acquisition_arguments(&manifest, python);
-        let dependencies =
-            dependency_installation_arguments(&manifest, &["scene".into()], python, true);
+        let dependencies = dependency_installation_arguments(
+            &manifest,
+            &["scene".into()],
+            &[],
+            python,
+            constraints,
+            true,
+        );
 
         assert_eq!(
             package_index(&manifest.package_version),
@@ -1200,6 +1611,11 @@ mod tests {
                 .any(|item| item == &manifest.dependency_index)
         );
         assert!(dependencies.iter().any(|item| item == "--torch-backend"));
+        assert!(
+            dependencies
+                .windows(2)
+                .any(|items| items == ["--constraints", "runtime-constraints.txt"])
+        );
     }
 
     #[test]

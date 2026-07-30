@@ -998,16 +998,18 @@ displays model preparation progress, and detaches from durable work or requests
 cooperative cancellation during shutdown. Closing the UI never waits on an
 uncancellable model thread inside the UI process.
 
-The Phase 11 adapter is a small Tauri v2 shell. Its bundled setup page selects
-capability extras, while the actual application is the exact published VidXP
-package installed into a versioned uv-managed environment. The existing Streamlit
-adapter remains the local human interface on a random loopback port; remote
-loopback content receives no Tauri IPC access. Runtime activation is atomic and a
-failed installation retains the prior environment. Tauri owns the Streamlit
-process and asks the repository-scoped worker to drain and shut down on exit.
+The Phase 11 adapter is a small Tauri v2 shell. Its first-run configuration
+selects capability extras, optional interfaces, model preparation, and model
+storage, while the processing application is the exact published VidXP package
+installed into a versioned uv-managed environment. When selected, the Streamlit
+adapter is the local human interface on a random loopback port; remote loopback
+content receives no Tauri IPC access. Runtime activation is atomic and a failed
+configuration retains the prior environment. Tauri owns the Streamlit process
+and asks the repository-scoped worker to drain and shut down on exit.
 
-The first desktop release is an online bootstrap with no tray or updater. It
-targets Windows x86-64 NSIS, Apple Silicon DMG, and Linux x86-64 AppImage.
+The first desktop release is an online bootstrap with a native tray supervisor
+and no updater. It targets Windows x86-64 NSIS, Apple Silicon DMG, and Linux
+x86-64 AppImage.
 Target-specific uv binaries are release inputs verified against the pinned
 upstream checksum. FFmpeg/ffprobe remain validated system dependencies until
 target build provenance, codec selection, and redistribution licenses are

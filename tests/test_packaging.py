@@ -266,6 +266,11 @@ class PackagingTests(unittest.TestCase):
                 / "tauri.conf.json"
             ).read_text(encoding="utf-8")
         )
+        cargo = tomllib.loads(
+            (
+                ROOT / "desktop" / "src-tauri" / "Cargo.toml"
+            ).read_text(encoding="utf-8")
+        )
 
         self.assertEqual(manifest["package_name"], project["project"]["name"])
         self.assertEqual(
@@ -274,6 +279,22 @@ class PackagingTests(unittest.TestCase):
         )
         self.assertEqual(package["version"], manifest["desktop_version"])
         self.assertEqual(tauri["version"], manifest["desktop_version"])
+        self.assertFalse(tauri["app"]["windows"][0]["visible"])
+        self.assertEqual(
+            tauri["bundle"]["windows"]["nsis"]["installerHooks"],
+            "nsis-hooks.nsh",
+        )
+        nsis_hooks = (
+            ROOT / "desktop" / "src-tauri" / "nsis-hooks.nsh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            r"$LOCALAPPDATA\Programs\${PRODUCTNAME}",
+            nsis_hooks,
+        )
+        self.assertIn(
+            "tray-icon",
+            cargo["dependencies"]["tauri"]["features"],
+        )
         self.assertEqual(
             Version(manifest["desktop_version"]),
             Version(manifest["package_version"]),
@@ -294,15 +315,28 @@ class PackagingTests(unittest.TestCase):
         )
         for target in sidecars["targets"].values():
             self.assertRegex(target["sha256"], r"^[a-f0-9]{64}$")
-        self.assertEqual(manifest["always_install_extras"], ["frontend"])
         dynamic_extras = project["tool"]["setuptools"]["dynamic"][
             "optional-dependencies"
         ]
+        self.assertEqual(set(manifest["surfaces"]), {"browser"})
+        self.assertTrue(manifest["surfaces"]["browser"]["default"])
+        for surface in manifest["surfaces"].values():
+            self.assertIn(surface["extra"], dynamic_extras)
         for capability in manifest["capabilities"].values():
             self.assertIn(capability["extra"], dynamic_extras)
         self.assertEqual(
             manifest["media_runtime"]["strategy"],
             "system",
+        )
+
+    def test_windows_release_binary_uses_the_gui_subsystem(self):
+        main = (
+            ROOT / "desktop" / "src-tauri" / "src" / "main.rs"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]',
+            main,
         )
 
 

@@ -5,5 +5,5 @@ Expose the shared VidXP application through each supported product surface:
 - provide a Python indexing and retrieval layer for applications
 - provide a versioned HTTP API with OpenAPI, media transfer, readiness, durable jobs, and artifact delivery
 - provide local stdio and remote Streamable HTTP MCP with import-ready client configuration, a real protocol self-check, media/index discovery, job polling/retry, and clip download links
-- provide a Tauri desktop setup preview that preflights FFmpeg before Python/package downloads, owns its runtime, supervises the same local UI and worker, and leaves FFmpeg bundling behind an explicit provenance/licensing gate
+- provide a Tauri desktop application that preflights FFmpeg with native consent, provisions selected capabilities and optional browser dependencies, supports a custom model location and deferred downloads, opens configured browser profiles directly, owns its runtime from a native system tray with full shutdown on Quit, builds as a Windows GUI executable, and hides supervised child consoles
 - provide an all-in-one local container using the same repository and worker behavior

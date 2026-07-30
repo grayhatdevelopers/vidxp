@@ -12,7 +12,7 @@ shape needs.
 | Native browser UI | `vidxp[local-worker,frontend]` | CLI, local worker, Streamlit |
 | Local agent integration | `vidxp[local-worker,mcp]` | Local worker and stdio MCP |
 | Local application server | `vidxp[local-worker,server]` | Loopback HTTP API, remote MCP, local worker |
-| Desktop preview | Build the Tauri app | Guided app-owned Python/worker/UI runtime |
+| Desktop app | Install the native package | Guided app-owned Python and worker runtime with an optional browser interface |
 | Public/self-hosted service | `compose.coolify.yaml` | API/MCP control plane, CPU worker, PostgreSQL, Chroma, tusd |
 | Embed one capability | `dialogue`, `scene`, or `actor` extra | Python indexing/retrieval code |
 
@@ -342,22 +342,32 @@ Follow [Coolify deployment](docs/deployment/coolify.md) for:
 - persistent volumes and backups; and
 - the optional, explicitly prepared Ollama profile.
 
-## Desktop preview
+## Desktop application
 
-The Tauri desktop shell performs setup in this order:
+The operating-system package installs the VidXP application itself. On first
+launch, the application configures local processing in this order:
 
 ```text
 FFmpeg preflight
 → explicit package-manager consent when missing
-→ app-owned Python and VidXP installation
+→ app-owned Python and VidXP runtime provisioning
 → optional model preparation
 → full doctor
 → atomic runtime activation
 ```
 
-The NSIS/DMG/AppImage packages do not install FFmpeg themselves. Desktop
-packaging is currently a source-built preview; signed installer publication is
-still under release validation. Build instructions are in
+Capability code is selected independently from the optional browser interface.
+Model downloads can be deferred, and the model cache can use a directory chosen
+through the operating system's folder picker. Later launches open the browser
+interface directly when it was selected. After configuration the Tauri
+supervisor stays in the system tray instead of keeping a window open. Closing
+the window hides it; **Quit VidXP** from the tray performs the complete
+interface and worker shutdown.
+
+The NSIS/DMG/AppImage packages do not install FFmpeg themselves. The application
+uses a native confirmation dialog before running a supported package manager.
+Windows SmartScreen and macOS Gatekeeper may require explicit confirmation
+until signing is added. Build instructions are in
 [Desktop application](docs/desktop.md).
 
 ## Install from source
@@ -399,6 +409,12 @@ VidXP/
     default/
   models/
 ```
+
+The desktop application uses this same root for repositories and its default
+model cache. Its managed Python environments and active-runtime pointer remain
+in the identifier-scoped private application-data directory. On Windows,
+per-user program files are installed separately under
+`%LOCALAPPDATA%\Programs\VidXP`.
 
 Use an alternate root for one CLI invocation:
 

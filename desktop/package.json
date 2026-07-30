@@ -10,7 +10,7 @@
     "predesktop:dev": "npm run sync:branding",
     "desktop:dev": "tauri dev",
     "predesktop:build": "npm run icons",
-    "desktop:build": "tauri build",
+    "desktop:build": "node scripts/build-desktop.mjs",
     "sidecar:windows": "powershell -ExecutionPolicy Bypass -File scripts/fetch-uv.ps1",
     "sidecar:unix": "bash scripts/fetch-uv.sh"
   },

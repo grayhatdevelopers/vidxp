@@ -75,13 +75,15 @@ small {
   background: rgba(21, 25, 34, 0.9);
 }
 
-.capabilities {
+.capabilities,
+.options {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 0.75rem;
 }
 
 .capability,
+.surface,
 .prepare-option {
   display: flex;
   gap: 0.7rem;
@@ -97,7 +99,15 @@ small {
   background: #171c26;
 }
 
-.capability:has(input:checked) {
+.surface {
+  padding: 0.9rem;
+  border: 1px solid #303746;
+  border-radius: 0.75rem;
+  background: #171c26;
+}
+
+.capability:has(input:checked),
+.surface:has(input:checked) {
   border-color: #7d88ff;
   background: #1d2340;
 }
@@ -108,9 +118,27 @@ input {
 }
 
 .capability span,
+.surface span,
 .prepare-option span {
   display: grid;
   gap: 0.3rem;
+}
+
+.path-option {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.path-option div {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+.path-option small {
+  overflow-wrap: anywhere;
 }
 
 .prepare-option {
@@ -169,11 +197,13 @@ button:disabled {
     padding: 2rem 0;
   }
 
-  .capabilities {
+  .capabilities,
+  .options {
     grid-template-columns: 1fr;
   }
 
   .status-panel,
+  .path-option,
   .actions {
     align-items: stretch;
     flex-direction: column;

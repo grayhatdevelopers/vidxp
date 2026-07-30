@@ -233,6 +233,15 @@ jobs:
             fi
           done
 
+  build-desktop:
+    if: needs.release.outputs.released == 'true'
+    needs:
+      - release
+      - validate-release
+    uses: ./.github/workflows/desktop.yml
+    with:
+      checkout_ref: ${{ needs.release.outputs.commit_sha }}
+
   publish-github:
     if: needs.release.outputs.released == 'true'
     needs:
@@ -240,6 +249,7 @@ jobs:
       - validate-release
       - publish-pypi
       - publish-container
+      - build-desktop
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -265,6 +275,12 @@ jobs:
           name: github-release-notes
           path: .
 
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: vidxp-desktop-*
+          path: desktop-dist/
+          merge-multiple: true
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -272,3 +288,6 @@ jobs:
           semantic-release publish --tag "${{ needs.release.outputs.tag }}"
           gh release edit "${{ needs.release.outputs.tag }}" \
             --notes-file .release-notes.md
+          gh release upload "${{ needs.release.outputs.tag }}" \
+            desktop-dist/* \
+            --clobber
