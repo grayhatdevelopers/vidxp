@@ -11,8 +11,8 @@ from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import quote
 
 
-INDEX_SCHEMA_VERSION = 3
-MANIFEST_SCHEMA_VERSION = 1
+INDEX_SCHEMA_VERSION = 6
+MANIFEST_SCHEMA_VERSION = 2
 
 
 class IndexCancelledError(RuntimeError):
@@ -28,6 +28,16 @@ def _require_identifier(label: str, value: str) -> str:
     if not value:
         raise ValueError(f"{label} must not be empty.")
     return value
+
+
+def _require_sha256(label: str, value: str) -> str:
+    checksum = str(value).lower()
+    if (
+        len(checksum) != 64
+        or any(character not in string.hexdigits for character in checksum)
+    ):
+        raise ValueError(f"{label} must be a 64-character SHA-256 value.")
+    return checksum
 
 
 def _filesystem_component(value: str) -> str:
@@ -50,6 +60,8 @@ def stable_source_id(
     video_id: str,
     modality: str,
     local_id: str | int,
+    *,
+    generation_id: str | None = None,
 ) -> str:
     """Return an escaped, deterministic record ID.
 
@@ -59,6 +71,9 @@ def stable_source_id(
 
     values = (run_id, video_id, modality, str(local_id))
     labels = ("run_id", "video_id", "modality", "local_id")
+    if generation_id is not None:
+        values = (generation_id, *values)
+        labels = ("generation_id", *labels)
     encoded = [
         quote(_require_identifier(label, value), safe="")
         for label, value in zip(labels, values)
@@ -82,6 +97,10 @@ class IndexConfig:
     )
     output_root: str | Path = "benchmark_runs"
     storage_directory: str | Path | None = None
+    generation_directory: str | Path | None = None
+    generation_id: str | None = None
+    snapshot_id: str | None = None
+    snapshot_sha256: str | None = None
     collection_names: Mapping[str, str] = field(
         default_factory=dict
     )
@@ -94,10 +113,26 @@ class IndexConfig:
                 "storage_directory",
                 str(self.storage_directory),
             )
+        if self.generation_directory is not None:
+            object.__setattr__(
+                self,
+                "generation_directory",
+                str(self.generation_directory),
+            )
         for label in ("dataset", "split", "run_id"):
             _require_identifier(label, getattr(self, label))
         if self.video_id is not None:
             _require_identifier("video_id", self.video_id)
+        if self.generation_id is not None:
+            _require_identifier("generation_id", self.generation_id)
+        if self.snapshot_id is not None:
+            _require_identifier("snapshot_id", self.snapshot_id)
+        if self.snapshot_sha256 is not None:
+            object.__setattr__(
+                self,
+                "snapshot_sha256",
+                _require_sha256("snapshot_sha256", self.snapshot_sha256),
+            )
 
         modalities = tuple(dict.fromkeys(self.enabled_modalities))
         if not modalities:
@@ -170,20 +205,20 @@ class IndexConfig:
 
     @classmethod
     def local(cls, **changes: Any) -> "IndexConfig":
-        """Return the single-video configuration used by the existing CLI/UI."""
+        """Return the default configuration for a local repository operation."""
 
         defaults = {
             "storage_directory": "chroma_data",
         }
         if "enabled_modalities" not in changes:
-            from vidxp.capabilities.registry import index_capability_names
-
-            defaults["enabled_modalities"] = index_capability_names()
+            defaults["enabled_modalities"] = ("dialogue", "scene", "actor")
         defaults.update(changes)
         return cls(**defaults)
 
     @property
     def run_directory(self) -> Path:
+        if self.generation_directory is not None:
+            return Path(self.generation_directory)
         if self.storage_directory is not None:
             return Path(self.storage_directory)
         return (
@@ -212,7 +247,7 @@ class IndexConfig:
             raise ValueError(
                 f"Capability {modality!r} is not enabled for this run."
             )
-        return {
+        identity = {
             "dataset": self.dataset,
             "split": self.split,
             "run_id": self.run_id,
@@ -220,6 +255,9 @@ class IndexConfig:
             "modality": modality,
             "source_id": source_id,
         }
+        if self.generation_id is not None:
+            identity["generation_id"] = self.generation_id
+        return identity
 
     def options_for(self, capability: str) -> dict[str, Any]:
         if capability not in self.enabled_modalities:
@@ -238,7 +276,16 @@ class IndexConfig:
 
     def fingerprint(self) -> str:
         payload = asdict(self)
-        for excluded in ("video_id", "output_root", "storage_directory"):
+        for excluded in (
+            "video_id",
+            "device",
+            "output_root",
+            "storage_directory",
+            "generation_directory",
+            "generation_id",
+            "snapshot_id",
+            "snapshot_sha256",
+        ):
             payload.pop(excluded, None)
         encoded = json.dumps(
             payload,
@@ -264,13 +311,11 @@ class VideoSource:
         if self.path is None and self.transcript is None:
             raise ValueError("A video path or timestamped transcript is required.")
         if self.checksum is not None:
-            checksum = str(self.checksum).lower()
-            if (
-                len(checksum) != 64
-                or any(character not in string.hexdigits for character in checksum)
-            ):
-                raise ValueError("checksum must be a 64-character SHA-256 value.")
-            object.__setattr__(self, "checksum", checksum)
+            object.__setattr__(
+                self,
+                "checksum",
+                _require_sha256("checksum", self.checksum),
+            )
 
 
 @dataclass(frozen=True)

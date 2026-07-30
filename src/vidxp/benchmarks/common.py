@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -9,11 +10,36 @@ from typing import Any, Mapping, Sequence
 from vidxp.core.manifest import sha256_file, utc_now, write_json_atomic
 
 
+def _benchmark_uuid4(*parts: str) -> str:
+    digest = bytearray(
+        hashlib.sha256("\0".join(parts).encode("utf-8")).digest()[:16]
+    )
+    digest[6] = (digest[6] & 0x0F) | 0x40
+    digest[8] = (digest[8] & 0x3F) | 0x80
+    return digest.hex()
+
+
+def benchmark_generation_id(
+    benchmark: str,
+    split: str,
+    run_id: str,
+) -> str:
+    """Return a stable UUID4-shaped identity for a resumable benchmark run."""
+
+    return _benchmark_uuid4("generation", benchmark, split, run_id)
+
+
+def benchmark_media_id(benchmark: str, official_video_id: str) -> str:
+    """Map an official dataset video key to VidXP's opaque media ID shape."""
+
+    return _benchmark_uuid4("media", benchmark, official_video_id)
+
+
 def verify_artifact(
     path: str | Path,
     *,
     name: str,
-    expected_sha256: str,
+    expected_sha256: str | Sequence[str],
     source: str,
     revision: str,
 ) -> dict[str, Any]:
@@ -21,9 +47,15 @@ def verify_artifact(
     if not artifact.is_file():
         raise FileNotFoundError(f"{name} not found: {artifact}")
     actual_sha256 = sha256_file(artifact)
-    if actual_sha256 != expected_sha256:
+    accepted = (
+        (expected_sha256,)
+        if isinstance(expected_sha256, str)
+        else tuple(expected_sha256)
+    )
+    if actual_sha256 not in accepted:
         raise ValueError(
-            f"{name} checksum mismatch: expected {expected_sha256}, "
+            f"{name} checksum mismatch: expected one of "
+            f"{', '.join(accepted)}, "
             f"received {actual_sha256}."
         )
     return {

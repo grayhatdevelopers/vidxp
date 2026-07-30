@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from threading import Lock
 from time import perf_counter
 from typing import Any, Callable, Sequence
 
 from filelock import FileLock, Timeout
 
-from vidxp.capabilities.registry import (
-    get_capability,
-    require_dependencies,
-)
+from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.core.contracts import (
     INDEX_SCHEMA_VERSION,
     CancellationToken,
     IndexCancelledError,
     IndexConfig,
-    IndexSchemaError,
     VideoSource,
 )
 from vidxp.core.manifest import (
@@ -25,15 +20,22 @@ from vidxp.core.manifest import (
     source_checksum,
     source_checksums,
 )
-from vidxp.core.storage import IndexStorage
-from vidxp.index_state import (
-    IndexingInProgressError,
-    write_index_status,
-)
+from vidxp.index_state import IndexingInProgressError
+from vidxp.ports import IndexStore, ModelRuntimePort
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
-_INDEXING_LOCK = Lock()
+
+
+def require_dependencies(
+    names: tuple[str, ...],
+    *,
+    source: VideoSource,
+    registry: CapabilityRegistry,
+) -> None:
+    """Single testable dependency gate for an injected registry."""
+
+    registry.require_dependencies(names, source=source)
 
 
 class _RunLock:
@@ -68,47 +70,8 @@ def _run_lock_held(run_directory: Path) -> bool:
         return False
 
 
-def indexing_in_progress(config: IndexConfig | None = None) -> bool:
-    if _INDEXING_LOCK.locked():
-        return True
-    active_config = config or IndexConfig.local()
-    return _run_lock_held(active_config.run_directory)
-
-
-def local_config_from_status(
-    status: dict[str, Any],
-    *,
-    storage_directory: str | Path | None = None,
-) -> IndexConfig:
-    summary = status.get("summary") or {}
-    if summary.get("index_schema_version") != INDEX_SCHEMA_VERSION:
-        raise IndexSchemaError(
-            "The saved index predates the benchmark-ready schema. "
-            "Re-index the video before searching."
-        )
-    stored = dict(summary.get("configuration") or {})
-    stored = {
-        key: value
-        for key, value in stored.items()
-        if key in IndexConfig.__dataclass_fields__
-    }
-    stored.update(
-        {
-            "dataset": str(summary["dataset"]),
-            "split": str(summary["split"]),
-            "run_id": str(summary["run_id"]),
-            "video_id": str(summary["video_id"]),
-        }
-    )
-    if storage_directory is not None:
-        stored["storage_directory"] = str(storage_directory)
-    else:
-        stored.setdefault("storage_directory", "chroma_data")
-    if "enabled_modalities" in stored:
-        stored["enabled_modalities"] = tuple(stored["enabled_modalities"])
-    if "collection_names" in stored:
-        stored["collection_names"] = dict(stored["collection_names"])
-    return IndexConfig(**stored)
+def indexing_in_progress(config: IndexConfig) -> bool:
+    return _run_lock_held(config.run_directory)
 
 
 def _resolve_sources(
@@ -140,19 +103,22 @@ def _run_capability_group(
     names: tuple[str, ...],
     source: VideoSource,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     manifest: ManifestStore,
     cancellation: CancellationToken,
     progress_callback: ProgressCallback | None,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntimePort,
 ) -> dict[str, Any]:
-    definitions = tuple(get_capability(name) for name in names)
-    indexer = definitions[0].indexer
+    definitions = tuple(registry.get(name) for name in names)
+    indexers = tuple(registry.executor(name).indexer for name in names)
+    indexer = indexers[0]
     index_stage = definitions[0].index_stage
     if indexer is None or index_stage is None:
         raise ValueError(
             f"Capability {names[0]!r} does not support indexing."
         )
-    if any(definition.indexer is not indexer for definition in definitions):
+    if any(candidate is not indexer for candidate in indexers):
         raise RuntimeError("Grouped capabilities must share one indexer.")
     if any(
         definition.index_stage != index_stage
@@ -192,6 +158,8 @@ def _run_capability_group(
             cancellation=cancellation,
             progress=stage_progress,
             modalities=names,
+            registry=registry,
+            runtime=runtime,
         )
     except BaseException:
         if active_substage is not None and active_substage != index_stage:
@@ -241,23 +209,27 @@ def _run_capability_group(
     return dict(result.summary)
 
 
-def _index_groups(names: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
+def _index_groups(
+    names: tuple[str, ...],
+    registry: CapabilityRegistry,
+) -> tuple[tuple[str, ...], ...]:
     groups: list[list[str]] = []
-    handlers = []
+    execution_groups: list[str] = []
     for name in names:
-        handler = get_capability(name).indexer
-        if handler is None:
+        definition = registry.get(name)
+        if registry.executor(name).indexer is None:
             raise ValueError(
                 f"Capability {name!r} does not support indexing."
             )
-        try:
-            group_index = next(
-                index
-                for index, existing in enumerate(handlers)
-                if existing is handler
+        execution_group = definition.execution_group
+        if execution_group is None:
+            raise RuntimeError(
+                f"Capability {name!r} has no execution group."
             )
-        except StopIteration:
-            handlers.append(handler)
+        try:
+            group_index = execution_groups.index(execution_group)
+        except ValueError:
+            execution_groups.append(execution_group)
             groups.append([name])
         else:
             groups[group_index].append(name)
@@ -267,16 +239,18 @@ def _index_groups(names: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
 def _run_enabled_modalities(
     source: VideoSource,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     manifest: ManifestStore,
     cancellation: CancellationToken,
     progress_callback: ProgressCallback | None,
     set_stage: Callable[[str], None],
+    registry: CapabilityRegistry,
+    runtime: ModelRuntimePort,
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {}
-    for names in _index_groups(config.enabled_modalities):
+    for names in _index_groups(config.enabled_modalities, registry):
         cancellation.raise_if_cancelled()
-        set_stage(get_capability(names[0]).index_stage)
+        set_stage(str(registry.get(names[0]).index_stage))
         summary.update(
             _run_capability_group(
                 names,
@@ -286,6 +260,8 @@ def _run_enabled_modalities(
                 manifest,
                 cancellation,
                 progress_callback,
+                registry,
+                runtime,
             )
         )
     return summary
@@ -296,12 +272,14 @@ def _process_video(
     source: VideoSource,
     checksum: str,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     manifest: ManifestStore,
     cancellation: CancellationToken,
     progress_callback: ProgressCallback | None,
     *,
     fail_fast: bool,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntimePort,
 ) -> None:
     video_config = config.for_video(video_id)
     manifest.start_video(video_id)
@@ -320,10 +298,19 @@ def _process_video(
         require_dependencies(
             config.enabled_modalities,
             source=source,
+            registry=registry,
         )
         stage = "preparing_storage"
-        for modality in config.enabled_modalities:
-            storage.delete_video(modality, video_id)
+        if config.generation_id is not None:
+            for modality in config.enabled_modalities:
+                storage.delete_records(
+                    modality,
+                    video_id=video_id,
+                    filters={"generation_id": config.generation_id},
+                )
+        else:
+            for modality in config.enabled_modalities:
+                storage.delete_video(modality, video_id)
 
         summary.update(
             _run_enabled_modalities(
@@ -334,6 +321,8 @@ def _process_video(
                 cancellation,
                 progress_callback,
                 set_stage,
+                registry,
+                runtime,
             )
         )
         manifest.complete_video(
@@ -380,54 +369,53 @@ def _run_index_unlocked(
     resume: bool = True,
     reset: bool = False,
     fail_fast: bool = True,
-    storage: IndexStorage | None = None,
-    manifest_store: ManifestStore | None = None,
+    storage: IndexStore,
+    manifest_store: ManifestStore,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntimePort,
 ) -> dict[str, Any]:
     if not sources:
         raise ValueError("At least one video or transcript source is required.")
     cancellation = cancellation or CancellationToken()
     resolved = _resolve_sources(sources, config)
-    owns_storage = storage is None
-    store = storage or IndexStorage(config)
-    try:
-        manifest = manifest_store or ManifestStore(config)
-        if reset:
-            store.clear()
-        manifest.initialize(resolved, reset=reset)
+    if reset:
+        storage.clear()
+    manifest_store.initialize(resolved, reset=reset)
 
-        for video_id, source, checksum, _ in resolved:
-            if resume and manifest.completed(
-                video_id,
-                checksum=checksum,
-                config_fingerprint=config.fingerprint(),
-            ):
-                _report(
-                    progress_callback,
-                    {
-                        "state": "skipped",
-                        "stage": "checkpoint",
-                        "message": f"Skipping completed video {video_id}.",
-                        "video_id": video_id,
-                    },
-                )
-                continue
-
-            _process_video(
-                video_id,
-                source,
-                checksum,
-                config,
-                store,
-                manifest,
-                cancellation,
+    for video_id, source, checksum, _ in resolved:
+        if resume and manifest_store.completed(
+            video_id,
+            checksum=checksum,
+            config_fingerprint=config.fingerprint(),
+        ):
+            _report(
                 progress_callback,
-                fail_fast=fail_fast,
+                {
+                    "state": "skipped",
+                    "stage": "checkpoint",
+                    "message": f"Skipping completed video {video_id}.",
+                    "video_id": video_id,
+                },
             )
+            continue
 
-        return manifest.complete_run(index_size_bytes=store.size_bytes())
-    finally:
-        if owns_storage:
-            store.close()
+        _process_video(
+            video_id,
+            source,
+            checksum,
+            config,
+            storage,
+            manifest_store,
+            cancellation,
+            progress_callback,
+            fail_fast=fail_fast,
+            registry=registry,
+            runtime=runtime,
+        )
+
+    return manifest_store.complete_run(
+        store_size_bytes_at_commit=storage.size_bytes()
+    )
 
 
 def run_index(
@@ -439,8 +427,10 @@ def run_index(
     resume: bool = True,
     reset: bool = False,
     fail_fast: bool = True,
-    storage: IndexStorage | None = None,
-    manifest_store: ManifestStore | None = None,
+    storage: IndexStore,
+    manifest_store: ManifestStore,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntimePort,
 ) -> dict[str, Any]:
     with _RunLock(config.run_directory):
         return _run_index_unlocked(
@@ -453,36 +443,32 @@ def run_index(
             fail_fast=fail_fast,
             storage=storage,
             manifest_store=manifest_store,
+            registry=registry,
+            runtime=runtime,
         )
-
-
-def _video_status(path: Path, source_name: str, checksum: str) -> dict[str, Any]:
-    stat = path.stat()
-    return {
-        "path": str(path.resolve()),
-        "source_name": source_name,
-        "size": stat.st_size,
-        "sha256": checksum,
-    }
 
 
 def index_video(
     path: str,
     progress_callback: ProgressCallback | None = None,
     source_name: str | None = None,
+    checksum: str | None = None,
     *,
-    config: IndexConfig | None = None,
+    config: IndexConfig,
     cancellation: CancellationToken | None = None,
+    storage: IndexStore,
+    manifest_store: ManifestStore,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntimePort,
 ) -> dict[str, Any]:
     input_path = Path(path)
     if not input_path.is_file():
         raise FileNotFoundError(f"Video not found: {input_path}")
-    if not _INDEXING_LOCK.acquire(blocking=False):
-        raise IndexingInProgressError("Another video is already being indexed.")
 
     source = VideoSource(
         path=input_path,
         source_name=source_name or input_path.name,
+        checksum=checksum,
     )
     checksum = source_checksum(source)
     source = VideoSource(
@@ -490,13 +476,8 @@ def index_video(
         source_name=source.source_name,
         checksum=checksum,
     )
-    active_config = config or IndexConfig.local(video_id=checksum)
+    active_config = config
     video_id = active_config.video_id or checksum
-    video = _video_status(
-        input_path,
-        source.source_name or input_path.name,
-        checksum,
-    )
     latest_event: dict[str, Any] = {
         "state": "indexing",
         "stage": "initializing",
@@ -504,17 +485,6 @@ def index_video(
 
     def report(event: dict[str, Any]) -> None:
         latest_event.update(event)
-        write_index_status(
-            state=event["state"],
-            stage=event["stage"],
-            message=event["message"],
-            video=video,
-            current=event.get("current"),
-            total=event.get("total"),
-            summary=event.get("summary"),
-            error=event.get("error"),
-            index_directory=active_config.index_directory,
-        )
         if progress_callback is not None:
             progress_callback(event)
 
@@ -522,10 +492,7 @@ def index_video(
         {
             "state": "indexing",
             "stage": "initializing",
-            "message": (
-                "Preparing the selected indexing modalities. "
-                "Missing model weights will download before their first use."
-            ),
+            "message": "Preparing the selected indexing modalities.",
         }
     )
     try:
@@ -534,8 +501,12 @@ def index_video(
             active_config,
             progress_callback=report,
             cancellation=cancellation,
+            storage=storage,
+            manifest_store=manifest_store,
+            registry=registry,
+            runtime=runtime,
             resume=False,
-            reset=True,
+            reset=False,
             fail_fast=True,
         )
         summary = dict(manifest["videos"][video_id]["summary"])
@@ -546,7 +517,6 @@ def index_video(
                 "split": active_config.split,
                 "run_id": active_config.run_id,
                 "video_id": video_id,
-                "configuration": active_config.to_dict(),
             }
         )
         report(
@@ -579,5 +549,3 @@ def index_video(
                 }
             )
         raise
-    finally:
-        _INDEXING_LOCK.release()

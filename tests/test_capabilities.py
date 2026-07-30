@@ -1,25 +1,28 @@
 import unittest
+from importlib.metadata import PackageNotFoundError
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from pydantic import BaseModel, ValidationError
 
+from vidxp.capabilities.actor.config import ActorConfig
 from vidxp.capabilities.contracts import (
-    CapabilityContext,
     CapabilityDefinition,
+    CapabilityExecutor,
     CapabilityIndexResult,
     CapabilityInput,
     CapabilityOutput,
+    CapabilityPlugin,
+    CapabilityProvenance,
     OperationDefinition,
+    RuntimeCheck,
 )
-from vidxp.capabilities.actor.config import ActorConfig
 from vidxp.capabilities.dialogue.config import DialogueConfig
 from vidxp.capabilities.registry import (
-    CAPABILITIES,
-    capability_names,
-    collection_names,
-    index_capability_names,
-    preparable_capability_names,
-    validate_capability_options,
+    CapabilityRegistry,
+    create_capability_registry,
 )
+from vidxp.capability_service import CapabilityService
 from vidxp.capabilities.scene.config import SceneConfig
 from vidxp.core.contracts import IndexConfig
 from vidxp.core.runner import _index_groups
@@ -34,114 +37,139 @@ class ExampleOutput(CapabilityOutput):
 
 
 class CapabilityTests(unittest.TestCase):
-    def test_registry_is_explicit_and_drives_index_collections(self):
+    def setUp(self):
+        self.registry = create_capability_registry()
+
+    def test_registry_drives_capability_metadata(self):
         self.assertEqual(
-            capability_names(),
+            self.registry.names(),
+            ("dialogue", "scene", "actor"),
+        )
+        self.assertEqual(self.registry.index_names(), self.registry.names())
+        self.assertEqual(
+            self.registry.preparable_names(),
             ("dialogue", "scene", "actor"),
         )
         self.assertEqual(
-            index_capability_names(),
-            capability_names(),
-        )
-        self.assertEqual(
-            preparable_capability_names(),
-            ("dialogue", "scene"),
-        )
-        self.assertEqual(
-            collection_names(),
+            self.registry.collection_names(),
             {
                 "dialogue": "dialogue",
                 "scene": "scene",
                 "actor": "actor",
             },
         )
-        self.assertEqual(collection_names(("scene",)), {"scene": "scene"})
 
-    def test_registered_operations_use_pydantic_contracts(self):
-        for capability in CAPABILITIES.values():
-            self.assertIsInstance(capability, BaseModel)
-            for operation in capability.operations.values():
-                self.assertIsInstance(operation, BaseModel)
-                self.assertTrue(
-                    issubclass(operation.input_model, BaseModel)
-                )
-                self.assertTrue(
-                    issubclass(operation.output_model, BaseModel)
-                )
+    def test_registered_operations_are_schema_only_metadata(self):
+        self.assertNotIn("handler", OperationDefinition.model_fields)
+        for definition in self.registry.definitions.values():
+            self.assertIsInstance(definition, BaseModel)
+            for operation in definition.operations.values():
+                self.assertTrue(issubclass(operation.input_model, BaseModel))
+                self.assertTrue(issubclass(operation.output_model, BaseModel))
 
-    def test_capability_contracts_are_frozen_and_schema_validated(self):
+    def test_internal_actor_cluster_lookup_is_not_advertised(self):
+        operations = {
+            operation.name
+            for operation in CapabilityService(self.registry)
+            .get("actor")
+            .operations
+        }
+
+        self.assertNotIn("cluster", operations)
+        self.assertIn("clusters", operations)
+        self.assertIn("detections", operations)
+
+    def test_capability_list_is_summary_only(self):
+        service = CapabilityService(self.registry)
+
+        summaries = service.list()
+        detail = service.get("scene")
+
+        self.assertEqual(
+            tuple(summary.name for summary in summaries),
+            self.registry.names(),
+        )
+        self.assertTrue(detail.operations)
+        self.assertTrue(
+            all(not hasattr(summary, "operations") for summary in summaries)
+        )
+
+    def test_executor_handlers_match_declared_operations(self):
+        for name, definition in self.registry.definitions.items():
+            self.assertEqual(
+                set(self.registry.executor(name).operations),
+                set(definition.operations),
+            )
+
+    def test_contracts_are_frozen_and_index_metadata_is_complete(self):
         with self.assertRaises(ValidationError):
-            CAPABILITIES["scene"].name = "changed"
+            self.registry.get("scene").name = "changed"
         with self.assertRaises(ValidationError):
             CapabilityDefinition(
                 name="broken",
                 description="Incomplete index integration.",
                 extra="broken",
                 collection_name="broken",
-                indexer=lambda **_: None,
             )
         with self.assertRaises(ValidationError):
-            CapabilityIndexResult(
-                summary={},
-                timings={"index": -1},
-            )
+            CapabilityIndexResult(summary={}, timings={"index": -1})
 
-    def test_built_in_settings_are_capability_owned_and_validated(self):
-        self.assertIs(CAPABILITIES["dialogue"].config_model, DialogueConfig)
-        self.assertIs(CAPABILITIES["scene"].config_model, SceneConfig)
-        self.assertIs(CAPABILITIES["actor"].config_model, ActorConfig)
+    def test_built_in_settings_are_owned_and_validated(self):
+        self.assertIs(
+            self.registry.get("dialogue").config_model,
+            DialogueConfig,
+        )
+        self.assertIs(self.registry.get("scene").config_model, SceneConfig)
+        self.assertIs(self.registry.get("actor").config_model, ActorConfig)
 
-        options = validate_capability_options(
+        options = self.registry.validate_options(
             ("scene",),
-            {"scene": {"batch_size": 4, "model": "test-model"}},
+            {"scene": {"batch_size": 4, "sample_fps": 0.5}},
         )
-
-        self.assertEqual(
-            options["scene"],
-            {"batch_size": 4, "model": "test-model"},
-        )
+        self.assertEqual(options["scene"]["batch_size"], 4)
+        self.assertEqual(options["scene"]["sample_fps"], 0.5)
+        self.assertNotIn("model", options["scene"])
         with self.assertRaises(ValidationError):
-            validate_capability_options(
+            self.registry.validate_options(
+                ("scene",),
+                {"scene": {"sample_fps": 0}},
+            )
+        with self.assertRaises(ValidationError):
+            self.registry.validate_options(
+                ("scene",),
+                {"scene": {"model": "unapproved/model"}},
+            )
+        with self.assertRaises(ValidationError):
+            self.registry.validate_options(
                 ("actor",),
                 {"actor": {"match_threshold": 2}},
             )
 
-    def test_core_config_has_no_built_in_capability_fields(self):
-        fields = IndexConfig.__dataclass_fields__
-        for name in (
-            "sentence_model",
-            "whisper_model",
-            "clip_model",
-            "dialogue_batch_size",
-            "scene_batch_size",
-            "actor_batch_size",
-            "face_match_threshold",
-        ):
-            self.assertNotIn(name, fields)
-
-    def test_operation_validates_both_input_and_output(self):
-        operation = OperationDefinition(
-            input_model=ExampleInput,
-            output_model=ExampleOutput,
-            handler=lambda _context, request: {
-                "doubled": request.value * 2
+    def test_registry_rejects_executor_metadata_drift(self):
+        definition = CapabilityDefinition(
+            name="export",
+            description="Export.",
+            extra="export",
+            operations={
+                "run": OperationDefinition(
+                    input_model=ExampleInput,
+                    output_model=ExampleOutput,
+                    requires_index=False,
+                )
             },
-            requires_index=False,
         )
-
-        result = operation.invoke(
-            CapabilityContext(config=None),
-            {"value": 3},
-        )
-
-        self.assertEqual(result, ExampleOutput(doubled=6))
-        with self.assertRaises(ValidationError):
-            operation.invoke(
-                CapabilityContext(config=None),
-                {"value": 3, "unexpected": True},
+        registry = CapabilityRegistry(
+            (
+                CapabilityPlugin(
+                    definition=definition,
+                    executor_factory=lambda: CapabilityExecutor(),
+                ),
             )
+        )
+        with self.assertRaisesRegex(RuntimeError, "operation handlers"):
+            registry.executor("export")
 
-    def test_operation_only_capability_needs_no_dummy_indexer(self):
+    def test_operation_only_capability_needs_no_index_metadata(self):
         capability = CapabilityDefinition(
             name="export",
             description="Export results.",
@@ -150,37 +178,274 @@ class CapabilityTests(unittest.TestCase):
                 "run": OperationDefinition(
                     input_model=ExampleInput,
                     output_model=ExampleOutput,
-                    handler=lambda _context, request: {
-                        "doubled": request.value * 2
-                    },
                     requires_index=False,
                 )
             },
         )
-
-        self.assertIsNone(capability.indexer)
         self.assertIsNone(capability.collection_name)
+        self.assertIsNone(capability.execution_group)
 
-    def test_shared_visual_handler_is_grouped_without_name_switches(self):
+    def test_visual_execution_group_is_explicit(self):
         self.assertEqual(
-            _index_groups(("dialogue", "scene", "actor")),
+            _index_groups(
+                ("dialogue", "scene", "actor"),
+                self.registry,
+            ),
             (("dialogue",), ("scene", "actor")),
         )
-        self.assertIsNotNone(CAPABILITIES["scene"].index_processor)
-        self.assertIsNotNone(CAPABILITIES["actor"].index_processor)
-        self.assertIsNone(CAPABILITIES["dialogue"].index_processor)
-
-    def test_capability_options_do_not_require_core_config_fields(self):
-        config = IndexConfig(
-            enabled_modalities=("ocr",),
-            collection_names={"ocr": "ocr"},
-            capability_options={"ocr": {"language": "en"}},
+        self.assertIsNotNone(
+            self.registry.executor("scene").index_processor
+        )
+        self.assertIsNotNone(
+            self.registry.executor("actor").index_processor
+        )
+        self.assertIsNone(
+            self.registry.executor("dialogue").index_processor
         )
 
+    def test_core_config_has_no_provider_specific_fields(self):
+        fields = IndexConfig.__dataclass_fields__
+        for name in (
+            "sentence_model",
+            "whisper_model",
+            "clip_model",
+            "actor_batch_size",
+            "face_match_threshold",
+        ):
+            self.assertNotIn(name, fields)
+
+    def test_external_plugins_require_exact_distribution_entry_point_pair(self):
+        plugin = CapabilityPlugin(
+            definition=CapabilityDefinition(
+                name="ocr",
+                description="OCR.",
+                extra="ocr",
+                operations={
+                    "run": OperationDefinition(
+                        input_model=ExampleInput,
+                        output_model=ExampleOutput,
+                        requires_index=False,
+                    )
+                },
+            ),
+            executor_factory=lambda: CapabilityExecutor(
+                operations={
+                    "run": lambda _context, request: {
+                        "doubled": request.value * 2
+                    }
+                }
+            ),
+            requirements=("example-runtime>=1,<2",),
+        )
+        distribution = SimpleNamespace(
+            name="acme-capabilities",
+            version="1.2.3",
+        )
+        entry_point = SimpleNamespace(
+            name="ocr",
+            dist=distribution,
+            load=Mock(return_value=plugin),
+        )
+        with patch(
+            "vidxp.capabilities.registry.entry_points",
+            return_value=(entry_point,),
+        ):
+            rejected = create_capability_registry(
+                external=True,
+                allowlist=("acme-capabilities:other",),
+            )
+            accepted = create_capability_registry(
+                external=True,
+                allowlist=("acme-capabilities:ocr",),
+            )
+
+        self.assertNotIn("ocr", rejected.names())
+        self.assertIn("ocr", accepted.names())
         self.assertEqual(
-            config.options_for("ocr"),
-            {"language": "en"},
+            accepted.provenance("ocr"),
+            CapabilityProvenance(
+                distribution="acme-capabilities",
+                entry_point="ocr",
+                version="1.2.3",
+            ),
         )
+        self.assertEqual(
+            [item.name for item in accepted.requirements_for(("ocr",))],
+            ["example-runtime"],
+        )
+        with patch(
+            "vidxp.dependencies.version",
+            side_effect=PackageNotFoundError("example-runtime"),
+        ):
+            check = accepted.dependency_checks(("ocr",))[0]
+        self.assertFalse(check.ok)
+        self.assertEqual(check.capability, "ocr")
+        self.assertEqual(check.provenance.distribution, "acme-capabilities")
+        self.assertEqual(entry_point.load.call_count, 1)
+
+    def test_plugin_contract_and_collision_errors_include_provenance(self):
+        provenance = CapabilityProvenance(
+            distribution="acme-capabilities",
+            entry_point="ocr",
+            version="1.2.3",
+        )
+        invalid = CapabilityPlugin(
+            definition=CapabilityDefinition(
+                name="ocr",
+                description="OCR.",
+                extra="ocr",
+                operations={
+                    "run": OperationDefinition(
+                        input_model=ExampleInput,
+                        output_model=ExampleOutput,
+                        requires_index=False,
+                    )
+                },
+            ),
+            executor_factory=lambda: CapabilityExecutor(
+                operations={"run": lambda _context, _request: {"doubled": 2}}
+            ),
+            contract_version=999,
+            provenance=provenance,
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "acme-capabilities:ocr",
+        ):
+            CapabilityRegistry((invalid,))
+
+        collision = invalid.model_copy(
+            update={
+                "definition": self.registry.get("scene"),
+                "contract_version": 1,
+            }
+        )
+        built_in = CapabilityPlugin(
+            definition=self.registry.get("scene"),
+            executor_factory=lambda: CapabilityExecutor(),
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "built-in VidXP capability.*acme-capabilities:ocr",
+        ):
+            CapabilityRegistry((built_in, collision))
+
+    def test_external_plugin_loading_is_deterministic_and_errors_are_chained(self):
+        def plugin(name):
+            return CapabilityPlugin(
+                definition=CapabilityDefinition(
+                    name=name,
+                    description=f"{name} capability.",
+                    extra=name,
+                    operations={
+                        "run": OperationDefinition(
+                            input_model=ExampleInput,
+                            output_model=ExampleOutput,
+                            requires_index=False,
+                        )
+                    },
+                ),
+                executor_factory=lambda: CapabilityExecutor(
+                    operations={
+                        "run": lambda _context, request: {
+                            "doubled": request.value * 2
+                        }
+                    }
+                ),
+            )
+
+        distribution = SimpleNamespace(name="acme", version="1")
+        zeta = SimpleNamespace(
+            name="zeta",
+            dist=distribution,
+            load=Mock(return_value=plugin("zeta")),
+        )
+        alpha = SimpleNamespace(
+            name="alpha",
+            dist=distribution,
+            load=Mock(return_value=plugin("alpha")),
+        )
+        with patch(
+            "vidxp.capabilities.registry.entry_points",
+            return_value=(zeta, alpha),
+        ):
+            registry = create_capability_registry(
+                external=True,
+                allowlist=("acme:zeta", "acme:alpha"),
+            )
+        self.assertEqual(registry.names()[-2:], ("alpha", "zeta"))
+
+        failure = RuntimeError("factory failure")
+        broken = SimpleNamespace(
+            name="broken",
+            dist=distribution,
+            load=Mock(side_effect=failure),
+        )
+        with (
+            patch(
+                "vidxp.capabilities.registry.entry_points",
+                return_value=(broken,),
+            ),
+            self.assertRaisesRegex(RuntimeError, "acme:broken") as raised,
+        ):
+            create_capability_registry(
+                external=True,
+                allowlist=("acme:broken",),
+            )
+        self.assertIs(raised.exception.__cause__, failure)
+
+    def test_external_runtime_check_errors_are_sanitized_with_provenance(self):
+        events = []
+
+        def fail_runtime_check():
+            events.append("inspect")
+            raise RuntimeError("token=do-not-leak")
+
+        provenance = CapabilityProvenance(
+            distribution="acme-capabilities",
+            entry_point="ocr",
+            version="1.2.3",
+        )
+        plugin = CapabilityPlugin(
+            definition=CapabilityDefinition(
+                name="ocr",
+                description="OCR.",
+                extra="ocr",
+                operations={
+                    "run": OperationDefinition(
+                        input_model=ExampleInput,
+                        output_model=ExampleOutput,
+                        requires_index=False,
+                    )
+                },
+            ),
+            executor_factory=lambda: CapabilityExecutor(
+                operations={
+                    "run": lambda _context, request: {
+                        "doubled": request.value * 2
+                    }
+                },
+                runtime_checks=(
+                    RuntimeCheck(
+                        label="ocr runtime",
+                        check=fail_runtime_check,
+                    ),
+                ),
+            ),
+            provenance=provenance,
+        )
+
+        check = CapabilityRegistry((plugin,)).dependency_checks(
+            ("ocr",),
+            on_check_start=lambda capability, _kind, name: events.append(
+                (capability, name)
+            ),
+        )[0]
+
+        self.assertEqual(events, [("ocr", "ocr runtime"), "inspect"])
+        self.assertEqual(check.error, "runtime check failed")
+        self.assertNotIn("do-not-leak", check.model_dump_json())
+        self.assertEqual(check.provenance, provenance)
 
 
 if __name__ == "__main__":

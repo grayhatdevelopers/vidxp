@@ -1,7 +1,6 @@
-clip-anytorch==2.6.0
-numpy>=2.1,<3
-opencv-python
-Pillow>=7.0.0
-# clip-anytorch still imports pkg_resources, removed in setuptools 81.
-setuptools<81
-torch
+numpy>=2.3,<3
+opencv-python-headless>=5.0.0.93,<6
+Pillow>=12.3,<13
+torch>=2.13,<3
+transformers>=5.14.1,<6
+huggingface-hub>=1.25.1,<2

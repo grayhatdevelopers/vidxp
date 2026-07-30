@@ -1,0 +1,17 @@
+{
+  "uv_version": "0.12.0",
+  "targets": {
+    "x86_64-pc-windows-msvc": {
+      "archive": "uv-x86_64-pc-windows-msvc.zip",
+      "sha256": "68200e25de594df92387186bbfb9d9df606ec1d87efaa0ae0c7f690970e53db6"
+    },
+    "aarch64-apple-darwin": {
+      "archive": "uv-aarch64-apple-darwin.tar.gz",
+      "sha256": "2b9e582af54f84fa50c115427451a6c13e80f43b52f8282b8af5791077317bbf"
+    },
+    "x86_64-unknown-linux-gnu": {
+      "archive": "uv-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "eaf842262aa1c418d8ecc5605f02ee1ebfd369124fa48548e85f9481a47831a9"
+    }
+  }
+}

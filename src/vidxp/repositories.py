@@ -3,17 +3,21 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 from filelock import FileLock
 
+from vidxp.app_paths import (
+    default_config_directory,
+    default_data_directory,
+    default_repository_directory,
+)
 
 REPOSITORY_SCHEMA_VERSION = 1
 DEFAULT_REPOSITORY_NAME = "default"
-DEFAULT_INDEX_DIRECTORY = Path("chroma_data")
+DEFAULT_INDEX_DIRECTORY = default_repository_directory()
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -25,15 +29,7 @@ def default_config_path() -> Path:
     configured = os.environ.get("VIDXP_CONFIG_FILE")
     if configured:
         return Path(configured).expanduser()
-    if sys.platform == "win32":
-        root = Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming"))
-    elif sys.platform == "darwin":
-        root = Path.home() / "Library/Application Support"
-    else:
-        root = Path(
-            os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
-        )
-    return root / "vidxp" / "repositories.json"
+    return default_config_directory() / "repositories.json"
 
 
 def _repository_name(value: str) -> str:
@@ -74,8 +70,18 @@ class RepositoryConfig:
 
 
 class RepositoryRegistry:
-    def __init__(self, path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        *,
+        default_index_directory: str | Path | None = None,
+    ) -> None:
         self.path = Path(path) if path is not None else default_config_path()
+        self.default_index_directory = Path(
+            default_index_directory
+            if default_index_directory is not None
+            else default_repository_directory()
+        ).expanduser()
 
     def read(self) -> dict[str, Any]:
         return self._read_unlocked()
@@ -115,7 +121,7 @@ class RepositoryRegistry:
         return (
             RepositoryConfig(
                 DEFAULT_REPOSITORY_NAME,
-                DEFAULT_INDEX_DIRECTORY,
+                self.default_index_directory,
                 configured=False,
             ),
             *configured,
@@ -134,7 +140,7 @@ class RepositoryRegistry:
         if selected == DEFAULT_REPOSITORY_NAME:
             return RepositoryConfig(
                 DEFAULT_REPOSITORY_NAME,
-                DEFAULT_INDEX_DIRECTORY,
+                self.default_index_directory,
                 configured=False,
             )
         raise RepositoryConfigError(
@@ -193,7 +199,7 @@ class RepositoryRegistry:
             elif selected == DEFAULT_REPOSITORY_NAME:
                 repository = RepositoryConfig(
                     DEFAULT_REPOSITORY_NAME,
-                    DEFAULT_INDEX_DIRECTORY,
+                    self.default_index_directory,
                     configured=False,
                 )
                 payload["active_repository"] = None
@@ -275,9 +281,20 @@ def resolve_repository(
     registry_path: str | Path | None = None,
     name: str | None = None,
     index_directory: str | Path | None = None,
+    data_directory: str | Path | None = None,
     device: str | None = None,
 ) -> tuple[RepositoryRegistry, RepositoryConfig]:
-    registry = RepositoryRegistry(registry_path)
+    active_data_directory = Path(
+        data_directory
+        if data_directory is not None
+        else os.environ.get("VIDXP_DATA_DIR") or default_data_directory()
+    ).expanduser()
+    registry = RepositoryRegistry(
+        registry_path,
+        default_index_directory=default_repository_directory(
+            active_data_directory
+        ),
+    )
     selected_name = name or os.environ.get("VIDXP_REPOSITORY")
     repository = registry.resolve(selected_name)
     resolved_index = (
@@ -285,8 +302,12 @@ def resolve_repository(
         if index_directory is not None
         else Path(os.environ["VIDXP_INDEX_DIR"])
         if os.environ.get("VIDXP_INDEX_DIR")
+        else default_repository_directory(active_data_directory)
+        if not repository.configured
         else repository.index_directory
     )
+    if not repository.configured:
+        registry.default_index_directory = resolved_index.expanduser()
     resolved_device = (
         device
         if device is not None

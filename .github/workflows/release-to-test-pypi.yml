@@ -13,6 +13,9 @@ on:
       - "LICENSE"
       - "MANIFEST.in"
       - "utils/**"
+      - "desktop/**"
+      - "uv.lock"
+      - ".github/workflows/desktop.yml"
       - ".github/workflows/release-to-test-pypi.yml"
 
 permissions:
@@ -23,12 +26,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
+    with:
+      checkout_ref: ${{ github.sha }}
+      full: true
+
   prerelease:
+    needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
+      commit_sha: ${{ steps.release.outputs.commit_sha }}
       released: ${{ steps.release.outputs.released }}
+      tag: ${{ steps.release.outputs.tag }}
 
     steps:
       - uses: actions/checkout@v7
@@ -38,7 +50,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: |
@@ -98,3 +110,36 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
           packages-dir: dist/
+
+  build-desktop:
+    if: needs.prerelease.outputs.released == 'true'
+    needs:
+      - prerelease
+      - publish-testpypi
+    uses: ./.github/workflows/desktop.yml
+    with:
+      checkout_ref: ${{ needs.prerelease.outputs.commit_sha }}
+
+  publish-desktop:
+    if: needs.prerelease.outputs.released == 'true'
+    needs:
+      - prerelease
+      - build-desktop
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: vidxp-desktop-*
+          path: desktop-dist/
+          merge-multiple: true
+
+      - name: Attach desktop installers to the prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.prerelease.outputs.tag }}" \
+            desktop-dist/* \
+            --clobber

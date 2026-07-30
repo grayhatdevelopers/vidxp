@@ -11,7 +11,19 @@ from vidxp.core.contracts import (
     IndexConfig,
     IndexSchemaError,
 )
-from vidxp.core.storage import IndexStorage
+from vidxp.ports import IndexStore
+
+
+PUBLIC_SEARCH_METADATA = frozenset(
+    {
+        "text",
+        "phrase_id",
+        "frame_index",
+        "timestamp",
+        "fps",
+        "duration",
+    }
+)
 
 
 def distance_to_score(raw_distance: float) -> float:
@@ -57,7 +69,9 @@ def _to_hits(
     hits = []
     for rank, row in enumerate(ordered, start=1):
         metadata = row["metadata"]
-        missing = sorted(required_metadata - metadata.keys())
+        missing = sorted(
+            (required_metadata | {"generation_id"}) - metadata.keys()
+        )
         if missing:
             raise IndexSchemaError(
                 "The saved index predates the benchmark-ready schema and must "
@@ -74,14 +88,20 @@ def _to_hits(
         hits.append(
             SearchHit(
                 rank=rank,
+                media_id=str(metadata["video_id"]),
                 video_id=str(metadata["video_id"]),
+                generation_id=str(metadata["generation_id"]),
                 start=start,
                 end=end,
                 score=distance_to_score(distance),
                 raw_distance=distance,
                 modality=modality,
                 source_id=str(row["source_id"]),
-                metadata=metadata,
+                metadata={
+                    key: value
+                    for key, value in metadata.items()
+                    if key in PUBLIC_SEARCH_METADATA
+                },
             )
         )
     return tuple(hits)
@@ -98,7 +118,7 @@ def search_embeddings(
     video_id: str | None = None,
     query_id: str | None = None,
     filters: Mapping[str, Any] | None = None,
-    storage: IndexStorage | None = None,
+    storage: IndexStore,
 ) -> SearchResult:
     query = query.strip()
     if not query:
@@ -109,19 +129,13 @@ def search_embeddings(
         raise ValueError(
             f"The {modality} modality is not present in this index run."
         )
-    owns_storage = storage is None
-    store = storage or IndexStorage(config)
-    try:
-        rows = store.query(
-            modality,
-            embedding,
-            top_k=top_k,
-            video_id=video_id,
-            filters=filters,
-        )
-    finally:
-        if owns_storage:
-            store.close()
+    rows = storage.query(
+        modality,
+        embedding,
+        top_k=top_k,
+        video_id=video_id,
+        filters=filters,
+    )
     return SearchResult(
         query_id=query_id or stable_query_id(query, modality, config),
         query=query,

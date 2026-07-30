@@ -24,3 +24,6 @@ jobs:
       - uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
+          # No patched Chroma release exists yet. Chroma is kept on the
+          # deployment's private network and is never published directly.
+          allow-ghsas: GHSA-f4j7-r4q5-qw2c

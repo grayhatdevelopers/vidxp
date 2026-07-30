@@ -1,0 +1,214 @@
+x-vidxp-environment: &vidxp-environment
+  VIDXP_MODE: server
+  VIDXP_RUNTIME_BACKEND: cpu
+  VIDXP_REPOSITORY_ROOT: /var/lib/vidxp/data
+  VIDXP_MODEL_CACHE: /var/lib/vidxp/models
+  PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+  VIDXP_HTTP_BIND_HOST: 0.0.0.0
+  VIDXP_HTTP_AUTH_MODE: static
+  VIDXP_HTTP_STATIC_BEARER_TOKEN: ${VIDXP_HTTP_STATIC_BEARER_TOKEN:?Set a bearer token of at least 32 characters}
+  VIDXP_HTTP_TRUSTED_HOSTS: '["127.0.0.1","localhost","${VIDXP_PUBLIC_API_HOST:?Set the public API host}"]'
+  VIDXP_MCP_ALLOWED_HOSTS: '["127.0.0.1:*","localhost:*","${VIDXP_PUBLIC_API_HOST:?Set the public API host}"]'
+  VIDXP_UPLOAD_PUBLIC_ENDPOINT: ${VIDXP_UPLOAD_PUBLIC_ENDPOINT:?Set the public tusd endpoint ending in /uploads/}
+  VIDXP_UPLOAD_INTERNAL_ENDPOINT: http://tusd:8080/uploads/
+  VIDXP_UPLOAD_CLEANUP_TOKEN: ${VIDXP_UPLOAD_CLEANUP_TOKEN:?Set a cleanup token of at least 32 characters}
+  VIDXP_UPLOAD_QUARANTINE_ROOT: /var/lib/vidxp/uploads
+  VIDXP_UPLOAD_MAX_BYTES: ${VIDXP_UPLOAD_MAX_BYTES:-53687091200}
+  VIDXP_UPLOAD_QUOTA_BYTES: ${VIDXP_UPLOAD_QUOTA_BYTES:-107374182400}
+
+services:
+  postgres:
+    image: postgres:18.3-trixie@sha256:7e32e9833a6fb1c92c32552794cb6ed569d51b445a54907d35fc112ef39684db
+    environment:
+      POSTGRES_DB: vidxp
+      POSTGRES_USER: vidxp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vidxp -d vidxp"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  chroma:
+    image: chromadb/chroma:1.5.9@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
+    volumes:
+      - chroma-data:/data
+    restart: unless-stopped
+
+  storage-init:
+    image: ${VIDXP_CONTROL_IMAGE:?Set the immutable VidXP control image}
+    user: "0:0"
+    command:
+      - chown
+      - -R
+      - vidxp:vidxp
+      - /var/lib/vidxp/data
+      - /var/lib/vidxp/uploads
+      - /var/lib/vidxp/models
+    volumes:
+      - content-data:/var/lib/vidxp/data
+      - upload-quarantine:/var/lib/vidxp/uploads
+      - model-cache:/var/lib/vidxp/models
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  chroma-ready:
+    image: ${VIDXP_CONTROL_IMAGE:?Set the immutable VidXP control image}
+    command: ["python", "-m", "vidxp.health_cli", "chroma"]
+    depends_on:
+      chroma:
+        condition: service_started
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  migrate:
+    image: ${VIDXP_CONTROL_IMAGE:?Set the immutable VidXP control image}
+    environment:
+      <<: *vidxp-environment
+    command:
+      - sh
+      - -c
+      - >-
+        vidxp-database &&
+        dbos migrate
+        --sys-db-url postgresql://vidxp@postgres:5432/vidxp
+        --schema dbos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  api:
+    image: ${VIDXP_CONTROL_IMAGE:?Set the immutable VidXP control image}
+    environment:
+      <<: *vidxp-environment
+    command: ["vidxp-api"]
+    volumes:
+      - content-data:/var/lib/vidxp/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=5)"
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    restart: unless-stopped
+
+  hooks:
+    image: ${VIDXP_CONTROL_IMAGE:?Set the immutable VidXP control image}
+    environment:
+      <<: *vidxp-environment
+    command: ["vidxp-hooks"]
+    volumes:
+      - upload-quarantine:/var/lib/vidxp/uploads:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  worker:
+    image: ${VIDXP_WORKER_IMAGE:?Set the immutable VidXP worker image}
+    environment:
+      <<: *vidxp-environment
+      VIDXP_ALLOW_MODEL_DOWNLOADS: ${VIDXP_ALLOW_MODEL_DOWNLOADS:-true}
+      VIDXP_SLM_BASE_URL: ${VIDXP_SLM_BASE_URL:-}
+      VIDXP_SLM_MODEL: ${VIDXP_SLM_MODEL:-}
+    command: ["vidxp-worker", "--role", "cpu"]
+    volumes:
+      - content-data:/var/lib/vidxp/data
+      - upload-quarantine:/var/lib/vidxp/uploads:ro
+      - model-cache:/var/lib/vidxp/models
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      chroma-ready:
+        condition: service_completed_successfully
+    stop_grace_period: 40s
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:0.32.5@sha256:4dea9fb511947e24a84237bb636b0203abcb2ff0d3fbc7b4ff865deb91362131
+    profiles: ["slm"]
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  tusd:
+    image: tusproject/tusd:v2.10.0@sha256:9610f0f8edf4cceeb26f1b3ac9fa4bb4803d61a878e222c1573cda63c9e23374
+    command:
+      - -host=0.0.0.0
+      - -port=8080
+      - -upload-dir=/srv/tusd-data
+      - -base-path=/uploads/
+      - -behind-proxy
+      - -max-size=${VIDXP_UPLOAD_MAX_BYTES:-53687091200}
+      - -disable-download
+      - -disable-concatenation
+      - -hooks-http=http://hooks:8000/hooks
+      - -hooks-enabled-events=pre-create,post-finish,pre-terminate,post-terminate
+      - -hooks-http-timeout=5s
+      - -hooks-http-size-limit=5120
+      - -hooks-http-retry=3
+      - -hooks-http-backoff=1s
+      - -cors-allow-origin=${VIDXP_UPLOAD_CORS_ORIGIN_REGEX:?Set an anchored browser-origin regex}
+      - -cors-allow-headers=Authorization
+      - -cors-max-age=600
+      - -network-timeout=60s
+      - -shutdown-timeout=30s
+      - -verbose=false
+      - -show-startup-logs=false
+      - -log-format=json
+    volumes:
+      - upload-quarantine:/srv/tusd-data
+    depends_on:
+      hooks:
+        condition: service_healthy
+    stop_grace_period: 35s
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:8080/metrics
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  chroma-data:
+  content-data:
+  upload-quarantine:
+  model-cache:
+  ollama-models:

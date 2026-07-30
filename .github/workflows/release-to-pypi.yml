@@ -30,7 +30,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: |
@@ -53,15 +53,6 @@ jobs:
           .release-smoke/bin/python -m pip check
           .release-smoke/bin/vidxp --version
 
-      - name: Publish GitHub release
-        if: steps.release.outputs.released == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          semantic-release publish --tag "${{ steps.release.outputs.tag }}"
-          gh release edit "${{ steps.release.outputs.tag }}" \
-            --notes-file .release-notes.md
-
       - name: Preserve distribution
         if: steps.release.outputs.released == 'true'
         uses: actions/upload-artifact@v7
@@ -71,9 +62,29 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish-pypi:
+      - name: Preserve release notes
+        if: steps.release.outputs.released == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: github-release-notes
+          path: .release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  validate-release:
     if: needs.release.outputs.released == 'true'
     needs: release
+    uses: ./.github/workflows/ci.yml
+    with:
+      checkout_ref: ${{ needs.release.outputs.commit_sha }}
+      full: true
+      skip_containers: true
+
+  publish-pypi:
+    if: needs.release.outputs.released == 'true'
+    needs:
+      - release
+      - validate-release
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -94,7 +105,9 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       needs.release.outputs.released == 'true'
-    needs: release
+    needs:
+      - release
+      - validate-release
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -134,6 +147,28 @@ jobs:
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
 
+      - name: Build stable control container
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          push: false
+          target: control
+          tags: ghcr.io/${{ github.repository }}:${{ needs.release.outputs.version }}-control
+          labels: ${{ steps.metadata.outputs.labels }}
+
+      - name: Build stable worker container
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          push: false
+          target: worker
+          tags: ghcr.io/${{ github.repository }}:${{ needs.release.outputs.version }}-worker
+          labels: ${{ steps.metadata.outputs.labels }}
+
       - name: Smoke stable container
         shell: bash
         run: |
@@ -143,8 +178,11 @@ jobs:
           trap 'docker rm --force vidxp-release >/dev/null 2>&1 || true' EXIT
 
           docker exec vidxp-release vidxp --version
+          docker exec vidxp-release vidxp init --json
           docker exec vidxp-release python -c \
-            'import clip, face_recognition, whisperx'
+            'import chromadb, cv2, faster_whisper, huggingface_hub, pooch, psutil, sentence_transformers, torch, transformers; assert psutil.virtual_memory().available > 0'
+          docker exec vidxp-release python -c \
+            'import importlib.metadata as m; assert not any(d.metadata["Name"].lower().startswith("nvidia-") for d in m.distributions())'
           docker exec vidxp-release sh -c \
             'test ! -d "$HOME/.cache/huggingface" && test ! -d "$HOME/.cache/clip"'
 
@@ -161,6 +199,21 @@ jobs:
           docker logs vidxp-release
           exit 1
 
+      - name: Smoke stable server containers
+        shell: bash
+        run: |
+          for target in control worker; do
+            image="ghcr.io/${{ github.repository }}:${{ needs.release.outputs.version }}-${target}"
+            docker run --rm "$image" vidxp --version
+          done
+          control="ghcr.io/${{ github.repository }}:${{ needs.release.outputs.version }}-control"
+          worker="ghcr.io/${{ github.repository }}:${{ needs.release.outputs.version }}-worker"
+          docker run --rm "$control" vidxp-api --help
+          docker run --rm "$control" vidxp-mcp --help
+          docker run --rm "$worker" vidxp init --json
+          docker run --rm "$worker" python -c \
+            'import chromadb, cv2, faster_whisper, huggingface_hub, pooch, psutil, sentence_transformers, torch, transformers; assert psutil.virtual_memory().available > 0'
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
         with:
@@ -175,8 +228,69 @@ jobs:
         shell: bash
         run: |
           docker logout ghcr.io
-          image="ghcr.io/${{ github.repository }}:${{ needs.release.outputs.version }}"
-          if ! docker buildx imagetools inspect "$image"; then
-            echo "::error::Make the GHCR package public, then rerun this failed job."
-            exit 1
-          fi
+          for suffix in "" "-control" "-worker"; do
+            image="ghcr.io/${{ github.repository }}:${{ needs.release.outputs.version }}${suffix}"
+            if ! docker buildx imagetools inspect "$image"; then
+              echo "::error::Make the GHCR package public, then rerun this failed job."
+              exit 1
+            fi
+          done
+
+  build-desktop:
+    if: needs.release.outputs.released == 'true'
+    needs:
+      - release
+      - validate-release
+    uses: ./.github/workflows/desktop.yml
+    with:
+      checkout_ref: ${{ needs.release.outputs.commit_sha }}
+
+  publish-github:
+    if: needs.release.outputs.released == 'true'
+    needs:
+      - release
+      - validate-release
+      - publish-pypi
+      - publish-container
+      - build-desktop
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.release.outputs.commit_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install release tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r utils/build-requirements.txt
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: github-release-notes
+          path: .
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: vidxp-desktop-*
+          path: desktop-dist/
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          semantic-release publish --tag "${{ needs.release.outputs.tag }}"
+          gh release edit "${{ needs.release.outputs.tag }}" \
+            --notes-file .release-notes.md
+          gh release upload "${{ needs.release.outputs.tag }}" \
+            desktop-dist/* \
+            --clobber

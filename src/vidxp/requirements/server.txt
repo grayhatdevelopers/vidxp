@@ -1,0 +1,8 @@
+asgi-correlation-id>=5.0.1,<6
+alembic>=1.18.5,<2
+fastapi>=0.140.13,<0.141
+psutil>=7.2.2,<8
+psycopg[binary]>=3.3.4,<4
+pyjwt[crypto]>=2.13,<3
+python-multipart>=0.0.32,<0.1
+uvicorn[standard]>=0.51,<0.52

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "desktop_version": "0.2.1-b.1",
+  "package_name": "vidxp",
+  "package_version": "0.2.1-b.1",
+  "dependency_index": "https://pypi.org/simple",
+  "dependency_constraints_sha256": "d3ed16906841952017f112903356bfe433a8515a37aa3f56e4af4dfa1f985835",
+  "python_version": "3.14.6",
+  "uv_version": "0.12.0",
+  "surfaces": {
+    "browser": {
+      "extra": "frontend",
+      "label": "Browser interface",
+      "description": "Installs the local browser interface. Leave this off for a processing-only runtime.",
+      "default": true
+    }
+  },
+  "capabilities": {
+    "dialogue": {
+      "extra": "dialogue",
+      "modality": "dialogue",
+      "label": "Dialogue search"
+    },
+    "scene": {
+      "extra": "scene",
+      "modality": "scene",
+      "label": "Visual scene search"
+    },
+    "actor": {
+      "extra": "actor",
+      "modality": "actor",
+      "label": "Actor recognition"
+    }
+  },
+  "media_runtime": {
+    "strategy": "system",
+    "executables": [
+      "ffmpeg",
+      "ffprobe"
+    ],
+    "reason": "Startup checks verify the system FFmpeg runtime and offer a consented package-manager command; bundling remains disabled until target-specific codec licenses and provenance are recorded."
+  }
+}
