@@ -98,7 +98,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: testpypi-release-notes
-          path: .release-notes.md
+          path: release-notes.md
           if-no-files-found: error
           retention-days: 7
 
@@ -179,7 +179,7 @@ jobs:
         run: |
           semantic-release publish --tag "${{ needs.prerelease.outputs.tag }}"
           gh release edit "${{ needs.prerelease.outputs.tag }}" \
-            --notes-file .release-notes.md
+            --notes-file release-notes.md
           gh release upload "${{ needs.prerelease.outputs.tag }}" \
             desktop-dist/* \
             --clobber

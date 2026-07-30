@@ -8,7 +8,7 @@ README="README.md"
 README_BAK="$README.bak"
 BUILD_DIR="build"
 DIST_DIR="dist"
-RELEASE_NOTES=".release-notes.md"
+RELEASE_NOTES="release-notes.md"
 
 restore_readme() {
   if [[ -f "$README_BAK" ]]; then
