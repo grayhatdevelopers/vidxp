@@ -38,31 +38,12 @@ permissions:
 
 jobs:
   build:
-    name: ${{ matrix.label }}
-    runs-on: ${{ matrix.runner }}
+    name: ${{ matrix.target == 'windows' && 'Windows x86-64 NSIS' || matrix.target == 'macos' && 'macOS Apple Silicon DMG' || 'Linux x86-64 AppImage' }}
+    runs-on: ${{ matrix.target == 'windows' && 'windows-2025' || matrix.target == 'macos' && 'macos-15' || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:
         target: ${{ fromJSON(github.event_name == 'pull_request' && '["windows"]' || '["windows","macos","linux"]') }}
-        include:
-          - target: windows
-            label: Windows x86-64 NSIS
-            runner: windows-2025
-            sidecar_script: sidecar:windows
-            bundle_glob: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
-            artifact: vidxp-desktop-windows-x86_64
-          - target: macos
-            label: macOS Apple Silicon DMG
-            runner: macos-15
-            sidecar_script: sidecar:unix
-            bundle_glob: desktop/src-tauri/target/release/bundle/dmg/*.dmg
-            artifact: vidxp-desktop-macos-aarch64
-          - target: linux
-            label: Linux x86-64 AppImage
-            runner: ubuntu-24.04
-            sidecar_script: sidecar:unix
-            bundle_glob: desktop/src-tauri/target/release/bundle/appimage/*.AppImage
-            artifact: vidxp-desktop-linux-x86_64
 
     steps:
       - uses: actions/checkout@v7
@@ -116,7 +97,7 @@ jobs:
             desktop/runtime-constraints.txt "$generated"
 
       - name: Fetch the pinned uv sidecar
-        run: npm run ${{ matrix.sidecar_script }}
+        run: npm run ${{ matrix.target == 'windows' && 'sidecar:windows' || 'sidecar:unix' }}
         working-directory: desktop
 
       - name: Test the locked desktop crate
@@ -148,8 +129,8 @@ jobs:
       - name: Preserve the desktop installer
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.bundle_glob }}
+          name: ${{ matrix.target == 'windows' && 'vidxp-desktop-windows-x86_64' || matrix.target == 'macos' && 'vidxp-desktop-macos-aarch64' || 'vidxp-desktop-linux-x86_64' }}
+          path: ${{ matrix.target == 'windows' && 'desktop/src-tauri/target/release/bundle/nsis/*-setup.exe' || matrix.target == 'macos' && 'desktop/src-tauri/target/release/bundle/dmg/*.dmg' || 'desktop/src-tauri/target/release/bundle/appimage/*.AppImage' }}
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
