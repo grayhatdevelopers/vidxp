@@ -78,6 +78,7 @@ jobs:
     with:
       checkout_ref: ${{ needs.release.outputs.commit_sha }}
       full: true
+      skip_containers: true
 
   publish-pypi:
     if: needs.release.outputs.released == 'true'

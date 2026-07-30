@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      skip_containers:
+        description: Skip container validation when a downstream release job builds and smokes the same images.
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -45,13 +50,18 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           FORCE_FULL: ${{ inputs.full || false }}
+          SKIP_CONTAINERS: ${{ inputs.skip_containers || false }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           if [[ "$FORCE_FULL" == "true" ]]; then
             {
               echo "run_suite=true"
-              echo "run_container=true"
+              if [[ "$SKIP_CONTAINERS" == "true" ]]; then
+                echo "run_container=false"
+              else
+                echo "run_container=true"
+              fi
               echo "require_changelog=false"
               echo "needs_python=true"
             } >> "$GITHUB_OUTPUT"
@@ -157,7 +167,12 @@ jobs:
               [".wheel-smoke/bin/vidxp", "--help"],
               text=True,
           )
-          assert "benchmark" not in help_text
+          assert "benchmark" in help_text
+          benchmark_help = check_output(
+              [".wheel-smoke/bin/vidxp", "benchmark", "--help"],
+              text=True,
+          )
+          assert "official benchmark adapters" in benchmark_help
           for module in (
               "chromadb",
               "cv2",

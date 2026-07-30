@@ -22,19 +22,13 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/desktop.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "desktop/**"
-      - "src/vidxp/requirements/**"
-      - "src/vidxp/capabilities/*/requirements.txt"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/desktop.yml"
 
 permissions:
   contents: read
+
+concurrency:
+  group: desktop-${{ github.event.pull_request.number || inputs.checkout_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -76,6 +70,17 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@1.85.0
 
+      - name: Restore Rust build cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: desktop-rust-${{ runner.os }}-${{ runner.arch }}-1.85.0-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            desktop-rust-${{ runner.os }}-${{ runner.arch }}-1.85.0-
+
       - name: Install locked desktop tooling
         run: npm ci
         working-directory: desktop
@@ -96,12 +101,20 @@ jobs:
           git diff --no-index --ignore-matching-lines='^#' -- \
             desktop/runtime-constraints.txt "$generated"
 
+      - name: Restore the pinned uv sidecar
+        id: uv-sidecar-cache
+        uses: actions/cache@v5
+        with:
+          path: desktop/src-tauri/binaries
+          key: desktop-uv-sidecar-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/sidecars.json') }}
+
       - name: Fetch the pinned uv sidecar
+        if: steps.uv-sidecar-cache.outputs.cache-hit != 'true'
         run: npm run ${{ matrix.target == 'windows' && 'sidecar:windows' || 'sidecar:unix' }}
         working-directory: desktop
 
       - name: Test the locked desktop crate
-        run: cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
+        run: cargo test --release --locked --manifest-path desktop/src-tauri/Cargo.toml
 
       - name: Build the unsigned desktop installer
         run: npm run desktop:build
