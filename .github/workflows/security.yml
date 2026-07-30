@@ -6,8 +6,15 @@ on:
       - ".github/dependabot.yml"
       - ".github/workflows/**"
       - "pyproject.toml"
+      - "uv.lock"
       - "src/**/*.txt"
       - "utils/build-requirements.txt"
+      - "desktop/package.json"
+      - "desktop/package-lock.json"
+      - "desktop/runtime-constraints.txt"
+      - "desktop/sidecars.json"
+      - "desktop/src-tauri/Cargo.toml"
+      - "desktop/src-tauri/Cargo.lock"
 
 concurrency:
   group: security-${{ github.event.pull_request.number || github.ref }}

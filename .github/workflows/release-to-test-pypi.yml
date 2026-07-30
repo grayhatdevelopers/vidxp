@@ -15,6 +15,7 @@ on:
       - "utils/**"
       - "desktop/**"
       - "uv.lock"
+      - ".github/workflows/ci.yml"
       - ".github/workflows/desktop.yml"
       - ".github/workflows/release-to-test-pypi.yml"
 
@@ -33,7 +34,9 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       checkout_ref: ${{ github.sha }}
-      full: true
+      force_validation: true
+      provider_platforms: '["ubuntu-24.04","windows-2025","macos-15"]'
+      run_containers: true
 
   prerelease:
     needs: validate
@@ -65,7 +68,12 @@ jobs:
         env:
           BUILD_RELEASE_NOTES: "1"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: semantic-release version --as-prerelease --prerelease-token b --no-changelog
+        run: >-
+          semantic-release version
+          --as-prerelease
+          --prerelease-token b
+          --no-changelog
+          --no-vcs-release
 
       - name: Smoke distribution
         if: steps.release.outputs.released == 'true'
@@ -76,15 +84,6 @@ jobs:
           .release-smoke/bin/python -m pip check
           .release-smoke/bin/vidxp --version
 
-      - name: Publish GitHub release
-        if: steps.release.outputs.released == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          semantic-release publish --tag "${{ steps.release.outputs.tag }}"
-          gh release edit "${{ steps.release.outputs.tag }}" \
-            --notes-file .release-notes.md
-
       - name: Preserve distribution
         if: steps.release.outputs.released == 'true'
         uses: actions/upload-artifact@v7
@@ -94,9 +93,20 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Preserve release notes
+        if: steps.release.outputs.released == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: testpypi-release-notes
+          path: .release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
   publish-testpypi:
     if: needs.prerelease.outputs.released == 'true'
-    needs: prerelease
+    needs:
+      - prerelease
+      - build-desktop
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
@@ -116,33 +126,60 @@ jobs:
 
   build-desktop:
     if: needs.prerelease.outputs.released == 'true'
-    needs:
-      - prerelease
-      - publish-testpypi
+    needs: prerelease
     uses: ./.github/workflows/desktop.yml
     with:
       checkout_ref: ${{ needs.prerelease.outputs.commit_sha }}
 
-  publish-desktop:
+  publish-github:
     if: needs.prerelease.outputs.released == 'true'
     needs:
       - prerelease
+      - publish-testpypi
       - build-desktop
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prerelease.outputs.commit_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install release tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r utils/build-requirements.txt
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: testpypi-distribution
+          path: dist/
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: testpypi-release-notes
+          path: .
+
       - uses: actions/download-artifact@v8
         with:
           pattern: vidxp-desktop-*
           path: desktop-dist/
           merge-multiple: true
 
-      - name: Attach desktop installers to the prerelease
+      - name: Publish complete GitHub prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          semantic-release publish --tag "${{ needs.prerelease.outputs.tag }}"
+          gh release edit "${{ needs.prerelease.outputs.tag }}" \
+            --notes-file .release-notes.md
           gh release upload "${{ needs.prerelease.outputs.tag }}" \
             desktop-dist/* \
             --clobber

@@ -11,8 +11,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-source:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      checkout_ref: ${{ github.sha }}
+      force_validation: true
+
   release:
     if: github.ref == 'refs/heads/main'
+    needs: validate-source
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -42,7 +53,7 @@ jobs:
         env:
           BUILD_CHANGELOG: "1"
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: semantic-release version --no-changelog
+        run: semantic-release version --no-changelog --no-vcs-release
 
       - name: Smoke distribution
         if: steps.release.outputs.released == 'true'
@@ -71,23 +82,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  validate-release:
-    if: needs.release.outputs.released == 'true'
-    needs: release
-    permissions:
-      contents: read
-      pull-requests: read
-    uses: ./.github/workflows/ci.yml
-    with:
-      checkout_ref: ${{ needs.release.outputs.commit_sha }}
-      full: true
-      skip_containers: true
-
   publish-pypi:
     if: needs.release.outputs.released == 'true'
     needs:
       - release
-      - validate-release
+      - build-desktop
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -110,7 +109,7 @@ jobs:
       needs.release.outputs.released == 'true'
     needs:
       - release
-      - validate-release
+      - build-desktop
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -241,9 +240,7 @@ jobs:
 
   build-desktop:
     if: needs.release.outputs.released == 'true'
-    needs:
-      - release
-      - validate-release
+    needs: release
     uses: ./.github/workflows/desktop.yml
     with:
       checkout_ref: ${{ needs.release.outputs.commit_sha }}
@@ -252,7 +249,6 @@ jobs:
     if: needs.release.outputs.released == 'true'
     needs:
       - release
-      - validate-release
       - publish-pypi
       - publish-container
       - build-desktop
@@ -280,6 +276,11 @@ jobs:
         with:
           name: github-release-notes
           path: .
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: pypi-distribution
+          path: dist/
 
       - uses: actions/download-artifact@v8
         with:

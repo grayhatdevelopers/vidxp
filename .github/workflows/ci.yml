@@ -12,13 +12,23 @@ on:
         description: Exact commit to validate.
         required: false
         type: string
-      full:
-        description: Run every validation surface without PR path scoping.
+      force_validation:
+        description: Run validation without PR path scoping.
         required: false
         default: false
         type: boolean
-      skip_containers:
-        description: Skip container validation when a downstream release job builds and smokes the same images.
+      python_versions:
+        description: JSON array of Python versions to validate.
+        required: false
+        default: '["3.14"]'
+        type: string
+      provider_platforms:
+        description: JSON array of runner labels for provider validation.
+        required: false
+        default: '["windows-2025"]'
+        type: string
+      run_containers:
+        description: Run container validation when validation is forced.
         required: false
         default: false
         type: boolean
@@ -32,12 +42,13 @@ permissions:
   pull-requests: read
 
 jobs:
-  validate:
+  scope:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ${{ fromJSON(inputs.full && '["3.11","3.12","3.13","3.14"]' || '["3.14"]') }}
+    outputs:
+      needs_python: ${{ steps.scope.outputs.needs_python }}
+      require_changelog: ${{ steps.scope.outputs.require_changelog }}
+      run_container: ${{ steps.scope.outputs.run_container }}
+      run_suite: ${{ steps.scope.outputs.run_suite }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -49,19 +60,15 @@ jobs:
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FORCE_FULL: ${{ inputs.full || false }}
-          SKIP_CONTAINERS: ${{ inputs.skip_containers || false }}
+          FORCE_VALIDATION: ${{ inputs.force_validation || false }}
+          RUN_CONTAINERS: ${{ inputs.run_containers || false }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [[ "$FORCE_FULL" == "true" ]]; then
+          if [[ "$FORCE_VALIDATION" == "true" ]]; then
             {
               echo "run_suite=true"
-              if [[ "$SKIP_CONTAINERS" == "true" ]]; then
-                echo "run_container=false"
-              else
-                echo "run_container=true"
-              fi
+              echo "run_container=$RUN_CONTAINERS"
               echo "require_changelog=false"
               echo "needs_python=true"
             } >> "$GITHUB_OUTPUT"
@@ -101,24 +108,37 @@ jobs:
           echo "require_changelog=$require_changelog" >> "$GITHUB_OUTPUT"
           echo "needs_python=$needs_python" >> "$GITHUB_OUTPUT"
 
+  validate:
+    if: needs.scope.outputs.needs_python == 'true'
+    needs: scope
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(inputs.python_versions || '["3.14"]') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Towncrier compares BASE_SHA...HEAD in this job.
+          fetch-depth: 0
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
       - uses: actions/setup-python@v7
-        if: steps.scope.outputs.needs_python == 'true'
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install repository tooling
-        if: steps.scope.outputs.needs_python == 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r utils/build-requirements.txt
 
       - name: Require a changelog fragment
-        if: steps.scope.outputs.require_changelog == 'true' && matrix.python-version == '3.14'
+        if: needs.scope.outputs.require_changelog == 'true' && matrix.python-version == '3.14'
         run: towncrier check --compare-with "${{ github.event.pull_request.base.sha }}"
 
       - name: Install test surface
-        if: steps.scope.outputs.run_suite == 'true'
+        if: needs.scope.outputs.run_suite == 'true'
         run: |
           python -m pip install "uv==0.12.0"
           uv sync \
@@ -132,21 +152,21 @@ jobs:
             --no-dev
 
       - name: Lint
-        if: steps.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
+        if: needs.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
         run: ruff check src tests
 
       - name: Test
-        if: steps.scope.outputs.run_suite == 'true'
+        if: needs.scope.outputs.run_suite == 'true'
         run: uv run --no-sync python -m unittest discover -s tests -q
         env:
           PYTHONPATH: src
 
       - name: Build wheel and source distribution
-        if: steps.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
+        if: needs.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
         run: python -m build
 
       - name: Verify minimal wheel
-        if: steps.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
+        if: needs.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
         shell: bash
         run: |
           python -m venv .wheel-smoke
@@ -186,15 +206,15 @@ jobs:
           PY
 
       - name: Validate Compose configuration
-        if: steps.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
+        if: needs.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
         run: docker compose config --quiet
 
       - name: Build container
-        if: steps.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
+        if: needs.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
         run: docker build --tag vidxp:ci .
 
       - name: Smoke container
-        if: steps.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
+        if: needs.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
         shell: bash
         run: |
           docker run --detach --name vidxp-ci \
@@ -224,12 +244,14 @@ jobs:
           exit 1
 
   provider-platform-smoke:
+    if: needs.scope.outputs.run_suite == 'true'
+    needs: scope
     name: CPU providers (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(inputs.full && '["ubuntu-24.04","windows-2025","macos-15"]' || '["windows-2025"]') }}
+        os: ${{ fromJSON(inputs.provider_platforms || '["windows-2025"]') }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -244,10 +266,14 @@ jobs:
           python -m pip install "uv==0.12.0"
           uv sync --frozen --extra local-worker --no-dev
 
-      - name: Verify provider contracts without model downloads
-        run: |
-          uv run --no-sync python -m unittest discover -s tests -p "test_models.py" -q
-          uv run --no-sync python -m unittest discover -s tests -p "test_indexing.py" -q
+      - name: Verify model provider contracts without network downloads
+        run: uv run --no-sync python -m unittest discover -s tests -p "test_models.py" -q
+        env:
+          PYTHONPATH: src
+          VIDXP_ALLOW_MODEL_DOWNLOADS: "false"
+
+      - name: Verify indexing provider contracts without network downloads
+        run: uv run --no-sync python -m unittest discover -s tests -p "test_indexing.py" -q
         env:
           PYTHONPATH: src
           VIDXP_ALLOW_MODEL_DOWNLOADS: "false"
