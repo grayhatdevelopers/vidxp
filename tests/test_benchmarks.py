@@ -120,6 +120,23 @@ class BenchmarkCommonTests(unittest.TestCase):
                     revision="abc123",
                 )
 
+    def test_artifact_accepts_declared_line_ending_variants(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_bytes(b"print('official')\r\n")
+            raw_sha = hashlib.sha256(b"print('official')\n").hexdigest()
+            checkout_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+
+            artifact = verify_artifact(
+                path,
+                name="test evaluator",
+                expected_sha256=(raw_sha, checkout_sha),
+                source="https://example.invalid/evaluator.py",
+                revision="abc123",
+            )
+
+        self.assertEqual(artifact["sha256"], checkout_sha)
+
 
 class DiDeMoAdapterTests(unittest.TestCase):
     def test_media_override_is_disclosed_in_result_classification(self):

@@ -27,6 +27,23 @@ The executable pass found and fixed three integration defects before closure:
 - official dataset filenames were still being supplied to UUID4-only product
   media fields.
 
+## 2026-07-30 benchmark-preparation closure
+
+The guided acquisition path was exercised independently of model loading and
+indexing:
+
+| Check | Executed path | Observed result |
+|---|---|---|
+| DiDeMo preparation | Official test annotation `0`; pinned raw annotations/evaluator/hash map; one Multimedia Commons video | 5.3 MiB maximum-additional-storage plan shown; download completed; FFprobe and frame decode passed; manifest and runnable command emitted |
+| DiDeMo resumability | Repeated the same preparation directory | Zero new files and zero additional bytes; existing checksums and media validation passed |
+| HiREST preparation | Complete validation moment set; pinned metadata and released ASR | 7.2 MiB downloaded; the plan now reserves up to 17.2 MB for transcript extraction; 193 selected transcripts extracted; manifest and runnable command emitted |
+
+Both temporary preparation directories were removed after validation. This pass
+also found that the earlier evaluator checksums described CRLF Windows checkout
+bytes rather than canonical raw GitHub bytes. Preparation now pins canonical
+raw hashes while direct adapter invocation accepts and records either canonical
+LF or the known CRLF checkout form.
+
 ## 2026-07-27 legacy-provider Chunk 1 closure
 
 ### Failure that triggered the pass

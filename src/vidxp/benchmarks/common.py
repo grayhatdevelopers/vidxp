@@ -39,7 +39,7 @@ def verify_artifact(
     path: str | Path,
     *,
     name: str,
-    expected_sha256: str,
+    expected_sha256: str | Sequence[str],
     source: str,
     revision: str,
 ) -> dict[str, Any]:
@@ -47,9 +47,15 @@ def verify_artifact(
     if not artifact.is_file():
         raise FileNotFoundError(f"{name} not found: {artifact}")
     actual_sha256 = sha256_file(artifact)
-    if actual_sha256 != expected_sha256:
+    accepted = (
+        (expected_sha256,)
+        if isinstance(expected_sha256, str)
+        else tuple(expected_sha256)
+    )
+    if actual_sha256 not in accepted:
         raise ValueError(
-            f"{name} checksum mismatch: expected {expected_sha256}, "
+            f"{name} checksum mismatch: expected one of "
+            f"{', '.join(accepted)}, "
             f"received {actual_sha256}."
         )
     return {

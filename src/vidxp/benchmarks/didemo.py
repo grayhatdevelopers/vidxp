@@ -39,6 +39,9 @@ DIDEMO_VALIDATION_SHA256 = (
     "b0364cc256553332feb19d46bcc4cd2b09774949fe6c0b25e7ed0ff3c6aefebb"
 )
 DIDEMO_EVALUATOR_SHA256 = (
+    "9ec3e7a171272eb3551b0eaa7bbe9292131ad5cf34fd5c1e02c0fc4a11234df6"
+)
+DIDEMO_EVALUATOR_CRLF_SHA256 = (
     "4754bb320564e5d2e7c633e0b660e87feca7f00fa73269e50140e81ffb4ca762"
 )
 DIDEMO_MOMENTS = (
@@ -47,8 +50,7 @@ DIDEMO_MOMENTS = (
 )
 
 
-def load_annotations(path: str | Path) -> list[dict[str, Any]]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+def parse_annotations(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, list) or not payload:
         raise ValueError("DiDeMo annotations must be a non-empty JSON list.")
     required = {
@@ -79,7 +81,13 @@ def load_annotations(path: str | Path) -> list[dict[str, Any]]:
                 raise ValueError(
                     f"DiDeMo annotation {index} exceeds num_segments."
                 )
-    return payload
+    return [dict(annotation) for annotation in payload]
+
+
+def load_annotations(path: str | Path) -> list[dict[str, Any]]:
+    return parse_annotations(
+        json.loads(Path(path).read_text(encoding="utf-8"))
+    )
 
 
 def select_annotations(
@@ -242,7 +250,10 @@ def _verified_artifacts(
         verify_artifact(
             evaluator_path,
             name="DiDeMo evaluator",
-            expected_sha256=DIDEMO_EVALUATOR_SHA256,
+            expected_sha256=(
+                DIDEMO_EVALUATOR_SHA256,
+                DIDEMO_EVALUATOR_CRLF_SHA256,
+            ),
             source=(
                 f"{DIDEMO_REPOSITORY}/blob/{DIDEMO_REVISION}"
                 "/utils/eval.py"

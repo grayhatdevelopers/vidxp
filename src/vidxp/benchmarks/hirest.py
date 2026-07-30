@@ -53,6 +53,9 @@ HIREST_CATEGORIES_SHA256 = (
     "157623d50f7b8482f55fa1c4efc500539784c0399fb2dd60bb687b4006d85ca1"
 )
 HIREST_EVALUATOR_SHA256 = (
+    "871b48dc5ce42fbe1a4b672fe4df88a88ce568d57759dfc971e5aacc5f88f119"
+)
+HIREST_EVALUATOR_CRLF_SHA256 = (
     "c4b8ba9b572ae4088e90ddc3eec2b2cc4f5b4c1a0153ff6e0843817da89a5ca0"
 )
 HIREST_DEFAULT_WINDOW_FRACTION = 0.8
@@ -271,7 +274,10 @@ def _verified_artifacts(
         verify_artifact(
             evaluator_path,
             name="HiREST evaluator",
-            expected_sha256=HIREST_EVALUATOR_SHA256,
+            expected_sha256=(
+                HIREST_EVALUATOR_SHA256,
+                HIREST_EVALUATOR_CRLF_SHA256,
+            ),
             source=f"{revision_root}/evaluate.py",
             revision=HIREST_REVISION,
         ),

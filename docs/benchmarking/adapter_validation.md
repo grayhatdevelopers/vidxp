@@ -19,12 +19,21 @@ the model and protocol differences are recorded explicitly.
 |---|---|---|---|
 | DiDeMo | [`data/val_data.json`](https://github.com/LisaAnne/LocalizingMoments/blob/b6a555c8134581305d0ed4716fbc192860e0b88c/data/val_data.json) | `b6a555c8134581305d0ed4716fbc192860e0b88c` | `b0364cc256553332feb19d46bcc4cd2b09774949fe6c0b25e7ed0ff3c6aefebb` |
 | DiDeMo | [`data/test_data.json`](https://github.com/LisaAnne/LocalizingMoments/blob/b6a555c8134581305d0ed4716fbc192860e0b88c/data/test_data.json) | `b6a555c8134581305d0ed4716fbc192860e0b88c` | `1891c04ec48b3d364c739594b2b6413806b74bd9027c092d896e7ebb930ff1cd` |
-| DiDeMo | [`utils/eval.py`](https://github.com/LisaAnne/LocalizingMoments/blob/b6a555c8134581305d0ed4716fbc192860e0b88c/utils/eval.py) | `b6a555c8134581305d0ed4716fbc192860e0b88c` | `4754bb320564e5d2e7c633e0b660e87feca7f00fa73269e50140e81ffb4ca762` |
+| DiDeMo | [`utils/eval.py`](https://github.com/LisaAnne/LocalizingMoments/blob/b6a555c8134581305d0ed4716fbc192860e0b88c/utils/eval.py) | `b6a555c8134581305d0ed4716fbc192860e0b88c` | `9ec3e7a171272eb3551b0eaa7bbe9292131ad5cf34fd5c1e02c0fc4a11234df6` |
+| DiDeMo | [`data/yfcc100m_hash.txt`](https://github.com/LisaAnne/LocalizingMoments/blob/b6a555c8134581305d0ed4716fbc192860e0b88c/data/yfcc100m_hash.txt) | `b6a555c8134581305d0ed4716fbc192860e0b88c` | `481d9aaf020624d5915200bcf4752fb46d3e1931167e8b46715a5f342577cc4d` |
 | HiREST | [`data/splits/all_data_val.json`](https://github.com/j-min/HiREST/blob/deffc169b4e8d51c1589d5512ad05da61e81bcee/data/splits/all_data_val.json) | `deffc169b4e8d51c1589d5512ad05da61e81bcee` | `70d32c5fcdffe66cbf3c732dd274f03378da2082f50c9cec7e67705f529ecb4d` |
 | HiREST | [`data/splits/all_data_test.json`](https://github.com/j-min/HiREST/blob/deffc169b4e8d51c1589d5512ad05da61e81bcee/data/splits/all_data_test.json) | `deffc169b4e8d51c1589d5512ad05da61e81bcee` | `00219050c022ff2fc89c210ca4db605de6aa13c5c6014e4c678345ade3448a62` |
 | HiREST | [`data/evaluation/categories.json`](https://github.com/j-min/HiREST/blob/deffc169b4e8d51c1589d5512ad05da61e81bcee/data/evaluation/categories.json) | `deffc169b4e8d51c1589d5512ad05da61e81bcee` | `157623d50f7b8482f55fa1c4efc500539784c0399fb2dd60bb687b4006d85ca1` |
-| HiREST | [`evaluate.py`](https://github.com/j-min/HiREST/blob/deffc169b4e8d51c1589d5512ad05da61e81bcee/evaluate.py) | `deffc169b4e8d51c1589d5512ad05da61e81bcee` | `c4b8ba9b572ae4088e90ddc3eec2b2cc4f5b4c1a0153ff6e0843817da89a5ca0` |
+| HiREST | [`evaluate.py`](https://github.com/j-min/HiREST/blob/deffc169b4e8d51c1589d5512ad05da61e81bcee/evaluate.py) | `deffc169b4e8d51c1589d5512ad05da61e81bcee` | `871b48dc5ce42fbe1a4b672fe4df88a88ce568d57759dfc971e5aacc5f88f119` |
 | HiREST | [`ASR.zip`](https://huggingface.co/j-min/HiREST-baseline/resolve/54e2f8da7a4384fec8a137011399f5e104069032/ASR.zip) | `54e2f8da7a4384fec8a137011399f5e104069032` | `0b452d38e30064dc7273a58b7b73ec33e307ff83d30048a472777f56e3a29fbc` |
+
+The table records canonical raw upstream bytes. The adapters also accept the
+semantically identical CRLF evaluator hashes produced by a Windows Git
+checkout: `4754bb320564e5d2e7c633e0b660e87feca7f00fa73269e50140e81ffb4ca762`
+for DiDeMo and
+`c4b8ba9b572ae4088e90ddc3eec2b2cc4f5b4c1a0153ff6e0843817da89a5ca0`
+for HiREST. The observed hash is recorded rather than silently normalizing a
+user-supplied checkout.
 
 The adapters verify these hashes before indexing. Each run manifest also records
 the artifact paths, URLs, revisions, sizes, and observed hashes. VidXP does not
@@ -249,33 +258,37 @@ The final adapter behavior now:
 The temporary 1,037-video corpus, model-run indexes, repository clones, and ASR
 copy were removed after recording the evidence above.
 
-## Commands
+## Prepare and run
 
-Install the optional adapters with the capabilities they evaluate:
-
-```powershell
-python -m pip install -e ".[scene,dialogue,benchmarks]"
-```
-
-Run a declared DiDeMo smoke subset by zero-based official annotation indices:
+Install the optional adapters and initialize FFmpeg:
 
 ```powershell
-vidxp benchmark didemo `
-  --annotations <LocalizingMoments>/data/test_data.json `
-  --evaluator <LocalizingMoments>/utils/eval.py `
-  --media-directory <didemo-videos> `
-  --media-overrides <media-overrides.json> `
-  --split test `
-  --annotation-indices 0,1,2 `
-  --run-id didemo-smoke
+uv tool install "vidxp[scene,dialogue,benchmarks]"
+vidxp init
 ```
 
-Omit `--annotation-indices` for the full official test split.
-`--media-overrides` is a JSON object mapping an official annotation filename to
-a documented replacement path. Relative replacement paths resolve beside the
-JSON file, and the run manifest records that a substitution was used.
+Prepare a declared DiDeMo smoke subset by zero-based official annotation
+indices:
 
-For HiREST, a smoke pair file is a JSON list:
+```powershell
+vidxp benchmark prepare didemo --split test --annotation-indices 0,1,2
+```
+
+The command reads the pinned metadata needed to inspect the selection, displays
+the maximum additional storage, destination free space, and any documented
+replacement, then asks before persisting files. It resumes `.part` downloads,
+validates each video with
+FFprobe and a decoded frame, writes `preparation-manifest.json`, and prints the
+complete benchmark command. Omit `--annotation-indices` for the full official
+split.
+
+The known corrupt Multimedia Commons object is never used or replaced
+silently. If its annotation is selected, the plan identifies the archived
+Wikimedia original, includes its 94,107,862-byte size, and records the SHA-1,
+source URL, and generated `media-overrides.json`. `--yes` confirms the displayed
+plan for automation; JSON output requires it.
+
+For a HiREST smoke, a pair file is a JSON list:
 
 ```json
 [
@@ -286,23 +299,26 @@ For HiREST, a smoke pair file is a JSON list:
 ]
 ```
 
-Run the declared pair subset:
+Prepare the released-ASR archive and a self-contained copy of that selection:
 
 ```powershell
-vidxp benchmark hirest `
-  --ground-truth <HiREST>/data/splits/all_data_test.json `
-  --categories <HiREST>/data/evaluation/categories.json `
-  --evaluator <HiREST>/evaluate.py `
-  --asr-archive <downloads>/ASR.zip `
-  --asr-directory <extracted>/ASR `
+vidxp benchmark prepare hirest `
   --split test `
-  --temporal-window-fraction 0.8 `
-  --pairs <subset-pairs.json> `
-  --run-id hirest-smoke
+  --pairs .\hirest-smoke-pairs.json
 ```
 
-Omit `--pairs` to generate all 776 official test predictions. Test output is
-explicitly unscored; use `--split validation` with the pinned validation file
+Preparation downloads the pinned annotations, categories, evaluator, and
+released ASR archive, then extracts only the selected transcripts. No HiREST
+video is downloaded by this adapter. Omit `--pairs` to prepare the complete
+selected split.
+
+By default, prepared data is stored below VidXP's platform-native application
+data directory under `benchmarks/<benchmark>`. Use `--output-directory` to
+choose another volume. The final line is deliberately a copy/paste command, so
+the user does not have to assemble artifact paths manually.
+
+The generated direct command can omit `--pairs` to produce all 776 official
+test predictions. Test output is explicitly unscored; use `--split validation`
 for locally evaluable official metrics.
 
 ## Shared run output
