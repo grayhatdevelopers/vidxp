@@ -6,7 +6,7 @@
 /video.mp4
 /dist/
 /build/
-/.release-notes.md
+/release-notes.md
 .build
 /MANIFEST
 /.pytest_cache/

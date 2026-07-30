@@ -1,0 +1,88 @@
+name: Synchronize release channels
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Stable release commit that completed publication.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: synchronize-release-channels
+  cancel-in-progress: false
+
+jobs:
+  synchronize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: release
+
+      - name: Fast-forward main after complete stable publication
+        env:
+          EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            refs/heads/release:refs/remotes/origin/release \
+            '+refs/tags/*:refs/tags/*'
+
+          release_sha="$(git rev-parse origin/release)"
+          main_sha="$(git rev-parse origin/main)"
+          if [[ "$main_sha" == "$release_sha" ]]; then
+            echo "main and release are already synchronized."
+            exit 0
+          fi
+          if ! git merge-base --is-ancestor "$main_sha" "$release_sha"; then
+            echo "::error::main advanced during stable promotion; refusing a non-fast-forward synchronization."
+            exit 1
+          fi
+          if [[ -n "$EXPECTED_RELEASE_SHA" ]] &&
+             ! git merge-base --is-ancestor "$EXPECTED_RELEASE_SHA" "$release_sha"; then
+            echo "::error::Published release $EXPECTED_RELEASE_SHA is not in the release branch."
+            exit 1
+          fi
+          publication_sha="${EXPECTED_RELEASE_SHA:-$release_sha}"
+
+          matched=0
+          drafts=0
+          while IFS=$'\t' read -r tag draft prerelease; do
+            [[ -n "$tag" ]] || continue
+            if ! git rev-parse --verify --quiet "refs/tags/$tag^{commit}" >/dev/null; then
+              continue
+            fi
+            tag_sha="$(git rev-parse "refs/tags/$tag^{commit}")"
+            if [[ "$tag_sha" != "$publication_sha" || "$prerelease" == "true" ]]; then
+              continue
+            fi
+            matched=$((matched + 1))
+            if [[ "$draft" == "true" ]]; then
+              drafts=$((drafts + 1))
+            fi
+          done < <(
+            gh api --paginate "repos/$REPOSITORY/releases?per_page=100" \
+              --jq '.[] | [.tag_name, .draft, .prerelease] | @tsv'
+          )
+
+          if [[ "$matched" == "0" ]]; then
+            echo "release has not produced a stable GitHub release yet."
+            exit 0
+          fi
+          if [[ "$drafts" != "0" ]]; then
+            echo "$drafts stable release artifact set(s) are still draft."
+            exit 0
+          fi
+
+          git push origin "origin/release:refs/heads/main"
