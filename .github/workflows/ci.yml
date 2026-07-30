@@ -32,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ${{ fromJSON(inputs.full && '["3.11","3.12","3.13","3.14"]' || '["3.14"]') }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -117,6 +117,7 @@ jobs:
             --extra frontend \
             --extra benchmarks \
             --extra server \
+            --extra slm \
             --extra test \
             --no-dev
 
@@ -213,10 +214,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2025
-          - macos-15
+        os: ${{ fromJSON(inputs.full && '["ubuntu-24.04","windows-2025","macos-15"]' || '["windows-2025"]') }}
     steps:
       - uses: actions/checkout@v7
         with:

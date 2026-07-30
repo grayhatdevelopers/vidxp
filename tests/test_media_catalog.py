@@ -203,12 +203,13 @@ class LocalMediaStoreTests(unittest.TestCase):
             root = Path(directory)
             junction = root / "objects" / "junction"
             junction.mkdir(parents=True)
-            original = Path.is_junction
+            original = getattr(Path, "is_junction", lambda _item: False)
 
             with patch.object(
                 Path,
                 "is_junction",
                 lambda item: item == junction or original(item),
+                create=True,
             ):
                 with self.assertRaises(PermissionError):
                     prepare_managed_destination(

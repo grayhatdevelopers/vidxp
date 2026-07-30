@@ -51,13 +51,17 @@ class ModelTests(unittest.TestCase):
         root: str,
         *,
         allowed_specs=None,
+        allow_model_downloads: bool | None = None,
     ) -> ModelRuntime:
+        settings = {
+            "repository_root": root,
+            "model_cache": Path(root) / "models",
+            "runtime_backend": "cpu",
+        }
+        if allow_model_downloads is not None:
+            settings["allow_model_downloads"] = allow_model_downloads
         return ModelRuntime(
-            VidXPSettings(
-                repository_root=root,
-                model_cache=Path(root) / "models",
-                runtime_backend="cpu",
-            ),
+            VidXPSettings(**settings),
             allowed_specs=(
                 create_capability_registry().model_specs()
                 if allowed_specs is None
@@ -145,7 +149,11 @@ class ModelTests(unittest.TestCase):
     def test_normal_model_resolution_never_downloads_implicitly(self):
         with TemporaryDirectory() as directory:
             spec = replace(YUNET_MODEL, filename="missing.onnx")
-            runtime = self.runtime(directory, allowed_specs=(spec,))
+            runtime = self.runtime(
+                directory,
+                allowed_specs=(spec,),
+                allow_model_downloads=True,
+            )
             retrieve = Mock(side_effect=AssertionError("downloaded"))
             with (
                 patch.dict(

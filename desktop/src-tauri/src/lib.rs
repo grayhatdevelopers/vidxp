@@ -435,15 +435,15 @@ fn executable_candidates(name: &str) -> Vec<PathBuf> {
     let mut directories = env::var_os("PATH")
         .map(|value| env::split_paths(&value).collect::<Vec<_>>())
         .unwrap_or_default();
-    if cfg!(windows)
-        && let Some(local) = env::var_os("LOCALAPPDATA")
-    {
-        directories.push(
-            PathBuf::from(local)
-                .join("Microsoft")
-                .join("WinGet")
-                .join("Links"),
-        );
+    if cfg!(windows) {
+        if let Some(local) = env::var_os("LOCALAPPDATA") {
+            directories.push(
+                PathBuf::from(local)
+                    .join("Microsoft")
+                    .join("WinGet")
+                    .join("Links"),
+            );
+        }
     }
     if cfg!(target_os = "macos") {
         directories.extend([
@@ -1404,20 +1404,20 @@ fn stop_worker(runtime: &Path, paths: &DesktopPaths) {
 fn shutdown(app: &AppHandle) {
     log::info!("Stopping active VidXP processes");
     let state = app.state::<DesktopState>();
-    if let Ok(mut active_operation) = state.operation_process.lock()
-        && let Some(process) = active_operation.take()
-    {
-        let _ = process.kill();
+    if let Ok(mut active_operation) = state.operation_process.lock() {
+        if let Some(process) = active_operation.take() {
+            let _ = process.kill();
+        }
     }
-    if let Ok(mut active_process) = state.ui_process.lock()
-        && let Some(mut ui) = active_process.take()
-    {
-        let _ = ui.process.kill();
-        match ui.process.wait_timeout(Duration::from_secs(5)) {
-            Ok(Some(_)) => {}
-            _ => {
-                let _ = ui.process.kill();
-                let _ = ui.process.wait_timeout(Duration::from_secs(1));
+    if let Ok(mut active_process) = state.ui_process.lock() {
+        if let Some(mut ui) = active_process.take() {
+            let _ = ui.process.kill();
+            match ui.process.wait_timeout(Duration::from_secs(5)) {
+                Ok(Some(_)) => {}
+                _ => {
+                    let _ = ui.process.kill();
+                    let _ = ui.process.wait_timeout(Duration::from_secs(1));
+                }
             }
         }
     }
@@ -1425,10 +1425,10 @@ fn shutdown(app: &AppHandle) {
         log::warn!("Could not resolve desktop paths during shutdown");
         return;
     };
-    if let Ok(mut operation_worker) = state.operation_worker_runtime.lock()
-        && let Some(runtime) = operation_worker.take()
-    {
-        stop_worker(&runtime, &paths);
+    if let Ok(mut operation_worker) = state.operation_worker_runtime.lock() {
+        if let Some(runtime) = operation_worker.take() {
+            stop_worker(&runtime, &paths);
+        }
     }
     let Ok(active) = active_runtime(&paths) else {
         log::info!("No active VidXP runtime needs worker shutdown");

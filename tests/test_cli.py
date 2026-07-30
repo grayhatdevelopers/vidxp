@@ -456,8 +456,9 @@ class CliTests(unittest.TestCase):
         result = self.invoke(["search", "--help"])
 
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("every media item in the active", result.output)
-        self.assertIn("index snapshot.", result.output)
+        normalized = " ".join(result.output.split())
+        self.assertIn("every media item in the active", normalized)
+        self.assertIn("index snapshot.", normalized)
 
     def test_query_constructs_shared_command_and_emits_typed_answer(self):
         answer = QueryAnswer(

@@ -43,18 +43,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        target: ${{ fromJSON(github.event_name == 'pull_request' && '["windows"]' || '["windows","macos","linux"]') }}
         include:
-          - label: Windows x86-64 NSIS
+          - target: windows
+            label: Windows x86-64 NSIS
             runner: windows-2025
             sidecar_script: sidecar:windows
             bundle_glob: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
             artifact: vidxp-desktop-windows-x86_64
-          - label: macOS Apple Silicon DMG
+          - target: macos
+            label: macOS Apple Silicon DMG
             runner: macos-15
             sidecar_script: sidecar:unix
             bundle_glob: desktop/src-tauri/target/release/bundle/dmg/*.dmg
             artifact: vidxp-desktop-macos-aarch64
-          - label: Linux x86-64 AppImage
+          - target: linux
+            label: Linux x86-64 AppImage
             runner: ubuntu-24.04
             sidecar_script: sidecar:unix
             bundle_glob: desktop/src-tauri/target/release/bundle/appimage/*.AppImage
