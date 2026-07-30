@@ -119,6 +119,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # Towncrier compares BASE_SHA...HEAD in this job.
+          fetch-depth: 0
           ref: ${{ inputs.checkout_ref || github.sha }}
 
       - uses: actions/setup-python@v7
