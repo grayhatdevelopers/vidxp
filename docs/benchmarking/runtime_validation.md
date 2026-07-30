@@ -4,7 +4,47 @@ This ledger records executable checks for the benchmark-ready core. It is
 separate from unit-test coverage and from benchmark results. A smoke result here
 must not be reported as a paper score.
 
-## 2026-07-27 Chunk 1 closure
+## 2026-07-30 current-provider benchmark closure
+
+Two real, bounded runs validated the current CPU providers and official
+evaluator paths after the model swap:
+
+| Check | Executed path | Observed result |
+|---|---|---|
+| HiREST multi-video smoke | Two released-ASR validation pairs; Qwen3 Embedding 0.6B; Chroma; filtered known-video search; 0.8-duration ranking; pinned evaluator | Both media remained indexed and searchable; two predictions serialized; R@0.5/R@0.7 `50/50`; empty failure log |
+| DiDeMo sample | Official test annotation index `0`; SigLIP2; source-aware 1.0 sample/sec; max chunk pooling; pinned evaluator | One prediction containing all 21 candidates serialized; Rank@5 `1.0`; empty failure log |
+| Targeted regression suite | Runner, benchmark adapters/CLI, search, storage unit and integration tests | 67 tests and 4 subtests passed |
+
+The percentages are smoke-subset outputs, not current full-corpus quality
+scores. The runs used the same HP ENVY/i7-12700H/15.72 GiB laptop as the legacy
+results. PyTorch 2.13.0+cpu did not use the installed RTX 3060 Laptop GPU.
+
+The executable pass found and fixed three integration defects before closure:
+
+- benchmark records lacked the now-required generation identity;
+- multi-video retries deleted an entire shared generation instead of only the
+  current video's records; and
+- official dataset filenames were still being supplied to UUID4-only product
+  media fields.
+
+## 2026-07-30 benchmark-preparation closure
+
+The guided acquisition path was exercised independently of model loading and
+indexing:
+
+| Check | Executed path | Observed result |
+|---|---|---|
+| DiDeMo preparation | Official test annotation `0`; pinned raw annotations/evaluator/hash map; one Multimedia Commons video | 5.3 MiB maximum-additional-storage plan shown; download completed; FFprobe and frame decode passed; manifest and runnable command emitted |
+| DiDeMo resumability | Repeated the same preparation directory | Zero new files and zero additional bytes; existing checksums and media validation passed |
+| HiREST preparation | Complete validation moment set; pinned metadata and released ASR | 7.2 MiB downloaded; the plan now reserves up to 17.2 MB for transcript extraction; 193 selected transcripts extracted; manifest and runnable command emitted |
+
+Both temporary preparation directories were removed after validation. This pass
+also found that the earlier evaluator checksums described CRLF Windows checkout
+bytes rather than canonical raw GitHub bytes. Preparation now pins canonical
+raw hashes while direct adapter invocation accepts and records either canonical
+LF or the known CRLF checkout form.
+
+## 2026-07-27 legacy-provider Chunk 1 closure
 
 ### Failure that triggered the pass
 

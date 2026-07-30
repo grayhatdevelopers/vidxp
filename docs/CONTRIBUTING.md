@@ -1,125 +1,242 @@
-# Contribution Guidelines
+# Contributing to VidXP
 
-Thanks for contributing to VidXP (Video eXPlain).
+Thanks for helping improve VidXP. Contributions may target the local product,
+public interfaces, model capabilities, deployment, documentation, or
+benchmarks.
 
-## Project layout
+## Before you start
 
-| File / path | Role |
-|-------------|------|
-| `src/vidxp/cli.py` | Typer commands and installed `vidxp` entry point |
-| `src/vidxp/application.py` | Reusable application boundary for CLI and future adapters |
-| `src/vidxp/capabilities/` | Capability registry, schemas, operations, dependencies, and optional CLI modules |
-| `src/vidxp/repositories.py` | Persistent named local-index configuration |
-| `src/vidxp/frontend.py` | Streamlit interface launched by `vidxp ui` |
-| `src/vidxp/core/` | Capability-neutral storage, media, run state, and execution contracts |
-| `src/vidxp/benchmarks/` | Benchmark-specific loaders, prediction adapters, and evaluator calls |
-| `pyproject.toml` | Package metadata and Python dependencies |
-| `docs/` | Installation-linked guidance, benchmark research, and contribution notes |
-| `chroma_data/` | Local ChromaDB index and `index_status.json` readiness record (generated; do not commit) |
-| `benchmark_runs/` | Isolated programmatic and benchmark runs (generated; do not commit) |
-| Model caches | Managed by WhisperX, SentenceTransformer, and CLIP outside the repository |
+- Open an issue before a large cross-capability or architecture change.
+- Keep pull requests focused on one user-visible outcome.
+- Preserve the shared application contracts: CLI, UI, HTTP, and MCP should not
+  grow separate implementations of the same operation.
+- State whether a storage/model change requires existing repositories to be
+  rebuilt.
+- GPU support is deferred. Do not silently make CUDA the default or add a new
+  GPU installation path without the documented validation gates.
 
-The full local CLI/UI index uses up to three collections:
-`dialogue`, `scene`, and `actor`. Runs containing
-selected capabilities create only the collections they need.
+## Development setup
 
-## Setup
-
-Follow the [installation guide](../INSTALLATION_GUIDE.md) or install from the
-package metadata directly.
+### 1. Clone and install the complete contributor environment
 
 ```bash
-python -m venv venv
-# Windows: venv\Scripts\activate
-# macOS/Linux: source venv/bin/activate
-python -m pip install -e ".[all,frontend,benchmarks]"
+git clone https://github.com/grayhatdevelopers/vidxp.git
+cd vidxp
+uv sync --frozen \
+  --extra local-worker \
+  --extra frontend \
+  --extra mcp \
+  --extra server \
+  --extra test \
+  --extra benchmarks
 ```
 
-Verify the environment:
+The repository lock selects CPU PyTorch on Linux and Windows.
+
+### 2. Initialize the media runtime
 
 ```bash
-vidxp --version
-vidxp doctor
+uv run --no-sync vidxp init
 ```
 
-CLI: `vidxp --help`  
-UI: `vidxp ui`
+This verifies FFmpeg, ffprobe, `libx264`, and `aac`. It may offer an explicit,
+confirmed system package-manager command; Python dependency installation never
+changes system packages.
 
-Models default to CPU and download into their libraries' standard caches on
-first use. If a model identifier changes, update the setup documentation and
-record the exact identifier in benchmark results.
-
-## Where to put work
-
-- Capability-specific indexing, retrieval, models, schemas, and dependencies:
-  the matching folder under `src/vidxp/capabilities/`.
-- Shared storage, media handling, run state, and execution mechanics:
-  `src/vidxp/core/`.
-- Transport-neutral application operations: `src/vidxp/application.py`.
-- Command-line behavior: `src/vidxp/cli.py`.
-- Upload and search UX: `src/vidxp/frontend.py`; keep product logic in the
-  shared application and core modules.
-- Official benchmark formats and evaluator calls: `src/vidxp/benchmarks/`.
-- Capability dependencies: that capability's `requirements.txt`; wire a new
-  install extra into `pyproject.toml`.
-- Product direction: the roadmap in the main [README](../README.md).
-
-Prefer small, focused pull requests. If you change how embeddings or metadata
-are stored, state whether an existing `chroma_data` index must be rebuilt.
-
-## Before you open a PR
-
-1. Run the automated test suite relevant to the change.
-2. Index a short sample video, then try dialogue, scene, and—if touched—actor
-   search.
-3. If you changed the Streamlit app, smoke-test upload, indexing, cancellation,
-   reload, and search.
-4. Confirm that an incomplete local index is replaced rather than treated as
-   ready.
-5. Do not commit model weights, generated indexes, benchmark runs, or local
-   sample media.
-
-Run the complete automated suite with:
+### 3. Verify the environment
 
 ```bash
-python -m unittest discover -s tests
+uv run --no-sync vidxp --version
+uv run --no-sync vidxp doctor
+uv run --no-sync pytest -q
 ```
+
+`doctor` may report that model artifacts have not been prepared; that is
+expected in a fresh contributor environment. Dependency, import, FFmpeg, or
+codec failures are not expected. Prepare only the modality needed for manual
+testing:
+
+```bash
+uv run --no-sync vidxp prepare --modalities scene
+uv run --no-sync vidxp doctor --modalities scene
+```
+
+Models and normal local repositories use the operating system’s per-user VidXP
+data directory. They are not written into the checkout unless you explicitly
+override `--data-dir`.
+
+## Project map
+
+- Product operations and contracts live in `application.py`,
+  `control_plane.py`, `application_models.py`, and the media, artifact, and
+  query services.
+- Capability-specific indexing and retrieval live in `capabilities/`.
+- CLI, Streamlit, HTTP, and MCP adapters live in `cli.py`, `cli_commands/`,
+  `frontend.py`, `api.py`, `api_routes/`, and `mcp.py`.
+- Durable execution and storage live in `job_service.py`, `workflow_*`,
+  `execution.py`, `core/`, `infrastructure/`, and `ports.py`.
+- Deployment and desktop packaging live in `Dockerfile`, `compose*.yaml`, and
+  `desktop/`.
+- Tests are under `tests/`; benchmark adapters and documentation are under
+  `src/vidxp/benchmarks/` and `docs/benchmarking/`.
+- Optional dependency groups are under `src/vidxp/requirements/`.
+
+Generated environments, model weights, media, indexes, artifacts,
+`benchmark_runs/`, build outputs, and local data do not belong in commits.
+
+## Architecture rules
+
+### Put logic at the correct boundary
+
+- Capability-specific models, indexing, retrieval, schemas, and dependencies:
+  `src/vidxp/capabilities/<name>/`.
+- Transport-neutral operations and result models: the application/control
+  plane.
+- CLI, Streamlit, HTTP, and MCP: thin input/output adapters.
+- Filesystem, Chroma, PostgreSQL, DBOS, FFmpeg, and process supervision:
+  infrastructure/ports.
+- Benchmark-specific data formats and evaluator behavior: benchmarks only.
+
+### Preserve public contracts
+
+- Public commands/results use stable IDs and metadata, not storage keys or
+  local filesystem paths.
+- Local and server adapters call the same typed application operations.
+- Long-running work crosses the durable job boundary.
+- Model downloads happen only through explicit preparation.
+- Media and artifact publication remains atomic.
+- A failed or cancelled generation must not replace the previous active
+  snapshot.
+- Server control processes remain model-free; provider work belongs in workers.
+- Local defaults remain under the per-user VidXP data root, not the current
+  working directory.
+
+### Adding or changing a capability
+
+Follow [Adding a capability](adding-a-capability.md). At minimum:
+
+- declare the definition and typed operation schemas;
+- keep provider dependencies in that capability’s `requirements.txt`;
+- pin model identity, revision, checksum, license metadata, and disclosed size;
+- wire the package extra in `pyproject.toml`;
+- test provider readiness without downloading models; and
+- document whether old indexes must be rebuilt.
+
+## Validation
+
+Run the smallest relevant checks while iterating, then the complete applicable
+gate before opening a pull request.
+
+| Change | Minimum validation |
+|---|---|
+| Python logic or contracts | Targeted pytest file + full `pytest -q` |
+| CLI | Command help, success path, failure path, JSON output |
+| Streamlit | Full-page render, form submit, job progress/terminal state, reload |
+| HTTP API | Shared application test + route/auth/error contract |
+| MCP | Tool contract + `vidxp-mcp --check` |
+| Media/artifacts | Real ffprobe/FFmpeg smoke + path/ID confinement |
+| Models/providers | Dependency check, prepared/unprepared states, short real-media smoke |
+| Desktop | Rust tests, JavaScript syntax, setup/close lifecycle |
+| Docker/Compose | Dockerfile targets, `docker compose config`, health checks |
+| Documentation | Commands, relative links, headings, and rendered tables |
+
+Common commands:
+
+```bash
+uv run --no-sync ruff check .
+uv run --no-sync pytest -q
+node --check desktop/web/app.js
+docker compose config --quiet
+```
+
+Desktop validation requires the pinned uv sidecar before Rust tests:
+
+```bash
+npm --prefix desktop install
+npm --prefix desktop run sidecar:windows
+cargo test --manifest-path desktop/src-tauri/Cargo.toml
+```
+
+Use `npm --prefix desktop run sidecar:unix` on macOS or Linux. Validate
+`compose.coolify.yaml` only with a complete deployment test environment; its
+required image, secret, hostname, and upload variables intentionally make a
+bare `docker compose config` fail.
+
+Model-backed manual smoke tests should use a short sample and only the
+modalities affected by the change:
+
+```bash
+uv run --no-sync vidxp media import samplevideo.mp4 --json
+uv run --no-sync vidxp index create <media-id> --modality scene
+uv run --no-sync vidxp search scene "a person enters the room"
+```
+
+Do not describe mocked adapter tests as end-to-end validation. If a test does
+not exercise a real process, provider, codec, database, browser, or protocol
+boundary, say so.
 
 ## Pull requests
 
-- Clear title and a few bullets on what / why.
-- Note any new env vars, model downloads, or breaking index format changes.
-- Link a related issue when there is one.
+The repository's
+[pull request template](../.github/pull_request_template.md) is the required
+starting point. GitHub loads it automatically for new pull requests. Complete
+all three sections:
 
-### Changelog fragments
+- **Summary:** describe the user-facing outcome and important compatibility or
+  migration behavior.
+- **Validation:** list the exact commands and real boundaries exercised. Do not
+  replace results with “tests passed.”
+- **Changelog:** add the correct fragment, or explain why the change is
+  dependency-only/internal and should receive `skip-changelog`.
 
-Add one `changes/<pr-number>.<type>.md` file for every user-visible pull
-request. Use one of these types:
+Keep the description compact, but include:
 
-- `breaking` for incompatible behavior or API changes.
-- `feature` for new behavior.
-- `bugfix` for corrected behavior.
-- `deprecation` for behavior scheduled for removal.
-- `docs` for user-facing documentation improvements.
-- `security` for security fixes or hardening users should know about.
+- what users can do after the change;
+- why the change is needed;
+- important design or compatibility decisions;
+- new dependencies, environment variables, downloads, or migrations;
+- validation actually performed; and
+- screenshots or sample output for user-interface changes.
 
-The fragment should be one sentence written for users. Do not include a heading,
-version number, commit message, or implementation details. See
-[`changes/README.md`](../changes/README.md) for an example.
+Use Conventional Commit prefixes for commits, for example:
 
-Dependency updates carrying GitHub's `dependencies` label do not require a
-fragment. For other internal-only maintenance, explain the reason in the pull
-request and ask a maintainer to apply `skip-changelog`. CI requires a fragment
-unless one of those labels is present.
+```text
+feat(mcp): add clip artifact discovery
+fix(frontend): keep search form submittable
+docs: clarify local installation profiles
+```
 
-Towncrier renders pending fragments as prerelease notes, then collects them into
-`CHANGELOG.md` and removes them when a stable release is made. Do not edit the
-changelog or package version in a feature pull request.
+## Release notes and versions
 
-## Questions
+Release Please derives versions and changelog entries from Conventional
+Commits. Make the squash-merge commit or the commits retained by a regular
+merge describe the public change accurately:
 
-Follow [Adding a capability](adding-a-capability.md) for the complete extension
-contract. Open an issue before large cross-capability refactors so scope stays
-aligned with the roadmap.
+- `feat` creates a feature release.
+- `fix` and `perf` create a patch release.
+- `!` or a `BREAKING CHANGE:` footer creates a breaking release.
+- `docs`, `test`, `ci`, `build`, `refactor`, and `chore` do not publish by
+  themselves.
 
-Maintainers should follow the [release process](releasing.md).
+Write user-visible `feat`, `fix`, and `perf` subjects for users, not for the
+implementation history. Internal corrections to an unreleased feature should
+remain part of that feature rather than appear as fictional public bug fixes.
+Release Please prepares the version and component changelogs in a pull request;
+do not edit released changelog sections by hand.
+
+## Documentation style
+
+- Lead with the outcome, then the command or decision.
+- Prefer short sections, bullets, and comparison tables over dense paragraphs.
+- Keep the README product-focused and the installation guide procedural.
+- Put deployment internals in `docs/deployment/`.
+- Mark previews, deferred work, and unsupported topologies explicitly.
+- Never publish a command sequence that skips a required install,
+  initialization, preparation, or activation step.
+
+## Getting help
+
+- Open an [issue](https://github.com/grayhatdevelopers/vidxp/issues) for a bug
+  or scoped proposal.
+- Use [Discord](https://grayhat.studio/discord) for contributor discussion.
+- Maintainers should follow the [release process](releasing.md).

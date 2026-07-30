@@ -1,7 +1,7 @@
 <p align="center">
-   <a href ="https://github.com/grayhatdevelopers/vidxp">
-      <img src="./docs/images/logo.png" alt="logo" width="200">
-   </a>
+  <a href="https://github.com/grayhatdevelopers/vidxp">
+    <img src="./docs/images/logo.png" alt="VidXP logo" width="180">
+  </a>
 </p>
 
 <h1 align="center">VidXP</h1>
@@ -10,258 +10,227 @@
   <em>Search video by what was said, what appeared on screen, and recurring faces.</em>
 </p>
 
-<div align="center">
-  <p>
-    VidXP is a local-first video indexing and search engine distributed as a Python
-    package. 
-  </p>
-
-</div>
-<hr/>
-  <br/>You can use it:
-  <ul style="display:inline-block; text-align:left;">
-    <li>From the command line</li>
-    <li>Through its browser interface</li>
-    <li>As a desktop app</li>
-    <li>As an API</li>
-    <li>As an MCP, with your agents (coming soon ⚡️)
-    <li>As an indexing and retrieval layer inside another application</li>
-  </ul>
-
 <p align="center">
-  <strong>Dialogue search · Scene search · Actor grouping · CLI · Browser UI · Python API</strong>
+  A local-first video search engine for people, applications, and AI agents.
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/vidxp/">
-    <img src="https://img.shields.io/pypi/v/vidxp" alt="PyPI version">
-  </a>
-  <a href="https://pypi.org/project/vidxp/">
-    <img src="https://img.shields.io/pypi/pyversions/vidxp" alt="Supported Python versions">
-  </a>
-  <a href="https://github.com/grayhatdevelopers/vidxp/actions/workflows/ci.yml?query=branch%3Amain">
-    <img src="https://github.com/grayhatdevelopers/vidxp/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status">
-  </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/github/license/grayhatdevelopers/vidxp" alt="MIT license">
-  </a>
-  <a href="https://grayhat.studio/discord">
-    <img src="https://img.shields.io/discord/867124708473700363?logo=discord&logoColor=white" alt="Discord">
+  <strong>Dialogue search · Scene search · Actor grouping</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/grayhatdevelopers/vidxp/releases">
+    <img src="https://img.shields.io/badge/Download-Desktop_app-5865F2?style=for-the-badge&logo=github" alt="Download VidXP desktop app">
   </a>
 </p>
 
-## Why VidXP
+<p align="center">
+  Windows · Apple Silicon macOS · Linux
+</p>
 
-Finding one moment in a video should not require scrubbing through the entire
-timeline. VidXP builds a searchable index from three kinds of evidence:
+<p align="center">
+  <a href="https://pypi.org/project/vidxp/"><img src="https://img.shields.io/pypi/v/vidxp" alt="PyPI version"></a>
+  <a href="https://github.com/grayhatdevelopers/vidxp/pkgs/container/vidxp"><img src="https://img.shields.io/badge/container-GHCR-blue" alt="GHCR container"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/grayhatdevelopers/vidxp" alt="MIT license"></a>
+  <a href="https://grayhat.studio/discord"><img src="https://img.shields.io/discord/867124708473700363?logo=discord&logoColor=white" alt="Discord"></a>
+</p>
 
-- **Dialogue:** semantic search over timestamped transcripts.
-- **Scenes:** text-to-frame search.
-- **Actors:** groups similar detected faces and exports a highlighted video for a selected cluster.
+## Find the moment, not the timestamp
 
-After the required model weights are available, video processing and search run completely locally, for your privacy and security.
+VidXP makes one video—or an entire collection—searchable by meaning:
 
-Some ideas on how to use VidXP:
-- Use it as way to find your favorite relatives in a huge folder of wedding videos (been there, done that)
-- Use it in your application, allow users to search videos (an idea: use it alongside a video-editing application)
-- Use it as an "understanding" layer so your LLM / agent can understand videos
+- **Dialogue search:** type what you remember someone saying and jump to the
+  matching moments.
+- **Scene search:** describe what appeared on screen and find the closest
+  visual matches.
+- **Actor matching:** find recurring faces within a video and export a
+  highlighted video for a selected group.
 
-[![Video Screenshot](./docs/images/video-screenshot.jpeg)](https://www.linkedin.com/feed/update/urn:li:activity:7343569473720725505/)
+Use it to search years of family videos, add video search to an editing
+workflow, or let an AI agent answer questions using evidence from your own
+video library. Your videos can stay on your machine.
 
+[![VidXP browser interface](./docs/images/video-screenshot.jpeg)](https://www.linkedin.com/feed/update/urn:li:activity:7343569473720725505/)
 
-## Current capabilities
+## Start here
 
-| Capability | Available now | Result |
-|---|---|---|
-| Dialogue search | Transcription, word alignment, semantic phrase indexing | Matching video time |
-| Scene search | Text search over sampled video frames | Matching frame and time |
-| Actor grouping | Within-video face detection and clustering | Clustered detections and highlighted output video |
-| Interfaces | Typer CLI, Streamlit browser interface, Python API | Interactive or programmatic use |
-| Index management | Saved progress, ready/failed state, cancellation, isolated programmatic runs | Traceable and reusable indexes |
+Choose the setup that fits how you want to use VidXP.
 
-## Quick start
+### 1. CLI and MCP
 
-VidXP supports Python 3.10 through 3.13 and requires FFmpeg. See the
-[installation guide](INSTALLATION_GUIDE.md) for the `dlib` compiler
-requirements, source installation, model preparation, and troubleshooting.
-
-Install the command line and browser interface with
-[pipx](https://packaging.python.org/en/latest/guides/installing-stand-alone-command-line-tools/).
-The command is available on your `PATH` while VidXP and its dependencies remain
-isolated:
+For direct use, scripts, and local AI agents, install
+[uv](https://docs.astral.sh/uv/getting-started/installation/), then run:
 
 ```bash
-pipx install "vidxp[all,frontend]"
-```
+# Install the CPU edition
+uv tool install --python 3.14 --torch-backend cpu "vidxp[local-worker,mcp]"
 
-Install only the capabilities you need with a smaller selection such as
-`pipx install "vidxp[scene,frontend]"` or
-`pipx install "vidxp[dialogue,scene]"`. To import VidXP from another Python
-project, install it into that project's environment instead; the
-[installation guide](INSTALLATION_GUIDE.md) covers that path.
+# Set up FFmpeg
+vidxp init
 
-Confirm the installed package and its runtime dependencies:
-
-```bash
-vidxp --version
-vidxp doctor
-```
-
-The first use of each capability downloads its model weights. Download the fixed
-dialogue, transcription, and scene models in advance with:
-
-```bash
+# Download search models
 vidxp prepare
+
+# Check everything
+vidxp doctor
+
+# Connect an MCP client
+vidxp mcp-config
 ```
 
-## Index and search
-
-Build an index containing dialogue, scene, and actor information:
+The CLI works without MCP. Add the browser app with:
 
 ```bash
-vidxp index create samplevideo.mp4
-```
-
-Search the completed index:
-
-```bash
-vidxp search dialogue "the bread just came out of the oven"
-vidxp search scene "a yellow taxi on a city street" --top-k 5
-vidxp actors list
-vidxp actors render 1 samplevideo.mp4
-```
-
-Index only selected capabilities or sample fewer visual frames:
-
-```bash
-vidxp index create samplevideo.mp4 --modality scene --frame-stride 5
-```
-
-Repeat `--modality` to combine `dialogue`, `scene`, and `actor`.
-Run `vidxp --help` or any command followed by `--help` for the complete command
-reference.
-
-Use named repositories to keep index locations and devices centrally
-configured:
-
-```bash
-vidxp repositories add team --index-dir ./indexes/team --device cuda --use
-vidxp repositories list
-```
-
-## Browser interface
-
-Install the `frontend` extra and start:
-
-```bash
+uv tool install --python 3.14 --torch-backend cpu \
+  "vidxp[local-worker,mcp,frontend]"
 vidxp ui
 ```
 
-The command uses the active named repository, starts a local Streamlit server,
-and remains active until stopped.
-The interface can upload a video, start or cancel indexing, restore saved
-progress after a page reload, and search the capabilities available in the
-completed index.
+If the `vidxp` command is not found, run `uv tool update-shell` once and reopen
+the terminal.
 
-## Container
+### 2. Desktop app
 
-Stable releases are available from GitHub Container Registry. Start the local
-interface with persistent index and model storage by running:
+Download the installer for Windows, Apple Silicon macOS, or Linux from
+[GitHub Releases](https://github.com/grayhatdevelopers/vidxp/releases).
+
+The desktop installer manages Python, VidXP, and the local worker for you. On
+first launch, choose the search capabilities you want, where model files should
+live, and whether to download them immediately. Python and uv do not need to be
+installed separately.
+
+After setup, VidXP can stay available from the system tray. The browser
+interface is optional and can be left out of the installed VidXP runtime.
+
+### 3. Docker for a server
+
+Run the published all-in-one image on a home server or another single machine:
 
 ```bash
-docker compose up
+docker run --rm --init \
+  -p 8501:8501 \
+  -v vidxp-data:/var/lib/vidxp \
+  ghcr.io/grayhatdevelopers/vidxp:latest
 ```
 
-See the [installation guide](INSTALLATION_GUIDE.md#run-the-container) for model
-preparation, configuration, and direct `docker run` usage.
+For a long-lived server, pin a published version instead of `latest`. For a
+Coolify deployment, use the published `-control` and `-worker` images with
+[`compose.coolify.yaml`](compose.coolify.yaml)—no repository build is required.
+See the [Coolify guide](docs/deployment/coolify.md) for the complete setup.
 
-## Use VidXP as a Python package
+## What you can do today
 
-The programmatic API supports isolated multi-video runs, supplied timestamped
-transcripts, resumable per-video checkpoints, and metadata-rich top-k results.
+- Build a reusable search library from one video or a whole collection.
+- Search dialogue by meaning, even when you do not remember the exact words.
+- Find visual moments by describing the scene you are looking for.
+- Group recurring faces in a video and render a highlighted actor overlay.
+- Search one selected video or every video in the active library.
+- Open matching timestamps and export downloadable clips and overlays.
+- Keep personal, client, or project libraries separate.
+- Follow long indexing jobs, cancel them, and keep the last working index if a
+  later run fails.
+- Use the browser app, automate the CLI, connect an MCP agent, or integrate
+  VidXP into another application.
 
-```python
-from vidxp.core import IndexConfig, VideoSource
-from vidxp.core.runner import run_index
-from vidxp.capabilities.scene.operations import search_scene
+## A first search
 
-config = IndexConfig(
-    dataset="my-library",
-    split="local",
-    run_id="demo",
-    enabled_modalities=("scene",),
-    frame_stride=5,
-)
+The browser app guides you through importing and indexing. The same flow from
+the command line is:
 
-run_index(
-    [
-        VideoSource(video_id="video-1", path="videos/first.mp4"),
-        VideoSource(video_id="video-2", path="videos/second.mp4"),
-    ],
-    config,
-)
+```bash
+# Add a video
+vidxp media import samplevideo.mp4 --json
 
-results = search_scene("a person enters a taxi", config=config, top_k=5)
-for hit in results.hits:
-    print(hit.video_id, hit.start, hit.end, hit.score)
+# Index the returned media ID
+vidxp index create <media-id>
+
+# Find a visual moment
+vidxp search scene "a yellow taxi on a city street"
+
+# Find something that was said
+vidxp search dialogue "the bread just came out of the oven"
 ```
 
-The [Python indexing and retrieval contract](docs/benchmarking/core_contract.md)
-documents configuration, stored metadata, result fields, and run layout.
+Results include the source video, timestamps, match score, and the evidence
+used to find the moment. Add `--media-id <media-id>` to search only one video.
 
-## Recommended specs
+Run `vidxp --help` or `vidxp <command> --help` for the full command reference.
 
-> Coming soon
+## For applications and AI agents
 
----
+Use the Python package to add selected VidXP capabilities directly to an
+application, or use the HTTP API when VidXP runs as a service.
 
-## Roadmap
+MCP clients can add and discover videos, start indexing, search dialogue and
+scenes, ask questions about a library, and create clips or actor overlays.
+Local agents can connect over stdio; remote agents can connect to a
+self-hosted VidXP server.
 
-VidXP is an evolving beta. We'd love to hear your feedback and where you'd like to see the project go.
+- [Python, HTTP, and MCP installation](INSTALLATION_GUIDE.md)
+- [Optional capability packages](INSTALLATION_GUIDE.md#optional-dependency-extras)
+- [Coolify server setup](docs/deployment/coolify.md)
 
-| Area | Current foundation | Direction |
-|---|---|---|
-| Search results | Top result in the CLI; structured top-k Python results | Rich ranked results, metadata, previews, and filtering across interfaces |
-| Temporal search | Frame and transcript-phrase timestamps | Better time ranges, scene boundaries, aggregation, and ranking |
-| Video collections | One local CLI/UI index; isolated multi-video Python runs | User-facing persistent multi-video libraries and index management |
-| Actor workflows | Face clustering and highlighted video export | Cluster browsing, labeling, actor search, and stronger tracking |
-| Speaker context | Timestamped dialogue search | Active-speaker detection and links between speech and visible people |
-| Product experience | CLI and browser indexing/search | Clearer progress, result navigation, recovery, and long-running job controls |
-| Evaluation | DiDeMo and HiREST baselines | Combined and component benchmarks, beginning with a LongVALE pilot |
+## Downloads and storage
 
-## Models and local data
+First setup downloads only the models needed for the capabilities you select.
+VidXP shows the download size and destination before it starts.
 
-| Capability | Model |
+| Capability | Approximate model download |
+|---|---:|
+| Dialogue search | 2.64 GiB |
+| Scene search | 1.43 GiB |
+| Actor matching | 37 MiB |
+
+Leave additional space for the VidXP runtime, indexes, source videos, and
+exported results.
+
+By default, the CLI and desktop app share the same VidXP data directory:
+
+| Platform | Default location |
 |---|---|
-| Dialogue embeddings | `sentence-transformers/all-MiniLM-L6-v2` |
-| Transcription | WhisperX `large-v2` |
-| Scene search | CLIP `ViT-B/32` |
-| Word alignment | WhisperX model selected for the detected language |
+| Windows | `%LOCALAPPDATA%\VidXP` |
+| macOS | `~/Library/Application Support/VidXP` |
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/VidXP` |
 
-VidXP maintains the standard local CLI/UI index in `chroma_data/`. Starting a
-new local indexing run replaces the previous or incomplete local index. Model
-caches normally live outside this directory and outside the virtual environment.
+Docker keeps the same data in the `vidxp-data` volume shown above.
 
-## Documentation and project links
+## Product roadmap
+
+The next product improvements are focused on:
+
+- labeling actor groups and matching the same person across different videos;
+- more reliable face tracking across angle, lighting, motion, and occlusion;
+- connecting visible people with the dialogue they are speaking;
+- better search ranking, time ranges, and natural-language questions across a
+  whole library;
+- richer previews, timelines, filters, saved searches, and result playback;
+- easier organization for large personal and project video collections;
+- faster indexing and supported GPU acceleration; and
+- smoother desktop updates, repair, and model management.
+
+VidXP is in beta. Feedback about search quality, actor workflows, and real
+video-library use cases is especially useful.
+
+## Help and project links
 
 - [Installation and troubleshooting](INSTALLATION_GUIDE.md)
-- [Benchmarking status and results](docs/benchmarking/README.md)
-- [Adding a capability](docs/adding-a-capability.md)
+- [Desktop application](docs/desktop.md)
+- [Coolify deployment](docs/deployment/coolify.md)
 - [Changelog](CHANGELOG.md)
 - [Issue tracker](https://github.com/grayhatdevelopers/vidxp/issues)
 - [MIT license](LICENSE)
 
-
 ## Contributing
 
-See [CONTRIBUTING.md](./docs/CONTRIBUTING.md) for guidelines, maintainers, and how to submit PRs. AI/vibe-coded PRs welcome!
+Contributions are welcome. Read the
+[contribution guide](docs/CONTRIBUTING.md) before opening a pull request.
 
 ## Credits
 
-Built by Grayhat Developers PVT Ltd. 2026. Maintained by the community.
+Built by Grayhat Developers PVT Ltd. and maintained by the community.
 
 Email: info@grayhat.studio
 
 <a href="https://github.com/grayhatdevelopers/vidxp/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=grayhatdevelopers/vidxp" />
+  <img src="https://contrib.rocks/image?repo=grayhatdevelopers/vidxp" alt="VidXP contributors">
 </a>
