@@ -19,9 +19,19 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/grayhatdevelopers/vidxp/releases">
+    <img src="https://img.shields.io/badge/Download-Desktop_app-5865F2?style=for-the-badge&logo=github" alt="Download VidXP desktop app">
+  </a>
+</p>
+
+<p align="center">
+  Windows · Apple Silicon macOS · Linux
+</p>
+
+<p align="center">
   <a href="https://pypi.org/project/vidxp/"><img src="https://img.shields.io/pypi/v/vidxp" alt="PyPI version"></a>
   <a href="https://github.com/grayhatdevelopers/vidxp/pkgs/container/vidxp"><img src="https://img.shields.io/badge/container-GHCR-blue" alt="GHCR container"></a>
-  <a href="https://github.com/grayhatdevelopers/vidxp/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/grayhatdevelopers/vidxp/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://github.com/grayhatdevelopers/vidxp/actions/workflows/release-to-test-pypi.yml?query=branch%3Amain"><img src="https://github.com/grayhatdevelopers/vidxp/actions/workflows/release-to-test-pypi.yml/badge.svg?branch=main" alt="Main prerelease status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/grayhatdevelopers/vidxp" alt="MIT license"></a>
   <a href="https://grayhat.studio/discord"><img src="https://img.shields.io/discord/867124708473700363?logo=discord&logoColor=white" alt="Discord"></a>
 </p>
