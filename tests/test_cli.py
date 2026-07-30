@@ -457,9 +457,11 @@ class CliTests(unittest.TestCase):
         result = self.invoke(["search", "--help"])
 
         self.assertEqual(result.exit_code, 0, result.output)
-        normalized = " ".join(unstyle(result.output).split())
-        self.assertIn("every media item in the active", normalized)
-        self.assertIn("index snapshot.", normalized)
+        normalized = " ".join(unstyle(result.output).replace("│", " ").split())
+        self.assertIn(
+            "Omit to rank matches across every media item in the active index snapshot.",
+            normalized,
+        )
 
     def test_query_constructs_shared_command_and_emits_typed_answer(self):
         answer = QueryAnswer(

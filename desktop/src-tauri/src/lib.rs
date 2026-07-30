@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     env, fs,
     io::{self, Write},
@@ -182,7 +183,7 @@ impl Drop for OperationGuard<'_> {
 fn manifest() -> Result<RuntimeManifest, String> {
     let manifest: RuntimeManifest = serde_json::from_slice(RUNTIME_MANIFEST_BYTES)
         .map_err(|error| format!("The embedded runtime manifest is invalid: {error}"))?;
-    let actual = hex::encode(Sha256::digest(RUNTIME_CONSTRAINTS_BYTES));
+    let actual = hex::encode(Sha256::digest(normalized_runtime_constraints().as_ref()));
     if actual != manifest.dependency_constraints_sha256 {
         return Err(format!(
             "The embedded runtime constraints have digest {actual}; expected {}.",
@@ -190,6 +191,29 @@ fn manifest() -> Result<RuntimeManifest, String> {
         ));
     }
     Ok(manifest)
+}
+
+fn normalize_line_endings(bytes: &[u8]) -> Cow<'_, [u8]> {
+    if !bytes.windows(2).any(|pair| pair == b"\r\n") {
+        return Cow::Borrowed(bytes);
+    }
+
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut offset = 0;
+    while offset < bytes.len() {
+        if bytes[offset..].starts_with(b"\r\n") {
+            normalized.push(b'\n');
+            offset += 2;
+        } else {
+            normalized.push(bytes[offset]);
+            offset += 1;
+        }
+    }
+    Cow::Owned(normalized)
+}
+
+fn normalized_runtime_constraints() -> Cow<'static, [u8]> {
+    normalize_line_endings(RUNTIME_CONSTRAINTS_BYTES)
 }
 
 fn manifest_digest() -> String {
@@ -1061,14 +1085,10 @@ async fn install_runtime(
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("The system clock is invalid: {error}"))?
-        .as_secs();
+        .as_nanos();
     let staging_name = format!(".staging-{profile_hash}-{timestamp}-{}", std::process::id());
     let staging = paths.runtimes.join(&staging_name);
-    fs::create_dir(&staging)
-        .map_err(|error| format!("Could not create the staged runtime: {error}"))?;
     let constraints = staging.join("runtime-constraints.txt");
-    fs::write(&constraints, RUNTIME_CONSTRAINTS_BYTES)
-        .map_err(|error| format!("Could not write runtime constraints: {error}"))?;
 
     let install_result = async {
         uv_output(
@@ -1086,6 +1106,9 @@ async fn install_runtime(
             "Managed Python setup",
         )
         .await?;
+
+        fs::write(&constraints, normalized_runtime_constraints().as_ref())
+            .map_err(|error| format!("Could not write runtime constraints: {error}"))?;
 
         uv_output(
             &app,
@@ -1173,10 +1196,20 @@ async fn install_runtime(
     }
     .await;
     if let Err(error) = install_result {
-        return Err(format!(
-            "{error}. The previous active runtime was not changed; staged files remain at {} for diagnosis.",
-            staging.display()
-        ));
+        let cleanup_error = if staging.exists() {
+            fs::remove_dir_all(&staging).err()
+        } else {
+            None
+        };
+        return Err(match cleanup_error {
+            Some(cleanup_error) => format!(
+                "{error}. The previous active runtime was not changed. VidXP could not remove the failed staged runtime at {}: {cleanup_error}",
+                staging.display()
+            ),
+            None => format!(
+                "{error}. The previous active runtime was not changed, and the failed staged runtime was removed."
+            ),
+        });
     }
 
     let profile = format!("{profile_hash}-{timestamp}");
@@ -1509,8 +1542,9 @@ mod tests {
     use super::{
         base_package_specification, capability_command_arguments,
         dependency_installation_arguments, desktop_paths_from_roots, display_command, manifest,
-        package_acquisition_arguments, package_index, package_specification,
-        required_encoder_missing, selected_capabilities, selected_surfaces,
+        normalize_line_endings, normalized_runtime_constraints, package_acquisition_arguments,
+        package_index, package_specification, required_encoder_missing, selected_capabilities,
+        selected_surfaces,
     };
     use std::path::{Path, PathBuf};
 
@@ -1550,6 +1584,20 @@ mod tests {
 
         assert_eq!(selected, ["dialogue", "scene"]);
         assert!(selected_capabilities(&manifest, &["other".into()]).is_err());
+    }
+
+    #[test]
+    fn runtime_constraints_digest_is_independent_of_checkout_line_endings() {
+        let canonical = normalized_runtime_constraints();
+        let windows = canonical
+            .split(|byte| *byte == b'\n')
+            .collect::<Vec<_>>()
+            .join(&b"\r\n"[..]);
+
+        assert_eq!(
+            normalize_line_endings(&windows).as_ref(),
+            canonical.as_ref()
+        );
     }
 
     #[test]
