@@ -4,37 +4,40 @@ from typing import Annotated
 
 import typer
 
-from vidxp.application_models import SearchCommand, SearchJobResult
-from vidxp.application_models import FusedSearchResult
+from vidxp.application_models import (
+    QueryAnswer,
+    QueryJobResult,
+    QueryVideoCommand,
+)
 from vidxp.cli_support import (
     CLIState,
     OutputFormat,
     effective_output_format,
     emit_job_progress,
     emit_progress,
-    emit_search,
+    emit_query,
     state_from_context,
 )
 
 
-def run_search(
+def run_query(
     state: CLIState,
-    capability: str,
-    query: str,
+    question: str,
     *,
     media_id: str | None,
+    modalities: tuple[str, ...],
     top_k: int,
     json_output: bool,
-) -> FusedSearchResult:
+) -> QueryAnswer:
     output_format = effective_output_format(state, json_output)
     show_progress = not state.quiet and output_format == OutputFormat.rich
     if show_progress:
-        emit_progress(f"Starting {capability} search...")
-    job = state.jobs.submit_search(
-        SearchCommand(
-            modalities=(capability,),
-            query=query,
+        emit_progress("Starting grounded video query...")
+    job = state.jobs.submit_query(
+        QueryVideoCommand(
+            question=question,
             media_id=media_id,
+            modalities=modalities,
             top_k=top_k,
         )
     )
@@ -42,57 +45,54 @@ def run_search(
         job.job_id,
         progress=emit_job_progress if show_progress else None,
     )
-    if not isinstance(completed.result, SearchJobResult):
-        raise RuntimeError("The completed search job has no search result.")
+    if not isinstance(completed.result, QueryJobResult):
+        raise RuntimeError("The completed query job has no query result.")
     result = completed.result.result
-    emit_search(
+    emit_query(
         result,
         output_format=output_format,
     )
     return result
 
 
-def search(
+def query(
     ctx: typer.Context,
-    capability: Annotated[
+    question: Annotated[
         str,
-        typer.Argument(help="Registered capability to query."),
-    ],
-    query: Annotated[
-        str,
-        typer.Argument(help="Text query to find."),
+        typer.Argument(help="Natural-language question about indexed media."),
     ],
     media_id: Annotated[
         str | None,
         typer.Option(
             "--media-id",
             help=(
-                "Search only this media ID. Omit to rank matches across every "
+                "Use evidence only from this media ID. Omit to query every "
                 "media item in the active index snapshot."
             ),
         ),
     ] = None,
+    modality: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--modality",
+            "-m",
+            help="Restrict query evidence; repeat for multiple capabilities.",
+        ),
+    ] = None,
     top_k: Annotated[
         int,
-        typer.Option(
-            "--top-k",
-            "-k",
-            min=1,
-            max=100,
-            help="Maximum ranked hits.",
-        ),
+        typer.Option("--top-k", "-k", min=1, max=50),
     ] = 10,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit machine-readable JSON."),
     ] = False,
 ) -> None:
-    state = state_from_context(ctx)
-    run_search(
-        state,
-        capability,
-        query,
+    run_query(
+        state_from_context(ctx),
+        question,
         media_id=media_id,
+        modalities=tuple(dict.fromkeys(modality or ())),
         top_k=top_k,
         json_output=json_output,
     )
