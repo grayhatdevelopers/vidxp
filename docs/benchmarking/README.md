@@ -13,8 +13,9 @@ installation and product usage, start with the main
 | Area | Status | What it means |
 |---|---|---|
 | Shared benchmark support | Complete | Stable IDs, time ranges, metadata, top-k retrieval, isolated runs, checkpoints, and prediction files are implemented |
-| DiDeMo visual localization | Complete | Full official test run completed over 4,021 queries and 1,037 videos |
-| HiREST transcript localization | Validation complete | All 193 official validation pairs were scored; 776 released test predictions are unscored because their public answer bounds are placeholders |
+| Guided input preparation | Complete | `vidxp benchmark prepare` estimates and confirms downloads, verifies pinned artifacts, validates DiDeMo media, resumes partial transfers, and prints the runnable benchmark command |
+| DiDeMo visual localization | Legacy full result + current smoke | The legacy CLIP stack completed 4,021 official test queries over 1,037 videos; the current SigLIP2 stack passed a one-annotation real execution smoke |
+| HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
 | LongVALE combined evaluation | Next | Build the visual-plus-speech adapter and validate one evaluation archive before scheduling the full run |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
 
@@ -44,12 +45,14 @@ they are not the current task list.
 No single published benchmark covers dialogue retrieval, scene retrieval, and
 actor clustering together.
 
-The completed DiDeMo and HiREST runs establish separate visual and
-transcript-based baselines. LongVALE is the next combined test because it asks a
-system to find described events in long videos using visual, speech, and general
-audio evidence. VidXP can currently contribute visual and speech evidence; it
-does not recognize general sounds such as music, alarms, or barking. Any
-LongVALE result must keep that limitation visible.
+The retained full DiDeMo and HiREST results establish separate legacy-provider
+visual and transcript baselines. Current SigLIP2 and Qwen3 checks establish
+adapter/runtime compatibility only; they do not yet provide full-corpus quality
+comparisons. LongVALE is the next combined test because it asks a system to find
+described events in long videos using visual, speech, and general audio
+evidence. VidXP can currently contribute visual and speech evidence; it does
+not recognize general sounds such as music, alarms, or barking. Any LongVALE
+result must keep that limitation visible.
 
 ## Evidence rules
 
