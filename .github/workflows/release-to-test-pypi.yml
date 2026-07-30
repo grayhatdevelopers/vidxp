@@ -27,6 +27,9 @@ concurrency:
 
 jobs:
   validate:
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/ci.yml
     with:
       checkout_ref: ${{ github.sha }}

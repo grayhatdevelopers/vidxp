@@ -74,6 +74,9 @@ jobs:
   validate-release:
     if: needs.release.outputs.released == 'true'
     needs: release
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/ci.yml
     with:
       checkout_ref: ${{ needs.release.outputs.commit_sha }}
