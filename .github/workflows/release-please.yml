@@ -1,0 +1,65 @@
+name: Prepare releases
+
+on:
+  push:
+    branches:
+      - main
+      - release
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable the beta publication workflow
+        if: github.ref_name == 'main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh api --method PUT
+          "repos/$GITHUB_REPOSITORY/actions/workflows/release-to-test-pypi.yml/enable"
+
+      - name: Prepare or create component releases
+        id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          config-file: ${{ github.ref_name == 'release' && 'release-please-config.stable.json' || 'release-please-config.json' }}
+          manifest-file: ${{ github.ref_name == 'release' && '.release-please-manifest.stable.json' || '.release-please-manifest.json' }}
+          target-branch: ${{ github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the core release
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_name }}" == "release" ]]; then
+            workflow="release-to-pypi.yml"
+          else
+            workflow="release-to-test-pypi.yml"
+          fi
+          gh workflow run "$workflow" \
+            --ref "$TAG" \
+            -f tag="$TAG"
+
+      - name: Publish the desktop release
+        if: steps.release.outputs['desktop--release_created'] == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs['desktop--tag_name'] }}
+        run: |
+          gh workflow run publish-desktop.yml \
+            --ref "$TAG" \
+            -f tag="$TAG"

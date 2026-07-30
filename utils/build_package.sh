@@ -6,7 +6,11 @@ README="README.md"
 README_BAK="$README.bak"
 BUILD_DIR="build"
 DIST_DIR="dist"
-RELEASE_NOTES=".release-notes.md"
+
+if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
+  SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+  export SOURCE_DATE_EPOCH
+fi
 
 restore_readme() {
   if [[ -f "$README_BAK" ]]; then
@@ -17,29 +21,7 @@ restore_readme() {
 trap restore_readme EXIT
 
 echo "🧹 Removing stale package artifacts..."
-rm -rf -- "$BUILD_DIR" "$DIST_DIR" "$RELEASE_NOTES"
-
-if [[ "${BUILD_CHANGELOG:-0}" == "1" || "${BUILD_RELEASE_NOTES:-0}" == "1" ]]; then
-  if [[ -z "${NEW_VERSION:-}" ]]; then
-    echo "NEW_VERSION is required when rendering release notes" >&2
-    exit 1
-  fi
-
-  RELEASE_DATE="$(date -u +%Y-%m-%d)"
-  echo "📰 Rendering release notes for v${NEW_VERSION}..."
-  towncrier build \
-    --draft \
-    --version "$NEW_VERSION" \
-    --date "$RELEASE_DATE" > "$RELEASE_NOTES"
-fi
-
-if [[ "${BUILD_CHANGELOG:-0}" == "1" ]]; then
-  echo "📰 Building changelog for v${NEW_VERSION}..."
-  towncrier build \
-    --yes \
-    --version "$NEW_VERSION" \
-    --date "$RELEASE_DATE"
-fi
+rm -rf -- "$BUILD_DIR" "$DIST_DIR"
 
 echo "📝 Backing up original README..."
 cp "$README" "$README_BAK"
@@ -49,6 +31,26 @@ python utils/fix_readme_links.py "$BASE_URL" "$README" --inplace
 
 echo "📦 Building package..."
 python -m build
+
+for sdist in "$DIST_DIR"/*.tar.gz; do
+  archive_listing="$(tar -tzf "$sdist")"
+  archive_root="${archive_listing%%/*}"
+  normalize_dir="$(mktemp -d)"
+  uncompressed="${sdist%.gz}"
+  tar -xzf "$sdist" -C "$normalize_dir"
+  rm -- "$sdist"
+  tar \
+    --sort=name \
+    --mtime="@${SOURCE_DATE_EPOCH}" \
+    --owner=0 \
+    --group=0 \
+    --numeric-owner \
+    -cf "$uncompressed" \
+    -C "$normalize_dir" \
+    "$archive_root"
+  gzip --no-name --best "$uncompressed"
+  rm -rf -- "$normalize_dir"
+done
 
 echo "♻️ Restoring original README..."
 restore_readme

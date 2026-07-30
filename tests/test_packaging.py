@@ -329,6 +329,154 @@ class PackagingTests(unittest.TestCase):
             "system",
         )
 
+    def test_release_please_preserves_desktop_manifests_and_links_versions(self):
+        for filename in (
+            "release-please-config.json",
+            "release-please-config.stable.json",
+        ):
+            config = json.loads(
+                (ROOT / filename).read_text(encoding="utf-8")
+            )
+            linked_versions = [
+                plugin
+                for plugin in config["plugins"]
+                if plugin["type"] == "linked-versions"
+            ]
+            self.assertEqual(len(linked_versions), 1, filename)
+            self.assertEqual(
+                set(linked_versions[0]["components"]),
+                {"vidxp", "desktop"},
+                filename,
+            )
+
+            desktop = config["packages"]["desktop"]
+            self.assertEqual(desktop["version-file"], "VERSION", filename)
+            generic_files = {
+                extra["path"]
+                for extra in desktop["extra-files"]
+                if extra["type"] == "generic"
+            }
+            self.assertIn("src-tauri/Cargo.toml", generic_files, filename)
+            self.assertIn("src-tauri/Cargo.lock", generic_files, filename)
+
+        stable = json.loads(
+            (ROOT / "release-please-config.stable.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        beta_manifest_updates = {
+            (entry["path"], entry.get("jsonpath"))
+            for package in stable["packages"].values()
+            for entry in package["extra-files"]
+            if entry["path"] == ".release-please-manifest.json"
+        }
+        self.assertEqual(
+            beta_manifest_updates,
+            {
+                (".release-please-manifest.json", "$['.']"),
+                (".release-please-manifest.json", "$.desktop"),
+            },
+        )
+
+        manifest = json.loads(
+            (ROOT / "desktop" / "runtime-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        package = json.loads(
+            (ROOT / "desktop" / "package.json").read_text(encoding="utf-8")
+        )
+        cargo = tomllib.loads(
+            (
+                ROOT / "desktop" / "src-tauri" / "Cargo.toml"
+            ).read_text(encoding="utf-8")
+        )
+        version_file = (
+            ROOT / "desktop" / "VERSION"
+        ).read_text(encoding="utf-8").strip()
+        self.assertEqual(version_file, manifest["desktop_version"])
+        self.assertEqual(version_file, package["version"])
+        self.assertEqual(version_file, cargo["package"]["version"])
+        self.assertIn(
+            f'version = "{version_file}" # x-release-please-version',
+            (
+                ROOT / "desktop" / "src-tauri" / "Cargo.toml"
+            ).read_text(encoding="utf-8"),
+        )
+        self.assertNotIn(
+            f"vidxp=={version_file}",
+            (
+                ROOT / "desktop" / "src-tauri" / "src" / "lib.rs"
+            ).read_text(encoding="utf-8"),
+        )
+
+        build_command = "bash utils/build_package.sh"
+        for workflow in (
+            ".github/workflows/ci.yml",
+            ".github/workflows/release-to-test-pypi.yml",
+            ".github/workflows/release-to-pypi.yml",
+        ):
+            self.assertIn(
+                build_command,
+                (ROOT / workflow).read_text(encoding="utf-8"),
+                workflow,
+            )
+
+        release_workflow = (
+            ROOT / ".github" / "workflows" / "release-please.yml"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(release_workflow.count('--ref "$TAG"'), 2)
+        self.assertNotIn(
+            '--ref "${{ github.ref_name }}"',
+            release_workflow,
+        )
+
+        desktop_publish = (
+            ROOT / ".github" / "workflows" / "publish-desktop.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"VERSION":', desktop_publish)
+        self.assertIn('"runtime manifest package":', desktop_publish)
+        self.assertEqual(desktop_publish.count("--latest"), 1)
+        core_publish = (
+            ROOT / ".github" / "workflows" / "release-to-pypi.yml"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("--latest", core_publish)
+
+        for workflow in ("ci.yml", "desktop.yml", "security.yml"):
+            contents = (
+                ROOT / ".github" / "workflows" / workflow
+            ).read_text(encoding="utf-8")
+            self.assertIn("      - release", contents, workflow)
+            self.assertIn("github.base_ref != 'release'", contents, workflow)
+            self.assertIn("github.head_ref != 'main'", contents, workflow)
+        desktop_ci = (
+            ROOT / ".github" / "workflows" / "desktop.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "!startsWith(github.head_ref, 'release-please--branches--')",
+            desktop_ci,
+        )
+
+        promotion = (
+            ROOT / ".github" / "workflows" / "promotion-pr.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"$status" == "diverged"', promotion)
+        synchronization = (
+            ROOT / ".github" / "workflows" / "sync-channels.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'git push origin "$publication_sha:refs/heads/main"',
+            synchronization,
+        )
+        self.assertNotIn(
+            'git push origin "origin/release:refs/heads/main"',
+            synchronization,
+        )
+        self.assertIn(
+            '--title "chore(release): synchronize stable baseline"',
+            synchronization,
+        )
+
     def test_windows_release_binary_uses_the_gui_subsystem(self):
         main = (
             ROOT / "desktop" / "src-tauri" / "src" / "main.rs"

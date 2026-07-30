@@ -1,3 +1,5 @@
 # Changelog
 
-Notable changes to the VidXP desktop application are recorded here.
+## 0.2.1-b.1
+
+Initial desktop preview.

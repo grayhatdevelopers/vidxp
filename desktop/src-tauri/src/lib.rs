@@ -1603,19 +1603,23 @@ mod tests {
     #[test]
     fn package_specification_has_one_sorted_extra_set() {
         let manifest = manifest().expect("manifest");
+        let version = &manifest.package_version;
 
-        assert_eq!(base_package_specification(&manifest), "vidxp==0.2.1-b.1");
+        assert_eq!(
+            base_package_specification(&manifest),
+            format!("vidxp=={version}")
+        );
         assert_eq!(
             package_specification(
                 &manifest,
                 &["scene".into(), "dialogue".into()],
                 &["browser".into()],
             ),
-            "vidxp[dialogue,frontend,scene]==0.2.1-b.1"
+            format!("vidxp[dialogue,frontend,scene]=={version}")
         );
         assert_eq!(
             package_specification(&manifest, &["scene".into()], &[]),
-            "vidxp[scene]==0.2.1-b.1"
+            format!("vidxp[scene]=={version}")
         );
         assert_eq!(
             selected_surfaces(&manifest, &["browser".into(), "browser".into()])

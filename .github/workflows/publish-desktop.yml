@@ -1,0 +1,129 @@
+name: Publish desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing desktop tag to build and publish.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Resolve source revision
+        id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify desktop tag and version sources
+        shell: bash
+        run: |
+          tag="${{ inputs.tag }}"
+          if [[ "$tag" != desktop-v* ]]; then
+            echo "::error::$tag is not a desktop release tag."
+            exit 1
+          fi
+          if ! git show-ref --verify --quiet "refs/tags/$tag"; then
+            echo "::error::$tag is not an existing Git tag."
+            exit 1
+          fi
+          python - "${tag#desktop-v}" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+          import tomllib
+
+          expected = sys.argv[1]
+          desktop = Path("desktop")
+          runtime_manifest = json.loads(
+              (desktop / "runtime-manifest.json").read_text()
+          )
+          versions = {
+              "VERSION": (desktop / "VERSION").read_text().strip(),
+              "Cargo.toml": tomllib.loads(
+                  (desktop / "src-tauri" / "Cargo.toml").read_text()
+              )["package"]["version"],
+              "package.json": json.loads(
+                  (desktop / "package.json").read_text()
+              )["version"],
+              "package-lock.json": json.loads(
+                  (desktop / "package-lock.json").read_text()
+              )["version"],
+              "package-lock root": json.loads(
+                  (desktop / "package-lock.json").read_text()
+              )["packages"][""]["version"],
+              "runtime manifest desktop": runtime_manifest["desktop_version"],
+              "runtime manifest package": runtime_manifest["package_version"],
+              "Tauri config": json.loads(
+                  (desktop / "src-tauri" / "tauri.conf.json").read_text()
+              )["version"],
+          }
+          mismatches = {
+              source: actual
+              for source, actual in versions.items()
+              if actual != expected
+          }
+          if mismatches:
+              raise SystemExit(
+                  f"desktop tag expects {expected}; mismatches: {mismatches}"
+              )
+          PY
+
+  build:
+    needs: verify
+    uses: ./.github/workflows/desktop.yml
+    with:
+      checkout_ref: ${{ inputs.tag }}
+
+  publish:
+    needs:
+      - build
+      - verify
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: vidxp-desktop-*
+          path: desktop-dist/
+          merge-multiple: true
+
+      - name: Publish complete desktop release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          tag="${{ inputs.tag }}"
+          version="${tag#desktop-v}"
+          gh release upload "$tag" desktop-dist/* --clobber
+          if [[ "$version" == *-* ]]; then
+            gh release edit "$tag" --draft=false --prerelease
+          else
+            gh release edit "$tag" --draft=false --latest
+          fi
+
+      - name: Synchronize stable source back to main
+        if: ${{ !contains(inputs.tag, '-b.') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run sync-channels.yml \
+            --ref main \
+            -f release_sha="${{ needs.verify.outputs.source_sha }}"

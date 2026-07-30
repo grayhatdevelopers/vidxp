@@ -1,0 +1,74 @@
+name: Maintain stable promotion PR
+
+on:
+  push:
+    branches:
+      - main
+  pull_request_target:
+    branches:
+      - release
+    types:
+      - closed
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: stable-promotion-pr
+  cancel-in-progress: false
+
+jobs:
+  ensure:
+    if: >-
+      github.event_name != 'pull_request_target' ||
+      (
+        github.event.pull_request.head.ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure a current main-to-release promotion PR exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          comparison="$(
+            gh api "repos/$REPOSITORY/compare/release...main" \
+              --jq '[.status, .ahead_by] | @tsv'
+          )"
+          IFS=$'\t' read -r status ahead <<< "$comparison"
+          if [[ "$status" == "diverged" ]]; then
+            echo "release and main diverged; stable synchronization must finish first."
+            exit 0
+          fi
+          if [[ "$ahead" == "0" ]]; then
+            echo "main has no commits to promote."
+            exit 0
+          fi
+
+          existing="$(
+            gh pr list \
+              --repo "$REPOSITORY" \
+              --base release \
+              --head main \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+          if [[ -n "$existing" ]]; then
+            echo "Promotion PR #$existing already tracks main."
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "$REPOSITORY" \
+            --base release \
+            --head main \
+            --draft \
+            --title "chore(release): promote beta to stable" \
+            --body "This draft is maintained automatically. Mark it ready and merge it when the current beta is approved for stable release."
