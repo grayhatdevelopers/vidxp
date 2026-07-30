@@ -126,7 +126,11 @@ class ModelTests(unittest.TestCase):
                 filename=downloaded.name,
                 sha256=hashlib.sha256(content).hexdigest(),
             )
-            runtime = self.runtime(directory, allowed_specs=(spec,))
+            runtime = self.runtime(
+                directory,
+                allowed_specs=(spec,),
+                allow_model_downloads=True,
+            )
             retrieve = Mock(return_value=str(downloaded))
             fake_pooch = types.SimpleNamespace(retrieve=retrieve)
             with patch.dict(sys.modules, {"pooch": fake_pooch}):
