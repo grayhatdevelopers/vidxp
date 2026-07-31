@@ -89,10 +89,12 @@ class JobService:
         settings: VidXPSettings,
         backend: JobBackend,
         read_planner: ReadJobPlanner | None = None,
+        index_preflight: Callable[[CreateIndexCommand], None] | None = None,
     ) -> None:
         self.settings = settings
         self.backend = backend
         self.read_planner = read_planner
+        self.index_preflight = index_preflight
 
     def _read_job_planner(self) -> ReadJobPlanner:
         if self.read_planner is None:
@@ -114,6 +116,8 @@ class JobService:
         *,
         job_id: str | None = None,
     ) -> Job:
+        if self.index_preflight is not None:
+            self.index_preflight(command)
         return self.backend.submit(
             IndexJobRequest(command=command),
             queue=self._model_queue(),

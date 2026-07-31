@@ -79,6 +79,7 @@ class JobContractTests(unittest.TestCase):
 
     def test_job_service_routes_model_work_without_reimplementing_it(self):
         backend = Mock()
+        preflight = Mock()
         backend.submit.return_value = Job(
             job_id=JOB_ID,
             kind=JobKind.index,
@@ -91,6 +92,7 @@ class JobContractTests(unittest.TestCase):
                 runtime_backend="cpu",
             ),
             backend=backend,
+            index_preflight=preflight,
         )
 
         job = service.submit_index(
@@ -102,12 +104,41 @@ class JobContractTests(unittest.TestCase):
 
         self.assertEqual(job.job_id, JOB_ID)
         request = backend.submit.call_args.args[0]
+        preflight.assert_called_once_with(request.command)
         self.assertEqual(request.kind, JobKind.index)
         self.assertEqual(request.command.media_id, MEDIA_ID)
         self.assertEqual(
             backend.submit.call_args.kwargs["queue"],
             JobQueue.cpu,
         )
+
+    def test_index_preflight_failure_never_reaches_the_job_backend(self):
+        backend = Mock()
+        command = CreateIndexCommand(
+            media_id=MEDIA_ID,
+            modalities=("scene",),
+        )
+        preflight = Mock(
+            side_effect=ApplicationError(
+                "invalid_request",
+                ErrorCategory.validation,
+                "The capability is not usable.",
+            )
+        )
+        service = JobService(
+            settings=VidXPSettings(
+                repository_root=Path("repository"),
+                runtime_backend="cpu",
+            ),
+            backend=backend,
+            index_preflight=preflight,
+        )
+
+        with self.assertRaises(ApplicationError):
+            service.submit_index(command)
+
+        preflight.assert_called_once_with(command)
+        backend.submit.assert_not_called()
 
     def test_job_list_cursor_is_bounded(self):
         with self.assertRaises(ValidationError):

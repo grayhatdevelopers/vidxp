@@ -43,7 +43,11 @@ def _configured_service(
 
 @lru_cache(maxsize=1)
 def _configured_jobs(settings: VidXPSettings | None = None) -> JobService:
-    return create_job_service(settings or _settings_from_arguments())
+    active_settings = settings or _settings_from_arguments()
+    return create_job_service(
+        active_settings,
+        index_preflight=_configured_service(active_settings).preflight_index,
+    )
 
 
 def _settings_from_arguments(
@@ -340,7 +344,6 @@ def _run_indexing(
                 media_id = media_ids[0] if len(media_ids) == 1 else None
             if media_id is None:
                 raise ValueError("Select or import media before indexing.")
-        service.require_models(modalities)
         job = _configured_jobs().submit_index(
             CreateIndexCommand(
                 media_id=media_id,

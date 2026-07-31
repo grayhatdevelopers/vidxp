@@ -307,13 +307,12 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             calls[0].kwargs["job_id"],
             calls[1].kwargs["job_id"],
         )
-        preflight = context.application.preflight_index.call_args.args[0]
-        self.assertEqual(preflight.modalities, ("scene",))
+        self.assertEqual(calls[0].args[0].modalities, ("scene",))
 
     async def test_missing_models_fail_before_index_submission(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
-            context.application.preflight_index.side_effect = ApplicationError(
+            context.jobs.submit_index.side_effect = ApplicationError(
                 "model_unavailable",
                 ErrorCategory.unavailable,
                 "Run vidxp prepare --modalities scene.",
@@ -346,7 +345,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             '"remediation":"vidxp prepare --modalities scene"',
             result.content[0].text,
         )
-        context.jobs.submit_index.assert_not_called()
+        context.jobs.submit_index.assert_called_once()
 
     async def test_query_video_submits_the_shared_durable_command(self):
         with TemporaryDirectory() as directory:

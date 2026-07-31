@@ -40,7 +40,6 @@ def create_index(
         not state.quiet and state.output_format == OutputFormat.rich
     )
     selected = tuple(modalities)
-    state.service.require_models(selected)
     with IndexProgress(show_progress) as progress:
         job = state.jobs.submit_index(
             CreateIndexCommand(

@@ -3,11 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
+from typing import Callable
 
 from pydantic import ValidationError
 
 from vidxp.application import VidXPApplication
-from vidxp.application_models import ApplicationError, ErrorCategory
+from vidxp.application_models import (
+    ApplicationError,
+    CreateIndexCommand,
+    ErrorCategory,
+)
 from vidxp.artifact_service import ArtifactQueryService, ArtifactService
 from vidxp.authentication import Authenticator, create_authenticator
 from vidxp.authorization import AuthorizationPolicy
@@ -94,7 +99,10 @@ class LocalApplicationContext:
     @cached_property
     def jobs(self) -> JobService:
         assert self._settings is not None
-        return create_job_service(self._settings)
+        return create_job_service(
+            self._settings,
+            index_preflight=self.application.preflight_index,
+        )
 
     def close(self) -> None:
         jobs = self.__dict__.get("jobs")
@@ -325,6 +333,7 @@ def create_job_service(
     catalog: SQLCatalog | None = None,
     snapshots: LocalSnapshotRepository | None = None,
     registry: CapabilityRegistry | None = None,
+    index_preflight: Callable[[CreateIndexCommand], None] | None = None,
     include_read_planner: bool = True,
 ) -> JobService:
     settings.layout.ensure_local_directories()
@@ -338,6 +347,7 @@ def create_job_service(
         stop_executor = supervisor.stop
     return JobService(
         settings=settings,
+        index_preflight=index_preflight,
         backend=DBOSJobBackend(
             system_database_url=(
                 None
@@ -394,6 +404,7 @@ def create_control_plane_application(
         catalog=components.catalog,
         snapshots=components.snapshots,
         registry=components.registry,
+        index_preflight=application.preflight_index,
     )
     uploads = (
         RemoteUploadService(

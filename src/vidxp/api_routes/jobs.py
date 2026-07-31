@@ -49,7 +49,6 @@ def submit_index(
     actor: Annotated[Principal, Depends(write_principal)],
     idempotency_key: HttpIdempotencyKey,
 ) -> Job:
-    service.application.preflight_index(command)
     return accepted(
         response,
         service.jobs.submit_index(

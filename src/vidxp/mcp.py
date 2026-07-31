@@ -561,7 +561,6 @@ def create_mcp_server(
         idempotency_key: IdempotencyKey,
     ) -> Job:
         def submit(actor: Principal) -> Job:
-            context.application.preflight_index(command)
             return context.jobs.submit_index(
                 command,
                 job_id=scoped_job_id(

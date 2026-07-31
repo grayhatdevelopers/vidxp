@@ -337,7 +337,7 @@ class FrontendTests(unittest.TestCase):
 
         command = jobs.submit_index.call_args.args[0]
         self.assertEqual(command.scene_sample_fps, 2.0)
-        service.require_models.assert_called_once_with(("scene",))
+        service.require_models.assert_not_called()
 
     def test_indexing_omits_scene_sample_rate_without_scene(self):
         jobs = Mock()

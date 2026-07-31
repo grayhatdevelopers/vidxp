@@ -402,7 +402,6 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(command.media_id, MEDIA_ID)
         self.assertEqual(command.modalities, ("scene",))
         self.assertEqual(command.scene_sample_fps, 0.5)
-        context.application.preflight_index.assert_called_once_with(command)
         expected_job_id = scoped_job_id(
             context,
             context.authenticator.authenticate(None),
@@ -465,7 +464,7 @@ class ApiTests(unittest.TestCase):
     def test_missing_models_fail_before_job_submission(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
-            context.application.preflight_index.side_effect = ApplicationError(
+            context.jobs.submit_index.side_effect = ApplicationError(
                 "model_unavailable",
                 ErrorCategory.unavailable,
                 "Run vidxp prepare --modalities scene.",
@@ -490,7 +489,7 @@ class ApiTests(unittest.TestCase):
             response.json()["error"]["details"]["remediation"],
             "vidxp prepare --modalities scene",
         )
-        context.jobs.submit_index.assert_not_called()
+        context.jobs.submit_index.assert_called_once()
 
     def test_job_submission_requires_an_idempotency_key(self):
         with TemporaryDirectory() as directory:
