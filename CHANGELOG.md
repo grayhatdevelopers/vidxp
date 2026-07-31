@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## [0.4.0-b](https://github.com/grayhatdevelopers/vidxp/compare/v0.3.0...v0.4.0-b) (2026-07-31)
+
+
+### Features
+
+* **api:** add explicit local network sharing ([#39](https://github.com/grayhatdevelopers/vidxp/issues/39)) ([37f3a84](https://github.com/grayhatdevelopers/vidxp/commit/37f3a84f03dcfc9022d723bac91d970352c3c1e3))
+
+
+### Bug Fixes
+
+* **models:** harden preparation downloads ([62cb7b1](https://github.com/grayhatdevelopers/vidxp/commit/62cb7b1b2dbdfbc968435bb76101b3199a88c1f8))
+* **models:** harden preparation downloads ([69c5e51](https://github.com/grayhatdevelopers/vidxp/commit/69c5e51588c496699fe3a49b8c61a374f1058a98))
+
 ## [0.3.0](https://github.com/grayhatdevelopers/vidxp/compare/v0.2.0...v0.3.0) (2026-07-31)
 
 

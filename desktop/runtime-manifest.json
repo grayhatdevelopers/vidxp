@@ -2,7 +2,7 @@
   "schema_version": 1,
   "desktop_version": "0.3.0",
   "package_name": "vidxp",
-  "package_version": "0.3.0",
+  "package_version": "0.4.0-b",
   "dependency_index": "https://pypi.org/simple",
   "dependency_constraints_sha256": "d3ed16906841952017f112903356bfe433a8515a37aa3f56e4af4dfa1f985835",
   "python_version": "3.14.6",
