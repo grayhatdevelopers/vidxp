@@ -337,15 +337,19 @@ class PackagingTests(unittest.TestCase):
             config = json.loads(
                 (ROOT / filename).read_text(encoding="utf-8")
             )
+            self.assertNotIn("group-pull-request-title-pattern", config)
             linked_versions = [
                 plugin
                 for plugin in config["plugins"]
                 if plugin["type"] == "linked-versions"
             ]
             self.assertEqual(len(linked_versions), 1, filename)
+            root_package = config["packages"]["."]
+            self.assertFalse(root_package["include-component-in-tag"])
+            self.assertNotIn("component", root_package)
             self.assertEqual(
                 set(linked_versions[0]["components"]),
-                {"vidxp", "desktop"},
+                {"", "desktop"},
                 filename,
             )
 

@@ -5,7 +5,6 @@
   "bump-patch-for-minor-pre-major": false,
   "draft": true,
   "force-tag-creation": true,
-  "group-pull-request-title-pattern": "chore(release): prepare ${branch}",
   "include-v-in-tag": true,
   "prerelease": true,
   "separate-pull-requests": false,
@@ -15,14 +14,13 @@
       "type": "linked-versions",
       "groupName": "VidXP",
       "components": [
-        "vidxp",
+        "",
         "desktop"
       ]
     }
   ],
   "packages": {
     ".": {
-      "component": "vidxp",
       "exclude-paths": [
         "desktop"
       ],
