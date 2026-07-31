@@ -1630,10 +1630,11 @@ mod tests {
     }
 
     #[test]
-    fn prerelease_package_and_dependencies_use_separate_indexes() {
+    fn package_and_dependencies_use_channel_specific_indexes() {
         let manifest = manifest().expect("manifest");
         let python = Path::new("managed-python");
         let constraints = Path::new("runtime-constraints.txt");
+        let selected_package_index = package_index(&manifest.package_version);
         let acquisition = package_acquisition_arguments(&manifest, python);
         let dependencies = dependency_installation_arguments(
             &manifest,
@@ -1644,17 +1645,21 @@ mod tests {
             true,
         );
 
-        assert_eq!(
-            package_index(&manifest.package_version),
+        let expected_package_index = if manifest.package_version.contains('-') {
             "https://test.pypi.org/simple"
-        );
+        } else {
+            "https://pypi.org/simple"
+        };
+
+        assert_eq!(selected_package_index, expected_package_index);
+        assert_eq!(package_index("0.3.0-b.1"), "https://test.pypi.org/simple");
         assert_eq!(package_index("0.3.0"), "https://pypi.org/simple");
         assert_eq!(manifest.dependency_index, "https://pypi.org/simple");
         assert!(acquisition.iter().any(|item| item == "--no-deps"));
         assert!(
             acquisition
                 .iter()
-                .any(|item| item == "https://test.pypi.org/simple")
+                .any(|item| item == selected_package_index)
         );
         assert!(!dependencies.iter().any(|item| item == "--no-deps"));
         assert!(
