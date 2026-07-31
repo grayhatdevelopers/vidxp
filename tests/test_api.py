@@ -181,10 +181,13 @@ class ApiTests(unittest.TestCase):
             )
             with TestClient(create_app(context=context)) as client:
                 health = client.get("/health")
+                favicon = client.get("/favicon.ico")
                 ready = client.get("/ready")
 
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json(), {"status": "ok"})
+        self.assertEqual(favicon.status_code, 204)
+        self.assertEqual(favicon.content, b"")
         self.assertEqual(ready.status_code, 200)
         self.assertEqual(ready.json(), {"ready": True, "status": "ready"})
 

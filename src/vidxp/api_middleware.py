@@ -16,7 +16,7 @@ from vidxp.application_models import (
 from vidxp.authentication import Authenticator
 
 
-PUBLIC_HTTP_PATHS = frozenset({"/health", "/ready"})
+PUBLIC_HTTP_PATHS = frozenset({"/favicon.ico", "/health", "/ready"})
 UPLOAD_PATH = "/api/v1/media"
 
 

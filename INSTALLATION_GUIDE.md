@@ -179,9 +179,18 @@ vidxp doctor --modalities dialogue,actor
 ### 5. Start the selected surface
 
 - CLI: `vidxp --help`
-- Browser UI: `vidxp ui`
-- Local HTTP API and remote MCP: `vidxp-api`
+- Loopback browser UI: `vidxp ui`
+- LAN-shared unauthenticated browser UI: `vidxp ui --share`
+- Local HTTP API and MCP: `vidxp-api`
+- LAN-shared authenticated HTTP API and MCP: `vidxp-api --share`
 - Local stdio MCP: `vidxp-mcp`
+
+The browser UI binds to loopback unless `--share` is present. In share mode,
+VidXP gives Streamlit an explicit wildcard bind and Streamlit prints both the
+Local and Network URLs. The UI has no authentication, so share it only on a
+trusted network.
+VidXP suppresses Streamlit's first-run email prompt and disables Streamlit
+usage-statistics collection for this managed launch.
 
 ## First CLI index
 
@@ -263,15 +272,31 @@ Install `local-worker,server`, prepare models, then run:
 vidxp-api
 ```
 
+The default is reachable only from the same machine. To deliberately share it
+on the machine's detected LAN address, run `vidxp-api --share`. Share mode:
+
+- generates and then reuses an app-owned bearer token;
+- binds Uvicorn to the detected LAN address;
+- configures the HTTP and MCP Host-header policies for that address; and
+- prints the exact health URL, Streamable HTTP MCP URL, and bearer token.
+
+The managed token is stored as `api-share-token` in VidXP's platform-native
+configuration directory. Share mode uses plain HTTP and is intended for a
+trusted local network; use the supported reverse-proxy deployment when TLS is
+required.
+
 The unauthenticated local default is deliberately loopback-only:
 
 | Endpoint | Purpose |
 |---|---|
-| `http://127.0.0.1:8000/docs` | Interactive OpenAPI |
-| `http://127.0.0.1:8000/openapi.json` | Machine-readable contract |
-| `http://127.0.0.1:8000/health` | Process liveness |
-| `http://127.0.0.1:8000/ready` | Aggregate runtime readiness |
-| `http://127.0.0.1:8000/mcp` | Streamable HTTP MCP |
+| `http://127.0.0.1:32191/docs` | Interactive OpenAPI |
+| `http://127.0.0.1:32191/openapi.json` | Machine-readable contract |
+| `http://127.0.0.1:32191/health` | Process liveness |
+| `http://127.0.0.1:32191/ready` | Aggregate runtime readiness |
+| `http://127.0.0.1:32191/mcp` | Streamable HTTP MCP |
+
+Native installs default to port `32191` to avoid the heavily reused development
+port `8000`. Use `vidxp-api --port <port>` when a specific port is required.
 
 Do not bind an unauthenticated API to a non-loopback address. Public
 deployments require static bearer or OIDC authentication and should use the

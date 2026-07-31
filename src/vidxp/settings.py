@@ -26,6 +26,9 @@ from vidxp.media_runtime import default_media_executable
 from vidxp.repository_layout import RepositoryLayout
 
 
+DEFAULT_HTTP_PORT = 32191
+
+
 class ApplicationMode(StrEnum):
     local = "local"
     remote = "remote"
@@ -79,7 +82,7 @@ class VidXPSettings(BaseSettings):
         le=3600,
     )
     http_bind_host: str = Field(default="127.0.0.1", min_length=1)
-    http_port: int = Field(default=8000, gt=0, le=65535)
+    http_port: int = Field(default=DEFAULT_HTTP_PORT, gt=0, le=65535)
     http_auth_mode: HttpAuthMode = HttpAuthMode.none
     http_static_bearer_token: SecretStr | None = None
     http_oidc_issuer: str | None = Field(

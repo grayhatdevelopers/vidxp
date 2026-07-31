@@ -86,6 +86,11 @@ uv tool install --python 3.14 --torch-backend cpu \
 vidxp ui
 ```
 
+`vidxp ui` binds to loopback by default. Use `vidxp ui --share` only when you
+intend to expose the unauthenticated browser interface on the local network.
+Streamlit prints its Local and Network URLs when it starts. VidXP disables
+Streamlit's first-run email prompt and usage-statistics collection.
+
 If the `vidxp` command is not found, run `uv tool update-shell` once and reopen
 the terminal.
 

@@ -334,11 +334,38 @@ class CliTests(unittest.TestCase):
         with patch(
             "vidxp.frontend.main",
             side_effect=SystemExit(0),
-        ):
+        ) as frontend:
             result = self.invoke(["ui"])
 
         self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn(
+            "--server.address=127.0.0.1",
+            frontend.call_args.args[0],
+        )
+        self.assertIn(
+            "--server.showEmailPrompt=false",
+            frontend.call_args.args[0],
+        )
+        self.assertIn(
+            "--browser.gatherUsageStats=false",
+            frontend.call_args.args[0],
+        )
         self.jobs.stop_worker.assert_called_once_with()
+
+    def test_ui_share_uses_streamlit_wildcard_bind_and_warns(self):
+        with patch(
+            "vidxp.frontend.main",
+            side_effect=SystemExit(0),
+        ) as frontend:
+            result = self.invoke(["ui", "--share"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        arguments = frontend.call_args.args[0]
+        self.assertIn("--server.address=0.0.0.0", arguments)
+        self.assertIn("--server.showEmailPrompt=false", arguments)
+        self.assertIn("--browser.gatherUsageStats=false", arguments)
+        self.assertIn("has no authentication", result.output)
+        self.assertNotIn("Browser UI:", result.output)
 
     def test_snippet_rejects_an_inverted_time_range_before_submission(self):
         result = self.invoke(

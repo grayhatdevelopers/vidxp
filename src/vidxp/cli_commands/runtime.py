@@ -33,6 +33,7 @@ from vidxp.media_runtime import (
     media_runtime_config_path,
     save_media_runtime_configuration,
 )
+from vidxp.network_share import is_loopback_host
 
 
 def _format_bytes(size: int) -> str:
@@ -513,6 +514,16 @@ def ui(
             help="Streamlit server port.",
         ),
     ] = None,
+    share: Annotated[
+        bool,
+        typer.Option(
+            "--share",
+            help=(
+                "Share the unauthenticated browser interface on this "
+                "machine's LAN address."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Launch Streamlit with the selected repository configuration."""
 
@@ -537,11 +548,23 @@ def ui(
             ) from exc
         raise
 
-    streamlit_arguments = []
-    if host is not None:
-        streamlit_arguments.append(f"--server.address={host}")
+    if share and host is not None:
+        raise typer.BadParameter("--share cannot be combined with --host.")
+    active_host = "0.0.0.0" if share else (host or "127.0.0.1")
+    streamlit_arguments = [
+        "--server.showEmailPrompt=false",
+        "--browser.gatherUsageStats=false",
+        f"--server.address={active_host}",
+    ]
     if port is not None:
         streamlit_arguments.append(f"--server.port={port}")
+    if share or not is_loopback_host(active_host):
+        typer.secho(
+            "WARNING: The browser interface has no authentication and is "
+            "reachable from the network.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
     if show_progress:
         emit_progress("Starting the browser interface...")
     try:

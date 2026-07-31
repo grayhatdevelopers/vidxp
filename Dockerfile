@@ -52,7 +52,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV PATH="/opt/vidxp/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    VIDXP_HTTP_PORT=8000
 
 USER vidxp
 WORKDIR /var/lib/vidxp

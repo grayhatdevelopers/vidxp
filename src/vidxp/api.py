@@ -92,6 +92,14 @@ def create_app(
         return HealthResponse()
 
     @app.get(
+        "/favicon.ico",
+        include_in_schema=False,
+        status_code=204,
+    )
+    def favicon() -> Response:
+        return Response(status_code=204)
+
+    @app.get(
         "/ready",
         response_model=ReadinessResponse,
         responses={503: {"model": ReadinessResponse}},
