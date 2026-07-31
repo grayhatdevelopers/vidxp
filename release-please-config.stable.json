@@ -8,6 +8,16 @@
   "group-pull-request-title-pattern": "chore(release): prepare ${branch}",
   "include-v-in-tag": true,
   "separate-pull-requests": false,
+  "plugins": [
+    {
+      "type": "linked-versions",
+      "groupName": "VidXP",
+      "components": [
+        "vidxp",
+        "desktop"
+      ]
+    }
+  ],
   "packages": {
     ".": {
       "component": "vidxp",
@@ -28,6 +38,10 @@
     "desktop": {
       "component": "desktop",
       "extra-files": [
+        {
+          "path": "src-tauri/Cargo.toml",
+          "type": "generic"
+        },
         {
           "path": "src-tauri/Cargo.lock",
           "type": "generic"
@@ -61,7 +75,7 @@
       "include-component-in-tag": true,
       "package-name": "vidxp-desktop",
       "release-type": "simple",
-      "version-file": "src-tauri/Cargo.toml"
+      "version-file": "VERSION"
     }
   }
 }

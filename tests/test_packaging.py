@@ -329,6 +329,62 @@ class PackagingTests(unittest.TestCase):
             "system",
         )
 
+    def test_release_please_preserves_desktop_manifests_and_links_versions(self):
+        for filename in (
+            "release-please-config.json",
+            "release-please-config.stable.json",
+        ):
+            config = json.loads(
+                (ROOT / filename).read_text(encoding="utf-8")
+            )
+            linked_versions = [
+                plugin
+                for plugin in config["plugins"]
+                if plugin["type"] == "linked-versions"
+            ]
+            self.assertEqual(len(linked_versions), 1, filename)
+            self.assertEqual(
+                set(linked_versions[0]["components"]),
+                {"vidxp", "desktop"},
+                filename,
+            )
+
+            desktop = config["packages"]["desktop"]
+            self.assertEqual(desktop["version-file"], "VERSION", filename)
+            generic_files = {
+                extra["path"]
+                for extra in desktop["extra-files"]
+                if extra["type"] == "generic"
+            }
+            self.assertIn("src-tauri/Cargo.toml", generic_files, filename)
+            self.assertIn("src-tauri/Cargo.lock", generic_files, filename)
+
+        manifest = json.loads(
+            (ROOT / "desktop" / "runtime-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        package = json.loads(
+            (ROOT / "desktop" / "package.json").read_text(encoding="utf-8")
+        )
+        cargo = tomllib.loads(
+            (
+                ROOT / "desktop" / "src-tauri" / "Cargo.toml"
+            ).read_text(encoding="utf-8")
+        )
+        version_file = (
+            ROOT / "desktop" / "VERSION"
+        ).read_text(encoding="utf-8").strip()
+        self.assertEqual(version_file, manifest["desktop_version"])
+        self.assertEqual(version_file, package["version"])
+        self.assertEqual(version_file, cargo["package"]["version"])
+        self.assertIn(
+            f'version = "{version_file}" # x-release-please-version',
+            (
+                ROOT / "desktop" / "src-tauri" / "Cargo.toml"
+            ).read_text(encoding="utf-8"),
+        )
+
     def test_windows_release_binary_uses_the_gui_subsystem(self):
         main = (
             ROOT / "desktop" / "src-tauri" / "src" / "main.rs"
