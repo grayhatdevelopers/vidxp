@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## [0.3.0-b.1](https://github.com/grayhatdevelopers/vidxp/compare/v0.2.1-b.1...v0.3.0-b.1) (2026-07-31)
+
+
+### Features
+
+* **deploy:** add published server deployment profiles ([600e333](https://github.com/grayhatdevelopers/vidxp/commit/600e3335bfd5b0dd97406b4c66dbb4b291db2049))
+* **desktop:** add managed local application ([3ff20ec](https://github.com/grayhatdevelopers/vidxp/commit/3ff20ec9aebf4bea7efe041b0ae9ca2e637266c9))
+* **interfaces:** expose CLI, browser, API, and MCP surfaces ([5ae9fc7](https://github.com/grayhatdevelopers/vidxp/commit/5ae9fc7bbb54dfcbca4a7597604d8466dc3b978c))
+* **platform:** add durable media and search services ([98b85a8](https://github.com/grayhatdevelopers/vidxp/commit/98b85a8d06e181919d724716b616bebdd63ecd24))
+
+
+### Documentation
+
+* present product setup capabilities and roadmap ([a72726d](https://github.com/grayhatdevelopers/vidxp/commit/a72726d5665cc001e71dbd8c98c6d4e818f33c47))
+
 ## v0.2.0 (2026-07-28)
 
 ### Features

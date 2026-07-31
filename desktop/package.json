@@ -1,7 +1,7 @@
 {
   "name": "vidxp-desktop",
   "private": true,
-  "version": "0.2.1-b.1",
+  "version": "0.3.0-b.1",
   "type": "module",
   "scripts": {
     "tauri": "tauri",
