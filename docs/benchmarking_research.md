@@ -63,7 +63,7 @@ The `face_recognition` project states **99.38% accuracy on Labeled Faces in the 
 Use a separate “published context” table, followed by the paper's own “same-harness baselines” table. The latter should contain only methods rerun on the identical frozen VidXP test set, for example:
 
 - dialogue: random, exact lexical/BM25, reference-transcript oracle, and full WhisperX pipeline;
-- scene: random, CLIP with each pre-registered frame stride, and any temporal aggregation variant;
+- scene: random, CLIP with each pre-registered time-based sample rate, and any temporal aggregation variant;
 - actors: all-singleton, all-in-one, fixed 0.55 threshold, and development-tuned threshold.
 
 State underneath the published-context table: **“Values are reproduced from their source papers and are not directly comparable to VidXP because datasets, languages, retrieval units, supervision, relevance definitions, and hardware differ.”** This prevents a literature-review table from being mistaken for an empirical leaderboard.
@@ -74,7 +74,7 @@ Use an immutable, versioned corpus and publish a manifest containing video IDs, 
 
 Use three disjoint splits:
 
-- **Development:** select face threshold, five-word phrase length, frame stride, temporal de-duplication, similarity settings, and any rejection threshold.
+- **Development:** select face threshold, five-word phrase length, scene sample rate, temporal de-duplication, similarity settings, and any rejection threshold.
 - **Test:** run once after the protocol and parameters are frozen.
 - **Optional training:** only if a component is trained or fine-tuned. VidXP's present models are otherwise evaluated zero-shot.
 
@@ -244,7 +244,7 @@ Record peak:
 
 PyTorch's `max_memory_allocated()` returns the peak tensor memory since program start and documents resetting peak statistics between stages ([official API](https://docs.pytorch.org/docs/stable/generated/torch.cuda.memory.max_memory_allocated.html)). Python exposes maximum RSS through `resource.getrusage` ([official documentation](https://docs.python.org/3/library/resource.html)); NVIDIA documents sampled GPU utilization and frame-buffer memory semantics in `nvidia-smi` ([official documentation](https://docs.nvidia.com/deploy/nvidia-smi/index.html)).
 
-For every result table, report CPU model/core count, RAM, storage, GPU and VRAM, OS, accelerator driver/runtime, Python and dependency versions, model identifiers/hashes, precision/compute type, batch size, thread counts, input resolution/fps, frame stride, database settings, and Git commit. Fix seeds where randomness exists, keep the machine otherwise idle, randomize condition order, and publish raw per-run measurements and the benchmark script.
+For every result table, report CPU model/core count, RAM, storage, GPU and VRAM, OS, accelerator driver/runtime, Python and dependency versions, model identifiers/hashes, precision/compute type, batch size, thread counts, input resolution/fps, effective scene sample rate, actor frame stride, database settings, and Git commit. Fix seeds where randomness exists, keep the machine otherwise idle, randomize condition order, and publish raw per-run measurements and the benchmark script.
 
 ## 6. Aggregation, uncertainty, and comparisons
 
@@ -253,13 +253,13 @@ For every result table, report CPU model/core count, RAM, storage, GPU and VRAM,
 - Report 95% confidence intervals by resampling the highest independent unit—source title/video, not adjacent frames or queries from the same event. Use the same resampled units for paired system comparisons.
 - Publish per-query/per-video scores so alternative aggregation is possible.
 - Compare systems on the identical frozen queries and judgments.
-- Present quality and efficiency together: e.g. \(R@1\) versus RTF for Whisper model/compute type, scene frame stride, and face threshold/history choices.
+- Present quality and efficiency together: e.g. \(R@1\) versus RTF for Whisper model/compute type, scene sample rate, and face threshold/history choices.
 
 ## 7. Minimum paper table set
 
 1. Corpus and annotation statistics by split and query stratum.
 2. Dialogue ASR/alignment results, then end-to-end retrieval with reference-transcript oracle and lexical baseline.
-3. Scene retrieval by query type, within-video versus corpus-wide, with frame-stride ablation.
+3. Scene retrieval by query type, within-video versus corpus-wide, with sample-rate ablation.
 4. Actor detection coverage plus B-cubed P/R/F1, pairwise P/R/F1, ARI, and cluster-count diagnostics.
 5. Indexing RTF/stage breakdown, query cold/warm p50/p95 and QPS, peak RAM/accelerator memory, and index size.
 6. Paired 95% confidence intervals and qualitative failure examples selected by a fixed rule (for example, worst five test queries per module), not hand-picked successes.

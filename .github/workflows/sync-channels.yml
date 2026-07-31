@@ -1,0 +1,115 @@
+name: Synchronize release channels
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Stable release commit that completed publication.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: synchronize-release-channels
+  cancel-in-progress: false
+
+jobs:
+  synchronize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: release
+
+      - name: Fast-forward main after complete stable publication
+        env:
+          EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          git fetch --force origin \
+            refs/heads/main:refs/remotes/origin/main \
+            refs/heads/release:refs/remotes/origin/release \
+            '+refs/tags/*:refs/tags/*'
+
+          release_sha="$(git rev-parse origin/release)"
+          main_sha="$(git rev-parse origin/main)"
+          if [[ -n "$EXPECTED_RELEASE_SHA" ]] &&
+             ! git merge-base --is-ancestor "$EXPECTED_RELEASE_SHA" "$release_sha"; then
+            echo "::error::Published release $EXPECTED_RELEASE_SHA is not in the release branch."
+            exit 1
+          fi
+          publication_sha="${EXPECTED_RELEASE_SHA:-$release_sha}"
+
+          matched=0
+          drafts=0
+          while IFS=$'\t' read -r tag draft prerelease; do
+            [[ -n "$tag" ]] || continue
+            if ! git rev-parse --verify --quiet "refs/tags/$tag^{commit}" >/dev/null; then
+              continue
+            fi
+            tag_sha="$(git rev-parse "refs/tags/$tag^{commit}")"
+            if [[ "$tag_sha" != "$publication_sha" || "$prerelease" == "true" ]]; then
+              continue
+            fi
+            matched=$((matched + 1))
+            if [[ "$draft" == "true" ]]; then
+              drafts=$((drafts + 1))
+            fi
+          done < <(
+            gh api --paginate "repos/$REPOSITORY/releases?per_page=100" \
+              --jq '.[] | [.tag_name, .draft, .prerelease] | @tsv'
+          )
+
+          if [[ "$matched" == "0" ]]; then
+            echo "release has not produced a stable GitHub release yet."
+            exit 0
+          fi
+          if [[ "$drafts" != "0" ]]; then
+            echo "$drafts stable release artifact set(s) are still draft."
+            exit 0
+          fi
+
+          if [[ "$main_sha" == "$publication_sha" ]] ||
+             git merge-base --is-ancestor "$publication_sha" "$main_sha"; then
+            echo "main already contains published release $publication_sha."
+            exit 0
+          fi
+          if git merge-base --is-ancestor "$main_sha" "$publication_sha"; then
+            git push origin "$publication_sha:refs/heads/main"
+            exit 0
+          fi
+
+          if [[ "$publication_sha" != "$release_sha" ]]; then
+            echo "::error::release advanced beyond published commit $publication_sha; refusing to propose unrelated changes."
+            exit 1
+          fi
+
+          existing="$(
+            gh pr list \
+              --repo "$REPOSITORY" \
+              --base main \
+              --head release \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+          if [[ -n "$existing" ]]; then
+            echo "Stable synchronization PR #$existing already exists."
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "$REPOSITORY" \
+            --base main \
+            --head release \
+            --title "chore(release): synchronize stable baseline" \
+            --body "Stable publication completed, but main advanced during the release. Merge this PR to carry the published version baseline back without discarding newer main commits."

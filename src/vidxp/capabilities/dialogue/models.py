@@ -1,30 +1,106 @@
 from __future__ import annotations
 
-from functools import lru_cache
+from typing import Any, Callable
+
+from vidxp.ports import ModelRuntimePort
+from vidxp.model_contracts import loaded_compute_precision
+from vidxp.capabilities.dialogue.specs import (
+    FASTER_WHISPER_MODEL,
+    QWEN3_EMBEDDING_MODEL,
+    whisper_compute_type,
+)
 
 
-@lru_cache
-def get_embedder(model_name: str, device: str):
-    from sentence_transformers import SentenceTransformer
+def get_embedder(
+    runtime: ModelRuntimePort,
+    *,
+    download: bool = False,
+    progress: Callable[[dict[str, Any]], None] | None = None,
+) -> Any:
+    device = runtime.device_for("dialogue.embedding")
+    key = QWEN3_EMBEDDING_MODEL.key(device)
 
-    return SentenceTransformer(model_name, device=device)
+    def load() -> Any:
+        from sentence_transformers import SentenceTransformer
+
+        snapshot = runtime.resolve_model(
+            QWEN3_EMBEDDING_MODEL,
+            download=download,
+            progress=progress,
+        )
+        if progress is not None:
+            progress(
+                {
+                    "state": "preparing",
+                    "stage": "loading_model",
+                    "message": (
+                        f"Loading {QWEN3_EMBEDDING_MODEL.model_id}."
+                    ),
+                }
+            )
+        model = SentenceTransformer(
+            str(snapshot),
+            device=device,
+            cache_folder=str(runtime.model_cache),
+            local_files_only=True,
+        )
+        runtime.record_compute_precision(
+            QWEN3_EMBEDDING_MODEL.capability,
+            loaded_compute_precision(
+                model,
+                fallback=QWEN3_EMBEDDING_MODEL.weights_precision,
+            ),
+        )
+        return model
+
+    return runtime.get_or_load(key, load)
 
 
-@lru_cache
-def get_whisper_model(model_name: str, device: str):
-    import whisperx
+def get_whisper_model(
+    runtime: ModelRuntimePort,
+    *,
+    download: bool = False,
+    progress: Callable[[dict[str, Any]], None] | None = None,
+) -> Any:
+    device = runtime.device_for("dialogue.transcription")
+    compute_type = whisper_compute_type(device)
+    key = FASTER_WHISPER_MODEL.key(f"{device}:{compute_type}")
 
-    return whisperx.load_model(model_name, device, compute_type="float32")
+    def load() -> Any:
+        from faster_whisper import WhisperModel
 
+        snapshot = runtime.resolve_model(
+            FASTER_WHISPER_MODEL,
+            download=download,
+            progress=progress,
+        )
+        if progress is not None:
+            progress(
+                {
+                    "state": "preparing",
+                    "stage": "loading_model",
+                    "message": (
+                        f"Loading {FASTER_WHISPER_MODEL.model_id}."
+                    ),
+                }
+            )
+        model = WhisperModel(
+            str(snapshot),
+            device=device.split(":", 1)[0],
+            device_index=(
+                int(device.split(":", 1)[1])
+                if ":" in device
+                else 0
+            ),
+            compute_type=compute_type,
+            cpu_threads=runtime.cpu_thread_budget,
+            download_root=str(runtime.model_cache),
+            local_files_only=True,
+        )
+        runtime.record_compute_precision(
+            FASTER_WHISPER_MODEL.capability,
+            compute_type,
+        )
+        return model
 
-@lru_cache
-def get_alignment_model(language: str, device: str):
-    import whisperx
-
-    return whisperx.load_align_model(language_code=language, device=device)
-
-
-def clear_model_cache() -> None:
-    get_embedder.cache_clear()
-    get_whisper_model.cache_clear()
-    get_alignment_model.cache_clear()
+    return runtime.get_or_load(key, load)

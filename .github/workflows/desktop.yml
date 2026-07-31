@@ -1,0 +1,156 @@
+name: Desktop
+
+on:
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: Commit to build
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      checkout_ref:
+        description: Commit, branch, or tag to build
+        required: false
+        default: ""
+        type: string
+  pull_request:
+    branches:
+      - main
+      - release
+    paths:
+      - "desktop/**"
+      - "src/vidxp/requirements/**"
+      - "src/vidxp/capabilities/*/requirements.txt"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/desktop.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.event.pull_request.number || inputs.checkout_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.base_ref != 'release' ||
+      github.head_ref != 'main'
+    name: ${{ matrix.target == 'windows' && 'Windows x86-64 NSIS' || matrix.target == 'macos' && 'macOS Apple Silicon DMG' || 'Linux x86-64 AppImage' }}
+    runs-on: ${{ matrix.target == 'windows' && 'windows-2025' || matrix.target == 'macos' && 'macos-15' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--branches--') && '["windows"]' || '["windows","macos","linux"]') }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout_ref || github.event.inputs.checkout_ref || github.sha }}
+
+      - name: Install Linux desktop build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.0"
+          enable-cache: false
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Restore Rust build cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: desktop-rust-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            desktop-rust-${{ runner.os }}-${{ runner.arch }}-1.97.1-
+
+      - name: Install locked desktop tooling
+        run: npm ci
+        working-directory: desktop
+
+      - name: Verify the desktop runtime constraints
+        shell: bash
+        run: |
+          generated="$RUNNER_TEMP/runtime-constraints.txt"
+          uv export \
+            --frozen \
+            --extra local-worker \
+            --extra frontend \
+            --no-dev \
+            --no-emit-project \
+            --no-hashes \
+            --format requirements-txt \
+            --output-file "$generated"
+          git diff --no-index --ignore-matching-lines='^#' -- \
+            desktop/runtime-constraints.txt "$generated"
+
+      - name: Restore the pinned uv sidecar
+        id: uv-sidecar-cache
+        uses: actions/cache@v5
+        with:
+          path: desktop/src-tauri/binaries
+          key: desktop-uv-sidecar-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/sidecars.json') }}
+
+      - name: Fetch the pinned uv sidecar
+        if: steps.uv-sidecar-cache.outputs.cache-hit != 'true'
+        run: npm run ${{ matrix.target == 'windows' && 'sidecar:windows' || 'sidecar:unix' }}
+        working-directory: desktop
+
+      - name: Test the locked desktop crate
+        run: cargo test --release --locked --manifest-path desktop/src-tauri/Cargo.toml
+
+      - name: Build the unsigned desktop installer
+        run: npm run desktop:build
+        working-directory: desktop
+
+      - name: Verify the Windows app uses the GUI subsystem
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $path = "desktop/src-tauri/target/release/vidxp-desktop.exe"
+          $stream = [System.IO.File]::OpenRead($path)
+          try {
+            $reader = [System.IO.BinaryReader]::new($stream)
+            $stream.Position = 0x3c
+            $peOffset = $reader.ReadInt32()
+            $stream.Position = $peOffset + 4 + 20 + 68
+            $subsystem = $reader.ReadUInt16()
+            if ($subsystem -ne 2) {
+              throw "Expected Windows GUI subsystem 2, found $subsystem."
+            }
+          } finally {
+            $stream.Dispose()
+          }
+
+      - name: Preserve the desktop installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target == 'windows' && 'vidxp-desktop-windows-x86_64' || matrix.target == 'macos' && 'vidxp-desktop-macos-aarch64' || 'vidxp-desktop-linux-x86_64' }}
+          path: ${{ matrix.target == 'windows' && 'desktop/src-tauri/target/release/bundle/nsis/*-setup.exe' || matrix.target == 'macos' && 'desktop/src-tauri/target/release/bundle/dmg/*.dmg' || 'desktop/src-tauri/target/release/bundle/appimage/*.AppImage' }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

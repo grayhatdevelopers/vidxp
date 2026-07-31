@@ -2,10 +2,65 @@ name: CI
 
 on:
   pull_request:
+    branches:
+      - main
+      - release
     types:
       - opened
       - synchronize
       - reopened
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: Exact commit to validate.
+        required: false
+        type: string
+      force_validation:
+        description: Run validation without PR path scoping.
+        required: false
+        default: false
+        type: boolean
+      python_versions:
+        description: JSON array of Python versions to validate.
+        required: false
+        default: '["3.14"]'
+        type: string
+      provider_platforms:
+        description: JSON array of runner labels for provider validation.
+        required: false
+        default: '["windows-2025"]'
+        type: string
+      run_containers:
+        description: Run container validation when validation is forced.
+        required: false
+        default: false
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      checkout_ref:
+        description: Exact commit to validate.
+        required: true
+        type: string
+      force_validation:
+        description: Run validation without PR path scoping.
+        required: false
+        default: true
+        type: boolean
+      python_versions:
+        description: JSON array of Python versions to validate.
+        required: false
+        default: '["3.14"]'
+        type: string
+      provider_platforms:
+        description: JSON array of runner labels for provider validation.
+        required: false
+        default: '["windows-2025"]'
+        type: string
+      run_containers:
+        description: Run container validation.
+        required: false
+        default: true
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -16,90 +71,109 @@ permissions:
   pull-requests: read
 
 jobs:
-  validate:
+  scope:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.base_ref != 'release' ||
+      github.head_ref != 'main'
     runs-on: ubuntu-latest
+    outputs:
+      needs_python: ${{ steps.scope.outputs.needs_python }}
+      run_container: ${{ steps.scope.outputs.run_container }}
+      run_suite: ${{ steps.scope.outputs.run_suite }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Determine validation scope
         id: scope
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          FORCE_VALIDATION: ${{ inputs.force_validation || false }}
+          RUN_CONTAINERS: ${{ inputs.run_containers || false }}
         run: |
+          if [[ "$FORCE_VALIDATION" == "true" ]]; then
+            {
+              echo "run_suite=true"
+              echo "run_container=$RUN_CONTAINERS"
+              echo "needs_python=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           changed_files="$(git diff --name-only "$BASE_SHA" HEAD)"
-          if grep -Eq '^(\.github/workflows/ci\.yml$|src/|tests/|utils/|LICENSE$|MANIFEST\.in$|pyproject\.toml$)' <<< "$changed_files"; then
+          if grep -Eq '^(\.github/workflows/ci\.yml$|src/|tests/|utils/|LICENSE$|MANIFEST\.in$|pyproject\.toml$|uv\.lock$)' <<< "$changed_files"; then
             run_suite=true
           else
             run_suite=false
           fi
-          if grep -Eq '^(\.dockerignore$|\.github/workflows/ci\.yml$|Dockerfile$|compose\.yaml$|pyproject\.toml$|src/vidxp/(requirements/.*\.txt|capabilities/[^/]+/requirements\.txt)$)' <<< "$changed_files"; then
+          if grep -Eq '^(\.dockerignore$|\.github/workflows/ci\.yml$|Dockerfile$|compose\.yaml$|pyproject\.toml$|uv\.lock$|src/vidxp/(requirements/.*\.txt|capabilities/[^/]+/requirements\.txt)$)' <<< "$changed_files"; then
             run_container=true
           else
             run_container=false
           fi
 
-          labels="$(
-            gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels" \
-              --jq '.[].name'
-          )"
-          if grep -Eq '^(dependencies|skip-changelog)$' <<< "$labels"; then
-            require_changelog=false
-          else
-            require_changelog=true
-          fi
-
-          if [[ "$run_suite" == "true" || "$require_changelog" == "true" ]]; then
-            needs_python=true
-          else
-            needs_python=false
-          fi
-
+          needs_python="$run_suite"
           echo "run_suite=$run_suite" >> "$GITHUB_OUTPUT"
           echo "run_container=$run_container" >> "$GITHUB_OUTPUT"
-          echo "require_changelog=$require_changelog" >> "$GITHUB_OUTPUT"
           echo "needs_python=$needs_python" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-python@v7
-        if: steps.scope.outputs.needs_python == 'true'
+  validate:
+    if: needs.scope.outputs.needs_python == 'true'
+    needs: scope
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(inputs.python_versions || '["3.14"]') }}
+    steps:
+      - uses: actions/checkout@v7
         with:
-          python-version: "3.11"
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install repository tooling
-        if: steps.scope.outputs.needs_python == 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r utils/build-requirements.txt
 
-      - name: Require a changelog fragment
-        if: steps.scope.outputs.require_changelog == 'true'
-        run: towncrier check --compare-with "${{ github.event.pull_request.base.sha }}"
-
       - name: Install test surface
-        if: steps.scope.outputs.run_suite == 'true'
-        run: python -m pip install ".[scene,frontend,benchmarks]"
+        if: needs.scope.outputs.run_suite == 'true'
+        run: |
+          python -m pip install "uv==0.12.0"
+          uv sync \
+            --frozen \
+            --extra all \
+            --extra frontend \
+            --extra benchmarks \
+            --extra server \
+            --extra slm \
+            --extra test \
+            --no-dev
 
       - name: Lint
-        if: steps.scope.outputs.run_suite == 'true'
+        if: needs.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
         run: ruff check src tests
 
       - name: Test
-        if: steps.scope.outputs.run_suite == 'true'
-        run: python -m unittest discover -s tests -q
+        if: needs.scope.outputs.run_suite == 'true'
+        run: uv run --no-sync python -m unittest discover -s tests -q
         env:
           PYTHONPATH: src
 
       - name: Build wheel and source distribution
-        if: steps.scope.outputs.run_suite == 'true'
-        run: python -m build
+        if: needs.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
+        run: bash utils/build_package.sh
 
       - name: Verify minimal wheel
-        if: steps.scope.outputs.run_suite == 'true'
+        if: needs.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
         shell: bash
         run: |
           python -m venv .wheel-smoke
@@ -111,38 +185,43 @@ jobs:
           from subprocess import check_output
 
           import vidxp
-          from vidxp.capabilities.registry import capability_names
+          from vidxp.capabilities.registry import create_capability_registry
 
-          assert capability_names() == ("dialogue", "scene", "actor")
+          assert create_capability_registry().names() == (
+              "dialogue", "scene", "actor"
+          )
           help_text = check_output(
               [".wheel-smoke/bin/vidxp", "--help"],
               text=True,
           )
-          assert "benchmark" not in help_text
+          assert "benchmark" in help_text
+          benchmark_help = check_output(
+              [".wheel-smoke/bin/vidxp", "benchmark", "--help"],
+              text=True,
+          )
+          assert "official benchmark adapters" in benchmark_help
           for module in (
               "chromadb",
-              "clip",
               "cv2",
-              "face_recognition",
+              "faster_whisper",
               "sentence_transformers",
-              "srt",
               "streamlit",
               "torch",
-              "whisperx",
+              "transformers",
           ):
               assert find_spec(module) is None, module
           PY
 
       - name: Validate Compose configuration
-        if: steps.scope.outputs.run_container == 'true'
+        if: needs.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
         run: docker compose config --quiet
 
       - name: Build container
-        if: steps.scope.outputs.run_container == 'true'
+        if: needs.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
         run: docker build --tag vidxp:ci .
 
       - name: Smoke container
-        if: steps.scope.outputs.run_container == 'true'
+        if: needs.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
         shell: bash
         run: |
           docker run --detach --name vidxp-ci \
@@ -150,8 +229,11 @@ jobs:
           trap 'docker rm --force vidxp-ci >/dev/null 2>&1 || true' EXIT
 
           docker exec vidxp-ci vidxp --version
+          docker exec vidxp-ci vidxp init --json
           docker exec vidxp-ci python -c \
-            'import clip, face_recognition, whisperx'
+            'import chromadb, cv2, faster_whisper, huggingface_hub, pooch, psutil, sentence_transformers, torch, transformers; assert psutil.virtual_memory().available > 0'
+          docker exec vidxp-ci python -c \
+            'import importlib.metadata as m; assert not any(d.metadata["Name"].lower().startswith("nvidia-") for d in m.distributions())'
           docker exec vidxp-ci sh -c \
             'test ! -d "$HOME/.cache/huggingface" && test ! -d "$HOME/.cache/clip"'
 
@@ -167,3 +249,95 @@ jobs:
 
           docker logs vidxp-ci
           exit 1
+
+  provider-platform-smoke:
+    if: needs.scope.outputs.run_suite == 'true'
+    needs: scope
+    name: CPU providers (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.provider_platforms || '["windows-2025"]') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install locked local-worker environment
+        run: |
+          python -m pip install "uv==0.12.0"
+          uv sync --frozen --extra local-worker --no-dev
+
+      - name: Verify model provider contracts without network downloads
+        run: uv run --no-sync python -m unittest discover -s tests -p "test_models.py" -q
+        env:
+          PYTHONPATH: src
+          VIDXP_ALLOW_MODEL_DOWNLOADS: "false"
+
+      - name: Verify indexing provider contracts without network downloads
+        run: uv run --no-sync python -m unittest discover -s tests -p "test_indexing.py" -q
+        env:
+          PYTHONPATH: src
+          VIDXP_ALLOW_MODEL_DOWNLOADS: "false"
+
+      - name: Verify platform and CPU runtime
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          from importlib import metadata
+          import platform
+          import chromadb
+          import cv2
+          import faster_whisper
+          import huggingface_hub
+          import pooch
+          import psutil
+          import sentence_transformers
+          import torch
+          import transformers
+
+          from vidxp.runtime import resolve_backends
+
+          assert hasattr(cv2, "FaceDetectorYN")
+          assert hasattr(cv2, "FaceRecognizerSF")
+          assert hasattr(faster_whisper, "WhisperModel")
+          assert hasattr(faster_whisper, "BatchedInferencePipeline")
+          assert hasattr(
+              sentence_transformers.SentenceTransformer,
+              "encode_query",
+          )
+          assert hasattr(
+              sentence_transformers.SentenceTransformer,
+              "encode_document",
+          )
+          assert hasattr(transformers, "AutoModel")
+          assert hasattr(transformers, "AutoProcessor")
+          assert hasattr(chromadb, "PersistentClient")
+          assert hasattr(huggingface_hub, "snapshot_download")
+          assert hasattr(pooch, "retrieve")
+          assert psutil.virtual_memory().available > 0
+          assert torch.version.cuda is None, torch.version.cuda
+          installed = {
+              distribution.metadata["Name"].lower().replace("_", "-")
+              for distribution in metadata.distributions()
+              if distribution.metadata.get("Name")
+          }
+          leaks = sorted(
+              name
+              for name in installed
+              if name in {"cuda-toolkit", "cuda-bindings", "triton"}
+              or name.startswith("nvidia-")
+              or name.startswith("pytorch-triton")
+          )
+          assert not leaks, leaks
+
+          profile = resolve_backends("cpu")
+          assert profile.torch_device == "cpu"
+          if platform.system() == "Darwin":
+              assert platform.machine() == "arm64"
+          PY

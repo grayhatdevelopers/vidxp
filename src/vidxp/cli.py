@@ -9,21 +9,20 @@ from typing import Annotated
 import typer
 
 from vidxp import __version__
-from vidxp.application import VidXPService
-from vidxp.capabilities.actor.results import ActorClusterNotFoundError
-from vidxp.capabilities.registry import CAPABILITIES
+from vidxp.application_models import ApplicationError
+from vidxp.benchmarks.cli import app as benchmark_app
+from vidxp.cli_commands.actors import app as actor_app
 from vidxp.cli_commands.index import app as index_app
+from vidxp.cli_commands.jobs import app as jobs_app
+from vidxp.cli_commands.mcp import mcp_config
+from vidxp.cli_commands.media import app as media_app
+from vidxp.cli_commands.artifacts import app as artifacts_app
 from vidxp.cli_commands.repositories import app as repositories_app
-from vidxp.cli_commands.runtime import doctor, prepare, ui
-from vidxp.cli_commands.search import app as search_app
+from vidxp.cli_commands.runtime import doctor, initialize, prepare, ui
+from vidxp.cli_commands.search import search
+from vidxp.cli_commands.query import query
 from vidxp.cli_support import CLIState, OutputFormat
-from vidxp.core.contracts import IndexSchemaError
-from vidxp.dependencies import requirements_available
-from vidxp.index_state import (
-    IndexingInProgressError,
-    IndexNotReadyError,
-)
-from vidxp.repositories import resolve_repository
+from vidxp.composition import create_local_application
 
 
 app = typer.Typer(
@@ -31,27 +30,19 @@ app = typer.Typer(
     help="Index and search video with installable capabilities.",
 )
 app.add_typer(index_app, name="index")
-app.add_typer(search_app, name="search")
+app.add_typer(jobs_app, name="jobs")
+app.add_typer(media_app, name="media")
+app.add_typer(artifacts_app, name="artifacts")
+app.command("search")(search)
+app.command("query")(query)
+app.command("mcp-config")(mcp_config)
 app.add_typer(repositories_app, name="repositories")
+app.add_typer(actor_app, name="actors")
 
 
-def _load_benchmark_app():
-    if not requirements_available("vidxp.benchmarks"):
-        return None
-    from vidxp.benchmarks.cli import app as benchmark_app
-
-    return benchmark_app
-
-
-if _benchmark_app := _load_benchmark_app():
-    app.add_typer(_benchmark_app, name="benchmark")
-for _capability in CAPABILITIES.values():
-    if _capability.cli_factory is not None:
-        app.add_typer(
-            _capability.cli_factory(),
-            name=_capability.cli_name,
-        )
+app.add_typer(benchmark_app, name="benchmark")
 app.command()(doctor)
+app.command("init")(initialize)
 app.command()(prepare)
 app.command()(ui)
 
@@ -99,6 +90,17 @@ def app_options(
             help="Override the selected repository index directory.",
         ),
     ] = None,
+    data_directory: Annotated[
+        Path | None,
+        typer.Option(
+            "--data-dir",
+            file_okay=False,
+            help=(
+                "Store VidXP models and the default repository beneath this "
+                "directory."
+            ),
+        ),
+    ] = None,
     device: Annotated[
         str | None,
         typer.Option(
@@ -119,19 +121,20 @@ def app_options(
         typer.Option("--quiet", "-q", help="Suppress progress output."),
     ] = False,
 ) -> None:
-    registry, repository = resolve_repository(
+    if ctx.invoked_subcommand in {"init", "mcp-config"}:
+        return
+    local = create_local_application(
         registry_path=config_file,
-        name=repository_name,
+        repository_name=repository_name,
         index_directory=index_directory,
+        data_directory=data_directory,
         device=device,
     )
+    ctx.call_on_close(local.close)
     ctx.obj = CLIState(
-        service=VidXPService(
-            repository.index_directory,
-            device=repository.device,
-        ),
-        registry=registry,
-        repository=repository,
+        local=local,
+        registry=local.repositories,
+        repository=local.repository,
         output_format=output_format,
         quiet=quiet,
     )
@@ -161,15 +164,20 @@ def _exit_code(exc: Exception) -> int:
 def _emit_error(exc: Exception, *, json_output: bool) -> None:
     message = _error_message(exc)
     if json_output:
+        error = (
+            exc.to_dict()
+            if isinstance(exc, ApplicationError)
+            else {
+                "type": type(exc).__name__,
+                "message": message,
+                "exit_code": _exit_code(exc),
+            }
+        )
         typer.echo(
             json.dumps(
                 {
                     "ok": False,
-                    "error": {
-                        "type": type(exc).__name__,
-                        "message": message,
-                        "exit_code": _exit_code(exc),
-                    },
+                    "error": error,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -185,30 +193,23 @@ def _emit_error(exc: Exception, *, json_output: bool) -> None:
 
 def main() -> None:
     try:
-        app(standalone_mode=False)
+        exit_code = app(standalone_mode=False)
+        if isinstance(exit_code, int) and exit_code:
+            raise SystemExit(exit_code)
     except typer.Exit as exc:
         raise SystemExit(exc.exit_code) from None
     except typer.Abort as exc:
         _emit_error(exc, json_output=_wants_json())
         raise SystemExit(1) from exc
     except Exception as exc:
+        if isinstance(exc, ApplicationError):
+            _emit_error(exc, json_output=_wants_json())
+            raise SystemExit(_exit_code(exc)) from exc
         is_command_error = hasattr(exc, "exit_code") and hasattr(
             exc,
             "format_message",
         )
-        is_expected_runtime_error = isinstance(
-            exc,
-            (
-                ActorClusterNotFoundError,
-                FileNotFoundError,
-                IndexNotReadyError,
-                IndexingInProgressError,
-                IndexSchemaError,
-                RuntimeError,
-                ValueError,
-            ),
-        )
-        if not is_command_error and not is_expected_runtime_error:
+        if not is_command_error:
             raise
         _emit_error(exc, json_output=_wants_json())
         raise SystemExit(_exit_code(exc)) from exc

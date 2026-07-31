@@ -1,51 +1,83 @@
-name: Release (main → PyPI)
+name: Release (tag → PyPI and GHCR)
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable core tag to publish.
+        required: true
+        type: string
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: pypi-main
+  group: pypi-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  release:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      commit_sha: ${{ steps.release.outputs.commit_sha }}
-      released: ${{ steps.release.outputs.released }}
-      tag: ${{ steps.release.outputs.tag }}
-      version: ${{ steps.release.outputs.version }}
+  validate:
+    uses: ./.github/workflows/ci.yml
+    with:
+      checkout_ref: ${{ inputs.tag }}
+      force_validation: true
+      python_versions: '["3.11","3.12","3.13","3.14"]'
+      provider_platforms: '["ubuntu-24.04","windows-2025","macos-15"]'
+      run_containers: false
 
+  build:
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
+          ref: ${{ inputs.tag }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Resolve source revision
+        id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: "3.14"
+          cache: pip
 
-      - name: Install dependencies
+      - name: Verify stable tag
+        id: version
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r utils/build-requirements.txt
+          tag="${{ inputs.tag }}"
+          if [[ "$tag" != v* || "$tag" == *-* ]]; then
+            echo "::error::$tag is not a stable core release tag."
+            exit 1
+          fi
+          if ! git show-ref --verify --quiet "refs/tags/$tag"; then
+            echo "::error::$tag is not an existing Git tag."
+            exit 1
+          fi
+          version="${tag#v}"
+          package_version="$(
+            python -c \
+              'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])'
+          )"
+          if [[ "$package_version" != "$version" ]]; then
+            echo "::error::Tag $tag does not match package version $package_version."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Create stable release
-        id: release
-        env:
-          BUILD_CHANGELOG: "1"
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: semantic-release version --no-changelog
+      - name: Install build tooling
+        run: python -m pip install -r utils/build-requirements.txt
+
+      - name: Build distribution
+        run: bash utils/build_package.sh
 
       - name: Smoke distribution
-        if: steps.release.outputs.released == 'true'
         shell: bash
         run: |
           python -m venv .release-smoke
@@ -53,130 +85,89 @@ jobs:
           .release-smoke/bin/python -m pip check
           .release-smoke/bin/vidxp --version
 
-      - name: Publish GitHub release
-        if: steps.release.outputs.released == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          semantic-release publish --tag "${{ steps.release.outputs.tag }}"
-          gh release edit "${{ steps.release.outputs.tag }}" \
-            --notes-file .release-notes.md
-
-      - name: Preserve distribution
-        if: steps.release.outputs.released == 'true'
-        uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7
         with:
-          name: pypi-distribution
+          name: pypi-${{ inputs.tag }}
           path: dist/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
 
   publish-pypi:
-    if: needs.release.outputs.released == 'true'
-    needs: release
+    needs: build
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      contents: read
       id-token: write
-
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+
       - uses: actions/download-artifact@v8
         with:
-          name: pypi-distribution
+          name: pypi-${{ inputs.tag }}
           path: dist/
 
+      - name: Check PyPI release state
+        id: registry
+        shell: bash
+        run: |
+          state="$(
+            python utils/verify_published_distribution.py \
+              --repository https://pypi.org \
+              --package vidxp \
+              --version "${{ needs.build.outputs.version }}" \
+              --dist dist
+          )"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+
       - name: Publish to PyPI
+        if: steps.registry.outputs.state == 'absent'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
 
-  publish-container:
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      needs.release.outputs.released == 'true'
-    needs: release
-    runs-on: ubuntu-latest
+  publish-containers:
+    needs:
+      - build
+      - publish-pypi
     permissions:
       contents: read
       packages: write
+    uses: ./.github/workflows/containers.yml
+    with:
+      channel: stable
+      tag: ${{ inputs.tag }}
+      version: ${{ needs.build.outputs.version }}
 
+  publish-github:
+    needs:
+      - build
+      - publish-pypi
+      - publish-containers
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
-          ref: ${{ needs.release.outputs.commit_sha }}
+          name: pypi-${{ inputs.tag }}
+          path: dist/
 
-      - uses: docker/setup-buildx-action@v4
-
-      - name: Generate container metadata
-        id: metadata
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=semver,pattern={{version}},value=${{ needs.release.outputs.tag }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release.outputs.tag }}
-            type=raw,value=latest
-          labels: |
-            org.opencontainers.image.title=VidXP
-            org.opencontainers.image.description=Local-first video indexing and search
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ needs.release.outputs.commit_sha }}
-            org.opencontainers.image.version=${{ needs.release.outputs.version }}
-            org.opencontainers.image.licenses=MIT
-
-      - name: Build stable container
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          load: true
-          platforms: linux/amd64
-          push: false
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-
-      - name: Smoke stable container
+      - name: Publish complete stable release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          image="ghcr.io/${{ github.repository }}:${{ needs.release.outputs.version }}"
-          docker run --detach --name vidxp-release \
-            --publish 127.0.0.1:8501:8501 "$image"
-          trap 'docker rm --force vidxp-release >/dev/null 2>&1 || true' EXIT
+          gh release upload "${{ inputs.tag }}" dist/* --clobber
+          gh release edit "${{ inputs.tag }}" --draft=false
 
-          docker exec vidxp-release vidxp --version
-          docker exec vidxp-release python -c \
-            'import clip, face_recognition, whisperx'
-          docker exec vidxp-release sh -c \
-            'test ! -d "$HOME/.cache/huggingface" && test ! -d "$HOME/.cache/clip"'
-
-          for attempt in {1..30}; do
-            if curl --fail --silent http://127.0.0.1:8501/_stcore/health; then
-              exit 0
-            fi
-            if [[ "$(docker inspect --format='{{.State.Running}}' vidxp-release)" != "true" ]]; then
-              break
-            fi
-            sleep 2
-          done
-
-          docker logs vidxp-release
-          exit 1
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish stable container
-        run: docker push --all-tags "ghcr.io/${{ github.repository }}"
-
-      - name: Verify public container access
-        shell: bash
+      - name: Synchronize stable source back to main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          docker logout ghcr.io
-          image="ghcr.io/${{ github.repository }}:${{ needs.release.outputs.version }}"
-          if ! docker buildx imagetools inspect "$image"; then
-            echo "::error::Make the GHCR package public, then rerun this failed job."
-            exit 1
-          fi
+          gh workflow run sync-channels.yml \
+            --ref main \
+            -f release_sha="${{ needs.build.outputs.source_sha }}"

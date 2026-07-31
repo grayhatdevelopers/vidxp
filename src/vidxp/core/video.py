@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import floor
 from pathlib import Path
-from shutil import which
-from typing import Iterator
+from typing import Iterator, Sequence
 
 from vidxp.core.contracts import CancellationToken
+from vidxp.core.indexing_common import ProgressCallback
 
 
 @dataclass(frozen=True)
@@ -30,19 +31,57 @@ class FrameSample:
     frame: object
 
 
-def ffmpeg_binary() -> str:
-    from moviepy.config import get_setting
+@dataclass(frozen=True)
+class FrameSampling:
+    frame_stride: int | None = None
+    source_fps: float | None = None
+    target_fps: float | None = None
 
-    configured = get_setting("FFMPEG_BINARY")
-    configured_path = Path(str(configured))
-    resolved = (
-        str(configured_path.resolve())
-        if configured_path.is_file()
-        else which(str(configured))
-    )
-    if not resolved:
-        raise RuntimeError(f"FFmpeg executable was not found: {configured}")
-    return resolved
+    def __post_init__(self) -> None:
+        frame_based = self.frame_stride is not None
+        time_based = self.source_fps is not None or self.target_fps is not None
+        if frame_based == time_based:
+            raise ValueError(
+                "Frame sampling requires either a stride or a source/target FPS pair."
+            )
+        if frame_based and self.frame_stride <= 0:
+            raise ValueError("frame_stride must be greater than zero.")
+        if time_based and (
+            self.source_fps is None
+            or self.target_fps is None
+            or self.source_fps <= 0
+            or self.target_fps <= 0
+        ):
+            raise ValueError("source_fps and target_fps must be greater than zero.")
+
+    def includes(self, frame_index: int, timestamp: float) -> bool:
+        if self.frame_stride is not None:
+            return frame_index % self.frame_stride == 0
+        assert self.source_fps is not None
+        assert self.target_fps is not None
+        if self.source_fps <= self.target_fps or frame_index == 0:
+            return True
+        previous_timestamp = (frame_index - 1) / self.source_fps
+        return floor(timestamp * self.target_fps) > floor(
+            previous_timestamp * self.target_fps
+        )
+
+    def next_sample_timestamp(
+        self,
+        frame_index: int,
+        *,
+        frame_count: int,
+        duration: float,
+    ) -> float:
+        if self.source_fps is None:
+            raise ValueError(
+                "Next sample timestamps require time-based sampling."
+            )
+        for next_index in range(frame_index + 1, max(0, frame_count)):
+            timestamp = next_index / self.source_fps
+            if self.includes(next_index, timestamp):
+                return min(duration, timestamp)
+        return duration
 
 
 def probe_video(path: str | Path) -> VideoInfo:
@@ -68,15 +107,20 @@ def probe_video(path: str | Path) -> VideoInfo:
 def iter_frame_batches(
     path: str | Path,
     *,
-    frame_stride: int,
+    frame_stride: int | None = None,
+    frame_strides: Sequence[int] | None = None,
+    samplings: Sequence[FrameSampling] | None = None,
     batch_size: int,
     cancellation: CancellationToken,
     stats: FrameStreamStats | None = None,
 ) -> Iterator[list[FrameSample]]:
     import cv2
 
-    if frame_stride <= 0:
-        raise ValueError("frame_stride must be greater than zero.")
+    strides = tuple(dict.fromkeys(frame_strides or ()))
+    if frame_stride is not None:
+        strides = tuple(dict.fromkeys((frame_stride, *strides)))
+    if any(stride <= 0 for stride in strides):
+        raise ValueError("frame strides must be greater than zero.")
     if batch_size <= 0:
         raise ValueError("batch_size must be greater than zero.")
 
@@ -85,13 +129,23 @@ def iter_frame_batches(
     if fps <= 0:
         video.release()
         raise ValueError("The selected video has an invalid frame rate.")
+    active_samplings = tuple(samplings or ()) + tuple(
+        FrameSampling(frame_stride=stride) for stride in strides
+    )
+    if not active_samplings:
+        video.release()
+        raise ValueError("At least one frame sampling schedule is required.")
 
     stream_stats = stats or FrameStreamStats()
     batch: list[FrameSample] = []
     frame_index = 0
     try:
         while True:
-            sampled = frame_index % frame_stride == 0
+            timestamp = frame_index / fps
+            sampled = any(
+                sampling.includes(frame_index, timestamp)
+                for sampling in active_samplings
+            )
             if sampled:
                 retrieved, frame = video.read()
             else:
@@ -105,7 +159,7 @@ def iter_frame_batches(
                 batch.append(
                     FrameSample(
                         frame_index=frame_index,
-                        timestamp=frame_index / fps,
+                        timestamp=timestamp,
                         frame=frame,
                     )
                 )
@@ -121,26 +175,18 @@ def iter_frame_batches(
         video.release()
 
 
-def extract_audio(input_path: str | Path, output_path: str | Path) -> Path:
-    from moviepy.editor import VideoFileClip
-
-    destination = Path(output_path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with VideoFileClip(str(input_path)) as source_video:
-        if source_video.audio is None:
-            raise ValueError("The selected video does not contain an audio track.")
-        source_video.audio.write_audiofile(str(destination), logger=None)
-    return destination
-
-
 def render_actor_video(
     input_path: str | Path,
     output_path: str | Path,
     cluster_id: str,
     detections: list[dict],
+    *,
+    cancellation: CancellationToken | None = None,
+    progress: ProgressCallback | None = None,
 ) -> None:
     import cv2
 
+    active_cancellation = cancellation or CancellationToken()
     source_path = Path(input_path)
     destination = Path(output_path)
     if not source_path.is_file():
@@ -157,6 +203,7 @@ def render_actor_video(
     fps = float(source.get(cv2.CAP_PROP_FPS))
     width = int(source.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(source.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    frame_count = int(source.get(cv2.CAP_PROP_FRAME_COUNT))
     if fps <= 0 or width <= 0 or height <= 0:
         source.release()
         raise RuntimeError(
@@ -188,6 +235,7 @@ def render_actor_video(
     try:
         frame_index = 0
         while True:
+            active_cancellation.raise_if_cancelled()
             retrieved, frame = source.read()
             if not retrieved:
                 break
@@ -215,9 +263,31 @@ def render_actor_video(
             writer.write(frame)
             frame_index += 1
             frames_written += 1
+            if progress is not None and frames_written % 30 == 0:
+                progress(
+                    {
+                        "state": "rendering",
+                        "stage": "rendering",
+                        "message": "Rendering the actor overlay.",
+                        "current": frames_written,
+                        "total": frame_count if frame_count > 0 else None,
+                    }
+                )
     finally:
         source.release()
         writer.release()
+
+    active_cancellation.raise_if_cancelled()
+    if progress is not None and frames_written:
+        progress(
+            {
+                "state": "rendering",
+                "stage": "rendering",
+                "message": "Rendered the actor overlay.",
+                "current": frames_written,
+                "total": frame_count if frame_count > 0 else frames_written,
+            }
+        )
 
     if (
         frames_written == 0

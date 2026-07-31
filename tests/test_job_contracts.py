@@ -1,0 +1,308 @@
+import json
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import Mock
+
+from pydantic import ValidationError
+
+from vidxp.application_models import (
+    ActorOverlayJobRequest,
+    ApplicationError,
+    CreateActorOverlayCommand,
+    CreateIndexCommand,
+    Job,
+    JobKind,
+    JobProgress,
+    JobQueue,
+    JobState,
+    InvalidRequestError,
+    IndexSnapshotReference,
+    ListJobsCommand,
+    QueryJobRequest,
+    QueryVideoCommand,
+    SearchCommand,
+    SearchJobRequest,
+)
+from vidxp.core.storage import BUNDLED_CHROMA_SERVER_URL
+from vidxp.job_service import JobService
+from vidxp.ports import InvalidJobBackendRequestError
+from vidxp.execution import ExecutionContext
+from vidxp.composition import _server_chroma_url
+from vidxp.settings import ApplicationMode, VidXPSettings
+from vidxp.workflow_runtime import (
+    BUNDLED_POSTGRES_DATABASE_URL,
+    workflow_database_url,
+)
+
+
+MEDIA_ID = "123456781234423481234567890abcde"
+JOB_ID = "223456781234423481234567890abcde"
+SNAPSHOT_ID = "323456781234423481234567890abcde"
+SNAPSHOT_SHA256 = "a" * 64
+
+
+class JobContractTests(unittest.TestCase):
+    def test_progress_is_typed_and_position_is_bounded(self):
+        progress = JobProgress(
+            stage="frames",
+            message="Indexing frames.",
+            current=2,
+            total=3,
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        self.assertEqual(progress.schema_version, 1)
+        with self.assertRaises(ValidationError):
+            JobProgress(
+                stage="frames",
+                message="Invalid.",
+                current=4,
+                total=3,
+                updated_at=datetime.now(timezone.utc),
+            )
+
+    def test_public_job_contract_has_no_path_or_storage_fields(self):
+        job = Job(
+            job_id=JOB_ID,
+            kind=JobKind.index,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        schema = json.dumps(Job.model_json_schema())
+        self.assertEqual(job.schema_version, 2)
+        self.assertNotIn("storage_key", schema)
+        self.assertNotIn('"path"', schema)
+        self.assertNotIn("model_cache", schema)
+
+    def test_job_service_routes_model_work_without_reimplementing_it(self):
+        backend = Mock()
+        backend.submit.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.index,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        service = JobService(
+            settings=VidXPSettings(
+                repository_root=Path("repository"),
+                runtime_backend="cpu",
+            ),
+            backend=backend,
+        )
+
+        job = service.submit_index(
+            CreateIndexCommand(
+                media_id=MEDIA_ID,
+                modalities=("scene",),
+            )
+        )
+
+        self.assertEqual(job.job_id, JOB_ID)
+        request = backend.submit.call_args.args[0]
+        self.assertEqual(request.kind, JobKind.index)
+        self.assertEqual(request.command.media_id, MEDIA_ID)
+        self.assertEqual(
+            backend.submit.call_args.kwargs["queue"],
+            JobQueue.cpu,
+        )
+
+    def test_job_list_cursor_is_bounded(self):
+        with self.assertRaises(ValidationError):
+            ListJobsCommand(cursor="x" * 513)
+
+    def test_search_uses_the_same_model_worker_queue(self):
+        backend = Mock()
+        planner = Mock()
+        command = SearchCommand(
+            modalities=("scene",),
+            query="taxi",
+            top_k=2,
+        )
+        planner.plan_search.return_value = SearchJobRequest(
+            command=command,
+            snapshot=IndexSnapshotReference(
+                snapshot_id=SNAPSHOT_ID,
+                snapshot_sha256=SNAPSHOT_SHA256,
+            ),
+        )
+        backend.submit.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.search,
+            state=JobState.queued,
+            queue=JobQueue.gpu,
+        )
+        service = JobService(
+            settings=VidXPSettings(
+                repository_root=Path("repository"),
+                runtime_backend="cuda:0",
+            ),
+            backend=backend,
+            read_planner=planner,
+        )
+
+        service.submit_search(command)
+
+        request = backend.submit.call_args.args[0]
+        self.assertEqual(request.kind, JobKind.search)
+        self.assertEqual(request.snapshot.snapshot_id, SNAPSHOT_ID)
+        planner.plan_search.assert_called_once_with(command)
+        self.assertEqual(
+            backend.submit.call_args.kwargs["queue"],
+            JobQueue.gpu,
+        )
+
+    def test_query_uses_the_same_pinned_model_worker_boundary(self):
+        backend = Mock()
+        planner = Mock()
+        command = QueryVideoCommand(question="What happens next?")
+        planner.plan_query.return_value = QueryJobRequest(
+            command=command,
+            snapshot=IndexSnapshotReference(
+                snapshot_id=SNAPSHOT_ID,
+                snapshot_sha256=SNAPSHOT_SHA256,
+            ),
+        )
+        backend.submit.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.query,
+            state=JobState.queued,
+            queue=JobQueue.gpu,
+        )
+        service = JobService(
+            settings=VidXPSettings(
+                repository_root=Path("repository"),
+                runtime_backend="cuda:0",
+            ),
+            backend=backend,
+            read_planner=planner,
+        )
+
+        service.submit_query(command)
+
+        request = backend.submit.call_args.args[0]
+        self.assertEqual(request.kind, JobKind.query)
+        self.assertEqual(request.snapshot.snapshot_id, SNAPSHOT_ID)
+        planner.plan_query.assert_called_once_with(command)
+        self.assertEqual(
+            backend.submit.call_args.kwargs["queue"],
+            JobQueue.gpu,
+        )
+
+    def test_actor_job_retains_pinned_snapshot_identity(self):
+        backend = Mock()
+        planner = Mock()
+        command = CreateActorOverlayCommand(cluster_id="actor-1")
+        planner.plan_actor_overlay.return_value = ActorOverlayJobRequest(
+            command=command,
+            snapshot=IndexSnapshotReference(
+                snapshot_id=SNAPSHOT_ID,
+                snapshot_sha256=SNAPSHOT_SHA256,
+            ),
+        )
+        backend.submit.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.actor_overlay,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        service = JobService(
+            settings=VidXPSettings(
+                repository_root=Path("repository"),
+                runtime_backend="cpu",
+            ),
+            backend=backend,
+            read_planner=planner,
+        )
+
+        service.submit_actor_overlay(command)
+
+        request = backend.submit.call_args.args[0]
+        self.assertEqual(request.snapshot.snapshot_id, SNAPSHOT_ID)
+        planner.plan_actor_overlay.assert_called_once_with(command)
+
+    def test_search_and_actor_identifiers_are_bounded(self):
+        command = SearchCommand(
+            modalities=(" scene ",),
+            query="  a chef prepares pizza  ",
+        )
+        self.assertEqual(command.modalities, ("scene",))
+        self.assertEqual(command.query, "a chef prepares pizza")
+
+        for values in (
+            {"modalities": ["scene/video"], "query": "taxi"},
+            {"modalities": ["scene"], "query": "x" * 4097},
+            {"modalities": ["scene"], "query": "   "},
+        ):
+            with self.assertRaises(ValidationError):
+                SearchCommand(**values)
+
+        with self.assertRaises(ValidationError):
+            CreateActorOverlayCommand(cluster_id="../../video")
+        encoded_cluster = CreateActorOverlayCommand(
+            cluster_id=(
+                "generation:run%20name:media:actor-cluster:1"
+            )
+        )
+        self.assertIn("%20", encoded_cluster.cluster_id)
+
+    def test_canonical_dbos_job_id_has_a_hex_operation_identity(self):
+        execution = ExecutionContext(
+            job_id="22345678-1234-4234-8123-4567890abcde"
+        )
+
+        self.assertEqual(execution.operation_id, JOB_ID)
+
+    def test_local_storage_uses_repository_services(self):
+        settings = VidXPSettings(
+            repository_root=Path("repository"),
+        )
+
+        self.assertEqual(
+            workflow_database_url(settings),
+            (
+                "sqlite:///"
+                f"{settings.layout.workflow_database.resolve().as_posix()}"
+            ),
+        )
+        self.assertIsNone(_server_chroma_url(settings))
+
+    def test_server_uses_bundled_storage_services(self):
+        settings = VidXPSettings(
+            mode=ApplicationMode.server,
+            runtime_backend="cpu",
+        )
+
+        self.assertEqual(
+            workflow_database_url(settings),
+            BUNDLED_POSTGRES_DATABASE_URL,
+        )
+        self.assertEqual(
+            _server_chroma_url(settings),
+            BUNDLED_CHROMA_SERVER_URL,
+        )
+
+    def test_job_backend_errors_are_normalized_for_every_adapter(self):
+        backend = Mock()
+        service = JobService(
+            settings=VidXPSettings(
+                repository_root=Path("repository"),
+                runtime_backend="cpu",
+            ),
+            backend=backend,
+        )
+        backend.get.side_effect = InvalidJobBackendRequestError(
+            "invalid workflow id"
+        )
+
+        with self.assertRaises(InvalidRequestError):
+            service.get("invalid")
+
+        backend.get.side_effect = RuntimeError("database unavailable")
+        with self.assertRaises(ApplicationError) as raised:
+            service.get(JOB_ID)
+        self.assertEqual(raised.exception.code, "job_backend_unavailable")
+
+
+if __name__ == "__main__":
+    unittest.main()

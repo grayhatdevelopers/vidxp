@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from vidxp.app_paths import default_repository_directory
 from vidxp.repositories import (
     DEFAULT_REPOSITORY_NAME,
     RepositoryConfigError,
@@ -23,7 +24,37 @@ class RepositoryRegistryTests(unittest.TestCase):
 
         self.assertEqual(repositories[0].name, DEFAULT_REPOSITORY_NAME)
         self.assertFalse(repositories[0].configured)
-        self.assertEqual(selected.index_directory, Path("chroma_data"))
+        self.assertEqual(
+            selected.index_directory,
+            default_repository_directory(),
+        )
+        self.assertTrue(selected.index_directory.is_absolute())
+
+    def test_data_directory_controls_the_implicit_default_repository(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            registry_path = root / "repos.json"
+            data_directory = root / "application-data"
+            unrelated_working_directory = root / "working-directory"
+            unrelated_working_directory.mkdir()
+            original_working_directory = Path.cwd()
+            try:
+                os.chdir(unrelated_working_directory)
+                with patch.dict(
+                    os.environ,
+                    {"VIDXP_DATA_DIR": str(data_directory)},
+                    clear=False,
+                ):
+                    _, selected = resolve_repository(
+                        registry_path=registry_path,
+                    )
+            finally:
+                os.chdir(original_working_directory)
+
+        self.assertEqual(
+            selected.index_directory,
+            data_directory / "repositories" / "default",
+        )
 
     def test_add_use_replace_and_remove_round_trip(self):
         with TemporaryDirectory() as directory:
@@ -108,6 +139,26 @@ class RepositoryRegistryTests(unittest.TestCase):
         self.assertEqual(selected.name, "team")
         self.assertEqual(selected.index_directory, Path("explicit-index"))
         self.assertEqual(selected.device, "cuda")
+
+    def test_explicit_data_directory_precedes_environment_default(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            environment_root = root / "environment-data"
+            explicit_root = root / "explicit-data"
+            with patch.dict(
+                os.environ,
+                {"VIDXP_DATA_DIR": str(environment_root)},
+                clear=False,
+            ):
+                _, selected = resolve_repository(
+                    registry_path=root / "repos.json",
+                    data_directory=explicit_root,
+                )
+
+        self.assertEqual(
+            selected.index_directory,
+            explicit_root / "repositories" / "default",
+        )
 
 
 if __name__ == "__main__":

@@ -5,23 +5,23 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 from vidxp.core.contracts import (
-    INDEX_SCHEMA_VERSION,
     IndexCancelledError,
     IndexConfig,
-    IndexSchemaError,
     VideoSource,
 )
-from vidxp.core.manifest import COMPLETION_FILE
+from vidxp.core.manifest import COMPLETION_FILE, ManifestStore
 from vidxp.capabilities.contracts import CapabilityIndexResult
-from vidxp.capabilities.dialogue.config import dialogue_config
+from vidxp.capabilities.dialogue.specs import FASTER_WHISPER_MODEL
 from vidxp.core.runner import (
     _RunLock,
-    index_video,
+    index_video as _index_video,
     indexing_in_progress,
-    local_config_from_status,
-    run_index,
+    run_index as _run_index,
 )
+from vidxp.capabilities.registry import create_capability_registry
 from vidxp.index_state import IndexingInProgressError
+from vidxp.runtime import ModelRuntime
+from vidxp.settings import VidXPSettings
 
 
 EXECUTION_STATE = {
@@ -32,6 +32,50 @@ EXECUTION_STATE = {
     "platform": "test",
     "dependencies": {"chromadb": "1.0"},
 }
+
+
+def _dependencies(config):
+    return {
+        "registry": create_capability_registry(),
+        "runtime": ModelRuntime(
+            VidXPSettings(
+                repository_root=config.run_directory,
+                runtime_backend=config.device,
+            )
+        ),
+    }
+
+
+def run_index(sources, config, **options):
+    dependencies = _dependencies(config)
+    options.setdefault("registry", dependencies["registry"])
+    options.setdefault("runtime", dependencies["runtime"])
+    options.setdefault("storage", FakeStorage())
+    options.setdefault(
+        "manifest_store",
+        ManifestStore(
+            config,
+            registry=options["registry"],
+            runtime=options["runtime"],
+        ),
+    )
+    return _run_index(sources, config, **options)
+
+
+def index_video(path, *args, config, **options):
+    dependencies = _dependencies(config)
+    options.setdefault("registry", dependencies["registry"])
+    options.setdefault("runtime", dependencies["runtime"])
+    options.setdefault("storage", FakeStorage())
+    options.setdefault(
+        "manifest_store",
+        ManifestStore(
+            config,
+            registry=options["registry"],
+            runtime=options["runtime"],
+        ),
+    )
+    return _index_video(path, *args, config=config, **options)
 
 
 def visual_result(summary, timings=None):
@@ -63,6 +107,17 @@ class FakeStorage:
     def delete_video(self, modality, video_id):
         self.deleted.append((modality, video_id))
 
+    def delete_records(
+        self,
+        modality,
+        *,
+        video_id,
+        filters=None,
+    ):
+        self.deleted.append(
+            (modality, video_id, dict(filters or {}))
+        )
+
     def size_bytes(self):
         return self.size
 
@@ -76,16 +131,6 @@ class RunnerTests(unittest.TestCase):
             enabled_modalities=modalities,
             output_root=root,
         )
-
-    def test_local_config_rejects_an_older_index_schema(self):
-        status = {
-            "summary": {
-                "index_schema_version": INDEX_SCHEMA_VERSION - 1,
-            }
-        }
-
-        with self.assertRaisesRegex(IndexSchemaError, "Re-index"):
-            local_config_from_status(status)
 
     def test_two_videos_complete_one_isolated_resumable_run(self):
         with TemporaryDirectory() as directory:
@@ -134,12 +179,75 @@ class RunnerTests(unittest.TestCase):
             )
             self.assertEqual(resumed["state"], "complete")
             self.assertEqual(manifest["git"]["commit"], "abc123")
-            self.assertEqual(manifest["index_size_bytes"], 321)
+            self.assertEqual(
+                manifest["store_size_bytes_at_commit"],
+                321,
+            )
             self.assertEqual(manifest["processed_frames"], 4)
             self.assertTrue((config.run_directory / COMPLETION_FILE).is_file())
             self.assertEqual(
                 storage.deleted,
                 [("scene", "video-1"), ("scene", "video-2")],
+            )
+
+    def test_generation_cleanup_is_scoped_to_each_video(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first.mp4"
+            second = root / "second.mp4"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            config = IndexConfig(
+                dataset="sample",
+                split="test",
+                run_id="run-1",
+                enabled_modalities=("scene",),
+                output_root=root,
+                generation_id="generation-1",
+            )
+            storage = FakeStorage()
+
+            with (
+                patch("vidxp.core.runner.require_dependencies"),
+                patch(
+                    "vidxp.capabilities.visual.index_visuals",
+                    return_value=visual_result(
+                        {
+                            "scene_frames": 1,
+                            "decoded_frames": 1,
+                            "duration": 1.0,
+                            "fps": 1.0,
+                        }
+                    ),
+                ),
+                patch(
+                    "vidxp.core.manifest.execution_state",
+                    return_value=EXECUTION_STATE,
+                ),
+            ):
+                run_index(
+                    [
+                        VideoSource(video_id="video-1", path=first),
+                        VideoSource(video_id="video-2", path=second),
+                    ],
+                    config,
+                    storage=storage,
+                )
+
+            self.assertEqual(
+                storage.deleted,
+                [
+                    (
+                        "scene",
+                        "video-1",
+                        {"generation_id": "generation-1"},
+                    ),
+                    (
+                        "scene",
+                        "video-2",
+                        {"generation_id": "generation-1"},
+                    ),
+                ],
             )
 
     def test_scene_and_actor_are_dispatched_as_one_visual_pipeline(self):
@@ -281,10 +389,12 @@ class RunnerTests(unittest.TestCase):
             ):
                 run_index([source], config, storage=FakeStorage())
 
-        dependency_check.assert_called_once_with(
-            ("dialogue",),
-            source=source,
+        dependency_check.assert_called_once()
+        self.assertEqual(
+            dependency_check.call_args.args,
+            (("dialogue",),),
         )
+        self.assertIs(dependency_check.call_args.kwargs["source"], source)
 
     def test_manifest_adds_transcription_model_when_run_later_needs_it(self):
         with TemporaryDirectory() as directory:
@@ -321,10 +431,10 @@ class RunnerTests(unittest.TestCase):
                 )
 
             self.assertNotIn("transcription", first["models"])
-            self.assertEqual(
-                second["models"]["transcription"],
-                dialogue_config(config).whisper_model,
-            )
+        self.assertEqual(
+            second["models"]["transcription"]["model"],
+            FASTER_WHISPER_MODEL.model_id,
+        )
 
     def test_changed_input_is_not_silently_accepted_by_checkpoint(self):
         with TemporaryDirectory() as directory:
@@ -571,22 +681,12 @@ class RunnerTests(unittest.TestCase):
                     "vidxp.core.runner.run_index",
                     return_value=manifest,
                 ) as run,
-                patch(
-                    "vidxp.core.runner.write_index_status",
-                ) as write_status,
             ):
                 index_video(str(path), config=config)
 
             hash_source.assert_called_once()
             indexed_source = run.call_args.args[0][0]
             self.assertEqual(indexed_source.checksum, checksum)
-            self.assertTrue(
-                all(
-                    call.kwargs["index_directory"]
-                    == config.index_directory
-                    for call in write_status.call_args_list
-                )
-            )
 
     def test_manifest_and_timing_files_are_valid_json(self):
         with TemporaryDirectory() as directory:

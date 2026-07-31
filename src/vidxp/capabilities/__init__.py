@@ -1,15 +1,11 @@
-"""Built-in VidXP capabilities and their explicit registry."""
+"""Capability contracts and registry construction."""
 
 from vidxp.capabilities.registry import (
-    CAPABILITIES,
-    capability_names,
-    get_capability,
-    index_capability_names,
+    CapabilityRegistry,
+    create_capability_registry,
 )
 
 __all__ = [
-    "CAPABILITIES",
-    "capability_names",
-    "get_capability",
-    "index_capability_names",
+    "CapabilityRegistry",
+    "create_capability_registry",
 ]

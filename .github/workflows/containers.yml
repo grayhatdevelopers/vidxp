@@ -1,0 +1,231 @@
+name: Publish core containers
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: Container channel to publish.
+        required: true
+        type: string
+      tag:
+        description: Existing core tag to build.
+        required: true
+        type: string
+      version:
+        description: Core version without the v prefix.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Resolve source revision
+        id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Generate product image metadata
+        id: metadata
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ inputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.tag }},enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=latest,enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=beta,enable=${{ inputs.channel == 'beta' }}
+          labels: |
+            org.opencontainers.image.title=VidXP
+            org.opencontainers.image.description=Local-first video indexing and search
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build product image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          push: false
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha,scope=release-product
+          cache-to: type=gha,mode=max,scope=release-product
+
+      - name: Build control image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          push: false
+          target: control
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ inputs.version }}-control
+            ghcr.io/${{ github.repository }}:${{ inputs.channel == 'stable' && 'latest' || 'beta' }}-control
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha,scope=release-control
+          cache-to: type=gha,mode=max,scope=release-control
+
+      - name: Build worker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          push: false
+          target: worker
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ inputs.version }}-worker
+            ghcr.io/${{ github.repository }}:${{ inputs.channel == 'stable' && 'latest' || 'beta' }}-worker
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha,scope=release-worker
+          cache-to: type=gha,mode=max,scope=release-worker
+
+      - name: Smoke product image
+        shell: bash
+        run: |
+          image="ghcr.io/${{ github.repository }}:${{ inputs.version }}"
+          docker run --detach --name vidxp-release \
+            --publish 127.0.0.1:8501:8501 "$image"
+          trap 'docker rm --force vidxp-release >/dev/null 2>&1 || true' EXIT
+
+          docker exec vidxp-release vidxp --version
+          docker exec vidxp-release vidxp init --json
+          docker exec vidxp-release python -c \
+            'import chromadb, cv2, faster_whisper, huggingface_hub, pooch, psutil, sentence_transformers, torch, transformers; assert psutil.virtual_memory().available > 0'
+          docker exec vidxp-release python -c \
+            'import importlib.metadata as m; assert not any(d.metadata["Name"].lower().startswith("nvidia-") for d in m.distributions())'
+          docker exec vidxp-release sh -c \
+            'test ! -d "$HOME/.cache/huggingface" && test ! -d "$HOME/.cache/clip"'
+
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8501/_stcore/health; then
+              exit 0
+            fi
+            if [[ "$(docker inspect --format='{{.State.Running}}' vidxp-release)" != "true" ]]; then
+              break
+            fi
+            sleep 2
+          done
+
+          docker logs vidxp-release
+          exit 1
+
+      - name: Smoke server images
+        shell: bash
+        run: |
+          control="ghcr.io/${{ github.repository }}:${{ inputs.version }}-control"
+          worker="ghcr.io/${{ github.repository }}:${{ inputs.version }}-worker"
+          docker run --rm "$control" vidxp-api --help
+          docker run --rm "$control" vidxp-mcp --help
+          docker run --rm "$worker" vidxp init --json
+          docker run --rm "$worker" python -c \
+            'import chromadb, cv2, faster_whisper, huggingface_hub, pooch, psutil, sentence_transformers, torch, transformers; assert psutil.virtual_memory().available > 0'
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Protect immutable version tags
+        id: existing
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        shell: bash
+        run: |
+          check_version_tag() {
+            local name="$1"
+            local image="$2"
+            local local_image="vidxp-release-local:$name"
+
+            docker tag "$image" "$local_image"
+            if ! docker pull "$image" >/dev/null 2>&1; then
+              docker tag "$local_image" "$image"
+              echo "${name}=false" >> "$GITHUB_OUTPUT"
+              return
+            fi
+
+            revision="$(
+              docker inspect \
+                --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+                "$image"
+            )"
+            if [[ "$revision" != "$SOURCE_SHA" ]]; then
+              echo "::error::$image already belongs to source revision $revision, not $SOURCE_SHA."
+              exit 1
+            fi
+            echo "${name}=true" >> "$GITHUB_OUTPUT"
+          }
+
+          check_version_tag \
+            product \
+            "ghcr.io/${{ github.repository }}:${{ inputs.version }}"
+          check_version_tag \
+            control \
+            "ghcr.io/${{ github.repository }}:${{ inputs.version }}-control"
+          check_version_tag \
+            worker \
+            "ghcr.io/${{ github.repository }}:${{ inputs.version }}-worker"
+
+      - name: Publish containers
+        shell: bash
+        run: |
+          product="ghcr.io/${{ github.repository }}:${{ inputs.version }}"
+          control="${product}-control"
+          worker="${product}-worker"
+          control_channel="ghcr.io/${{ github.repository }}:${{ inputs.channel == 'stable' && 'latest' || 'beta' }}-control"
+          worker_channel="ghcr.io/${{ github.repository }}:${{ inputs.channel == 'stable' && 'latest' || 'beta' }}-worker"
+
+          if [[ "${{ steps.existing.outputs.product }}" == "true" ]]; then
+            while read -r image; do
+              [[ "$image" == "$product" ]] || docker tag "$product" "$image"
+            done <<< "${{ steps.metadata.outputs.tags }}"
+          fi
+          while read -r image; do
+            if [[ "$image" != "$product" ||
+                  "${{ steps.existing.outputs.product }}" != "true" ]]; then
+              docker push "$image"
+            fi
+          done <<< "${{ steps.metadata.outputs.tags }}"
+
+          if [[ "${{ steps.existing.outputs.control }}" == "true" ]]; then
+            docker tag "$control" "$control_channel"
+          else
+            docker push "$control"
+          fi
+          docker push "$control_channel"
+
+          if [[ "${{ steps.existing.outputs.worker }}" == "true" ]]; then
+            docker tag "$worker" "$worker_channel"
+          else
+            docker push "$worker"
+          fi
+          docker push "$worker_channel"
+
+      - name: Verify public container access
+        shell: bash
+        run: |
+          docker logout ghcr.io
+          for suffix in "" "-control" "-worker"; do
+            image="ghcr.io/${{ github.repository }}:${{ inputs.version }}${suffix}"
+            if ! docker buildx imagetools inspect "$image"; then
+              echo "::error::Make the GHCR package public, then rerun this workflow for the same tag."
+              exit 1
+            fi
+          done

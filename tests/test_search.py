@@ -3,8 +3,11 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+from unittest.mock import Mock
 
+import numpy as np
 from vidxp.capabilities.dialogue.operations import search_dialogue
+from vidxp.capabilities.dialogue.operations import dialogue_embedding
 from vidxp.capabilities.schemas import SearchResult
 from vidxp.capabilities.search import (
     distance_to_score,
@@ -12,6 +15,12 @@ from vidxp.capabilities.search import (
     stable_query_id,
 )
 from vidxp.core.contracts import IndexConfig, IndexSchemaError
+from vidxp.runtime import ModelRuntime
+from vidxp.settings import VidXPSettings
+
+
+MEDIA_ID = "123456781234423481234567890abcde"
+GENERATION_ID = "223456781234423481234567890abcde"
 
 
 class FakeStorage:
@@ -24,7 +33,7 @@ class FakeStorage:
         return list(self.rows)
 
 
-def dialogue_row(source_id, distance, video_id="video-1"):
+def dialogue_row(source_id, distance, video_id=MEDIA_ID):
     return {
         "source_id": source_id,
         "raw_distance": distance,
@@ -33,6 +42,7 @@ def dialogue_row(source_id, distance, video_id="video-1"):
             "split": "test",
             "run_id": "run-1",
             "video_id": video_id,
+            "generation_id": GENERATION_ID,
             "source_id": source_id,
             "start": 1.0,
             "end": 2.0,
@@ -51,6 +61,12 @@ class SearchTests(unittest.TestCase):
             run_id="run-1",
             enabled_modalities=("dialogue",),
         )
+        self.runtime = ModelRuntime(
+            VidXPSettings(
+                repository_root="unused",
+                runtime_backend="cpu",
+            )
+        )
 
     def test_top_k_filter_order_distance_and_score_are_preserved(self):
         storage = FakeStorage(
@@ -67,8 +83,9 @@ class SearchTests(unittest.TestCase):
             result = search_dialogue(
                 "fresh bread",
                 config=self.config,
+                runtime=self.runtime,
                 top_k=3,
-                video_id="video-1",
+                video_id=MEDIA_ID,
                 query_id="query-7",
                 storage=storage,
             )
@@ -84,12 +101,32 @@ class SearchTests(unittest.TestCase):
         self.assertEqual([hit.rank for hit in result.hits], [1, 2, 3])
         self.assertEqual(result.hits[0].raw_distance, 0.1)
         self.assertEqual(result.hits[0].score, -0.1)
+        self.assertEqual(
+            result.hits[0].metadata,
+            {"text": "fresh bread", "phrase_id": 3},
+        )
         self.assertEqual(storage.calls[0][2]["top_k"], 3)
-        self.assertEqual(storage.calls[0][2]["video_id"], "video-1")
+        self.assertEqual(storage.calls[0][2]["video_id"], MEDIA_ID)
 
     def test_score_is_strictly_monotonic_and_not_a_probability(self):
         self.assertGreater(distance_to_score(0.1), distance_to_score(0.2))
         self.assertEqual(distance_to_score(2.5), -2.5)
+
+    def test_dialogue_query_uses_model_owned_query_prompt(self):
+        encoder = Mock()
+        encoder.encode_query.return_value = np.asarray([[0.5, 0.25]])
+        with patch(
+            "vidxp.capabilities.dialogue.operations.get_embedder",
+            return_value=encoder,
+        ):
+            vector = dialogue_embedding("fresh bread", self.config, self.runtime)
+
+        self.assertEqual(vector, [0.5, 0.25])
+        encoder.encode_query.assert_called_once_with(
+            ["fresh bread"],
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+        )
 
     def test_generated_query_ids_are_scoped_to_the_benchmark_run(self):
         first = stable_query_id("fresh bread", "dialogue", self.config)
@@ -111,6 +148,7 @@ class SearchTests(unittest.TestCase):
             search_dialogue(
                 "query",
                 config=self.config,
+                runtime=self.runtime,
                 top_k=0,
                 storage=FakeStorage([]),
             )
@@ -135,6 +173,7 @@ class SearchTests(unittest.TestCase):
             search_dialogue(
                 "query",
                 config=self.config,
+                runtime=self.runtime,
                 storage=storage,
             )
 

@@ -5,15 +5,17 @@ from time import perf_counter
 from typing import Any, Protocol, Sequence
 
 from vidxp.capabilities.contracts import CapabilityIndexResult
+from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.core.contracts import (
     CancellationToken,
     IndexConfig,
     VideoSource,
 )
 from vidxp.core.indexing_common import ProgressCallback, report_progress
-from vidxp.core.storage import IndexStorage
+from vidxp.ports import IndexStore, ModelRuntimePort
 from vidxp.core.video import (
     FrameSample,
+    FrameSampling,
     FrameStreamStats,
     iter_frame_batches,
     probe_video,
@@ -21,11 +23,14 @@ from vidxp.core.video import (
 
 
 class VisualProcessor(Protocol):
+    def sampling(self, config: IndexConfig, info: Any) -> FrameSampling: ...
+
     def batch_size(self, config: IndexConfig) -> int: ...
 
     def prepare(
         self,
         config: IndexConfig,
+        runtime: ModelRuntimePort,
         progress: ProgressCallback | None,
     ) -> Any: ...
 
@@ -36,7 +41,7 @@ class VisualProcessor(Protocol):
         state: Any,
         info: Any,
         config: IndexConfig,
-        storage: IndexStorage,
+        storage: IndexStore,
         cancellation: CancellationToken,
     ) -> None: ...
 
@@ -45,7 +50,7 @@ class VisualProcessor(Protocol):
         state: Any,
         *,
         config: IndexConfig,
-        storage: IndexStorage,
+        storage: IndexStore,
     ) -> tuple[dict[str, Any], int]: ...
 
 
@@ -54,6 +59,7 @@ class _Participant:
     name: str
     processor: VisualProcessor
     state: Any
+    sampling: FrameSampling
 
 
 def _rgb_samples(samples) -> list[FrameSample]:
@@ -72,24 +78,61 @@ def _rgb_samples(samples) -> list[FrameSample]:
 def _participants(
     names: Sequence[str],
     *,
+    info: Any,
     config: IndexConfig,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntimePort,
     progress: ProgressCallback | None,
     timings: dict[str, float],
 ) -> list[_Participant]:
-    from vidxp.capabilities.registry import get_capability
-
     participants = []
     for name in names:
-        processor = get_capability(name).index_processor
+        processor = registry.executor(name).index_processor
         if processor is None:
             raise ValueError(
                 f"Capability {name!r} does not provide a visual processor."
             )
         started = perf_counter()
-        state = processor.prepare(config, progress)
+        state = processor.prepare(config, runtime, progress)
         timings[name] = perf_counter() - started
-        participants.append(_Participant(name, processor, state))
+        sampling_factory = getattr(type(processor), "sampling", None)
+        sampling = (
+            FrameSampling(frame_stride=config.frame_stride)
+            if sampling_factory is None
+            else sampling_factory(processor, config, info)
+        )
+        if not isinstance(sampling, FrameSampling):
+            raise ValueError(
+                f"Capability {name!r} returned invalid frame sampling."
+            )
+        participants.append(_Participant(name, processor, state, sampling))
     return participants
+
+
+def _is_participant_sample(
+    sample: FrameSample,
+    participant: _Participant,
+) -> bool:
+    return participant.sampling.includes(
+        sample.frame_index,
+        sample.timestamp,
+    )
+
+
+def _expected_sample_count(
+    info: Any,
+    participants: Sequence[_Participant],
+) -> int:
+    return sum(
+        any(
+            participant.sampling.includes(
+                frame_index,
+                frame_index / info.fps,
+            )
+            for participant in participants
+        )
+        for frame_index in range(max(0, info.frame_count))
+    )
 
 
 def _consume_visual_stream(
@@ -99,7 +142,7 @@ def _consume_visual_stream(
     expected: int,
     info: Any,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
     progress: ProgressCallback | None,
     timings: dict[str, float],
@@ -108,7 +151,9 @@ def _consume_visual_stream(
     stream = iter(
         iter_frame_batches(
             source.path,
-            frame_stride=config.frame_stride,
+            samplings=tuple(
+                participant.sampling for participant in participants
+            ),
             batch_size=max(
                 participant.processor.batch_size(config)
                 for participant in participants
@@ -128,9 +173,16 @@ def _consume_visual_stream(
         timings["frame_stream"] += perf_counter() - stream_started
 
         for participant in participants:
+            participant_samples = [
+                sample
+                for sample in rgb_samples
+                if _is_participant_sample(sample, participant)
+            ]
+            if not participant_samples:
+                continue
             processor_started = perf_counter()
             participant.processor.process(
-                rgb_samples,
+                participant_samples,
                 state=participant.state,
                 info=info,
                 config=config,
@@ -155,7 +207,7 @@ def _finalize(
     participants: Sequence[_Participant],
     *,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     timings: dict[str, float],
 ) -> tuple[dict[str, Any], int]:
     summary: dict[str, Any] = {}
@@ -183,8 +235,10 @@ def index_visuals(
     source: VideoSource,
     *,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntimePort,
     progress: ProgressCallback | None = None,
     modalities: Sequence[str] | None = None,
 ) -> CapabilityIndexResult:
@@ -201,18 +255,19 @@ def index_visuals(
 
     started = perf_counter()
     info = probe_video(source.path)
-    expected = (
-        info.frame_count + config.frame_stride - 1
-    ) // config.frame_stride
     timings = {
         "frame_stream": 0.0,
     }
     participants = _participants(
         selected,
+        info=info,
         config=config,
+        registry=registry,
+        runtime=runtime,
         progress=progress,
         timings=timings,
     )
+    expected = _expected_sample_count(info, participants)
     report_progress(
         progress,
         "visual_indexing",
@@ -259,8 +314,10 @@ def index_capabilities(
     source: VideoSource,
     *,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntimePort,
     progress: ProgressCallback | None = None,
     modalities: Sequence[str] | None = None,
 ) -> CapabilityIndexResult:
@@ -269,6 +326,8 @@ def index_capabilities(
         config=config,
         storage=storage,
         cancellation=cancellation,
+        registry=registry,
+        runtime=runtime,
         progress=progress,
         modalities=modalities,
     )

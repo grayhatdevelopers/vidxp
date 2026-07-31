@@ -1,6 +1,5 @@
 # CHANGELOG
 
-<!-- towncrier release notes start -->
 ## v0.2.0 (2026-07-28)
 
 ### Features

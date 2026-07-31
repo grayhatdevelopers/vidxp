@@ -1,11 +1,16 @@
 import hashlib
 import json
 import unittest
+from uuid import UUID
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from vidxp.benchmarks.common import verify_artifact
+from vidxp.benchmarks.common import (
+    benchmark_generation_id,
+    benchmark_media_id,
+    verify_artifact,
+)
 from vidxp.benchmarks.didemo import (
     DIDEMO_MOMENTS,
     _result_classification as didemo_result_classification,
@@ -26,10 +31,16 @@ from vidxp.benchmarks.hirest import (
 from vidxp.capabilities.schemas import SearchHit
 
 
+MEDIA_ID = "123456781234423481234567890abcde"
+GENERATION_ID = "223456781234423481234567890abcde"
+
+
 def scene_hit(chunk, score):
     return SearchHit(
         rank=chunk + 1,
-        video_id="video",
+        media_id=MEDIA_ID,
+        video_id=MEDIA_ID,
+        generation_id=GENERATION_ID,
         start=chunk * 5.0,
         end=chunk * 5.0 + 1.0,
         score=score,
@@ -43,7 +54,9 @@ def scene_hit(chunk, score):
 def timed_hit(start, end, score, rank=1):
     return SearchHit(
         rank=rank,
-        video_id="video",
+        media_id=MEDIA_ID,
+        video_id=MEDIA_ID,
+        generation_id=GENERATION_ID,
         start=start,
         end=end,
         score=score,
@@ -55,6 +68,34 @@ def timed_hit(start, end, score, rank=1):
 
 
 class BenchmarkCommonTests(unittest.TestCase):
+    def test_generation_identity_is_stable_and_run_scoped(self):
+        first = benchmark_generation_id("hirest", "validation", "run-1")
+
+        self.assertEqual(
+            first,
+            benchmark_generation_id("hirest", "validation", "run-1"),
+        )
+        self.assertEqual(len(first), 32)
+        self.assertEqual(UUID(hex=first).version, 4)
+        self.assertNotEqual(
+            first,
+            benchmark_generation_id("hirest", "validation", "run-2"),
+        )
+        self.assertNotEqual(
+            first,
+            benchmark_generation_id("didemo", "validation", "run-1"),
+        )
+
+    def test_official_video_key_maps_to_stable_media_id(self):
+        first = benchmark_media_id("hirest", "video.mp4")
+
+        self.assertEqual(first, benchmark_media_id("hirest", "video.mp4"))
+        self.assertEqual(UUID(hex=first).version, 4)
+        self.assertNotEqual(
+            first,
+            benchmark_media_id("didemo", "video.mp4"),
+        )
+
     def test_artifact_checksum_is_verified(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "artifact.json"
@@ -78,6 +119,23 @@ class BenchmarkCommonTests(unittest.TestCase):
                     source="https://example.invalid/artifact",
                     revision="abc123",
                 )
+
+    def test_artifact_accepts_declared_line_ending_variants(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_bytes(b"print('official')\r\n")
+            raw_sha = hashlib.sha256(b"print('official')\n").hexdigest()
+            checkout_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+
+            artifact = verify_artifact(
+                path,
+                name="test evaluator",
+                expected_sha256=(raw_sha, checkout_sha),
+                source="https://example.invalid/evaluator.py",
+                revision="abc123",
+            )
+
+        self.assertEqual(artifact["sha256"], checkout_sha)
 
 
 class DiDeMoAdapterTests(unittest.TestCase):
@@ -205,11 +263,11 @@ class HiRESTAdapterTests(unittest.TestCase):
                 patch(
                     "vidxp.benchmarks.hirest.run_index",
                     return_value={},
-                ),
+                ) as run_index,
                 patch(
                     "vidxp.benchmarks.hirest._generate_predictions",
                     return_value=predictions,
-                ),
+                ) as generate_predictions,
                 patch(
                     "vidxp.benchmarks.hirest._evaluate_predictions"
                 ) as evaluate_predictions,
@@ -233,6 +291,22 @@ class HiRESTAdapterTests(unittest.TestCase):
             )
             self.assertFalse((run_directory / "metrics.json").exists())
             evaluate_predictions.assert_not_called()
+            index_config = run_index.call_args.args[1]
+            prediction_config = (
+                generate_predictions.call_args.kwargs["config"]
+            )
+            self.assertEqual(
+                index_config.generation_id,
+                benchmark_generation_id(
+                    "hirest",
+                    "test",
+                    "test-submission",
+                ),
+            )
+            self.assertEqual(
+                prediction_config.generation_id,
+                index_config.generation_id,
+            )
 
     @patch("vidxp.benchmarks.hirest.run_logged_evaluator")
     def test_official_evaluator_is_forced_to_utf8(

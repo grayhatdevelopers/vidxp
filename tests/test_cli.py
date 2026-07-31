@@ -1,426 +1,1006 @@
 import json
 import os
-import sys
 import unittest
-from contextlib import redirect_stderr
-from io import StringIO
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from vidxp import cli
-from vidxp.capabilities.actor.schemas import (
-    ActorClusterSummary,
-    ActorDetection,
-    ActorRenderResult,
+from vidxp.entrypoint import startup_command
+from vidxp.composition import LocalApplicationContext, settings_for_repository
+from vidxp.media_runtime import (
+    MediaRuntimeConfiguration,
+    MediaRuntimeStatus,
+    SystemInstallPlan,
 )
-from vidxp.capabilities.schemas import SearchHit, SearchResult
-from vidxp.index_state import IndexNotReadyError
+from vidxp.settings import ApplicationMode
+from vidxp.application_models import (
+    Artifact,
+    ArtifactJobResult,
+    CapabilityDependencyCheck,
+    CreateIndexCommand,
+    DependencyCheckResult,
+    DependencyKind,
+    FusedSearchResult,
+    FusionProvenance,
+    IndexJobResult,
+    IndexResult,
+    IndexStatus,
+    IndexStatusSummary,
+    Job,
+    JobKind,
+    JobQueue,
+    JobState,
+    MediaAsset,
+    PrepareModelsResult,
+    PrepareModelsJobResult,
+    QueryAnswer,
+    QueryAnswerMode,
+    QueryJobResult,
+    QueryPlan,
+    QueryVideoCommand,
+    RemoveIndexCommand,
+    SearchCommand,
+    SearchJobResult,
+    SearchMomentsPlanStep,
+)
+from vidxp.core.artifacts import ArtifactKind, ArtifactState
+from vidxp.core.media import MediaState, MediaStream
+from vidxp.capabilities.registry import create_capability_registry
+from vidxp.capability_service import CapabilityService
+from vidxp.repositories import RepositoryConfig, RepositoryRegistry
+from vidxp.ports import LocalFileResource
 
 
-def result(modality, starts):
-    return SearchResult(
-        query_id="q",
-        query="example",
-        modality=modality,
-        hits=tuple(
-            SearchHit(
-                rank=index + 1,
-                video_id="video-1",
-                start=start,
-                end=start + 1,
-                score=-float(index),
-                raw_distance=float(index),
-                modality=modality,
-                source_id=f"source-{index}",
-            )
-            for index, start in enumerate(starts)
-        ),
-    )
+MEDIA_ID = "123456781234423481234567890abcde"
+GENERATION_ID = "223456781234423481234567890abcde"
+SNAPSHOT_ID = "323456781234423481234567890abcde"
+JOB_ID = "423456781234423481234567890abcde"
+ARTIFACT_ID = "523456781234423481234567890abcde"
 
 
 class CliTests(unittest.TestCase):
     def setUp(self):
         self.runner = CliRunner()
-        self.temporary_directory = TemporaryDirectory()
-        self.addCleanup(self.temporary_directory.cleanup)
-        self.config_file = (
-            Path(self.temporary_directory.name) / "repositories.json"
-        )
         self.service = Mock()
-        self.service.index_directory = Path("chroma_data")
-        self.service.device = None
+        self.service.registry = create_capability_registry()
+        self.service.list_capabilities.return_value = CapabilityService(
+            self.service.registry
+        ).list()
+        self.service.index_directory = Path("repo/indexes")
+        self.service.layout.root = Path("repo")
+        self.service.model_cache = Path("model-cache")
+        self.service.runtime.backends.requested = "cpu"
+        self.service.model_readiness.return_value = DependencyCheckResult(
+            ok=True,
+            modalities=(),
+            checks=(),
+        )
+        self.jobs = Mock()
+        self.registry = Mock(spec=RepositoryRegistry)
+        self.registry.path = Path("repositories.json")
+        self.repository = RepositoryConfig(
+            "default",
+            Path("repo"),
+            device="cpu",
+            configured=False,
+        )
 
-    def invoke(self, arguments):
-        with patch.object(
-            cli,
-            "VidXPService",
-            return_value=self.service,
+    def invoke(self, arguments, *, media_runtime_initialized=True):
+        with (
+            patch.object(
+                cli,
+                "create_local_application",
+                return_value=LocalApplicationContext(
+                    application=self.service,
+                    jobs=self.jobs,
+                    repositories=self.registry,
+                    repository=self.repository,
+                ),
+            ) as create_local_application,
+            patch(
+                "vidxp.cli_support.media_runtime_is_initialized",
+                return_value=media_runtime_initialized,
+            ),
         ):
-            return self.runner.invoke(
-                cli.app,
-                ["--config", str(self.config_file), *arguments],
-            )
+            result = self.runner.invoke(cli.app, arguments)
+        self.create_local_application = create_local_application
+        return result
+
+    def test_data_directory_is_forwarded_to_local_composition(self):
+        result = self.invoke(
+            [
+                "--data-dir",
+                "custom-data",
+                "repositories",
+                "show",
+                "--json",
+            ]
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(
+            self.create_local_application.call_args.kwargs["data_directory"],
+            Path("custom-data"),
+        )
 
     def test_grouped_commands_are_exposed(self):
-        response = self.invoke(["--help"])
-
-        self.assertEqual(response.exit_code, 0)
+        result = self.invoke(["--help"])
+        self.assertEqual(result.exit_code, 0, result.output)
         for command in (
+            "media",
             "index",
+            "jobs",
             "search",
             "actors",
-            "repositories",
-            "benchmark",
-            "ui",
+            "artifacts",
+            "init",
+            "doctor",
+            "prepare",
+            "mcp-config",
         ):
-            self.assertIn(command, response.stdout)
+            self.assertIn(command, result.output)
 
-    def test_removed_legacy_commands_are_rejected(self):
-        for command in ("videoindex", "dialogue", "scene", "actor"):
-            with self.subTest(command=command):
-                response = self.invoke([command])
+    def test_mcp_config_is_copy_paste_json_without_opening_repository(self):
+        result = self.invoke(["mcp-config"])
 
-                self.assertEqual(response.exit_code, 2)
-                self.assertIn("No such command", response.output)
-
-    def test_search_returns_ranked_json_and_passes_top_k(self):
-        self.service.search.return_value = result(
-            "dialogue",
-            [7.5, 12.0],
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.create_local_application.assert_not_called()
+        config = json.loads(result.output)
+        server = config["mcpServers"]["vidxp"]
+        self.assertIn(
+            Path(server["command"]).name.lower(),
+            {"vidxp-mcp", "vidxp-mcp.exe"},
         )
+        self.assertEqual(server["args"], ["--repository", "default"])
 
-        response = self.invoke(
-            [
-                "search",
-                "dialogue",
-                "fresh bread",
-                "--top-k",
-                "2",
-                "--json",
-            ]
-        )
-
-        self.assertEqual(response.exit_code, 0, response.output)
-        payload = json.loads(response.stdout)
+    def test_startup_notice_targets_long_interactive_commands(self):
+        self.assertEqual(startup_command(["init"]), "init")
+        self.assertEqual(startup_command(["doctor"]), "doctor")
         self.assertEqual(
-            [hit["start"] for hit in payload["hits"]],
-            [7.5, 12.0],
+            startup_command(["media", "import", "video.mp4"]),
+            "media import",
         )
-        self.service.search.assert_called_once_with(
-            "dialogue",
-            "fresh bread",
-            top_k=2,
+        self.assertEqual(
+            startup_command(["--data-dir", "custom-data", "ui"]),
+            "ui",
         )
+        self.assertIsNone(startup_command(["doctor", "--json"]))
+        self.assertIsNone(startup_command(["--quiet", "prepare"]))
+        self.assertIsNone(startup_command(["repositories", "list"]))
 
-    def test_global_index_directory_and_device_configure_service(self):
-        with patch.object(cli, "VidXPService") as service_type:
-            service_type.return_value.index_status.return_value = {
-                "state": "missing",
-            }
-            response = self.runner.invoke(
-                cli.app,
-                [
-                    "--config",
-                    str(self.config_file),
-                    "--index-dir",
-                    "custom-index",
-                    "--device",
-                    "cuda",
-                    "index",
-                    "status",
-                    "--json",
-                ],
+    def test_init_saves_verified_paths_without_opening_a_repository(self):
+        ffmpeg = Path("tools/ffmpeg.exe").resolve()
+        ffprobe = Path("tools/ffprobe.exe").resolve()
+        status = MediaRuntimeStatus(
+            ready=True,
+            initialized=False,
+            ffmpeg_executable=ffmpeg,
+            ffprobe_executable=ffprobe,
+        )
+        configuration = MediaRuntimeConfiguration(
+            ffmpeg_executable=ffmpeg,
+            ffprobe_executable=ffprobe,
+        )
+        with (
+            patch(
+                "vidxp.cli_commands.runtime.inspect_media_runtime",
+                return_value=status,
+            ),
+            patch(
+                "vidxp.cli_commands.runtime.save_media_runtime_configuration",
+                return_value=configuration,
+            ) as save,
+            patch(
+                "vidxp.cli_commands.runtime.media_runtime_config_path",
+                return_value=Path("config/media-runtime.json").resolve(),
+            ),
+        ):
+            result = self.invoke(["init", "--json"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        payload = json.loads(result.output)
+        self.assertTrue(payload["ready"])
+        self.assertTrue(payload["initialized"])
+        save.assert_called_once_with(status)
+        self.create_local_application.assert_not_called()
+
+    def test_noninteractive_init_reports_command_without_installing(self):
+        plan = SystemInstallPlan(
+            manager="Windows Package Manager",
+            command=(
+                "winget",
+                "install",
+                "--id",
+                "Gyan.FFmpeg",
+                "--exact",
+            ),
+            automatic=True,
+        )
+        status = MediaRuntimeStatus(
+            ready=False,
+            initialized=False,
+            errors=("FFmpeg was not found.",),
+            install_plan=plan,
+        )
+        with (
+            patch(
+                "vidxp.cli_commands.runtime.inspect_media_runtime",
+                return_value=status,
+            ),
+            patch(
+                "vidxp.cli_commands.runtime.install_media_runtime",
+            ) as install,
+        ):
+            result = self.invoke(["init", "--json"])
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        payload = json.loads(result.output)
+        self.assertFalse(payload["ready"])
+        self.assertIn("Gyan.FFmpeg", payload["install_command"])
+        install.assert_not_called()
+        self.create_local_application.assert_not_called()
+
+    def test_yes_explicitly_runs_the_displayed_installer_and_verifies(self):
+        plan = SystemInstallPlan(
+            manager="Windows Package Manager",
+            command=("winget", "install", "--id", "Gyan.FFmpeg"),
+            automatic=True,
+        )
+        missing = MediaRuntimeStatus(
+            ready=False,
+            initialized=False,
+            errors=("FFmpeg was not found.",),
+            install_plan=plan,
+        )
+        ready = MediaRuntimeStatus(
+            ready=True,
+            initialized=False,
+            ffmpeg_executable=Path("tools/ffmpeg.exe").resolve(),
+            ffprobe_executable=Path("tools/ffprobe.exe").resolve(),
+        )
+        configuration = MediaRuntimeConfiguration(
+            ffmpeg_executable=ready.ffmpeg_executable,
+            ffprobe_executable=ready.ffprobe_executable,
+        )
+        with (
+            patch(
+                "vidxp.cli_commands.runtime.inspect_media_runtime",
+                side_effect=(missing, ready),
+            ),
+            patch(
+                "vidxp.cli_commands.runtime.install_media_runtime",
+            ) as install,
+            patch(
+                "vidxp.cli_commands.runtime.save_media_runtime_configuration",
+                return_value=configuration,
+            ),
+        ):
+            result = self.invoke(["init", "--yes", "--json"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(json.loads(result.output)["ready"])
+        install.assert_called_once_with(plan, output_to_stderr=True)
+        self.create_local_application.assert_not_called()
+
+    def test_first_media_command_points_to_init_when_uninitialized(self):
+        with TemporaryDirectory() as directory:
+            video = Path(directory) / "video.mp4"
+            video.write_bytes(b"video")
+            result = self.invoke(
+                ["media", "import", str(video)],
+                media_runtime_initialized=False,
             )
 
-        self.assertEqual(response.exit_code, 0, response.output)
-        service_type.assert_called_once_with(Path("custom-index"), device="cuda")
+        self.assertEqual(result.exit_code, 1)
+        self.assertEqual(result.exception.code, "media_runtime_uninitialized")
+        self.assertIn("vidxp init", str(result.exception))
+        self.service.import_media.assert_not_called()
 
-    def test_repository_commands_persist_and_select_named_indexes(self):
-        index_directory = (
-            Path(self.temporary_directory.name) / "team-index"
-        )
-        added = self.invoke(
-            [
-                "repositories",
-                "add",
-                "team",
-                "--index-dir",
-                str(index_directory),
-                "--device",
-                "cuda",
-                "--use",
-                "--json",
-            ]
-        )
-        listed = self.invoke(["repositories", "list", "--json"])
+    def test_ui_shutdown_stops_its_local_worker(self):
+        with patch(
+            "vidxp.frontend.main",
+            side_effect=SystemExit(0),
+        ):
+            result = self.invoke(["ui"])
 
-        self.assertEqual(added.exit_code, 0, added.output)
-        self.assertEqual(json.loads(added.stdout)["name"], "team")
-        payload = json.loads(listed.stdout)
-        self.assertEqual(payload["active_repository"], "team")
-        configured = {
-            item["name"]: item for item in payload["repositories"]
-        }
-        self.assertEqual(
-            configured["team"]["index_directory"],
-            str(index_directory.resolve()),
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.jobs.stop_worker.assert_called_once_with()
+
+    def test_snippet_rejects_an_inverted_time_range_before_submission(self):
+        result = self.invoke(
+            ["artifacts", "snippet", MEDIA_ID, "3", "2"]
         )
 
-    def test_repository_removal_leaves_index_data_untouched(self):
-        index_directory = (
-            Path(self.temporary_directory.name) / "team-index"
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("snippet end must be greater than its", result.output)
+        self.assertIn("start.", result.output)
+        self.jobs.submit_snippet.assert_not_called()
+
+    def test_snippet_completion_points_to_the_download_command(self):
+        artifact = Artifact(
+            artifact_id=ARTIFACT_ID,
+            media_id=MEDIA_ID,
+            kind=ArtifactKind.snippet,
+            profile="compatible_mp4",
+            mime_type="video/mp4",
+            byte_size=12,
+            sha256="1" * 64,
+            state=ArtifactState.ready,
+            created_at=datetime.now(timezone.utc),
         )
-        index_directory.mkdir()
-        marker = index_directory / "keep"
-        marker.write_text("data", encoding="utf-8")
-        self.invoke(
-            [
-                "repositories",
-                "add",
-                "team",
-                "--index-dir",
-                str(index_directory),
-            ]
+        self.jobs.submit_snippet.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.snippet,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        self.jobs.wait.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.snippet,
+            state=JobState.succeeded,
+            queue=JobQueue.cpu,
+            result=ArtifactJobResult(
+                kind=JobKind.snippet,
+                result=artifact,
+            ),
         )
 
-        removed = self.invoke(
-            ["repositories", "remove", "team", "--yes", "--json"]
+        result = self.invoke(
+            ["artifacts", "snippet", MEDIA_ID, "9", "17"]
         )
 
-        self.assertEqual(removed.exit_code, 0, removed.output)
-        self.assertFalse(json.loads(removed.stdout)["index_deleted"])
-        self.assertTrue(marker.is_file())
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn(f"Clip ready: {ARTIFACT_ID}", result.output)
+        self.assertIn(
+            f"vidxp artifacts download {ARTIFACT_ID}",
+            result.output,
+        )
 
-    def test_index_create_uses_repeated_typed_modalities(self):
-        self.service.create_index.return_value = {"scene_frames": 10}
+    def test_artifact_download_copies_authorized_content(self):
         with TemporaryDirectory() as directory:
-            video = Path(directory) / "sample.mp4"
-            video.write_bytes(b"video")
-            response = self.invoke(
+            root = Path(directory)
+            source = root / "managed.mp4"
+            source.write_bytes(b"clip-content")
+            destination = root / "exported.mp4"
+            self.service.open_artifact_content.return_value = (
+                LocalFileResource(
+                    path=source,
+                    filename=f"snippet-{ARTIFACT_ID}.mp4",
+                    mime_type="video/mp4",
+                    byte_size=12,
+                    etag="1" * 64,
+                )
+            )
+
+            result = self.invoke(
                 [
-                    "--format",
-                    "json",
-                    "index",
-                    "create",
-                    str(video),
-                    "--modality",
-                    "scene",
-                    "--frame-stride",
-                    "5",
-                    "--option",
-                    "scene.batch_size=4",
-                    "--option",
-                    "scene.model=test-model",
+                    "artifacts",
+                    "download",
+                    ARTIFACT_ID,
+                    str(destination),
+                    "--json",
                 ]
             )
 
-        self.assertEqual(response.exit_code, 0, response.output)
-        self.assertEqual(json.loads(response.stdout), {"scene_frames": 10})
-        self.service.create_index.assert_called_once()
-        call = self.service.create_index.call_args
-        self.assertEqual(call.kwargs["modalities"], ("scene",))
-        self.assertEqual(call.kwargs["frame_stride"], 5)
-        self.assertEqual(
-            call.kwargs["capability_options"],
-            {"scene": {"batch_size": 4, "model": "test-model"}},
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual(destination.read_bytes(), b"clip-content")
+            payload = json.loads(result.output)
+            self.assertEqual(payload["artifact_id"], ARTIFACT_ID)
+            self.assertEqual(payload["path"], str(destination.resolve()))
+
+            refused = self.invoke(
+                [
+                    "artifacts",
+                    "download",
+                    ARTIFACT_ID,
+                    str(destination),
+                ]
+            )
+
+        self.assertEqual(refused.exit_code, 2, refused.output)
+        self.assertIn("already exists", refused.output)
+
+    def test_search_constructs_shared_command(self):
+        search_result = FusedSearchResult(
+            query_id="fused:1",
+            query="yellow taxi",
+            modalities=("scene",),
+            fusion=FusionProvenance(
+                requested_modalities=("scene",),
+                searched_modalities=("scene",),
+            ),
+        )
+        self.jobs.submit_search.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.search,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        self.jobs.wait.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.search,
+            state=JobState.succeeded,
+            queue=JobQueue.cpu,
+            result=SearchJobResult(result=search_result),
         )
 
-    def test_index_status_reports_missing_index_as_json(self):
-        self.service.index_status.return_value = {
-            "state": "missing",
-            "message": "No local video index was found.",
-        }
+        result = self.invoke(
+            [
+                "search",
+                "scene",
+                "yellow taxi",
+                "--media-id",
+                MEDIA_ID,
+                "--top-k",
+                "7",
+                "--json",
+            ]
+        )
 
-        response = self.invoke(["index", "status", "--json"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.jobs.submit_search.assert_called_once_with(
+            SearchCommand(
+                modalities=("scene",),
+                query="yellow taxi",
+                media_id=MEDIA_ID,
+                top_k=7,
+            )
+        )
+        self.assertEqual(json.loads(result.output)["query"], "yellow taxi")
 
-        self.assertEqual(response.exit_code, 0, response.output)
-        self.assertEqual(json.loads(response.stdout)["state"], "missing")
+    def test_search_help_explains_cross_media_default(self):
+        result = self.invoke(["search", "--help"])
 
-    def test_index_clear_requires_explicit_confirmation_for_automation(self):
-        self.service.clear_index.return_value = True
+        self.assertEqual(result.exit_code, 0, result.output)
+        normalized = " ".join(unstyle(result.output).replace("│", " ").split())
+        self.assertIn(
+            "Omit to rank matches across every media item in the active index snapshot.",
+            normalized,
+        )
 
-        response = self.invoke(["index", "clear", "--yes", "--json"])
+    def test_query_constructs_shared_command_and_emits_typed_answer(self):
+        answer = QueryAnswer(
+            question="What happens?",
+            mode=QueryAnswerMode.no_evidence,
+            plan=QueryPlan(
+                steps=(
+                    SearchMomentsPlanStep(
+                        modality="scene",
+                        query="What happens?",
+                    ),
+                )
+            ),
+            fusion=FusionProvenance(
+                requested_modalities=("scene",),
+                searched_modalities=("scene",),
+            ),
+            fallback_reason="no_evidence",
+        )
+        self.jobs.submit_query.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.query,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        self.jobs.wait.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.query,
+            state=JobState.succeeded,
+            queue=JobQueue.cpu,
+            result=QueryJobResult(result=answer),
+        )
 
-        self.assertEqual(response.exit_code, 0, response.output)
-        self.assertTrue(json.loads(response.stdout)["cleared"])
-        self.service.clear_index.assert_called_once_with()
+        result = self.invoke(
+            [
+                "query",
+                "What happens?",
+                "--media-id",
+                MEDIA_ID,
+                "--modality",
+                "scene",
+                "--json",
+            ]
+        )
 
-    def test_doctor_and_prepare_use_the_reusable_service(self):
-        self.service.check_dependencies.return_value = {
-            "ok": True,
-            "modalities": ["scene"],
-            "checks": [{"name": "CLIP", "ok": True, "error": None}],
-        }
-        self.service.prepare_models.return_value = {
-            "prepared": ["ViT-B/32"],
-            "modalities": ["scene"],
-            "device": "cpu",
-        }
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.jobs.submit_query.assert_called_once_with(
+            QueryVideoCommand(
+                question="What happens?",
+                media_id=MEDIA_ID,
+                modalities=("scene",),
+            )
+        )
+        self.assertEqual(json.loads(result.output)["mode"], "no_evidence")
+
+    def test_index_constructs_shared_command(self):
+        result_value = IndexResult(
+            media_id=MEDIA_ID,
+            generation_id=GENERATION_ID,
+            snapshot_id=SNAPSHOT_ID,
+            active_media_count=1,
+            record_counts={"scene": 1},
+        )
+        self.jobs.submit_index.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.index,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        self.jobs.wait.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.index,
+            state=JobState.succeeded,
+            queue=JobQueue.cpu,
+            result=IndexJobResult(result=result_value),
+        )
+
+        result = self.invoke(
+            [
+                "--format",
+                "json",
+                "index",
+                "create",
+                MEDIA_ID,
+                "--modality",
+                "scene",
+                "--frame-stride",
+                "5",
+                "--scene-sample-fps",
+                "2",
+            ]
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        command = self.jobs.submit_index.call_args.args[0]
+        self.assertIsInstance(command, CreateIndexCommand)
+        self.assertEqual(command.modalities, ("scene",))
+        self.assertEqual(command.frame_stride, 5)
+        self.assertEqual(command.scene_sample_fps, 2.0)
+        self.assertEqual(command.media_id, MEDIA_ID)
+
+    def test_remove_uses_shared_media_id_command(self):
+        self.service.remove_from_index.return_value = True
+        removed = self.invoke(["index", "remove", MEDIA_ID, "--json"])
+        self.assertEqual(removed.exit_code, 0, removed.output)
+        self.service.remove_from_index.assert_called_once_with(
+            RemoveIndexCommand(media_id=MEDIA_ID)
+        )
+
+    def test_media_import_uses_the_local_import_command(self):
+        self.service.import_media.return_value = MediaAsset(
+            schema_version=1,
+            media_id=MEDIA_ID,
+            video_id=MEDIA_ID,
+            original_filename="video.mp4",
+            sha256="1" * 64,
+            byte_size=5,
+            detected_mime_type="video/mp4",
+            container="mp4",
+            duration_seconds=1,
+            streams=(
+                MediaStream(
+                    index=0,
+                    kind="video",
+                    codec="h264",
+                    width=1,
+                    height=1,
+                ),
+            ),
+            state=MediaState.ready,
+            created_at=datetime.now(timezone.utc),
+        )
+        with TemporaryDirectory() as directory:
+            video = Path(directory) / "video.mp4"
+            video.write_bytes(b"video")
+            result = self.invoke(["media", "import", str(video), "--json"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(json.loads(result.output)["media_id"], MEDIA_ID)
+        self.assertEqual(
+            self.service.import_media.call_args.args[0].path,
+            video.resolve(),
+        )
+
+    def test_media_show_returns_registered_metadata(self):
+        self.service.get_media.return_value = MediaAsset(
+            schema_version=1,
+            media_id=MEDIA_ID,
+            video_id=MEDIA_ID,
+            original_filename="video.mp4",
+            sha256="1" * 64,
+            byte_size=5,
+            detected_mime_type="video/mp4",
+            container="mp4",
+            duration_seconds=1,
+            streams=(
+                MediaStream(
+                    index=0,
+                    kind="video",
+                    codec="h264",
+                    width=1,
+                    height=1,
+                ),
+            ),
+            state=MediaState.ready,
+            created_at=datetime.now(timezone.utc),
+        )
+
+        result = self.invoke(["media", "show", MEDIA_ID, "--json"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.service.get_media.assert_called_once_with(MEDIA_ID)
+        self.assertEqual(json.loads(result.output)["media_id"], MEDIA_ID)
+
+    def test_status_serializes_shared_model(self):
+        self.service.index_status.return_value = IndexStatus(
+            schema_version=1,
+            state="missing",
+            stage="status",
+            message="No index.",
+        )
+
+        result = self.invoke(["index", "status", "--json"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(json.loads(result.output)["state"], "missing")
+
+    def test_index_list_joins_active_ids_to_registered_metadata(self):
+        self.service.index_status.return_value = IndexStatus(
+            schema_version=1,
+            state="ready",
+            stage="status",
+            message="Index ready.",
+            summary=IndexStatusSummary(
+                index_schema_version=1,
+                snapshot_id=SNAPSHOT_ID,
+                media_count=1,
+                media_ids=(MEDIA_ID,),
+                modalities=("scene", "dialogue"),
+            ),
+        )
+        self.service.get_media.return_value = MediaAsset(
+            schema_version=1,
+            media_id=MEDIA_ID,
+            video_id=MEDIA_ID,
+            original_filename="video.mp4",
+            sha256="1" * 64,
+            byte_size=5,
+            detected_mime_type="video/mp4",
+            container="mp4",
+            duration_seconds=1,
+            streams=(
+                MediaStream(
+                    index=0,
+                    kind="video",
+                    codec="h264",
+                    width=1,
+                    height=1,
+                ),
+            ),
+            state=MediaState.ready,
+            created_at=datetime.now(timezone.utc),
+        )
+
+        result = self.invoke(["index", "list", "--json"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.service.get_media.assert_called_once_with(MEDIA_ID)
+        payload = json.loads(result.output)
+        self.assertEqual(payload["snapshot_id"], SNAPSHOT_ID)
+        self.assertEqual(payload["media_count"], 1)
+        self.assertEqual(payload["modalities"], ["scene", "dialogue"])
+        self.assertEqual(payload["items"][0]["original_filename"], "video.mp4")
+
+    def test_doctor_and_prepare_use_shared_models(self):
+        self.service.check_dependencies.return_value = DependencyCheckResult(
+            ok=True,
+            modalities=("scene",),
+            checks=(),
+        )
+        prepared_value = PrepareModelsResult(
+            prepared=("scene-model",),
+            modalities=("scene",),
+            runtime={
+                "requested": "cpu",
+                "torch_device": "cpu",
+                "transcription_device": "cpu",
+            },
+        )
+        self.jobs.submit_prepare_models.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.prepare_models,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        self.jobs.wait.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.prepare_models,
+            state=JobState.succeeded,
+            queue=JobQueue.cpu,
+            result=PrepareModelsJobResult(result=prepared_value),
+        )
 
         checked = self.invoke(
             ["doctor", "--modalities", "scene", "--json"]
         )
-        prepared = self.invoke([
-            "prepare",
-            "--modalities",
-            "scene",
-            "--option",
-            "scene.model=test-model",
-            "--json",
-        ])
-
-        self.assertTrue(json.loads(checked.stdout)["ok"])
-        self.assertEqual(
-            json.loads(prepared.stdout)["prepared"],
-            ["ViT-B/32"],
+        prepared = self.invoke(
+            ["prepare", "--modalities", "scene", "--json"]
         )
-        self.service.check_dependencies.assert_called_once_with(("scene",))
-        self.service.prepare_models.assert_called_once()
+
+        self.assertEqual(checked.exit_code, 0, checked.output)
+        self.assertEqual(prepared.exit_code, 0, prepared.output)
         self.assertEqual(
-            self.service.prepare_models.call_args.kwargs[
-                "capability_options"
+            self.service.check_dependencies.call_args.args[0].modalities,
+            ("scene",),
+        )
+        self.assertTrue(
+            self.service.check_dependencies.call_args.args[0].include_models
+        )
+        self.assertEqual(
+            self.jobs.submit_prepare_models.call_args.args[0].modalities,
+            ("scene",),
+        )
+
+    def test_doctor_accepts_repeated_modality_options(self):
+        self.service.check_dependencies.return_value = DependencyCheckResult(
+            ok=True,
+            modalities=("dialogue", "scene"),
+            checks=(),
+        )
+        result = self.invoke(
+            [
+                "doctor",
+                "--modalities",
+                "dialogue",
+                "--modalities",
+                "scene",
+                "--json",
             ],
-            {"scene": {"model": "test-model"}},
         )
 
-    def test_ui_receives_the_selected_service_configuration(self):
-        self.service.index_directory = Path("selected-index")
-        self.service.device = "cuda"
-        from vidxp import frontend
+        self.assertEqual(result.exit_code, 0, result.output)
+        command = self.service.check_dependencies.call_args.args[0]
+        self.assertEqual(command.modalities, ("dialogue", "scene"))
 
-        with (
-            patch.dict(os.environ, {}, clear=False),
-            patch.object(frontend, "SERVICE"),
-            patch.object(frontend, "SAVED_VIDEO_PATH"),
-            patch.object(frontend, "ACTOR_OUTPUT_PATH"),
-            patch.object(frontend, "main") as launch,
-        ):
-            response = self.invoke(
-                ["ui", "--host", "0.0.0.0", "--port", "8501"]
-            )
-
-            self.assertEqual(response.exit_code, 0, response.output)
-            launch.assert_called_once_with(
-                ["--server.address=0.0.0.0", "--server.port=8501"]
-            )
-            self.assertEqual(os.environ["VIDXP_DEVICE"], "cuda")
-            self.assertEqual(
-                os.environ["VIDXP_INDEX_DIR"],
-                "selected-index",
-            )
-
-    def test_actor_commands_expose_clusters_detections_and_rendering(self):
-        cluster = ActorClusterSummary(
-            cluster_id="3",
-            video_id="video-1",
-            detection_count=4,
-            first_timestamp=1.0,
-            last_timestamp=8.0,
-        )
-        self.service.actor_clusters.return_value = (cluster,)
-        self.service.actor_detections.return_value = [
-            ActorDetection(
-                detection_id="d2",
-                cluster_id="3",
-                frame_index=2,
-                timestamp=1.5,
-                bbox=(1, 2, 3, 0),
-                dataset="local",
-                split="local",
-                run_id="default",
-                video_id="video-1",
-                modality="actor",
-                source_id="actor:d2",
-            )
-        ]
-        self.service.render_actor.return_value = ActorRenderResult(
-            output_path=Path("actor.mp4"),
-            detection_count=4,
-        )
-
-        listed = self.invoke(["actors", "list", "--json"])
-        inspected = self.invoke(["actors", "inspect", "3", "--json"])
-        with TemporaryDirectory() as directory:
-            source = Path(directory) / "source.mp4"
-            source.write_bytes(b"video")
-            rendered = self.invoke(
-                [
-                    "actors",
-                    "render",
-                    "3",
-                    str(source),
-                    "--output",
-                    "actor.mp4",
-                    "--json",
-                ]
-            )
-
-        self.assertEqual(json.loads(listed.stdout)["count"], 1)
-        self.assertEqual(
-            json.loads(inspected.stdout)["detection_count"],
-            1,
-        )
-        self.assertEqual(
-            json.loads(rendered.stdout)["output_path"],
-            "actor.mp4",
-        )
-
-    def test_benchmark_commands_are_exposed(self):
-        response = self.invoke(["benchmark", "--help"])
-
-        self.assertEqual(response.exit_code, 0)
-        self.assertIn("didemo", response.stdout)
-        self.assertIn("hirest", response.stdout)
-
-    def test_version_options_report_installed_package_version(self):
-        for option in ("--version", "-V"):
-            with self.subTest(option=option):
-                response = self.invoke([option])
-
-                self.assertEqual(response.exit_code, 0)
-                self.assertEqual(
-                    response.stdout.strip(),
-                    f"VidXP {cli.__version__}",
-                )
-
-    def test_main_emits_uniform_json_for_runtime_errors(self):
-        self.service.search.side_effect = IndexNotReadyError(
-            "Index is not ready."
-        )
-        stderr = StringIO()
-        arguments = [
-            "vidxp",
-            "--config",
-            str(self.config_file),
-            "--format",
-            "json",
-            "search",
-            "scene",
-            "yellow taxi",
-        ]
-        with (
-            patch.object(sys, "argv", arguments),
-            patch.object(
-                cli,
-                "VidXPService",
-                return_value=self.service,
+    def test_prepare_announces_start_and_subscribes_to_job_progress(self):
+        self.service.model_readiness.return_value = DependencyCheckResult(
+            ok=False,
+            modalities=("scene",),
+            checks=(
+                CapabilityDependencyCheck(
+                    capability="scene",
+                    kind=DependencyKind.model,
+                    name="google/siglip2-base-patch16-224",
+                    download_size_bytes=1_539_458_338,
+                    ok=False,
+                    error="model artifacts are not prepared",
+                ),
             ),
-            redirect_stderr(stderr),
-            self.assertRaises(SystemExit) as raised,
-        ):
-            cli.main()
-
-        self.assertEqual(raised.exception.code, 1)
-        payload = json.loads(stderr.getvalue())
-        self.assertFalse(payload["ok"])
-        self.assertEqual(
-            payload["error"]["message"],
-            "Index is not ready.",
         )
-        self.assertEqual(payload["error"]["exit_code"], 1)
+        prepared = PrepareModelsResult(
+            prepared=("scene-model",),
+            modalities=("scene",),
+            runtime={
+                "requested": "cpu",
+                "torch_device": "cpu",
+                "transcription_device": "cpu",
+            },
+        )
+        self.jobs.submit_prepare_models.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.prepare_models,
+            state=JobState.queued,
+            queue=JobQueue.cpu,
+        )
+        self.jobs.wait.return_value = Job(
+            job_id=JOB_ID,
+            kind=JobKind.prepare_models,
+            state=JobState.succeeded,
+            queue=JobQueue.cpu,
+            result=PrepareModelsJobResult(result=prepared),
+        )
+
+        result = self.invoke(
+            ["prepare", "--modalities", "scene", "--yes"]
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("1.43 GiB", result.output)
+        self.assertRegex(
+            result.output,
+            r"\[\d{2}:\d{2}:\d{2}\] Starting model preparation for scene\.",
+        )
+        self.assertTrue(callable(self.jobs.wait.call_args.kwargs["progress"]))
+
+    def test_prepare_discloses_size_and_requires_confirmation(self):
+        self.service.model_readiness.return_value = DependencyCheckResult(
+            ok=False,
+            modalities=("scene",),
+            checks=(
+                CapabilityDependencyCheck(
+                    capability="scene",
+                    kind=DependencyKind.model,
+                    name="google/siglip2-base-patch16-224",
+                    download_size_bytes=1_539_458_338,
+                    ok=False,
+                    error="model artifacts are not prepared",
+                ),
+            ),
+        )
+
+        declined = self.invoke(
+            ["prepare", "--modalities", "scene"],
+        )
+
+        self.assertNotEqual(declined.exit_code, 0)
+        self.assertIn("1.43 GiB", declined.output)
+        self.assertIn("Model cache: model-cache", declined.output)
+        self.assertIn("Download these models?", declined.output)
+        self.jobs.submit_prepare_models.assert_not_called()
+
+    def test_doctor_streams_timestamped_runtime_check_progress(self):
+        def check_dependencies(
+            _command,
+            *,
+            on_check_start,
+            on_check_complete,
+        ):
+            on_check_start(
+                "scene",
+                DependencyKind.distribution,
+                "torch",
+            )
+            on_check_complete(
+                CapabilityDependencyCheck(
+                    capability="scene",
+                    kind=DependencyKind.distribution,
+                    name="torch",
+                    requirement="torch==2.13.0",
+                    installed_version="2.13.0",
+                    ok=True,
+                ),
+                0.01,
+            )
+            on_check_start(
+                "scene",
+                DependencyKind.runtime,
+                "Torch import",
+            )
+            on_check_complete(
+                CapabilityDependencyCheck(
+                    capability="scene",
+                    kind=DependencyKind.runtime,
+                    name="Torch import",
+                    ok=True,
+                ),
+                1.25,
+            )
+            return DependencyCheckResult(
+                ok=True,
+                modalities=("scene",),
+                checks=(
+                    CapabilityDependencyCheck(
+                        capability="scene",
+                        kind=DependencyKind.distribution,
+                        name="torch",
+                        requirement="torch==2.13.0",
+                        installed_version="2.13.0",
+                        ok=True,
+                    ),
+                    CapabilityDependencyCheck(
+                        capability="scene",
+                        kind=DependencyKind.runtime,
+                        name="Torch import",
+                        ok=True,
+                    ),
+                ),
+            )
+
+        self.service.check_dependencies.side_effect = check_dependencies
+
+        result = self.invoke(["doctor", "--modalities", "scene"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertRegex(
+            result.output,
+            r"\[\d{2}:\d{2}:\d{2}\] Checking \[scene\] Torch import\.\.\.",
+        )
+        self.assertIn("OK (1.2s)", result.output)
+        self.assertIn("OK (version 2.13.0, 0.0s)", result.output)
+        self.assertEqual(result.output.count("package torch"), 1)
+
+    def test_doctor_prints_install_remedy_for_python_failures(self):
+        self.service.check_dependencies.return_value = DependencyCheckResult(
+            ok=False,
+            modalities=("scene",),
+            checks=(
+                CapabilityDependencyCheck(
+                    capability="scene",
+                    kind=DependencyKind.distribution,
+                    name="transformers",
+                    requirement="transformers>=5,<6",
+                    ok=False,
+                    error="distribution is not installed",
+                ),
+            ),
+        )
+
+        result = self.invoke(["doctor", "--modalities", "scene"])
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn(
+            "include --extra local-worker",
+            result.output,
+        )
+        self.assertIn(
+            'pip install "vidxp[scene]"',
+            result.output,
+        )
+
+    def test_doctor_reports_missing_models_and_prepare_command(self):
+        self.service.check_dependencies.return_value = DependencyCheckResult(
+            ok=False,
+            modalities=("scene",),
+            checks=(
+                CapabilityDependencyCheck(
+                    capability="scene",
+                    kind=DependencyKind.model,
+                    name="google/siglip2-base-patch16-224",
+                    download_size_bytes=1_539_458_338,
+                    ok=False,
+                    error="model artifacts are not prepared",
+                ),
+            ),
+        )
+
+        result = self.invoke(["doctor", "--modalities", "scene"])
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn(
+            "vidxp prepare --modalities scene",
+            result.output,
+        )
+        self.assertIn("1.43 GiB", result.output)
+        self.assertNotIn("pip install", result.output)
+
+    def test_invalid_capability_is_a_cli_parameter_error(self):
+        result = self.invoke(
+            ["doctor", "--modalities", "unknown", "--json"]
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("Unknown or unsupported capabilities", result.output)
+
+    def test_repository_without_device_preserves_runtime_environment(self):
+        repository = RepositoryConfig(
+            "default",
+            Path("repo"),
+            device=None,
+            configured=False,
+        )
+        with patch.dict(
+            os.environ,
+            {"VIDXP_RUNTIME_BACKEND": "cpu"},
+        ):
+            settings = settings_for_repository(repository)
+
+        self.assertEqual(settings.runtime_backend, "cpu")
+
+    def test_local_repository_ignores_server_mode_environment(self):
+        repository = RepositoryConfig(
+            "default",
+            Path("repo"),
+            device=None,
+            configured=False,
+        )
+        with patch.dict(os.environ, {"VIDXP_MODE": "server"}):
+            settings = settings_for_repository(repository)
+
+        self.assertEqual(settings.mode, ApplicationMode.local)
 
 
 if __name__ == "__main__":

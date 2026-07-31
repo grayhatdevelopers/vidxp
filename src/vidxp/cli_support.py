@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Any, Iterable
 
@@ -16,13 +17,21 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from vidxp.application import VidXPService
-from vidxp.capabilities.registry import (
-    index_capability_names,
-    validate_capability_names,
+from vidxp.application_models import (
+    ApplicationError,
+    ErrorCategory,
+    FusedSearchResult,
+    QueryAnswer,
 )
-from vidxp.capabilities.schemas import SearchResult
+from vidxp.media_runtime import media_runtime_is_initialized
 from vidxp.repositories import RepositoryConfig, RepositoryRegistry
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vidxp.application import VidXPApplication
+    from vidxp.composition import LocalApplicationContext
+    from vidxp.job_service import JobService
+    from vidxp.settings import VidXPSettings
 
 
 class OutputFormat(str, Enum):
@@ -32,11 +41,23 @@ class OutputFormat(str, Enum):
 
 @dataclass
 class CLIState:
-    service: VidXPService
+    local: "LocalApplicationContext"
     registry: RepositoryRegistry
     repository: RepositoryConfig
     output_format: OutputFormat = OutputFormat.rich
     quiet: bool = False
+
+    @property
+    def service(self) -> "VidXPApplication":
+        return self.local.application
+
+    @property
+    def jobs(self) -> "JobService":
+        return self.local.jobs
+
+    @property
+    def settings(self) -> "VidXPSettings":
+        return self.local.settings
 
 
 def state_from_context(ctx: typer.Context) -> CLIState:
@@ -44,6 +65,21 @@ def state_from_context(ctx: typer.Context) -> CLIState:
     if not isinstance(state, CLIState):
         raise RuntimeError("VidXP CLI state was not initialized.")
     return state
+
+
+def require_media_runtime() -> None:
+    if media_runtime_is_initialized():
+        return
+    raise ApplicationError(
+        "media_runtime_uninitialized",
+        ErrorCategory.unavailable,
+        "FFmpeg and ffprobe are not initialized for local media work. "
+        "Run `vidxp init`, then retry this command.",
+        details={
+            "remediation": "vidxp init",
+            "install_hint": "Run vidxp init",
+        },
+    )
 
 
 def effective_output_format(
@@ -64,32 +100,95 @@ def emit_json(payload: Any) -> None:
     )
 
 
+def emit_progress(
+    message: str,
+    *,
+    updated_at: datetime | None = None,
+    newline: bool = True,
+) -> None:
+    timestamp = (updated_at or datetime.now().astimezone()).astimezone()
+    typer.secho(
+        f"[{timestamp:%H:%M:%S}] {message}",
+        fg=typer.colors.BLUE,
+        nl=newline,
+    )
+
+
+def emit_job_progress(job: Any) -> None:
+    if job.progress is not None:
+        message = job.progress.message
+        if (
+            job.progress.stage == "downloading_model"
+            and job.progress.current is not None
+            and job.progress.total
+        ):
+            gib = 1024**3
+            mib = 1024**2
+            unit = gib if job.progress.total >= gib else mib
+            suffix = "GiB" if unit == gib else "MiB"
+            message += (
+                f" {job.progress.current / unit:.1f} of "
+                f"{job.progress.total / unit:.1f} {suffix}"
+            )
+        emit_progress(
+            message,
+            updated_at=job.progress.updated_at,
+        )
+
+
 def emit_search(
-    result: SearchResult,
+    result: FusedSearchResult,
     *,
     output_format: OutputFormat,
 ) -> None:
     if output_format == OutputFormat.json:
-        emit_json(result.to_dict())
+        emit_json(result.model_dump(mode="json"))
         return
-    if not result.hits:
-        typer.echo(f"No {result.modality} matches found.")
+    if not result.moments:
+        typer.echo("No matching moments found.")
         return
-    table = Table(title=f"{result.modality.title()} search results")
+    table = Table(title="Fused search results")
     table.add_column("Rank", justify="right")
     table.add_column("Start", justify="right")
     table.add_column("End", justify="right")
     table.add_column("Score", justify="right")
     table.add_column("Video")
-    for hit in result.hits:
+    table.add_column("Modalities")
+    for moment in result.moments:
         table.add_row(
-            str(hit.rank),
-            f"{hit.start:.3f}s",
-            f"{hit.end:.3f}s",
-            f"{hit.score:.6f}",
-            hit.video_id,
+            str(moment.rank),
+            f"{moment.start:.3f}s",
+            f"{moment.end:.3f}s",
+            f"{moment.score:.6f}",
+            moment.media_id,
+            ", ".join(moment.modalities),
         )
     Console().print(table)
+
+
+def emit_query(
+    result: QueryAnswer,
+    *,
+    output_format: OutputFormat,
+) -> None:
+    if output_format == OutputFormat.json:
+        emit_json(result.model_dump(mode="json"))
+        return
+    console = Console()
+    console.print(f"Mode: {result.mode.value}")
+    if result.claims:
+        for claim in result.claims:
+            console.print(f"• {claim.text}")
+            console.print(f"  Evidence: {', '.join(claim.evidence_ids)}")
+    elif result.evidence:
+        console.print(
+            f"No generated answer; returning {len(result.evidence)} "
+            "evidence item(s)."
+        )
+    else:
+        console.print("No supporting evidence found.")
+    if result.fallback_reason:
+        console.print(f"Fallback: {result.fallback_reason}")
 
 
 def emit_status(
@@ -107,15 +206,8 @@ def emit_status(
     table.add_row("Message", str(status.get("message", "—")))
     if updated_at := status.get("updated_at"):
         table.add_row("Updated", str(updated_at))
-    if video := status.get("video"):
-        table.add_row(
-            "Video",
-            str(video.get("source_name") or video.get("path") or "—"),
-        )
     summary = status.get("summary") or {}
-    if modalities := (summary.get("configuration") or {}).get(
-        "enabled_modalities"
-    ):
+    if modalities := summary.get("modalities"):
         table.add_row("Modalities", ", ".join(map(str, modalities)))
     Console().print(table)
 
@@ -166,25 +258,30 @@ class IndexProgress:
 
 def selected_modalities(
     values: Iterable[str] | None,
+    available: Iterable[str],
 ) -> tuple[str, ...]:
+    supported = tuple(available)
     if values is None:
-        return index_capability_names()
-    try:
-        return validate_capability_names(values)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        return supported
+    selected = tuple(dict.fromkeys(values))
+    unknown = sorted(set(selected) - set(supported))
+    if unknown:
+        raise typer.BadParameter(
+            "Unknown or unsupported capabilities: " + ", ".join(unknown)
+        )
+    return selected
 
 
-def parse_modalities(value: str) -> tuple[str, ...]:
+def parse_modalities(
+    value: str,
+    available: Iterable[str],
+) -> tuple[str, ...]:
     selected = tuple(
         item.strip().lower()
         for item in value.split(",")
         if item.strip()
     )
-    try:
-        return validate_capability_names(selected)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+    return selected_modalities(selected, available)
 
 
 def parse_capability_options(
