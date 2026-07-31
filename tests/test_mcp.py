@@ -34,6 +34,7 @@ from vidxp.application_models import (
     MediaPage,
     Principal,
     QueryVideoCommand,
+    WorkspaceOverview,
 )
 from vidxp.authentication import (
     AuthenticatedBearer,
@@ -103,6 +104,11 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             stage="status",
             message="No index.",
         )
+        application.workspace.return_value = WorkspaceOverview(
+            media_total=0,
+            index=application.index_status.return_value,
+            next_actions=("register_media",),
+        )
         jobs = Mock(spec=JobService)
         readiness = Mock()
         readiness.ready.return_value = True
@@ -132,6 +138,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [tool.name for tool in discovered.tools],
             [
+                "get_workspace",
                 "list_capabilities",
                 "get_capability",
                 "get_runtime_readiness",
@@ -165,6 +172,26 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("active index snapshot", media_description)
         self.assertEqual(result.structured_content, {"items": []})
         self.assertFalse(result.is_error)
+
+    async def test_workspace_tool_projects_actionable_repository_state(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="local",
+                    scopes=frozenset({"*"}),
+                ),
+            )
+            async with Client(server) as client:
+                result = await client.call_tool("get_workspace", {})
+
+        self.assertEqual(result.structured_content["media_total"], 0)
+        self.assertEqual(
+            result.structured_content["next_actions"],
+            ["register_media"],
+        )
+        context.application.workspace.assert_called_once()
 
     def test_stdio_help_and_config_are_ready_to_copy(self):
         config = stdio_client_config(
@@ -217,7 +244,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         rendered = output.getvalue()
         self.assertIn("OK VidXP MCP", rendered)
         self.assertIn("Index state: missing", rendered)
-        self.assertIn("Tools: 16", rendered)
+        self.assertIn("Tools: 17", rendered)
         self.assertIn("get_index_status", rendered)
 
     async def test_server_info_exposes_vidxp_branding(self):
@@ -280,15 +307,13 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             calls[0].kwargs["job_id"],
             calls[1].kwargs["job_id"],
         )
-        self.assertEqual(
-            context.application.require_models.call_args.args[0],
-            ("scene",),
-        )
+        preflight = context.application.preflight_index.call_args.args[0]
+        self.assertEqual(preflight.modalities, ("scene",))
 
     async def test_missing_models_fail_before_index_submission(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
-            context.application.require_models.side_effect = ApplicationError(
+            context.application.preflight_index.side_effect = ApplicationError(
                 "model_unavailable",
                 ErrorCategory.unavailable,
                 "Run vidxp prepare --modalities scene.",
@@ -628,6 +653,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [tool.name for tool in discovered.tools],
             [
+                "get_workspace",
                 "list_capabilities",
                 "get_capability",
                 "get_runtime_readiness",
@@ -697,7 +723,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 16)
+        self.assertEqual(len(discovered.tools), 17)
         self.assertEqual(result.structured_content, {"items": []})
 
     async def test_oidc_verifier_projects_the_shared_validated_token(self):

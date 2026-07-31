@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from vidxp.application_models import CapabilityIdentityMode, CapabilityRole
 from vidxp.capabilities.actor.config import ActorConfig, actor_config
 from vidxp.capabilities.actor.indexing import VISUAL_PROCESSOR
 from vidxp.capabilities.actor.models import (
@@ -77,6 +78,12 @@ DEFINITION = CapabilityDefinition(
     index_stage="visual_indexing",
     execution_group="visual",
     prepares_models=True,
+    roles=(
+        CapabilityRole.queryable,
+        CapabilityRole.inspectable,
+        CapabilityRole.renderable,
+    ),
+    identity_mode=CapabilityIdentityMode.anonymous_clusters,
     model_specs=(YUNET_MODEL, SFACE_MODEL),
     operations={
         "cluster": OperationDefinition(

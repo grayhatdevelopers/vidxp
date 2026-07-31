@@ -18,7 +18,11 @@ from vidxp.core.contracts import IndexConfig, VideoSource
 from vidxp.core.indexing_common import ProgressCallback
 from vidxp.model_contracts import ArtifactSpec, ModelSpec
 from vidxp.ports import IndexReader, ModelRuntimePort
-from vidxp.application_models import CapabilityProvenance
+from vidxp.application_models import (
+    CapabilityIdentityMode,
+    CapabilityProvenance,
+    CapabilityRole,
+)
 
 
 CAPABILITY_CONTRACT_VERSION = 1
@@ -224,6 +228,10 @@ class CapabilityDefinition(_ContractModel):
     index_stage: str | None = None
     execution_group: str | None = None
     operations: Mapping[str, OperationDefinition] = Field(default_factory=dict)
+    roles: tuple[CapabilityRole, ...] = ()
+    identity_mode: CapabilityIdentityMode = (
+        CapabilityIdentityMode.not_applicable
+    )
     model_specs: tuple[ModelSpec | ArtifactSpec, ...] = ()
     prepares_models: bool = False
 
@@ -249,6 +257,16 @@ class CapabilityDefinition(_ContractModel):
         value: Mapping[str, OperationDefinition],
     ) -> Mapping[str, OperationDefinition]:
         return MappingProxyType(dict(value))
+
+    @field_validator("roles")
+    @classmethod
+    def _unique_roles(
+        cls,
+        value: tuple[CapabilityRole, ...],
+    ) -> tuple[CapabilityRole, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("Capability roles must be unique.")
+        return value
 
     @model_validator(mode="after")
     def _require_complete_metadata(self) -> CapabilityDefinition:
@@ -340,6 +358,37 @@ def capability_install_hint(name: str) -> str:
 
 class CapabilityRequestError(ValueError):
     """Expected invalid capability selection or options."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        field: str = "capabilities",
+        reason: str = "capability_request_invalid",
+        requested: tuple[str, ...] = (),
+        available: tuple[str, ...] = (),
+        indexed: tuple[str, ...] = (),
+        next_action: str | None = None,
+    ) -> None:
+        self.field = field
+        self.reason = reason
+        self.requested = requested
+        self.available = available
+        self.indexed = indexed
+        self.next_action = next_action
+        super().__init__(message)
+
+    def details(self) -> dict[str, Any]:
+        result: dict[str, Any] = {"reason": self.reason}
+        if self.requested:
+            result["requested"] = list(self.requested)
+        if self.available:
+            result["available"] = list(self.available)
+        if self.indexed:
+            result["indexed"] = list(self.indexed)
+        if self.next_action is not None:
+            result["next_action"] = self.next_action
+        return result
 
 
 class CapabilityDependencyError(RuntimeError):

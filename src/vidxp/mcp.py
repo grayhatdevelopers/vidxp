@@ -44,6 +44,7 @@ from vidxp.application_models import (
     QueryVideoCommand,
     RuntimeReadiness,
     SearchCommand,
+    WorkspaceOverview,
 )
 from vidxp.authentication import (
     OIDCBearerAuthenticator,
@@ -345,9 +346,11 @@ def create_mcp_server(
             )
         ],
         instructions=(
-            "Call get_runtime_readiness before indexing. If selected model "
+            "Call get_workspace before planning index, search, query, or actor "
+            "work; it reports valid capability roles for each media item. Call "
+            "get_runtime_readiness before indexing. If selected model "
             "artifacts are missing, submit prepare_models and poll get_job "
-            "until it completes. Discover registered media with list_media. "
+            "until it completes. "
             "Register and upload new video through the HTTP/tus API, then use "
             "its media_id with start_indexing. get_index_status identifies the "
             "media included in the active index snapshot. For search_moments "
@@ -416,6 +419,32 @@ def create_mcp_server(
         return await artifact_bytes(
             artifact_id,
             expected_mime_type="video/x-matroska",
+        )
+
+    @server.tool(
+        description=(
+            "Inspect registered media, the active index, installed capabilities, "
+            "and the searchable, queryable, inspectable, or renderable roles "
+            "currently usable for each media item. Call this before planning "
+            "index, search, query, or actor work."
+        ),
+        annotations=_READ_ONLY,
+        structured_output=True,
+    )
+    async def get_workspace(
+        page_size: Annotated[int, Field(gt=0, le=100)] = 50,
+        cursor: Annotated[
+            str | None,
+            Field(min_length=1, max_length=512),
+        ] = None,
+    ) -> WorkspaceOverview:
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=lambda _actor: context.application.workspace(
+                ListMediaCommand(page_size=page_size, cursor=cursor)
+            ),
         )
 
     @server.tool(
@@ -532,7 +561,7 @@ def create_mcp_server(
         idempotency_key: IdempotencyKey,
     ) -> Job:
         def submit(actor: Principal) -> Job:
-            context.application.require_models(command.modalities)
+            context.application.preflight_index(command)
             return context.jobs.submit_index(
                 command,
                 job_id=scoped_job_id(

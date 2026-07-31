@@ -43,6 +43,8 @@ from vidxp.media_service import (
     MediaIdempotencyConflictError,
     MediaImportNotAllowedError,
 )
+
+
 def _validation_details(
     exc: ValidationError,
 ) -> list[dict[str, JsonValue]]:
@@ -113,7 +115,13 @@ def application_boundary(handler: Callable) -> Callable:
                 errors=_validation_details(exc),
             ) from exc
         except CapabilityRequestError as exc:
-            raise InvalidRequestError() from exc
+            error = {
+                "type": "capability_request",
+                "location": [exc.field],
+                "message": str(exc),
+                **exc.details(),
+            }
+            raise InvalidRequestError(errors=[error]) from exc
         except InvalidMediaError as exc:
             raise ApplicationError(
                 "media_invalid",

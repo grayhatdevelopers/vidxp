@@ -25,11 +25,13 @@ from vidxp.application_models import (
     JobKind,
     JobQueue,
     JobState,
+    IndexStatus,
     MediaAsset,
     Principal,
     SearchCommand,
     QueryVideoCommand,
     UploadIntent,
+    WorkspaceOverview,
 )
 from vidxp.composition import (
     HttpApplicationContext,
@@ -278,6 +280,28 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(accepted.json(), {"items": []})
         context.application.list_capabilities.assert_called_once_with()
 
+    def test_workspace_endpoint_returns_actionable_repository_state(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.application.workspace.return_value = WorkspaceOverview(
+                media_total=0,
+                index=IndexStatus(
+                    schema_version=2,
+                    state="missing",
+                    stage="status",
+                    message="No index.",
+                ),
+                next_actions=("register_media",),
+            )
+            with TestClient(create_app(context=context)) as client:
+                response = client.get("/api/v1/workspace?page_size=25")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["media_total"], 0)
+        self.assertEqual(response.json()["next_actions"], ["register_media"])
+        command = context.application.workspace.call_args.args[0]
+        self.assertEqual(command.page_size, 25)
+
     def test_repository_scopes_are_enforced_per_operation(self):
         with TemporaryDirectory() as directory:
             context = self.context(
@@ -378,7 +402,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(command.media_id, MEDIA_ID)
         self.assertEqual(command.modalities, ("scene",))
         self.assertEqual(command.scene_sample_fps, 0.5)
-        context.application.require_models.assert_called_once_with(("scene",))
+        context.application.preflight_index.assert_called_once_with(command)
         expected_job_id = scoped_job_id(
             context,
             context.authenticator.authenticate(None),
@@ -441,7 +465,7 @@ class ApiTests(unittest.TestCase):
     def test_missing_models_fail_before_job_submission(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
-            context.application.require_models.side_effect = ApplicationError(
+            context.application.preflight_index.side_effect = ApplicationError(
                 "model_unavailable",
                 ErrorCategory.unavailable,
                 "Run vidxp prepare --modalities scene.",

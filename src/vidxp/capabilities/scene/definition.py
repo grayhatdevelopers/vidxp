@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from vidxp.application_models import CapabilityRole
 from vidxp.capabilities.contracts import (
     CapabilityDefinition,
     CapabilityExecutor,
@@ -59,6 +60,7 @@ DEFINITION = CapabilityDefinition(
     index_stage="visual_indexing",
     execution_group="visual",
     prepares_models=True,
+    roles=(CapabilityRole.searchable, CapabilityRole.queryable),
     model_specs=(SIGLIP2_MODEL,),
     operations={
         "search": OperationDefinition(

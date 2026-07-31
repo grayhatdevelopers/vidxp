@@ -171,6 +171,12 @@ scenes, ask questions about a library, and create clips or actor overlays.
 Local agents can connect over stdio; remote agents can connect to a
 self-hosted VidXP server.
 
+Agents can call `get_workspace` before acting to inspect registered media,
+active-index coverage, model readiness, and the searchable, queryable,
+inspectable, or renderable roles available for each video. Invalid capability
+or media selections are rejected before a durable job is queued and include an
+actionable next step.
+
 - [Python, HTTP, and MCP installation](INSTALLATION_GUIDE.md)
 - [Optional capability packages](INSTALLATION_GUIDE.md#optional-dependency-extras)
 - [Coolify server setup](docs/deployment/coolify.md)

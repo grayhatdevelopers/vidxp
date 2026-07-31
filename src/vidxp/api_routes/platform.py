@@ -1,12 +1,14 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from vidxp.api_routes.dependencies import context, read_principal
 from vidxp.application_models import (
     CapabilityInfo,
     CapabilityList,
+    ListMediaCommand,
     RuntimeReadiness,
+    WorkspaceOverview,
 )
 from vidxp.composition import HttpApplicationContext
 
@@ -15,6 +17,25 @@ router = APIRouter(
     tags=["platform"],
     dependencies=[Depends(read_principal)],
 )
+
+
+@router.get(
+    "/workspace",
+    response_model=WorkspaceOverview,
+    operation_id="getWorkspace",
+    summary="Inspect media and usable capability roles",
+)
+def workspace(
+    service: Annotated[HttpApplicationContext, Depends(context)],
+    page_size: Annotated[int, Query(gt=0, le=100)] = 50,
+    cursor: Annotated[
+        str | None,
+        Query(min_length=1, max_length=512),
+    ] = None,
+) -> WorkspaceOverview:
+    return service.application.workspace(
+        ListMediaCommand(page_size=page_size, cursor=cursor)
+    )
 
 
 @router.get(

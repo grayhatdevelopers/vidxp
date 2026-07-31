@@ -159,12 +159,9 @@ def _server_chroma_url(settings: VidXPSettings) -> str | None:
     return BUNDLED_CHROMA_SERVER_URL
 
 
-def _create_control_plane_components(
-    settings: VidXPSettings,
-) -> _ControlPlaneComponents:
-    settings.layout.ensure_local_directories()
+def _capability_registry(settings: VidXPSettings) -> CapabilityRegistry:
     server_mode = settings.mode == ApplicationMode.server
-    registry = create_capability_registry(
+    return create_capability_registry(
         external=settings.external_capabilities,
         allowlist=settings.capability_allowlist,
         platform_runtime_checks=(
@@ -183,6 +180,13 @@ def _create_control_plane_components(
             else None
         ),
     )
+
+
+def _create_control_plane_components(
+    settings: VidXPSettings,
+) -> _ControlPlaneComponents:
+    settings.layout.ensure_local_directories()
+    registry = _capability_registry(settings)
     catalog = (
         SQLCatalog(
             workflow_database_url(settings),
@@ -305,6 +309,7 @@ def create_application(
         media=components.media,
         artifacts=artifacts,
         index_status=backend.repository.status,
+        active_snapshot=components.snapshots.read_active,
         completed_upload_importer=(
             upload_service.import_completed
             if upload_service is not None
@@ -319,6 +324,7 @@ def create_job_service(
     *,
     catalog: SQLCatalog | None = None,
     snapshots: LocalSnapshotRepository | None = None,
+    registry: CapabilityRegistry | None = None,
     include_read_planner: bool = True,
 ) -> JobService:
     settings.layout.ensure_local_directories()
@@ -353,6 +359,7 @@ def create_job_service(
         read_planner=(
             LocalReadJobPlanner(
                 layout=settings.layout,
+                registry=registry or _capability_registry(settings),
                 index=LocalIndexReader(
                     settings.layout,
                     chroma_server_url=_server_chroma_url(settings),
@@ -380,11 +387,13 @@ def create_control_plane_application(
         ),
         index_status=components.snapshots.status,
         model_cache=active_settings.model_cache,
+        active_snapshot=components.snapshots.read_active,
     )
     jobs = create_job_service(
         active_settings,
         catalog=components.catalog,
         snapshots=components.snapshots,
+        registry=components.registry,
     )
     uploads = (
         RemoteUploadService(

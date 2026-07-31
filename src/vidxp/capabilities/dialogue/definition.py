@@ -5,6 +5,7 @@ from typing import Any, Mapping
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
+from vidxp.application_models import CapabilityRole
 from vidxp.capabilities.contracts import (
     CapabilityDefinition,
     CapabilityExecutor,
@@ -96,6 +97,7 @@ DEFINITION = CapabilityDefinition(
     index_stage="dialogue_indexing",
     execution_group="dialogue",
     prepares_models=True,
+    roles=(CapabilityRole.searchable, CapabilityRole.queryable),
     model_specs=(QWEN3_EMBEDDING_MODEL, FASTER_WHISPER_MODEL),
     operations={
         "search": OperationDefinition(

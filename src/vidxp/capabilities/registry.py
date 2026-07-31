@@ -187,7 +187,12 @@ class CapabilityRegistry:
             available = ", ".join(self.names())
             raise CapabilityRequestError(
                 f"Unknown capability {name!r}. "
-                f"Available capabilities: {available}."
+                f"Available capabilities: {available}.",
+                field="modalities",
+                reason="capability_unknown",
+                requested=(name,),
+                available=self.names(),
+                next_action="Choose a capability returned by get_workspace.",
             ) from exc
 
     def executor(self, name: str) -> CapabilityExecutor:
@@ -222,7 +227,13 @@ class CapabilityRegistry:
     def validate_names(self, names: Iterable[str]) -> tuple[str, ...]:
         selected = tuple(dict.fromkeys(str(name).strip() for name in names))
         if not selected:
-            raise CapabilityRequestError("At least one capability is required.")
+            raise CapabilityRequestError(
+                "At least one capability is required.",
+                field="modalities",
+                reason="capability_required",
+                available=self.names(),
+                next_action="Choose a capability returned by get_workspace.",
+            )
         for name in selected:
             self.get(name)
         return selected
@@ -249,7 +260,15 @@ class CapabilityRegistry:
         if unknown:
             raise CapabilityRequestError(
                 "Options were supplied for disabled capabilities: "
-                + ", ".join(unknown)
+                + ", ".join(unknown),
+                field="capability_options",
+                reason="capability_options_disabled",
+                requested=tuple(unknown),
+                available=selected,
+                next_action=(
+                    "Remove options for disabled capabilities or enable those "
+                    "capabilities in modalities."
+                ),
             )
         return {
             name: self.get(name)

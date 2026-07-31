@@ -28,6 +28,8 @@ class CapabilityService:
             install_extra=definition.extra,
             supports_indexing=definition.collection_name is not None,
             prepares_models=definition.prepares_models,
+            roles=definition.roles,
+            identity_mode=definition.identity_mode,
             provenance=self.registry.provenance(name),
         )
 

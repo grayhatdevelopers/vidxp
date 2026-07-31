@@ -7,8 +7,10 @@ from vidxp.application_boundary import application_boundary
 from vidxp.application_models import (
     Artifact,
     CapabilityInfo,
+    CapabilityRole,
     CapabilitySummary,
     ComponentReadiness,
+    CreateIndexCommand,
     DependencyCheckResult,
     IndexStatus,
     InvalidRequestError,
@@ -18,11 +20,16 @@ from vidxp.application_models import (
     ModelUnavailableError,
     ResourceNotFoundError,
     RuntimeReadiness,
+    WorkspaceCapability,
+    WorkspaceMedia,
+    WorkspaceMediaCapability,
+    WorkspaceOverview,
 )
 from vidxp.artifact_service import ArtifactQueryService
 from vidxp.capabilities.contracts import CapabilityRequestError
 from vidxp.capability_service import CapabilityService
 from vidxp.core.media import QuarantinedMedia
+from vidxp.core.snapshots import IndexSnapshot
 from vidxp.index_state import INDEX_STATUS_SCHEMA
 from vidxp.media_service import MediaService
 from vidxp.ports import LocalFileResource
@@ -41,12 +48,14 @@ class ControlPlaneApplication:
         artifacts: ArtifactQueryService,
         index_status: Callable[[], dict | None],
         model_cache: Path,
+        active_snapshot: Callable[[], IndexSnapshot | None] | None = None,
     ) -> None:
         self.layout = layout
         self.capabilities = capabilities
         self.media = media
         self.artifacts = artifacts
         self._read_index_status = index_status
+        self._read_active_snapshot = active_snapshot or (lambda: None)
         self.model_cache = model_cache
 
     @application_boundary
@@ -104,6 +113,139 @@ class ControlPlaneApplication:
             return self.media.list(command)
         except ValueError as exc:
             raise InvalidRequestError() from exc
+
+    @application_boundary
+    def workspace(self, command: ListMediaCommand) -> WorkspaceOverview:
+        page = self.list_media(command)
+        index = self.index_status()
+        snapshot = self._read_active_snapshot()
+        capabilities = self.list_capabilities()
+        readiness = self.model_readiness()
+        readiness_by_capability = {
+            capability.name: all(
+                check.ok
+                for check in readiness.checks
+                if check.capability == capability.name
+            )
+            for capability in capabilities
+            if capability.prepares_models
+        }
+        projected_capabilities = tuple(
+            WorkspaceCapability(
+                **capability.model_dump(),
+                models_ready=readiness_by_capability.get(capability.name),
+            )
+            for capability in capabilities
+        )
+        media = tuple(
+            self._workspace_media(
+                asset,
+                capabilities=capabilities,
+                snapshot=snapshot,
+            )
+            for asset in page.items
+        )
+        indexed_media = (
+            frozenset(snapshot.generations) if snapshot is not None else frozenset()
+        )
+        indexed_capabilities = (
+            {
+                name
+                for generation in snapshot.generations.values()
+                for name in generation.modalities
+            }
+            if snapshot is not None
+            else set()
+        )
+        active_roles = {
+            role
+            for capability in capabilities
+            if capability.name in indexed_capabilities
+            for role in capability.roles
+        }
+        next_actions = []
+        if page.total == 0:
+            next_actions.append("register_media")
+        if page.total > len(indexed_media) or any(
+            item.media_id not in indexed_media for item in page.items
+        ):
+            next_actions.append("index_media")
+        if CapabilityRole.searchable in active_roles:
+            next_actions.append("find_moments")
+        if CapabilityRole.queryable in active_roles:
+            next_actions.append("answer_video")
+        return WorkspaceOverview(
+            capabilities=projected_capabilities,
+            media=media,
+            media_total=page.total,
+            next_cursor=page.next_cursor,
+            index=index,
+            next_actions=tuple(next_actions),
+        )
+
+    @staticmethod
+    def _workspace_media(
+        asset: MediaAsset,
+        *,
+        capabilities: tuple[CapabilitySummary, ...],
+        snapshot: IndexSnapshot | None,
+    ) -> WorkspaceMedia:
+        generation = (
+            snapshot.generations.get(asset.media_id) if snapshot is not None else None
+        )
+        coverage = tuple(
+            WorkspaceMediaCapability(
+                name=capability.name,
+                indexed=(
+                    generation is not None and capability.name in generation.modalities
+                ),
+                record_count=(
+                    generation.record_counts.get(capability.name)
+                    if generation is not None
+                    and capability.name in generation.modalities
+                    else None
+                ),
+                roles=(
+                    capability.roles
+                    if generation is not None
+                    and capability.name in generation.modalities
+                    else ()
+                ),
+                identity_mode=capability.identity_mode,
+            )
+            for capability in capabilities
+        )
+        return WorkspaceMedia(
+            media_id=asset.media_id,
+            original_filename=asset.original_filename,
+            duration_seconds=asset.duration_seconds,
+            state=asset.state,
+            in_active_snapshot=generation is not None,
+            capabilities=coverage,
+        )
+
+    @application_boundary
+    def preflight_index(self, command: CreateIndexCommand) -> None:
+        selected = self.capabilities.registry.validate_names(command.modalities)
+        indexable = self.capabilities.registry.index_names()
+        unsupported = tuple(name for name in selected if name not in indexable)
+        if unsupported:
+            raise CapabilityRequestError(
+                "Indexing does not support these capabilities: "
+                + ", ".join(unsupported)
+                + ".",
+                field="modalities",
+                reason="capability_not_indexable",
+                requested=unsupported,
+                available=indexable,
+                next_action="Choose capabilities returned by get_workspace.",
+            )
+        self.capabilities.registry.validate_options(
+            selected,
+            command.capability_options,
+        )
+        self.get_media(command.media_id)
+        self.require_models(selected)
 
     @application_boundary
     def open_media_content(self, media_id: str) -> LocalFileResource:
@@ -186,10 +328,7 @@ class ControlPlaneApplication:
         components = self.control_plane_readiness()
         models = self.model_readiness()
         return RuntimeReadiness(
-            ready=(
-                all(component.ready for component in components)
-                and models.ok
-            ),
+            ready=(all(component.ready for component in components) and models.ok),
             runtime=None,
             components=components,
             dependencies=models,

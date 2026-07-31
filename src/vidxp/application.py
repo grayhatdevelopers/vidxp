@@ -56,6 +56,7 @@ from vidxp.capabilities.schemas import SearchResult
 from vidxp.core.contracts import (
     IndexConfig,
 )
+from vidxp.core.snapshots import IndexSnapshot
 from vidxp.execution import ExecutionContext, execution_context
 from vidxp.ports import IndexBackend, ModelRuntimePort, QueryModelPort
 from vidxp.query_service import GroundedQueryService
@@ -89,6 +90,7 @@ class VidXPApplication(ControlPlaneApplication):
         media: MediaService,
         artifacts: ArtifactService,
         index_status: Callable[[], dict[str, Any] | None],
+        active_snapshot: Callable[[], IndexSnapshot | None] | None = None,
         completed_upload_importer: Callable[[str], MediaAsset] | None = None,
         query_model: QueryModelPort | None = None,
     ) -> None:
@@ -104,6 +106,7 @@ class VidXPApplication(ControlPlaneApplication):
             artifacts=artifacts,
             index_status=index_status,
             model_cache=settings.model_cache,
+            active_snapshot=active_snapshot,
         )
         self.settings = settings
 

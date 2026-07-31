@@ -291,12 +291,29 @@ class CapabilityOperationInfo(ApplicationModel):
     output_schema: dict[str, JsonValue]
 
 
+class CapabilityRole(StrEnum):
+    searchable = "searchable"
+    queryable = "queryable"
+    inspectable = "inspectable"
+    renderable = "renderable"
+
+
+class CapabilityIdentityMode(StrEnum):
+    not_applicable = "not_applicable"
+    anonymous_clusters = "anonymous_clusters"
+    registered_entities = "registered_entities"
+
+
 class CapabilitySummary(ApplicationModel):
     name: str = Field(min_length=1)
     description: str = Field(min_length=1)
     install_extra: str = Field(min_length=1)
     supports_indexing: bool
     prepares_models: bool
+    roles: tuple[CapabilityRole, ...] = ()
+    identity_mode: CapabilityIdentityMode = (
+        CapabilityIdentityMode.not_applicable
+    )
     provenance: CapabilityProvenance | None = None
 
 
@@ -586,6 +603,47 @@ class IndexStatusSummary(ApplicationModel):
                 "media_ids_truncated must reflect the returned media-ID window"
             )
         return self
+
+
+class WorkspaceCapability(CapabilitySummary):
+    models_ready: bool | None = Field(
+        default=None,
+        description=(
+            "Whether required model artifacts are prepared. Null means the "
+            "capability does not prepare model artifacts."
+        ),
+    )
+
+
+class WorkspaceMediaCapability(ApplicationModel):
+    name: Identifier
+    indexed: bool
+    record_count: NonNegativeInt | None = None
+    roles: tuple[CapabilityRole, ...] = Field(
+        default=(),
+        description="Capability roles currently usable for this media item.",
+    )
+    identity_mode: CapabilityIdentityMode = (
+        CapabilityIdentityMode.not_applicable
+    )
+
+
+class WorkspaceMedia(ApplicationModel):
+    media_id: MediaId
+    original_filename: str = Field(min_length=1)
+    duration_seconds: float = Field(gt=0)
+    state: MediaState
+    in_active_snapshot: bool
+    capabilities: tuple[WorkspaceMediaCapability, ...] = ()
+
+
+class WorkspaceOverview(ApplicationModel):
+    capabilities: tuple[WorkspaceCapability, ...] = ()
+    media: tuple[WorkspaceMedia, ...] = ()
+    media_total: NonNegativeInt
+    next_cursor: str | None = None
+    index: IndexStatus
+    next_actions: tuple[str, ...] = ()
 
 
 class FusionProfile(StrEnum):

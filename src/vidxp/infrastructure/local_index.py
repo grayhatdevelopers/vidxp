@@ -20,6 +20,7 @@ from vidxp.core.contracts import (
 from vidxp.core.indexing_common import ProgressCallback
 from vidxp.core.manifest import MANIFEST_FILE, ManifestStore
 from vidxp.core.runner import index_video
+from vidxp.core.snapshots import IndexSnapshot
 from vidxp.core.storage import (
     ChromaClientFactory,
     IndexStorage,
@@ -88,6 +89,15 @@ class LocalIndexReader:
         self._require_index_directory(index_directory)
         config, _snapshot = self.repository.active_config(device=device)
         return config
+
+    def active_snapshot(
+        self,
+        index_directory: Path,
+        *,
+        device: str,
+    ) -> tuple[IndexConfig, IndexSnapshot]:
+        self._require_index_directory(index_directory)
+        return self.repository.active_config(device=device)
 
     def config_for_snapshot(
         self,
