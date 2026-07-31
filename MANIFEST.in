@@ -1,5 +1,6 @@
 include README.md
 include LICENSE
+include docs/images/logo.png
 global-exclude *.whl
 global-exclude *.pyc
 global-exclude __pycache__

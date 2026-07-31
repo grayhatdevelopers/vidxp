@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from vidxp.capabilities.dialogue.config import dialogue_config
-from vidxp.capabilities.dialogue.models import (
-    get_alignment_model,
-    get_embedder,
-    get_whisper_model,
+from vidxp.capabilities.dialogue.models import get_embedder, get_whisper_model
+from vidxp.capabilities.dialogue.specs import (
+    FASTER_WHISPER_MODEL,
+    QWEN3_EMBEDDING_MODEL,
 )
 from vidxp.core.contracts import (
     CancellationToken,
@@ -19,8 +18,7 @@ from vidxp.core.contracts import (
     stable_source_id,
 )
 from vidxp.core.indexing_common import ProgressCallback, report_progress
-from vidxp.core.storage import IndexStorage
-from vidxp.core.video import extract_audio
+from vidxp.ports import IndexStore, ModelRuntimePort
 
 
 @dataclass(frozen=True)
@@ -118,73 +116,63 @@ def transcribe_video(
     input_path: str | Path,
     *,
     config: IndexConfig,
-    work_directory: str | Path,
     cancellation: CancellationToken,
+    runtime: ModelRuntimePort,
     progress: ProgressCallback | None,
-) -> tuple[list[Mapping[str, Any]], str]:
-    import whisperx
+) -> tuple[list[Mapping[str, Any]], str | None]:
+    import av
+    from faster_whisper import BatchedInferencePipeline
 
     settings = dialogue_config(config)
     cancellation.raise_if_cancelled()
-    audio_name = hashlib.sha256(
-        str(config.video_id).encode("utf-8")
-    ).hexdigest()
-    audio_path = Path(work_directory) / f"{audio_name}.wav"
+    with av.open(str(input_path)) as container:
+        if not container.streams.audio:
+            report_progress(
+                progress,
+                "dialogue_skipped",
+                "No audio stream was found; dialogue indexing was skipped.",
+            )
+            return [], None
     report_progress(
         progress,
-        "extracting_audio",
-        "Extracting audio from the video.",
+        "preparing_transcription_model",
+        "Preparing transcription model: faster-whisper "
+        f"{FASTER_WHISPER_MODEL.model_id}.",
     )
-    extract_audio(input_path, audio_path)
-    try:
+    whisper_model = get_whisper_model(runtime)
+    report_progress(
+        progress,
+        "transcribing_audio",
+        "Transcribing and timestamping the video audio.",
+    )
+    segments, info = BatchedInferencePipeline(
+        model=whisper_model
+    ).transcribe(
+        str(input_path),
+        batch_size=settings.transcription_batch_size,
+        word_timestamps=True,
+        vad_filter=True,
+    )
+    result = []
+    for segment in segments:
         cancellation.raise_if_cancelled()
-        report_progress(
-            progress,
-            "preparing_transcription_model",
-            f"Preparing transcription model: WhisperX {settings.whisper_model}.",
+        result.append(
+            {
+                "text": segment.text,
+                "start": segment.start,
+                "end": segment.end,
+                "words": [
+                    {
+                        "word": word.word,
+                        "start": word.start,
+                        "end": word.end,
+                    }
+                    for word in (segment.words or ())
+                    if word.start is not None and word.end is not None
+                ],
+            }
         )
-        whisper_model = get_whisper_model(
-            settings.whisper_model,
-            config.device,
-        )
-        audio = whisperx.load_audio(str(audio_path))
-        report_progress(
-            progress,
-            "transcribing_audio",
-            "Transcribing the video audio.",
-        )
-        transcription = whisper_model.transcribe(
-            audio,
-            batch_size=settings.transcription_batch_size,
-        )
-        language = str(transcription["language"])
-
-        cancellation.raise_if_cancelled()
-        report_progress(
-            progress,
-            "preparing_alignment_model",
-            f"Preparing the {language} alignment model.",
-        )
-        alignment_model, alignment_metadata = get_alignment_model(
-            language,
-            config.device,
-        )
-        report_progress(
-            progress,
-            "aligning_audio",
-            "Aligning transcript timestamps.",
-        )
-        aligned = whisperx.align(
-            transcription["segments"],
-            alignment_model,
-            alignment_metadata,
-            audio,
-            config.device,
-            return_char_alignments=False,
-        )
-        return list(aligned["segments"]), language
-    finally:
-        audio_path.unlink(missing_ok=True)
+    return result, str(info.language)
 
 
 def _dialogue_records(
@@ -199,6 +187,7 @@ def _dialogue_records(
             str(config.video_id),
             "dialogue",
             f"p{phrase.phrase_id:08d}",
+            generation_id=config.generation_id,
         )
         records.append(
             StorageRecord(
@@ -221,8 +210,9 @@ def index_dialogue(
     source: VideoSource,
     *,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
+    runtime: ModelRuntimePort,
     progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     if config.video_id is None:
@@ -240,8 +230,8 @@ def index_dialogue(
         segments, language = transcribe_video(
             source.path,
             config=config,
-            work_directory=config.run_directory / "work",
             cancellation=cancellation,
+            runtime=runtime,
             progress=progress,
         )
 
@@ -255,11 +245,11 @@ def index_dialogue(
     report_progress(
         progress,
         "preparing_dialogue_model",
-        f"Preparing dialogue model: {settings.sentence_model}.",
+        f"Preparing dialogue model: {QWEN3_EMBEDDING_MODEL.model_id}.",
         0,
         len(phrases),
     )
-    encoder = get_embedder(settings.sentence_model, config.device)
+    encoder = get_embedder(runtime)
     report_progress(
         progress,
         "dialogue_indexing",
@@ -271,7 +261,7 @@ def index_dialogue(
     for offset in range(0, len(phrases), settings.embedding_batch_size):
         cancellation.raise_if_cancelled()
         group = phrases[offset:offset + settings.embedding_batch_size]
-        vectors = encoder.encode(
+        vectors = encoder.encode_document(
             [phrase.text for phrase in group],
             batch_size=len(group),
             convert_to_numpy=True,

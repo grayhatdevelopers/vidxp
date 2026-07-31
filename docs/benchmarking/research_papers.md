@@ -120,7 +120,7 @@ ranks whole videos rather than locating timestamps.
 
 | Paper | Typical benchmarks | Relevance |
 | --- | --- | --- |
-| [CLIP: Learning Transferable Visual Models From Natural Language Supervision](https://arxiv.org/abs/2103.00020) | Image-text transfer only; no selected video temporal benchmark | Foundation of the current scene encoder; provenance, not a video benchmark |
+| [CLIP: Learning Transferable Visual Models From Natural Language Supervision](https://arxiv.org/abs/2103.00020) | Image-text transfer only; no selected video temporal benchmark | Foundation for the legacy CLIP scene baseline and a relevant SigLIP2 predecessor; provenance, not a video benchmark |
 | [CLIP4Clip](https://github.com/ArrowLuo/CLIP4Clip) | MSR-VTT, MSVD, LSMDC, ActivityNet, DiDeMo whole-video/clip retrieval | Established CLIP video-text comparator; its DiDeMo/ActivityNet use is not temporal localization |
 | [Frozen in Time](https://github.com/m-bain/frozen-in-time) | MSR-VTT, DiDeMo, LSMDC, MSVD whole-video retrieval | Retrieval baseline and practical MSR-VTT preparation route; WebVid/image-caption sets are pretraining |
 | [X-CLIP](https://github.com/xuguohai/X-CLIP) | MSR-VTT, MSVD, LSMDC, DiDeMo, ActivityNet whole-video retrieval | Stronger supervised CLIP-style comparator, not a timestamp baseline |

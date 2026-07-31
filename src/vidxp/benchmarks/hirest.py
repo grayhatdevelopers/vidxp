@@ -13,6 +13,8 @@ from typing import Any, Literal, Mapping, Sequence
 
 from vidxp.benchmarks.common import (
     append_failure,
+    benchmark_generation_id,
+    benchmark_media_id,
     ensure_adapter_outputs,
     record_adapter_manifest,
     run_logged_evaluator,
@@ -21,9 +23,14 @@ from vidxp.benchmarks.common import (
 from vidxp.capabilities.dialogue.config import dialogue_config
 from vidxp.capabilities.dialogue.operations import search_dialogue
 from vidxp.capabilities.schemas import SearchHit
+from vidxp.capabilities.registry import create_capability_registry
 from vidxp.core.contracts import IndexConfig, VideoSource
-from vidxp.core.manifest import sha256_file, write_json_atomic
+from vidxp.core.manifest import ManifestStore, sha256_file, write_json_atomic
 from vidxp.core.runner import run_index
+from vidxp.core.storage import IndexStorage
+from vidxp.infrastructure.local_index import LOCAL_INDEX_RUNTIME_CHECKS
+from vidxp.runtime import ModelRuntime
+from vidxp.settings import VidXPSettings
 
 
 HIREST_REVISION = "deffc169b4e8d51c1589d5512ad05da61e81bcee"
@@ -46,6 +53,9 @@ HIREST_CATEGORIES_SHA256 = (
     "157623d50f7b8482f55fa1c4efc500539784c0399fb2dd60bb687b4006d85ca1"
 )
 HIREST_EVALUATOR_SHA256 = (
+    "871b48dc5ce42fbe1a4b672fe4df88a88ce568d57759dfc971e5aacc5f88f119"
+)
+HIREST_EVALUATOR_CRLF_SHA256 = (
     "c4b8ba9b572ae4088e90ddc3eec2b2cc4f5b4c1a0153ff6e0843817da89a5ca0"
 )
 HIREST_DEFAULT_WINDOW_FRACTION = 0.8
@@ -264,7 +274,10 @@ def _verified_artifacts(
         verify_artifact(
             evaluator_path,
             name="HiREST evaluator",
-            expected_sha256=HIREST_EVALUATOR_SHA256,
+            expected_sha256=(
+                HIREST_EVALUATOR_SHA256,
+                HIREST_EVALUATOR_CRLF_SHA256,
+            ),
             source=f"{revision_root}/evaluate.py",
             revision=HIREST_REVISION,
         ),
@@ -292,7 +305,7 @@ def _transcript_sources(
             )
         sources.append(
             VideoSource(
-                video_id=video,
+                video_id=benchmark_media_id("hirest", video),
                 source_name=asr_path.name,
                 transcript=parse_srt(asr_path),
                 checksum=sha256_file(asr_path),
@@ -312,6 +325,8 @@ def _generate_predictions(
     config: IndexConfig,
     manifest: Mapping[str, Any],
     temporal_window_fraction: float,
+    runtime: ModelRuntime,
+    storage: IndexStorage,
 ) -> dict[str, dict[str, dict[str, list[float]]]]:
     dialogue_counts = {
         video_id: int(video["summary"]["dialogue_phrases"])
@@ -319,12 +334,15 @@ def _generate_predictions(
     }
     predictions: dict[str, dict[str, dict[str, list[float]]]] = {}
     for prompt, video in ordered_pairs:
+        media_id = benchmark_media_id("hirest", video)
         hits = search_dialogue(
             prompt,
             config=config,
-            top_k=dialogue_counts[video],
-            video_id=video,
+            top_k=dialogue_counts[media_id],
+            video_id=media_id,
             query_id=f"{prompt}\0{video}",
+            runtime=runtime,
+            storage=storage,
         ).hits
         if not hits:
             raise RuntimeError(
@@ -430,8 +448,19 @@ def run_hirest(
         enabled_modalities=("dialogue",),
         device=device,
         output_root=output_root,
+        generation_id=benchmark_generation_id("hirest", split, run_id),
     )
     run_directory = config.run_directory
+    registry = create_capability_registry(
+        platform_runtime_checks=LOCAL_INDEX_RUNTIME_CHECKS
+    )
+    runtime = ModelRuntime(
+        VidXPSettings(
+            repository_root=run_directory,
+            runtime_backend=device,
+        ),
+        allowed_specs=registry.model_specs(),
+    )
     ensure_adapter_outputs(run_directory)
     subset = {
         "label": (
@@ -444,29 +473,40 @@ def run_hirest(
         "video_count": len({video for _, video in ordered_pairs}),
     }
     try:
-        manifest = run_index(
-            _transcript_sources(
+        with IndexStorage(config) as storage:
+            manifest = run_index(
+                _transcript_sources(
+                    ordered_pairs,
+                    asr_directory=asr_directory,
+                ),
+                config,
+                reset=reset,
+                storage=storage,
+                manifest_store=ManifestStore(
+                    config,
+                    registry=registry,
+                    runtime=runtime,
+                ),
+                registry=registry,
+                runtime=runtime,
+            )
+            ensure_adapter_outputs(run_directory)
+            record_adapter_manifest(
+                run_directory,
+                benchmark="hirest",
+                subset=subset,
+                artifacts=artifacts,
+                state="predicting",
+            )
+            predictions = _generate_predictions(
                 ordered_pairs,
-                asr_directory=asr_directory,
-            ),
-            config,
-            reset=reset,
-        )
-        ensure_adapter_outputs(run_directory)
-        record_adapter_manifest(
-            run_directory,
-            benchmark="hirest",
-            subset=subset,
-            artifacts=artifacts,
-            state="predicting",
-        )
-        predictions = _generate_predictions(
-            ordered_pairs,
-            ground_truth=ground_truth,
-            config=config,
-            manifest=manifest,
-            temporal_window_fraction=temporal_window_fraction,
-        )
+                ground_truth=ground_truth,
+                config=config,
+                manifest=manifest,
+                temporal_window_fraction=temporal_window_fraction,
+                runtime=runtime,
+                storage=storage,
+            )
         validate_predictions(predictions, ground_truth)
         predictions_path = run_directory / "predictions.json"
         ground_truth_subset_path = (
@@ -489,8 +529,11 @@ def run_hirest(
                 "duration_relative_window_mean_second_score"
             ),
             "temporal_window_fraction": temporal_window_fraction,
-            "whisperx_used": False,
+            "transcription_provider": "supplied-transcript",
             "video_decode_used": False,
+            "media_id_mapping": (
+                "deterministic_uuid4_from_benchmark_and_official_video_id"
+            ),
         }
         if split == "test":
             summary = {

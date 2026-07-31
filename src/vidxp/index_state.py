@@ -1,13 +1,46 @@
-import hashlib
-import json
-from datetime import datetime, timezone
-from pathlib import Path
+from __future__ import annotations
+
 from typing import Any
 
+from vidxp.core.contracts import INDEX_SCHEMA_VERSION
+from vidxp.core.snapshots import IndexSnapshot
 
-INDEX_DIRECTORY = Path("chroma_data")
-INDEX_STATUS_FILE = "index_status.json"
+
 INDEX_STATUS_SCHEMA = 1
+INDEX_STATUS_MEDIA_ID_LIMIT = 100
+
+
+def bounded_media_ids(media_ids: list[str]) -> dict[str, object]:
+    selected = media_ids[:INDEX_STATUS_MEDIA_ID_LIMIT]
+    return {
+        "media_ids": selected,
+        "media_ids_truncated": len(media_ids) > len(selected),
+    }
+
+
+def snapshot_status(snapshot: IndexSnapshot) -> dict[str, Any]:
+    media_ids = sorted(snapshot.generations)
+    ready = bool(media_ids)
+    return {
+        "schema_version": INDEX_STATUS_SCHEMA,
+        "state": "ready" if ready else "empty",
+        "stage": "status",
+        "message": (
+            f"The active snapshot contains {len(media_ids)} media item(s)."
+            if ready
+            else "The active index snapshot is empty."
+        ),
+        "updated_at": snapshot.created_at.isoformat(),
+        "summary": {
+            "index_schema_version": INDEX_SCHEMA_VERSION,
+            "snapshot_id": snapshot.snapshot_id,
+            "media_count": len(media_ids),
+            **bounded_media_ids(media_ids),
+            "modalities": tuple(
+                snapshot.configuration.get("enabled_modalities", ())
+            ),
+        },
+    }
 
 
 class IndexNotReadyError(RuntimeError):
@@ -16,92 +49,3 @@ class IndexNotReadyError(RuntimeError):
 
 class IndexingInProgressError(RuntimeError):
     """Raised when another indexing run is already active."""
-
-
-def fingerprint_file(path: str | Path) -> dict[str, Any]:
-    file_path = Path(path)
-    digest = hashlib.sha256()
-
-    with file_path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-
-    stat = file_path.stat()
-    return {
-        "path": str(file_path.resolve()),
-        "size": stat.st_size,
-        "sha256": digest.hexdigest(),
-    }
-
-
-def read_index_status(index_directory: str | Path = INDEX_DIRECTORY) -> dict[str, Any] | None:
-    status_path = Path(index_directory) / INDEX_STATUS_FILE
-    if not status_path.is_file():
-        return None
-
-    try:
-        return json.loads(status_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {
-            "schema_version": INDEX_STATUS_SCHEMA,
-            "state": "failed",
-            "stage": "status",
-            "message": "The saved index status is unreadable. Re-index the video.",
-        }
-
-
-def write_index_status(
-    *,
-    state: str,
-    stage: str,
-    message: str,
-    video: dict[str, Any] | None = None,
-    current: int | None = None,
-    total: int | None = None,
-    summary: dict[str, Any] | None = None,
-    error: str | None = None,
-    index_directory: str | Path = INDEX_DIRECTORY,
-) -> dict[str, Any]:
-    index_path = Path(index_directory)
-    index_path.mkdir(parents=True, exist_ok=True)
-    status_path = index_path / INDEX_STATUS_FILE
-    temporary_path = status_path.with_suffix(".tmp")
-
-    payload: dict[str, Any] = {
-        "schema_version": INDEX_STATUS_SCHEMA,
-        "state": state,
-        "stage": stage,
-        "message": message,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    if video is not None:
-        payload["video"] = video
-    if current is not None:
-        payload["current"] = current
-    if total is not None:
-        payload["total"] = total
-    if summary is not None:
-        payload["summary"] = summary
-    if error is not None:
-        payload["error"] = error
-
-    temporary_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    temporary_path.replace(status_path)
-    return payload
-
-
-def require_ready_index(
-    index_directory: str | Path = INDEX_DIRECTORY,
-) -> dict[str, Any]:
-    status = read_index_status(index_directory)
-    if status is None:
-        raise IndexNotReadyError(
-            "No completed video index was found. Index a video before searching."
-        )
-    if status.get("state") != "ready":
-        message = status.get("message", "The video index is not ready.")
-        raise IndexNotReadyError(message)
-    return status

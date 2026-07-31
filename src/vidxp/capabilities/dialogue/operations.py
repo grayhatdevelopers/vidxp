@@ -6,6 +6,7 @@ from vidxp.capabilities.contracts import (
     CapabilityContext,
     CapabilityIndexResult,
 )
+from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.capabilities.dialogue.config import dialogue_config
 from vidxp.capabilities.dialogue.indexing import index_dialogue
 from vidxp.capabilities.dialogue.models import get_embedder
@@ -17,7 +18,7 @@ from vidxp.core.contracts import (
     VideoSource,
 )
 from vidxp.core.indexing_common import ProgressCallback
-from vidxp.core.storage import IndexStorage
+from vidxp.ports import IndexStore, ModelRuntimePort
 
 
 REQUIRED_METADATA = frozenset(
@@ -40,8 +41,10 @@ def index_capability(
     source: VideoSource,
     *,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
+    registry: CapabilityRegistry,
+    runtime: ModelRuntimePort,
     progress: ProgressCallback | None = None,
     modalities: tuple[str, ...] = ("dialogue",),
 ) -> CapabilityIndexResult:
@@ -54,14 +57,19 @@ def index_capability(
             storage=storage,
             cancellation=cancellation,
             progress=progress,
+            runtime=runtime,
         )
     )
 
 
-def dialogue_embedding(query: str, config: IndexConfig) -> list[float]:
+def dialogue_embedding(
+    query: str,
+    config: IndexConfig,
+    runtime: ModelRuntimePort,
+) -> list[float]:
     settings = dialogue_config(config)
-    encoder = get_embedder(settings.sentence_model, config.device)
-    encoded = encoder.encode(
+    encoder = get_embedder(runtime)
+    encoded = encoder.encode_query(
         [query],
         convert_to_numpy=True,
         normalize_embeddings=settings.normalize_embeddings,
@@ -73,11 +81,12 @@ def search_dialogue(
     query: str,
     *,
     config: IndexConfig,
+    runtime: ModelRuntimePort,
     top_k: int = 10,
     video_id: str | None = None,
     query_id: str | None = None,
     filters: Mapping[str, Any] | None = None,
-    storage: IndexStorage | None = None,
+    storage: IndexStore,
 ) -> SearchResult:
     cleaned = query.strip()
     if not cleaned:
@@ -87,7 +96,7 @@ def search_dialogue(
     return search_embeddings(
         cleaned,
         "dialogue",
-        dialogue_embedding(cleaned, config),
+        dialogue_embedding(cleaned, config, runtime),
         config=config,
         required_metadata=REQUIRED_METADATA,
         top_k=top_k,
@@ -107,5 +116,7 @@ def search_operation(
         request.query,
         config=config,
         top_k=request.top_k,
-        video_id=config.video_id,
+        video_id=request.media_id or config.video_id,
+        runtime=context.runtime,
+        storage=context.require_storage(),
     )

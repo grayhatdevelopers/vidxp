@@ -11,6 +11,8 @@ from typing import Any, Literal, Mapping, Sequence
 
 from vidxp.benchmarks.common import (
     append_failure,
+    benchmark_generation_id,
+    benchmark_media_id,
     ensure_adapter_outputs,
     record_adapter_manifest,
     run_logged_evaluator,
@@ -18,9 +20,14 @@ from vidxp.benchmarks.common import (
 )
 from vidxp.capabilities.scene.operations import search_scene
 from vidxp.capabilities.schemas import SearchHit
+from vidxp.capabilities.registry import create_capability_registry
 from vidxp.core.contracts import IndexConfig, VideoSource
-from vidxp.core.manifest import write_json_atomic
+from vidxp.core.manifest import ManifestStore, write_json_atomic
 from vidxp.core.runner import run_index
+from vidxp.core.storage import IndexStorage
+from vidxp.infrastructure.local_index import LOCAL_INDEX_RUNTIME_CHECKS
+from vidxp.runtime import ModelRuntime
+from vidxp.settings import VidXPSettings
 
 
 DIDEMO_REVISION = "b6a555c8134581305d0ed4716fbc192860e0b88c"
@@ -32,6 +39,9 @@ DIDEMO_VALIDATION_SHA256 = (
     "b0364cc256553332feb19d46bcc4cd2b09774949fe6c0b25e7ed0ff3c6aefebb"
 )
 DIDEMO_EVALUATOR_SHA256 = (
+    "9ec3e7a171272eb3551b0eaa7bbe9292131ad5cf34fd5c1e02c0fc4a11234df6"
+)
+DIDEMO_EVALUATOR_CRLF_SHA256 = (
     "4754bb320564e5d2e7c633e0b660e87feca7f00fa73269e50140e81ffb4ca762"
 )
 DIDEMO_MOMENTS = (
@@ -40,8 +50,7 @@ DIDEMO_MOMENTS = (
 )
 
 
-def load_annotations(path: str | Path) -> list[dict[str, Any]]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+def parse_annotations(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, list) or not payload:
         raise ValueError("DiDeMo annotations must be a non-empty JSON list.")
     required = {
@@ -72,7 +81,13 @@ def load_annotations(path: str | Path) -> list[dict[str, Any]]:
                 raise ValueError(
                     f"DiDeMo annotation {index} exceeds num_segments."
                 )
-    return payload
+    return [dict(annotation) for annotation in payload]
+
+
+def load_annotations(path: str | Path) -> list[dict[str, Any]]:
+    return parse_annotations(
+        json.loads(Path(path).read_text(encoding="utf-8"))
+    )
 
 
 def select_annotations(
@@ -235,7 +250,10 @@ def _verified_artifacts(
         verify_artifact(
             evaluator_path,
             name="DiDeMo evaluator",
-            expected_sha256=DIDEMO_EVALUATOR_SHA256,
+            expected_sha256=(
+                DIDEMO_EVALUATOR_SHA256,
+                DIDEMO_EVALUATOR_CRLF_SHA256,
+            ),
             source=(
                 f"{DIDEMO_REPOSITORY}/blob/{DIDEMO_REVISION}"
                 "/utils/eval.py"
@@ -253,7 +271,7 @@ def _video_sources(
 ) -> list[VideoSource]:
     return [
         VideoSource(
-            video_id=video_name,
+            video_id=benchmark_media_id("didemo", video_name),
             path=resolve_media(
                 media_directory,
                 video_name,
@@ -271,6 +289,8 @@ def _generate_predictions(
     config: IndexConfig,
     manifest: Mapping[str, Any],
     chunk_pooling: Literal["max", "mean"],
+    runtime: ModelRuntime,
+    storage: IndexStorage,
 ) -> list[list[list[int]]]:
     scene_counts = {
         video_id: int(video["summary"]["scene_frames"])
@@ -278,13 +298,18 @@ def _generate_predictions(
     }
     predictions = []
     for annotation in annotations:
-        video_id = str(annotation["video"])
+        video_id = benchmark_media_id(
+            "didemo",
+            str(annotation["video"]),
+        )
         result = search_scene(
             str(annotation["description"]),
             config=config,
             top_k=scene_counts[video_id],
             video_id=video_id,
             query_id=str(annotation["annotation_id"]),
+            runtime=runtime,
+            storage=storage,
         )
         predictions.append(
             [
@@ -354,7 +379,7 @@ def run_didemo(
     output_root: str | Path = "benchmark_runs",
     annotation_indices: Sequence[int] | None = None,
     media_overrides: Mapping[str, str | Path] | None = None,
-    frame_stride: int = 1,
+    scene_sample_fps: float = 1.0,
     device: str = "cpu",
     split: Literal["validation", "test"] = "test",
     chunk_pooling: Literal["max", "mean"] = "max",
@@ -378,11 +403,24 @@ def run_didemo(
         split=split,
         run_id=run_id,
         enabled_modalities=("scene",),
-        frame_stride=frame_stride,
+        capability_options={
+            "scene": {"sample_fps": scene_sample_fps},
+        },
         device=device,
         output_root=output_root,
+        generation_id=benchmark_generation_id("didemo", split, run_id),
     )
     run_directory = config.run_directory
+    registry = create_capability_registry(
+        platform_runtime_checks=LOCAL_INDEX_RUNTIME_CHECKS
+    )
+    runtime = ModelRuntime(
+        VidXPSettings(
+            repository_root=run_directory,
+            runtime_backend=device,
+        ),
+        allowed_specs=registry.model_specs(),
+    )
     ensure_adapter_outputs(run_directory)
     subset = {
         "label": (
@@ -397,29 +435,40 @@ def run_didemo(
         "video_count": len({item["video"] for item in annotations}),
     }
     try:
-        manifest = run_index(
-            _video_sources(
+        with IndexStorage(config) as storage:
+            manifest = run_index(
+                _video_sources(
+                    annotations,
+                    media_directory=media_directory,
+                    media_overrides=media_overrides,
+                ),
+                config,
+                reset=reset,
+                storage=storage,
+                manifest_store=ManifestStore(
+                    config,
+                    registry=registry,
+                    runtime=runtime,
+                ),
+                registry=registry,
+                runtime=runtime,
+            )
+            ensure_adapter_outputs(run_directory)
+            record_adapter_manifest(
+                run_directory,
+                benchmark="didemo",
+                subset=subset,
+                artifacts=artifacts,
+                state="predicting",
+            )
+            predictions = _generate_predictions(
                 annotations,
-                media_directory=media_directory,
-                media_overrides=media_overrides,
-            ),
-            config,
-            reset=reset,
-        )
-        ensure_adapter_outputs(run_directory)
-        record_adapter_manifest(
-            run_directory,
-            benchmark="didemo",
-            subset=subset,
-            artifacts=artifacts,
-            state="predicting",
-        )
-        predictions = _generate_predictions(
-            annotations,
-            config=config,
-            manifest=manifest,
-            chunk_pooling=chunk_pooling,
-        )
+                config=config,
+                manifest=manifest,
+                chunk_pooling=chunk_pooling,
+                runtime=runtime,
+                storage=storage,
+            )
         validate_predictions(predictions, annotations)
         predictions_path = run_directory / "predictions.json"
         ground_truth_path = run_directory / "ground_truth.subset.json"
@@ -444,6 +493,9 @@ def run_didemo(
                 "chunk_pooling": chunk_pooling,
                 "media_override_count": len(media_overrides or {}),
                 "media_override_video_ids": sorted(media_overrides or {}),
+                "media_id_mapping": (
+                    "deterministic_uuid4_from_benchmark_and_official_video_id"
+                ),
                 "result_classification": _result_classification(
                     split=split,
                     full_split=annotation_indices is None,

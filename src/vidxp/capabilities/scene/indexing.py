@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from vidxp.capabilities.scene.config import scene_config
-from vidxp.capabilities.scene.models import get_clip_model
+from vidxp.capabilities.scene.models import SceneModel, get_scene_model
+from vidxp.capabilities.scene.specs import SIGLIP2_MODEL
 from vidxp.core.contracts import (
     CancellationToken,
     IndexConfig,
@@ -13,26 +14,35 @@ from vidxp.core.contracts import (
     stable_source_id,
 )
 from vidxp.core.indexing_common import ProgressCallback, report_progress
-from vidxp.core.storage import IndexStorage
+from vidxp.core.video import FrameSampling
+from vidxp.ports import IndexStore, ModelRuntimePort
 
 
 @dataclass
 class SceneIndexState:
-    model: Any
-    preprocess: Any
+    provider: SceneModel
     stored_frames: int = 0
 
 
-def encode_scene_batch(samples, model, preprocess, device):
+def scene_sampling(config: IndexConfig, info) -> FrameSampling:
+    return FrameSampling(
+        source_fps=info.fps,
+        target_fps=scene_config(config).sample_fps,
+    )
+
+
+def encode_scene_batch(samples, provider: SceneModel):
     import torch
     from PIL import Image
 
-    images = torch.stack(
-        [preprocess(Image.fromarray(sample.frame)) for sample in samples]
-    ).to(device)
-    with torch.no_grad():
-        features = model.encode_image(images)
-        features /= features.norm(dim=-1, keepdim=True)
+    inputs = provider.processor(
+        images=[Image.fromarray(sample.frame) for sample in samples],
+        return_tensors="pt",
+    )
+    inputs = {name: value.to(provider.device) for name, value in inputs.items()}
+    with torch.inference_mode():
+        features = provider.model.get_image_features(**inputs).pooler_output
+        features = torch.nn.functional.normalize(features, dim=-1)
     return features.cpu().numpy().tolist()
 
 
@@ -43,10 +53,12 @@ def scene_records(
     config: IndexConfig,
 ) -> list[StorageRecord]:
     records = []
+    sampling = scene_sampling(config, info)
     for sample, vector in zip(samples, vectors):
-        end = min(
-            info.duration,
-            sample.timestamp + config.frame_stride / info.fps,
+        end = sampling.next_sample_timestamp(
+            sample.frame_index,
+            frame_count=info.frame_count,
+            duration=info.duration,
         )
         if end <= sample.timestamp:
             end = sample.timestamp + 1 / info.fps
@@ -55,6 +67,7 @@ def scene_records(
             str(config.video_id),
             "scene",
             f"f{sample.frame_index:012d}",
+            generation_id=config.generation_id,
         )
         records.append(
             StorageRecord(
@@ -80,7 +93,7 @@ def process_scene_samples(
     state: SceneIndexState,
     info,
     config: IndexConfig,
-    storage: IndexStorage,
+    storage: IndexStore,
     cancellation: CancellationToken,
 ) -> None:
     settings = scene_config(config)
@@ -88,9 +101,7 @@ def process_scene_samples(
         cancellation.raise_if_cancelled()
         vectors = encode_scene_batch(
             group,
-            state.model,
-            state.preprocess,
-            config.device,
+            state.provider,
         )
         state.stored_frames += storage.upsert(
             "scene",
@@ -101,22 +112,25 @@ def process_scene_samples(
 
 
 class SceneVisualProcessor:
+    def sampling(self, config: IndexConfig, info) -> FrameSampling:
+        return scene_sampling(config, info)
+
     def batch_size(self, config: IndexConfig) -> int:
         return scene_config(config).batch_size
 
     def prepare(
         self,
         config: IndexConfig,
+        runtime: ModelRuntimePort,
         progress: ProgressCallback | None,
     ) -> SceneIndexState:
-        settings = scene_config(config)
         report_progress(
             progress,
             "preparing_scene_model",
-            f"Preparing scene model: CLIP {settings.model}.",
+            f"Preparing scene model: SigLIP2 {SIGLIP2_MODEL.model_id}.",
         )
-        model, preprocess = get_clip_model(settings.model, config.device)
-        return SceneIndexState(model, preprocess)
+        provider = get_scene_model(runtime)
+        return SceneIndexState(provider)
 
     def process(
         self,
@@ -125,7 +139,7 @@ class SceneVisualProcessor:
         state: SceneIndexState,
         info,
         config: IndexConfig,
-        storage: IndexStorage,
+        storage: IndexStore,
         cancellation: CancellationToken,
     ) -> None:
         process_scene_samples(
@@ -142,7 +156,7 @@ class SceneVisualProcessor:
         state: SceneIndexState,
         *,
         config: IndexConfig,
-        storage: IndexStorage,
+        storage: IndexStore,
     ) -> tuple[dict[str, Any], int]:
         return {"scene_frames": state.stored_frames}, state.stored_frames
 

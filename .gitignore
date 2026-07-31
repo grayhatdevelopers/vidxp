@@ -6,7 +6,7 @@
 /video.mp4
 /dist/
 /build/
-/.release-notes.md
+/release-notes.md
 .build
 /MANIFEST
 /.pytest_cache/
@@ -37,6 +37,16 @@ pnpm-debug.log*
 
 # compiled output
 /target
+/desktop/node_modules/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+/desktop/src-tauri/binaries/uv-*
+/desktop/web/icon.png
+/desktop/src-tauri/icons/android/
+/desktop/src-tauri/icons/ios/
+/desktop/src-tauri/icons/64x64.png
+/desktop/src-tauri/icons/Square*.png
+/desktop/src-tauri/icons/StoreLogo.png
 
 # dependencies
 /node_modules

@@ -1,0 +1,20 @@
+{
+  "name": "vidxp-desktop",
+  "private": true,
+  "version": "0.2.1-b.1",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "sync:branding": "node scripts/sync-branding.mjs",
+    "icons": "npm run sync:branding && tauri icon ../docs/images/logo.png --output src-tauri/icons",
+    "predesktop:dev": "npm run sync:branding",
+    "desktop:dev": "tauri dev",
+    "predesktop:build": "npm run icons",
+    "desktop:build": "node scripts/build-desktop.mjs",
+    "sidecar:windows": "powershell -ExecutionPolicy Bypass -File scripts/fetch-uv.ps1",
+    "sidecar:unix": "bash scripts/fetch-uv.sh"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4"
+  }
+}

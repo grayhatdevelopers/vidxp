@@ -8,8 +8,8 @@ from vidxp.core.contracts import IndexConfig
 
 class ActorConfig(CapabilityConfig):
     batch_size: int = Field(default=16, gt=0)
-    match_threshold: float = Field(default=0.55, gt=0, lt=1)
-    num_jitters: int = Field(default=2, gt=0)
+    match_threshold: float = Field(default=0.363, gt=0, lt=1)
+    detection_threshold: float = Field(default=0.9, gt=0, lt=1)
     minimum_detections: int = Field(default=4, gt=0)
 
 

@@ -15,7 +15,7 @@ authors = [
 ]
 description = "VidXP - Video indexing and search by dialogue, scene, and actor"
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.15"
 license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["video", "search", "indexing", "cli", "streamlit"]
@@ -26,26 +26,36 @@ classifiers = [
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Multimedia :: Video",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dynamic = ["optional-dependencies"]
 dependencies = [
-  "filelock>=3.13",
-  "packaging>=24",
-  "pydantic>=2.8,<3",
-  "rich",
+  "dbos>=2.28,<3",
+  "filelock>=3.32,<4",
+  "packaging>=26.2,<27",
+  "platformdirs>=4.11,<5",
+  "pydantic>=2.13.4,<3",
+  "pydantic-settings>=2.14.2,<3",
+  "rich>=15,<16",
+  "sqlalchemy>=2.0.51,<2.1",
   "typer>=0.27,<1",
 ]
 
 [project.scripts]
-vidxp = "vidxp.cli:main"
+vidxp = "vidxp.entrypoint:main"
+vidxp-api = "vidxp.api_cli:main"
+vidxp-worker = "vidxp.workflow_worker:main"
+vidxp-database = "vidxp.database_cli:main"
+vidxp-hooks = "vidxp.hook_cli:main"
+vidxp-mcp = "vidxp.mcp_cli:main"
 
 [project.urls]
+Homepage = "https://github.com/grayhatdevelopers/vidxp"
 Repository = "https://github.com/grayhatdevelopers/vidxp"
 Issues = "https://github.com/grayhatdevelopers/vidxp/issues"
 
@@ -62,6 +72,8 @@ vidxp = [
   "benchmarks/requirements.txt",
   "capabilities/*/requirements.txt",
   "requirements/*.txt",
+  "migrations/*.py",
+  "migrations/versions/*.py",
 ]
 
 [tool.setuptools.dynamic.optional-dependencies]
@@ -84,71 +96,43 @@ all = { file = [
   "src/vidxp/capabilities/scene/requirements.txt",
   "src/vidxp/capabilities/actor/requirements.txt",
 ] }
+local-worker = { file = [
+  "src/vidxp/requirements/storage.txt",
+  "src/vidxp/requirements/slm.txt",
+  "src/vidxp/capabilities/dialogue/requirements.txt",
+  "src/vidxp/capabilities/scene/requirements.txt",
+  "src/vidxp/capabilities/actor/requirements.txt",
+] }
+mcp = { file = ["src/vidxp/requirements/mcp.txt"] }
+slm = { file = ["src/vidxp/requirements/slm.txt"] }
+server = { file = [
+  "src/vidxp/requirements/server.txt",
+  "src/vidxp/requirements/mcp.txt",
+] }
+server-worker = { file = [
+  "src/vidxp/requirements/server.txt",
+  "src/vidxp/requirements/server-storage.txt",
+  "src/vidxp/requirements/slm.txt",
+  "src/vidxp/capabilities/dialogue/requirements.txt",
+  "src/vidxp/capabilities/scene/requirements.txt",
+  "src/vidxp/capabilities/actor/requirements.txt",
+] }
+test = { file = ["src/vidxp/requirements/test.txt"] }
 frontend = { file = ["src/vidxp/requirements/frontend.txt"] }
 benchmarks = { file = ["src/vidxp/benchmarks/requirements.txt"] }
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
 
-[tool.semantic_release]
-version_toml = ["pyproject.toml:project.version"]
-tag_format = "v{version}"
-build_command = "bash ./utils/build_package.sh"
-build_command_env = ["BUILD_CHANGELOG", "BUILD_RELEASE_NOTES"]
-assets = ["CHANGELOG.md"]
-commit_parser = "conventional"
-major_on_zero = true
-allow_zero_version = true
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 
-[tool.semantic_release.commit_parser_options]
-allowed_tags = ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore"]
-minor_tags = ["feat"]
-patch_tags = ["fix", "perf"]
-parse_squash_commits = true
-ignore_merge_commits = true
-
-[tool.semantic_release.branches.main]
-match = "main"
-prerelease = false
-prerelease_token = "b"
-
-[tool.towncrier]
-directory = "changes"
-filename = "CHANGELOG.md"
-start_string = "<!-- towncrier release notes start -->"
-title_format = "## v{version} ({project_date})"
-issue_format = "[#{issue}](https://github.com/grayhatdevelopers/vidxp/pull/{issue})"
-wrap = false
-
-[[tool.towncrier.type]]
-directory = "breaking"
-name = "Breaking Changes"
-showcontent = true
-
-[[tool.towncrier.type]]
-directory = "feature"
-name = "Features"
-showcontent = true
-
-[[tool.towncrier.type]]
-directory = "bugfix"
-name = "Bug Fixes"
-showcontent = true
-
-[[tool.towncrier.type]]
-directory = "deprecation"
-name = "Deprecations"
-showcontent = true
-
-[[tool.towncrier.type]]
-directory = "docs"
-name = "Documentation"
-showcontent = true
-
-[[tool.towncrier.type]]
-directory = "security"
-name = "Security"
-showcontent = true
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
