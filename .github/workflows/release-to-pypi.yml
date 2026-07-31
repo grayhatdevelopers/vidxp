@@ -161,13 +161,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          gh release upload "${{ inputs.tag }}" dist/* --clobber
-          gh release edit "${{ inputs.tag }}" --draft=false
+          gh release upload "${{ inputs.tag }}" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+          gh release edit "${{ inputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false
 
       - name: Synchronize stable source back to main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh workflow run sync-channels.yml \
+            --repo "$GITHUB_REPOSITORY" \
             --ref main \
             -f release_sha="${{ needs.build.outputs.source_sha }}"

@@ -112,11 +112,19 @@ jobs:
         run: |
           tag="${{ inputs.tag }}"
           version="${tag#desktop-v}"
-          gh release upload "$tag" desktop-dist/* --clobber
+          gh release upload "$tag" desktop-dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
           if [[ "$version" == *-* ]]; then
-            gh release edit "$tag" --draft=false --prerelease
+            gh release edit "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft=false \
+              --prerelease
           else
-            gh release edit "$tag" --draft=false --latest
+            gh release edit "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft=false \
+              --latest
           fi
 
       - name: Synchronize stable source back to main
@@ -125,5 +133,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh workflow run sync-channels.yml \
+            --repo "$GITHUB_REPOSITORY" \
             --ref main \
             -f release_sha="${{ needs.verify.outputs.source_sha }}"

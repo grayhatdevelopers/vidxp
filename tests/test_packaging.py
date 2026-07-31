@@ -435,6 +435,21 @@ class PackagingTests(unittest.TestCase):
             release_workflow,
         )
 
+        publisher_repo_flags = {
+            "release-to-test-pypi.yml": 2,
+            "release-to-pypi.yml": 3,
+            "publish-desktop.yml": 4,
+        }
+        for workflow, expected in publisher_repo_flags.items():
+            contents = (
+                ROOT / ".github" / "workflows" / workflow
+            ).read_text(encoding="utf-8")
+            self.assertEqual(
+                contents.count('--repo "$GITHUB_REPOSITORY"'),
+                expected,
+                workflow,
+            )
+
         desktop_publish = (
             ROOT / ".github" / "workflows" / "publish-desktop.yml"
         ).read_text(encoding="utf-8")

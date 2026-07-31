@@ -144,7 +144,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          gh release upload "${{ inputs.tag }}" dist/* --clobber
+          gh release upload "${{ inputs.tag }}" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
           gh release edit "${{ inputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
             --draft=false \
             --prerelease
