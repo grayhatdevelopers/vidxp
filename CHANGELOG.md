@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## [0.3.0-b.2](https://github.com/grayhatdevelopers/vidxp/compare/v0.3.0-b.1...v0.3.0-b.2) (2026-07-31)
+
+
+### Bug Fixes
+
+* **release:** resolve repository in finalizers ([#30](https://github.com/grayhatdevelopers/vidxp/issues/30)) ([83891e3](https://github.com/grayhatdevelopers/vidxp/commit/83891e3115f507ddc751415accb98f457a8bffa6))
+
 ## [0.3.0-b.1](https://github.com/grayhatdevelopers/vidxp/compare/v0.2.1-b.1...v0.3.0-b.1) (2026-07-31)
 
 
