@@ -75,10 +75,10 @@ jobs:
           version: "0.12.0"
           enable-cache: false
 
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Restore Rust build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -110,7 +110,7 @@ jobs:
 
       - name: Restore the pinned uv sidecar
         id: uv-sidecar-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: desktop/src-tauri/binaries
           key: desktop-uv-sidecar-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/sidecars.json') }}
