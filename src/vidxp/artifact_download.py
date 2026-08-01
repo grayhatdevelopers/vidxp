@@ -24,7 +24,11 @@ from vidxp.core.media import utc_now
 
 router = APIRouter(prefix="/artifact-download", tags=["artifact-download"])
 _SESSION_COOKIE = "__Secure-vidxp-artifact"
-_SCRIPT = "artifact-download.js"
+_ASSETS = {
+    "artifact-download.css": "text/css; charset=utf-8",
+    "artifact-download.js": "text/javascript; charset=utf-8",
+    "vidxp-logo.png": "image/png",
+}
 
 
 def _capabilities(service: HttpApplicationContext) -> ArtifactDownloadCapabilities:
@@ -58,16 +62,17 @@ def _require_same_origin(
 
 @router.get("/assets/{asset_name}", include_in_schema=False)
 def artifact_download_asset(asset_name: str) -> Response:
-    if asset_name != _SCRIPT:
+    media_type = _ASSETS.get(asset_name)
+    if media_type is None:
         raise ApplicationError(
             "resource_not_found",
             ErrorCategory.not_found,
             "The requested artifact-download asset was not found.",
         )
     content = files("vidxp").joinpath(
-        "assets", "artifact_download", _SCRIPT
+        "assets", "artifact_download", asset_name
     ).read_bytes()
-    return Response(content=content, media_type="text/javascript; charset=utf-8")
+    return Response(content=content, media_type=media_type)
 
 
 @router.get("/{artifact_id}", include_in_schema=False)
@@ -93,6 +98,7 @@ def bootstrap_artifact_download(
 ) -> ArtifactDownloadBootstrapResponse:
     _require_same_origin(request, service)
     artifact = service.application.get_artifact(artifact_id)
+    binding = artifact_binding(artifact)
     session_token, expires_at = _capabilities(service).exchange(
         artifact,
         command.capability,
@@ -109,6 +115,9 @@ def bootstrap_artifact_download(
     )
     return ArtifactDownloadBootstrapResponse(
         content_url=f"/artifact-download/{artifact_id}/content",
+        filename=binding.filename,
+        mime_type=binding.mime_type,
+        byte_size=binding.byte_size,
         expires_at=expires_at,
     )
 

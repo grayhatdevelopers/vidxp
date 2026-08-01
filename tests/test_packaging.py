@@ -141,16 +141,36 @@ class PackagingTests(unittest.TestCase):
         assets = ROOT / "src" / "vidxp" / "assets" / "artifact_download"
         self.assertEqual(
             {path.name for path in assets.iterdir() if path.is_file()},
-            {"index.html", "artifact-download.js"},
+            {
+                "index.html",
+                "artifact-download.css",
+                "artifact-download.js",
+                "vidxp-logo.png",
+            },
         )
         html = (assets / "index.html").read_text(encoding="utf-8")
+        stylesheet = (assets / "artifact-download.css").read_text(
+            encoding="utf-8"
+        )
         script = (assets / "artifact-download.js").read_text(encoding="utf-8")
         self.assertIn("./assets/artifact-download.js", html)
+        self.assertIn("./assets/artifact-download.css", html)
+        self.assertIn("./assets/vidxp-logo.png", html)
         self.assertNotRegex(html, r"https?://")
         self.assertNotIn("<script>", html)
+        self.assertNotIn("style=", html)
+        self.assertIn("@media (max-width: 34rem)", stylesheet)
         self.assertIn("window.history.replaceState", script)
         self.assertIn("credentials: 'same-origin'", script)
-        self.assertIn("window.location.replace(payload.content_url)", script)
+        self.assertIn("method: 'HEAD'", script)
+        self.assertIn("downloadAgain.click()", script)
+        self.assertIn("Download again", html)
+        self.assertEqual(
+            (assets / "vidxp-logo.png").read_bytes(),
+            (
+                ROOT / "desktop" / "src-tauri" / "icons" / "128x128.png"
+            ).read_bytes(),
+        )
         self.assertNotIn("local_path", script)
 
     def test_canonical_icon_is_packaged_and_desktop_derivatives_are_wired(self):

@@ -1,0 +1,284 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  background: #08101f;
+  color: #e8eefc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(49, 91, 169, 0.38), transparent 33rem),
+    radial-gradient(circle at 90% 100%, rgba(35, 83, 130, 0.2), transparent 30rem),
+    #08101f;
+}
+
+.shell {
+  width: min(38rem, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: clamp(1.5rem, 7vh, 5rem) 0 3rem;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0 0 1.25rem 0.5rem;
+  color: #f5f8ff;
+  font-size: 1.08rem;
+  font-weight: 760;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+}
+
+.brand img {
+  border-radius: 0.7rem;
+  box-shadow: 0 0.55rem 1.5rem rgba(0, 0, 0, 0.28);
+}
+
+.primary-action:focus-visible {
+  outline: 3px solid #96b6ff;
+  outline-offset: 3px;
+}
+
+.download-card {
+  padding: clamp(1.5rem, 5vw, 2.5rem);
+  border: 1px solid #2c3d60;
+  border-radius: 1.4rem;
+  background: rgba(16, 26, 45, 0.92);
+  box-shadow: 0 1.6rem 4rem rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(16px);
+}
+
+.state-mark {
+  display: grid;
+  width: 3.2rem;
+  height: 3.2rem;
+  margin-bottom: 1.25rem;
+  place-items: center;
+  border: 1px solid #385078;
+  border-radius: 50%;
+  background: #13223b;
+}
+
+.state-mark span {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 2px solid #526a90;
+  border-top-color: #96b6ff;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+[data-state="ready"] .state-mark,
+[data-state="starting"] .state-mark {
+  border-color: #296e55;
+  background: #102d27;
+}
+
+[data-state="ready"] .state-mark span,
+[data-state="starting"] .state-mark span {
+  width: 1.25rem;
+  height: 0.65rem;
+  border: 0;
+  border-bottom: 2px solid #91e6bc;
+  border-left: 2px solid #91e6bc;
+  border-radius: 0;
+  animation: none;
+  transform: translateY(-0.15rem) rotate(-45deg);
+}
+
+[data-state="error"] .state-mark {
+  border-color: #7e3f49;
+  background: #321c27;
+}
+
+[data-state="error"] .state-mark span {
+  position: relative;
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 0;
+  animation: none;
+}
+
+[data-state="error"] .state-mark span::before,
+[data-state="error"] .state-mark span::after {
+  position: absolute;
+  top: 0.6rem;
+  left: 0;
+  width: 1.35rem;
+  height: 2px;
+  border-radius: 1px;
+  background: #ffaaa2;
+  content: "";
+}
+
+[data-state="error"] .state-mark span::before {
+  transform: rotate(45deg);
+}
+
+[data-state="error"] .state-mark span::after {
+  transform: rotate(-45deg);
+}
+
+.eyebrow {
+  margin: 0 0 0.65rem;
+  color: #96b6ff;
+  font-size: 0.76rem;
+  font-weight: 760;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(1.85rem, 7vw, 2.65rem);
+  line-height: 1.06;
+  letter-spacing: -0.035em;
+}
+
+.status {
+  margin: 1rem 0 0;
+  color: #b6c4df;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.artifact-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(7rem, auto);
+  gap: 0.85rem 1.5rem;
+  margin: 1.6rem 0 0;
+  padding: 1.1rem;
+  border: 1px solid #2c3d60;
+  border-radius: 0.9rem;
+  background: rgba(8, 16, 31, 0.7);
+}
+
+.artifact-details[hidden],
+.actions[hidden],
+.expiry[hidden] {
+  display: none;
+}
+
+.artifact-details div {
+  min-width: 0;
+}
+
+.filename-row {
+  grid-column: 1 / -1;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid #263754;
+}
+
+.artifact-details dt {
+  margin-bottom: 0.25rem;
+  color: #8393ae;
+  font-size: 0.76rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.artifact-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #f2f6ff;
+  font-weight: 650;
+}
+
+.expiry,
+.privacy-note {
+  color: #8393ae;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.expiry {
+  margin: 0.8rem 0 0;
+}
+
+.actions {
+  margin-top: 1.4rem;
+}
+
+.primary-action {
+  display: inline-flex;
+  min-height: 2.85rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1.1rem;
+  border: 1px solid #83a7ed;
+  border-radius: 0.7rem;
+  color: #08101f;
+  background: #a8c2f5;
+  box-shadow: 0 0.6rem 1.6rem rgba(76, 121, 205, 0.18);
+  font-weight: 780;
+  text-decoration: none;
+}
+
+.primary-action:hover {
+  background: #c2d5f8;
+}
+
+.privacy-note {
+  margin: 1.4rem 0 0;
+  padding-top: 1.1rem;
+  border-top: 1px solid #263754;
+}
+
+noscript {
+  display: block;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #7e3f49;
+  border-radius: 0.75rem;
+  color: #ffcbc6;
+  background: #321c27;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 34rem) {
+  .shell {
+    width: min(100% - 1rem, 38rem);
+    padding-top: 1rem;
+  }
+
+  .brand {
+    margin-left: 0.35rem;
+  }
+
+  .download-card {
+    padding: 1.35rem;
+    border-radius: 1.05rem;
+  }
+
+  .artifact-details {
+    grid-template-columns: 1fr;
+  }
+
+  .filename-row {
+    grid-column: auto;
+  }
+
+  .primary-action {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .state-mark span {
+    animation-duration: 1.8s;
+  }
+}

@@ -43,6 +43,9 @@ class ArtifactDownloadBootstrapRequest(ApplicationModel):
 
 class ArtifactDownloadBootstrapResponse(ApplicationModel):
     content_url: str = Field(min_length=1, max_length=2048)
+    filename: str = Field(min_length=1, max_length=255)
+    mime_type: str = Field(min_length=1, max_length=255)
+    byte_size: int = Field(gt=0)
     expires_at: AwareDatetime
 
 

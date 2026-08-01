@@ -43,7 +43,13 @@ _ARTIFACT_DOWNLOAD_BOOTSTRAP = re.compile(
 _ARTIFACT_DOWNLOAD_CONTENT = re.compile(
     r"^/artifact-download/[0-9a-f]{32}/content$"
 )
-_ARTIFACT_DOWNLOAD_ASSET = "/artifact-download/assets/artifact-download.js"
+_ARTIFACT_DOWNLOAD_ASSETS = frozenset(
+    {
+        "/artifact-download/assets/artifact-download.css",
+        "/artifact-download/assets/artifact-download.js",
+        "/artifact-download/assets/vidxp-logo.png",
+    }
+)
 
 
 def _public_upload_handoff_request(scope: Scope) -> bool:
@@ -73,7 +79,7 @@ def _public_artifact_download_request(scope: Scope) -> bool:
     return (
         method == "GET"
         and (
-            path == _ARTIFACT_DOWNLOAD_ASSET
+            path in _ARTIFACT_DOWNLOAD_ASSETS
             or _ARTIFACT_DOWNLOAD_PAGE.fullmatch(path) is not None
             or _ARTIFACT_DOWNLOAD_CONTENT.fullmatch(path) is not None
         )
@@ -338,9 +344,9 @@ class BrowserCapabilitySecurityHeadersMiddleware:
             "form-action 'none'; frame-ancestors 'none'; worker-src 'none'"
         )
         self.artifact_csp = (
-            "default-src 'none'; script-src 'self'; connect-src 'self'; "
-            "object-src 'none'; base-uri 'none'; form-action 'none'; "
-            "frame-ancestors 'none'"
+            "default-src 'none'; script-src 'self'; style-src 'self'; "
+            "img-src 'self'; connect-src 'self'; object-src 'none'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
         )
 
     async def __call__(

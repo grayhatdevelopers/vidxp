@@ -573,7 +573,11 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             result.structured_content["upload_session_url"],
         )
 
-    async def test_real_streamable_http_artifact_delivery_hides_local_path(self):
+    async def _real_streamable_http_artifact_delivery(
+        self,
+        *,
+        configure_download: bool,
+    ):
         token = "s" * 32
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
@@ -585,14 +589,17 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             content = b"real-http-matroska-content"
             clip.write_bytes(content)
             digest = hashlib.sha256(content).hexdigest()
-            context = self.context(
-                root,
-                static_token=token,
-                artifact_download_public_url=(
-                    "https://public.example/artifact-download"
-                ),
-                artifact_download_secret="d" * 32,
+            download_settings = (
+                {
+                    "artifact_download_public_url": (
+                        "https://public.example/artifact-download"
+                    ),
+                    "artifact_download_secret": "d" * 32,
+                }
+                if configure_download
+                else {}
             )
+            context = self.context(root, static_token=token, **download_settings)
             context.application.get_artifact.return_value = Artifact(
                 artifact_id=ARTIFACT_ID,
                 media_id=MEDIA_ID,
@@ -649,6 +656,15 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
+        return result, link, downloaded, content
+
+    async def test_real_streamable_http_artifact_delivery_hides_local_path(self):
+        result, link, downloaded, content = (
+            await self._real_streamable_http_artifact_delivery(
+                configure_download=True
+            )
+        )
+
         self.assertFalse(result.is_error)
         self.assertIsInstance(link, ResourceLink)
         self.assertEqual(result.structured_content["delivery_mode"], "https_download")
@@ -660,6 +676,31 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(public.query, "")
         self.assertTrue(public.fragment.startswith("capability="))
         self.assertEqual(downloaded.contents[0].blob, base64.b64encode(content).decode())
+
+    async def test_real_streamable_http_preserves_resource_without_public_download(
+        self,
+    ):
+        result, link, downloaded, content = (
+            await self._real_streamable_http_artifact_delivery(
+                configure_download=False
+            )
+        )
+
+        self.assertFalse(result.is_error)
+        self.assertIsInstance(link, ResourceLink)
+        self.assertEqual(result.structured_content["delivery_mode"], "mcp_resource")
+        self.assertIsNone(result.structured_content["local_path"])
+        self.assertIsNone(result.structured_content["file_uri"])
+        self.assertIsNone(result.structured_content["download_url"])
+        self.assertIsNone(result.structured_content["download_expires_at"])
+        self.assertEqual(
+            result.structured_content["delivery_error"]["code"],
+            "public_download_origin_unavailable",
+        )
+        self.assertEqual(
+            downloaded.contents[0].blob,
+            base64.b64encode(content).decode(),
+        )
 
     async def test_media_upload_tools_enforce_permissions_and_availability(self):
         with TemporaryDirectory() as directory:
@@ -1185,7 +1226,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-    async def test_remote_artifact_delivery_requires_public_origin(self):
+    async def test_remote_artifact_delivery_preserves_resource_without_public_origin(
+        self,
+    ):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
             context.application.get_artifact.return_value = Artifact(
@@ -1213,8 +1256,17 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     {"artifact_id": ARTIFACT_ID},
                 )
 
-        self.assertTrue(result.is_error)
-        self.assertIn("public_download_origin_unavailable", result.content[0].text)
+        self.assertFalse(result.is_error)
+        self.assertIsInstance(result.content[0], ResourceLink)
+        self.assertEqual(result.structured_content["delivery_mode"], "mcp_resource")
+        self.assertIsNone(result.structured_content["local_path"])
+        self.assertIsNone(result.structured_content["file_uri"])
+        self.assertIsNone(result.structured_content["download_url"])
+        self.assertIsNone(result.structured_content["download_expires_at"])
+        self.assertEqual(
+            result.structured_content["delivery_error"]["code"],
+            "public_download_origin_unavailable",
+        )
 
     async def test_application_errors_are_machine_readable_and_safe(self):
         with TemporaryDirectory() as directory:

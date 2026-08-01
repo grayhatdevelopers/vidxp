@@ -128,6 +128,10 @@ def test_capability_download_supports_full_head_ranges_and_resume(
             base_url="https://download.example",
         ) as client:
             landing = client.get(f"/artifact-download/{ARTIFACT_ID}")
+            stylesheet = client.get(
+                "/artifact-download/assets/artifact-download.css"
+            )
+            logo = client.get("/artifact-download/assets/vidxp-logo.png")
             bootstrap = _bootstrap(client, artifact, capability)
             head = client.head(f"/artifact-download/{ARTIFACT_ID}/content")
             full = client.get(f"/artifact-download/{ARTIFACT_ID}/content")
@@ -153,10 +157,30 @@ def test_capability_download_supports_full_head_ranges_and_resume(
     assert parsed.query == ""
     assert capability not in landing.text
     assert landing.status_code == 200
-    assert "script-src 'self'" in landing.headers["content-security-policy"]
+    csp = landing.headers["content-security-policy"]
+    assert "script-src 'self'" in csp
+    assert "style-src 'self'" in csp
+    assert "img-src 'self'" in csp
+    assert "'unsafe-inline'" not in csp
     assert landing.headers["referrer-policy"] == "no-referrer"
+    assert stylesheet.status_code == 200
+    assert stylesheet.headers["content-type"].startswith("text/css")
+    assert logo.status_code == 200
+    assert logo.headers["content-type"] == "image/png"
     assert bootstrap.status_code == 200
-    assert bootstrap.json()["content_url"].endswith("/content")
+    bootstrap_payload = bootstrap.json()
+    assert set(bootstrap_payload) == {
+        "content_url",
+        "filename",
+        "mime_type",
+        "byte_size",
+        "expires_at",
+    }
+    assert capability not in bootstrap.text
+    assert bootstrap_payload["content_url"].endswith("/content")
+    assert bootstrap_payload["filename"] == f"snippet-{ARTIFACT_ID}.{extension}"
+    assert bootstrap_payload["mime_type"] == mime_type
+    assert bootstrap_payload["byte_size"] == len(content)
     assert "secure" in bootstrap.headers["set-cookie"].lower()
     assert "httponly" in bootstrap.headers["set-cookie"].lower()
     assert head.status_code == 200

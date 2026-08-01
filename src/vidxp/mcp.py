@@ -267,6 +267,17 @@ def _translate_application_result(operation: Callable[[], _T]) -> _T:
         raise _application_error(exc) from exc
 
 
+def _public_download_unavailable() -> ErrorDetail:
+    return ErrorDetail(
+        code="public_download_origin_unavailable",
+        category=ErrorCategory.unavailable,
+        message=(
+            "Public artifact downloads are not configured; read the native "
+            "MCP resource instead."
+        ),
+    )
+
+
 def _invoke(
     context: ControlPlaneContext,
     *,
@@ -870,7 +881,10 @@ def create_mcp_server(
         download_url = None
         download_expires_at = None
         delivery_error = None
-        if artifact_delivery == "streamable_http":
+        if (
+            artifact_delivery == "streamable_http"
+            and context.settings.artifact_download_public_url is not None
+        ):
             issued = _translate_application_result(
                 lambda: ArtifactDownloadCapabilities(context.settings).issue(
                     artifact
@@ -879,6 +893,9 @@ def create_mcp_server(
             delivery_mode = ArtifactDeliveryMode.https_download
             download_url = issued.url
             download_expires_at = issued.expires_at
+        elif artifact_delivery == "streamable_http":
+            delivery_mode = ArtifactDeliveryMode.mcp_resource
+            delivery_error = _public_download_unavailable()
         elif context.settings.mcp_stdio_filesystem_accessible:
             resource = await _invoke_async(
                 context,

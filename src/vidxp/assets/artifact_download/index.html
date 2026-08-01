@@ -3,13 +3,60 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>VidXP artifact download</title>
+    <meta name="color-scheme" content="dark" />
+    <title>Download artifact · VidXP</title>
+    <link rel="icon" type="image/png" href="./assets/vidxp-logo.png" />
+    <link rel="stylesheet" href="./assets/artifact-download.css" />
     <script src="./assets/artifact-download.js" defer></script>
   </head>
   <body>
-    <main>
-      <h1>Preparing your VidXP artifact</h1>
-      <p id="download-status" role="status">Verifying the download link…</p>
+    <main class="shell">
+      <div class="brand">
+        <img src="./assets/vidxp-logo.png" alt="" width="44" height="44" />
+        <span>VidXP</span>
+      </div>
+
+      <section class="download-card" id="download-card" data-state="verifying">
+        <div class="state-mark" aria-hidden="true"><span></span></div>
+        <p class="eyebrow">Secure artifact delivery</p>
+        <h1 id="download-title">Verifying your link</h1>
+        <p id="download-status" class="status" role="status" aria-live="polite">
+          Checking that this artifact is ready and authorized for download…
+        </p>
+
+        <dl class="artifact-details" id="artifact-details" hidden>
+          <div class="filename-row">
+            <dt>File</dt>
+            <dd id="artifact-filename"></dd>
+          </div>
+          <div>
+            <dt>Media type</dt>
+            <dd id="artifact-media-type"></dd>
+          </div>
+          <div>
+            <dt>Size</dt>
+            <dd id="artifact-size"></dd>
+          </div>
+        </dl>
+
+        <p class="expiry" id="artifact-expiry" hidden>
+          Link available until <time id="artifact-expiry-time"></time>
+        </p>
+
+        <div class="actions" id="download-actions" hidden>
+          <a class="primary-action" id="download-again" href="" download>
+            Download again
+          </a>
+        </div>
+
+        <p class="privacy-note">
+          This private link is handled only by VidXP and is not stored by this page.
+        </p>
+      </section>
+
+      <noscript>
+        JavaScript is required to verify this private download link.
+      </noscript>
     </main>
   </body>
 </html>
