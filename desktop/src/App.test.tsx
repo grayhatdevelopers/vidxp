@@ -55,11 +55,18 @@ const localProfile = {
   kind: 'existing_local',
   lifecycle_ownership: 'external',
   canonical_executable: 'C:\\Tools\\VidXP\\vidxp.exe',
+  data_root: 'C:\\Users\\tester\\AppData\\Local\\vidxp',
   vidxp_version: '0.4.0',
   probe_version: 1,
   launch_protocol_version: 1,
   last_validated_at: '2026-08-01T10:00:00Z',
   can_launch_frontend: true,
+  frontend: {
+    available: true,
+    launchable: true,
+    message: 'The browser interface can be launched.',
+    remediation: '',
+  },
 };
 
 function renderApp() {
@@ -114,6 +121,7 @@ describe('target-first setup', () => {
     });
     mocks.modelDirectoryInventory.mockResolvedValue({ directory: 'models', exists: false, readable: true, total_bytes: 0, file_count: 0, recognized_models: [], empty: true, verification_required: false, truncated: false, detail: 'No cached models were found.' });
     mocks.activateLocalTarget.mockResolvedValue(localProfile);
+    mocks.launchUi.mockResolvedValue(undefined);
   });
 
   it('opens with two real target choices and no remote placeholder', async () => {
@@ -123,6 +131,44 @@ describe('target-first setup', () => {
     expect(screen.getByRole('radio', { name: /Set up VidXP for me/i })).toBeVisible();
     expect(screen.queryByText(/remote server/i)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+    expect(mocks.launchUi).not.toHaveBeenCalled();
+  });
+
+  it('restores the configured control panel without launching the browser and keeps setup accessible', async () => {
+    const user = userEvent.setup();
+    mocks.targetSetupState.mockResolvedValue({
+      profiles: [localProfile],
+      selected_profile_id: localProfile.id,
+      selected_profile: localProfile,
+    });
+
+    renderApp();
+
+    expect(await screen.findByRole('heading', { name: 'Studio VidXP' })).toBeVisible();
+    expect(screen.getByText('You manage this installation')).toBeVisible();
+    expect(screen.getByText('C:\\Tools\\VidXP\\vidxp.exe')).toBeVisible();
+    expect(screen.getByText('C:\\Users\\tester\\AppData\\Local\\vidxp')).toBeVisible();
+    expect(screen.getByText('0.4.0')).toBeVisible();
+    expect(screen.getByText('Browser interface available')).toBeVisible();
+    expect(mocks.launchUi).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Choose another target' }));
+    expect(await screen.findByRole('heading', { name: 'Where should VidXP run?' })).toBeVisible();
+    expect(mocks.launchUi).not.toHaveBeenCalled();
+  });
+
+  it('opens the configured browser only after an explicit control-panel action', async () => {
+    const user = userEvent.setup();
+    mocks.targetSetupState.mockResolvedValue({
+      profiles: [localProfile],
+      selected_profile_id: localProfile.id,
+      selected_profile: localProfile,
+    });
+    renderApp();
+
+    await user.click(await screen.findByRole('button', { name: 'Open VidXP' }));
+
+    expect(mocks.launchUi).toHaveBeenCalledTimes(1);
   });
 
   it('renders the real VidXP identity once in an accessible custom title bar', async () => {

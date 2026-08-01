@@ -182,6 +182,33 @@ struct ManagedUi {
     profile_id: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UiProcessAction {
+    Reuse,
+    Replace,
+    Start,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DesktopAction {
+    Manage,
+    OpenBrowser,
+    Quit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DesktopCloseAction {
+    HideToTray,
+    Quit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DesktopActivation<'a> {
+    Startup,
+    SingleInstance,
+    Tray(&'a str),
+}
+
 struct DesktopState {
     ui_process: Mutex<Option<ManagedUi>>,
     operation_process: Mutex<Option<CommandChild>>,
@@ -1632,12 +1659,13 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
             .try_wait()
             .map_err(|error| format!("Could not inspect the interface process: {error}"))?
             .is_none();
-        if running && ui.profile_id == profile.id {
-            return Ok(ui.url.clone());
-        }
-        if running {
-            let _ = ui.process.kill();
-            let _ = ui.process.wait_timeout(Duration::from_secs(5));
+        match ui_process_action(running, &ui.profile_id, &profile.id) {
+            UiProcessAction::Reuse => return Ok(ui.url.clone()),
+            UiProcessAction::Replace => {
+                let _ = ui.process.kill();
+                let _ = ui.process.wait_timeout(Duration::from_secs(5));
+            }
+            UiProcessAction::Start => {}
         }
         *active_process = None;
     }
@@ -1703,6 +1731,20 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
     Err("The VidXP interface did not become ready in 30 seconds.".into())
 }
 
+fn ui_process_action(
+    running: bool,
+    active_profile_id: &str,
+    requested_profile_id: &str,
+) -> UiProcessAction {
+    if !running {
+        UiProcessAction::Start
+    } else if active_profile_id == requested_profile_id {
+        UiProcessAction::Reuse
+    } else {
+        UiProcessAction::Replace
+    }
+}
+
 fn configure_ui_service_command(command: &mut Command, repository_root: &Path, port: u16) {
     command
         // The desktop owns the one intentional browser open after readiness. Without
@@ -1761,7 +1803,7 @@ fn open_ui_in_browser(app: &AppHandle, state: &DesktopState) -> Result<(), Strin
     hide_main_window(app)
 }
 
-fn open_or_show(app: &AppHandle) {
+fn open_browser_or_show_manager(app: &AppHandle) {
     if !browser_surface_configured(app) {
         show_main_window(app);
         return;
@@ -1778,6 +1820,34 @@ fn open_or_show(app: &AppHandle) {
                 .blocking_show();
         }
     });
+}
+
+fn action_for_activation(activation: DesktopActivation<'_>) -> Option<DesktopAction> {
+    match activation {
+        DesktopActivation::Startup | DesktopActivation::SingleInstance => {
+            Some(DesktopAction::Manage)
+        }
+        DesktopActivation::Tray("open") => Some(DesktopAction::OpenBrowser),
+        DesktopActivation::Tray("manage") => Some(DesktopAction::Manage),
+        DesktopActivation::Tray("quit") => Some(DesktopAction::Quit),
+        DesktopActivation::Tray(_) => None,
+    }
+}
+
+fn perform_desktop_action(app: &AppHandle, action: DesktopAction) {
+    match action {
+        DesktopAction::Manage => show_main_window(app),
+        DesktopAction::OpenBrowser => open_browser_or_show_manager(app),
+        DesktopAction::Quit => begin_shutdown(app),
+    }
+}
+
+fn close_action(configured: bool) -> DesktopCloseAction {
+    if configured {
+        DesktopCloseAction::HideToTray
+    } else {
+        DesktopCloseAction::Quit
+    }
 }
 
 fn begin_shutdown(app: &AppHandle) {
@@ -1810,16 +1880,19 @@ fn hide_to_tray(app: AppHandle) -> Result<(), String> {
 
 fn create_tray(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open VidXP", true, None::<&str>)?;
+    let manage = MenuItem::with_id(app, "manage", "Manage VidXP", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit VidXP", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &manage, &quit])?;
     let mut tray = TrayIconBuilder::with_id("vidxp")
         .tooltip("VidXP")
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "open" => open_or_show(app),
-            "quit" => begin_shutdown(app),
-            _ => {}
+        .on_menu_event(|app, event| {
+            if let Some(action) =
+                action_for_activation(DesktopActivation::Tray(event.id().as_ref()))
+            {
+                perform_desktop_action(app, action);
+            }
         });
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
@@ -1908,7 +1981,9 @@ fn shutdown(app: &AppHandle) {
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            open_or_show(app);
+            if let Some(action) = action_for_activation(DesktopActivation::SingleInstance) {
+                perform_desktop_action(app, action);
+            }
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_log::Builder::new().build())
@@ -1922,17 +1997,8 @@ pub fn run() {
                 log::error!("Target profile initialization failed: {error}");
             }
             create_tray(app)?;
-            if browser_surface_configured(app.handle()) {
-                let app_handle = app.handle().clone();
-                thread::spawn(move || {
-                    let state = app_handle.state::<DesktopState>();
-                    if let Err(error) = open_ui_in_browser(&app_handle, &state) {
-                        log::error!("Restored VidXP target could not open: {error}");
-                        show_main_window(&app_handle);
-                    }
-                });
-            } else {
-                show_main_window(app.handle());
+            if let Some(action) = action_for_activation(DesktopActivation::Startup) {
+                perform_desktop_action(app.handle(), action);
             }
             Ok(())
         })
@@ -1974,10 +2040,11 @@ pub fn run() {
                 return;
             }
             api.prevent_close();
-            if configured_runtime(app_handle) {
-                let _ = hide_main_window(app_handle);
-            } else {
-                begin_shutdown(app_handle);
+            match close_action(configured_runtime(app_handle)) {
+                DesktopCloseAction::HideToTray => {
+                    let _ = hide_main_window(app_handle);
+                }
+                DesktopCloseAction::Quit => begin_shutdown(app_handle),
             }
         }
         RunEvent::ExitRequested { api, .. }
@@ -1996,11 +2063,13 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        base_package_specification, capability_command_arguments, configure_ui_service_command,
-        dependency_installation_arguments, desktop_paths_from_roots, display_command,
-        inventory_model_directory, manifest, normalize_line_endings,
-        normalized_runtime_constraints, package_acquisition_arguments, package_index,
-        package_specification, required_encoder_missing, selected_capabilities, selected_surfaces,
+        DesktopAction, DesktopActivation, DesktopCloseAction, UiProcessAction,
+        action_for_activation, base_package_specification, capability_command_arguments,
+        close_action, configure_ui_service_command, dependency_installation_arguments,
+        desktop_paths_from_roots, display_command, inventory_model_directory, manifest,
+        normalize_line_endings, normalized_runtime_constraints, package_acquisition_arguments,
+        package_index, package_specification, required_encoder_missing, selected_capabilities,
+        selected_surfaces, ui_process_action,
     };
     use std::{
         ffi::OsStr,
@@ -2179,6 +2248,64 @@ mod tests {
                 "43123",
             ]
         );
+    }
+
+    #[test]
+    fn startup_and_single_instance_activation_manage_without_opening_the_browser() {
+        assert_eq!(
+            action_for_activation(DesktopActivation::Startup),
+            Some(DesktopAction::Manage)
+        );
+        assert_eq!(
+            action_for_activation(DesktopActivation::SingleInstance),
+            Some(DesktopAction::Manage)
+        );
+    }
+
+    #[test]
+    fn tray_manage_browser_and_quit_actions_are_unambiguous() {
+        assert_eq!(
+            action_for_activation(DesktopActivation::Tray("manage")),
+            Some(DesktopAction::Manage)
+        );
+        assert_eq!(
+            action_for_activation(DesktopActivation::Tray("open")),
+            Some(DesktopAction::OpenBrowser)
+        );
+        assert_eq!(
+            action_for_activation(DesktopActivation::Tray("quit")),
+            Some(DesktopAction::Quit)
+        );
+        assert_eq!(
+            action_for_activation(DesktopActivation::Tray("other")),
+            None
+        );
+    }
+
+    #[test]
+    fn repeated_browser_actions_reuse_one_service_and_target_changes_replace_it() {
+        assert_eq!(
+            ui_process_action(true, "selected", "selected"),
+            UiProcessAction::Reuse
+        );
+        assert_eq!(
+            ui_process_action(true, "previous", "selected"),
+            UiProcessAction::Replace
+        );
+        assert_eq!(
+            ui_process_action(false, "selected", "selected"),
+            UiProcessAction::Start
+        );
+    }
+
+    #[test]
+    fn closing_a_configured_desktop_hides_it_and_manage_can_restore_it() {
+        assert_eq!(close_action(true), DesktopCloseAction::HideToTray);
+        assert_eq!(
+            action_for_activation(DesktopActivation::Tray("manage")),
+            Some(DesktopAction::Manage)
+        );
+        assert_eq!(close_action(false), DesktopCloseAction::Quit);
     }
 
     #[test]
