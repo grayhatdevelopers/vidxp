@@ -32,11 +32,7 @@ class LocalArtifactStore:
 
     def stage(self, artifact_id: str, *, suffix: str) -> StagedArtifact:
         validated_id = TypeAdapter(ArtifactId).validate_python(artifact_id)
-        if (
-            not suffix.startswith(".")
-            or not suffix[1:].isalnum()
-            or len(suffix) > 10
-        ):
+        if not suffix.startswith(".") or not suffix[1:].isalnum() or len(suffix) > 10:
             raise ValueError("Artifact suffix is invalid.")
         path = prepare_managed_destination(
             self.root,
@@ -47,10 +43,7 @@ class LocalArtifactStore:
 
     def publish(self, staged: StagedArtifact) -> StoredArtifact:
         suffix = staged.path.suffix.lower()
-        storage_key = (
-            f"objects/{staged.artifact_id[:2]}/"
-            f"{staged.artifact_id}{suffix}"
-        )
+        storage_key = f"objects/{staged.artifact_id[:2]}/{staged.artifact_id}{suffix}"
         path, checksum, byte_size = self._managed.publish(
             staged.path,
             storage_key,
@@ -71,10 +64,7 @@ class LocalArtifactStore:
         suffix: str,
     ) -> StoredArtifact | None:
         validated_id = TypeAdapter(ArtifactId).validate_python(artifact_id)
-        storage_key = (
-            f"objects/{validated_id[:2]}/"
-            f"{validated_id}{suffix.lower()}"
-        )
+        storage_key = f"objects/{validated_id[:2]}/{validated_id}{suffix.lower()}"
         try:
             path = self._managed.resolve(storage_key)
         except FileNotFoundError:
@@ -192,9 +182,7 @@ class FFmpegSnippetRenderer:
                 cancellation.raise_if_cancelled()
                 now = monotonic()
                 if now - started_at > self.timeout_seconds:
-                    raise ArtifactRenderError(
-                        "The requested snippet render timed out."
-                    )
+                    raise ArtifactRenderError("The requested snippet render timed out.")
                 if progress is not None and now - last_progress_at >= 1:
                     progress(
                         {
@@ -223,3 +211,81 @@ class FFmpegSnippetRenderer:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
+
+
+class FFmpegFrameRenderer:
+    """Extract an indexed frame exactly, or a representative timestamp frame."""
+
+    def __init__(
+        self,
+        executable: str = "ffmpeg",
+        *,
+        timeout_seconds: float = 120,
+    ) -> None:
+        self.executable = executable
+        self.timeout_seconds = timeout_seconds
+
+    def render(
+        self,
+        source: Path,
+        destination: Path,
+        *,
+        timestamp_seconds: float,
+        frame_index: int | None,
+        cancellation: CancellationToken,
+        progress: ProgressCallback | None,
+    ) -> None:
+        if frame_index is None:
+            seek = ["-ss", str(timestamp_seconds)]
+            video_filter: list[str] = []
+        else:
+            seek = []
+            video_filter = ["-vf", f"select=eq(n\\,{frame_index})"]
+        try:
+            process = subprocess.Popen(
+                [
+                    self.executable,
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    *seek,
+                    "-i",
+                    str(source),
+                    *video_filter,
+                    "-frames:v",
+                    "1",
+                    "-c:v",
+                    "png",
+                    "-y",
+                    str(destination),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError as exc:
+            raise ArtifactRendererUnavailableError(
+                "The configured ffmpeg executable is unavailable."
+            ) from exc
+        started_at = monotonic()
+        try:
+            while process.poll() is None:
+                cancellation.raise_if_cancelled()
+                if monotonic() - started_at > self.timeout_seconds:
+                    raise ArtifactRenderError(
+                        "The evidence frame extraction timed out."
+                    )
+                sleep(0.05)
+            if process.returncode != 0 or not destination.is_file():
+                raise ArtifactRenderError("The evidence frame could not be extracted.")
+            if progress is not None:
+                progress(
+                    {
+                        "stage": "rendering_evidence_frame",
+                        "message": "Extracted an evidence frame.",
+                    }
+                )
+        except BaseException:
+            if process.poll() is None:
+                FFmpegSnippetRenderer._stop(process)
+            raise

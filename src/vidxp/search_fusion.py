@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 from vidxp.application_models import (
     FusedMoment,
@@ -51,11 +52,7 @@ def _connected_components(
     current_media: str | None = None
     current_end = 0.0
     for hit in ordered:
-        if (
-            not current
-            or hit.media_id != current_media
-            or hit.start > current_end
-        ):
+        if not current or hit.media_id != current_media or hit.start > current_end:
             if current:
                 components.append(current)
             current = [hit]
@@ -76,10 +73,50 @@ def _score(hits: list[SearchHit]) -> float:
             hit.rank,
             best_ranks.get(hit.modality, hit.rank),
         )
-    return sum(
-        1.0 / (RRF_RANK_CONSTANT + rank)
-        for rank in best_ranks.values()
-    )
+    return sum(1.0 / (RRF_RANK_CONSTANT + rank) for rank in best_ranks.values())
+
+
+def _moment_id(
+    *,
+    snapshot_id: str | None,
+    media_id: str,
+    start: float,
+    end: float,
+    hits: tuple[SearchHit, ...],
+) -> str:
+    identity = {
+        "snapshot_id": snapshot_id or "legacy-unpinned",
+        "media_id": media_id,
+        "start": start,
+        "end": end,
+        "hits": [
+            {
+                "generation_id": hit.generation_id,
+                "media_id": hit.media_id,
+                "modality": hit.modality,
+                "source_id": hit.source_id,
+                "start": hit.start,
+                "end": hit.end,
+            }
+            for hit in sorted(
+                hits,
+                key=lambda item: (
+                    item.generation_id,
+                    item.media_id,
+                    item.modality,
+                    item.source_id,
+                    item.start,
+                    item.end,
+                ),
+            )
+        ],
+    }
+    encoded = json.dumps(
+        identity,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def fuse_search_results(
@@ -89,23 +126,16 @@ def fuse_search_results(
     results: tuple[SearchResult, ...],
     media_id: str | None = None,
     top_k: int = 10,
+    snapshot_id: str | None = None,
 ) -> FusedSearchResult:
     by_modality = {result.modality: result for result in results}
     if len(by_modality) != len(results):
         raise ValueError("Fusion accepts one result per modality.")
     searched_modalities = tuple(
-        modality
-        for modality in requested_modalities
-        if modality in by_modality
-    ) + tuple(
-        sorted(set(by_modality) - set(requested_modalities))
-    )
-    ordered_results = tuple(
-        by_modality[modality] for modality in searched_modalities
-    )
-    flattened = tuple(
-        hit for result in ordered_results for hit in result.hits
-    )
+        modality for modality in requested_modalities if modality in by_modality
+    ) + tuple(sorted(set(by_modality) - set(requested_modalities)))
+    ordered_results = tuple(by_modality[modality] for modality in searched_modalities)
+    flattened = tuple(hit for result in ordered_results for hit in result.hits)
     candidates = []
     for hits in _connected_components(flattened):
         ordered_hits = tuple(
@@ -124,9 +154,7 @@ def fuse_search_results(
                 "media_id": hits[0].media_id,
                 "start": min(hit.start for hit in hits),
                 "end": max(hit.end for hit in hits),
-                "modalities": tuple(
-                    sorted({hit.modality for hit in hits})
-                ),
+                "modalities": tuple(sorted({hit.modality for hit in hits})),
                 "hits": ordered_hits,
             }
         )
@@ -140,7 +168,17 @@ def fuse_search_results(
         )
     )
     moments = tuple(
-        FusedMoment(rank=rank, **candidate)
+        FusedMoment(
+            rank=rank,
+            moment_id=_moment_id(
+                snapshot_id=snapshot_id,
+                media_id=candidate["media_id"],
+                start=candidate["start"],
+                end=candidate["end"],
+                hits=candidate["hits"],
+            ),
+            **candidate,
+        )
         for rank, candidate in enumerate(candidates[:top_k], start=1)
     )
     return FusedSearchResult(

@@ -4,13 +4,16 @@ import contextlib
 import hashlib
 import io
 import json
+import shutil
 import socket
+import subprocess
 import sys
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
@@ -21,24 +24,45 @@ from mcp.client import Client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
-from mcp.types import ResourceLink
+from mcp.types import ImageContent, ResourceLink
 
 from vidxp.application_models import (
     ApplicationError,
     Artifact,
+    EvidenceArtifact,
+    EvidenceDeliveryItem,
+    EvidenceDeliveryResult,
+    EvidenceDeliveryState,
+    EvidenceFrameMatch,
+    EvidenceKeyframe,
+    EvidenceRangeResolution,
+    FusedMoment,
+    FusedSearchResult,
+    FusionProvenance,
+    GroundedClaim,
     ErrorCategory,
     ErrorDetail,
+    EvidenceDeliveryMode,
+    EvidenceDeliveryPolicy,
     IndexStatus,
     Job,
     JobKind,
     JobPage,
     JobQueue,
     JobState,
+    SearchHit,
+    SearchJobResult,
     MediaPage,
     MediaUploadSessionStatus,
     MediaUploadStatus,
+    MomentEvidence,
     Principal,
     QueryVideoCommand,
+    QueryAnswer,
+    QueryAnswerMode,
+    QueryJobResult,
+    QueryPlan,
+    SearchMomentsPlanStep,
     WorkspaceOverview,
 )
 from vidxp.authentication import (
@@ -86,6 +110,7 @@ MCP_TOOL_NAMES = [
     "search_moments",
     "query_video",
     "create_clip",
+    "create_evidence_clip",
     "get_artifact_download",
     "list_jobs",
     "get_job",
@@ -100,6 +125,151 @@ def queued_job() -> Job:
         kind=JobKind.index,
         state=JobState.queued,
         queue=JobQueue.cpu,
+    )
+
+
+def search_evidence_job(frame: Artifact, clip: Artifact | None = None) -> Job:
+    evidence_id = "e" * 64
+    hit = SearchHit(
+        rank=1,
+        media_id=MEDIA_ID,
+        video_id=MEDIA_ID,
+        generation_id="523456781234423481234567890abcde",
+        start=1.0,
+        end=2.0,
+        score=0.9,
+        raw_distance=0.1,
+        modality="scene",
+        source_id="scene:frame:7",
+        metadata={"frame_index": 7, "timestamp": 1.4, "fps": 5.0},
+    )
+    resolved = EvidenceRangeResolution(
+        source_start_seconds=1.0,
+        source_end_seconds=2.0,
+        representative_timestamp_seconds=1.4,
+        clip_start_seconds=0.0,
+        clip_end_seconds=4.0,
+        requested_padding_before_seconds=2.0,
+        requested_padding_after_seconds=2.0,
+        applied_padding_before_seconds=1.0,
+        applied_padding_after_seconds=2.0,
+        start_clamped=True,
+    )
+    delivery = EvidenceDeliveryResult(
+        policy=EvidenceDeliveryPolicy(
+            mode=(
+                EvidenceDeliveryMode.keyframes_and_clips
+                if clip is not None
+                else EvidenceDeliveryMode.keyframes
+            ),
+            max_items=1,
+        ),
+        items=(
+            EvidenceDeliveryItem(
+                evidence_id=evidence_id,
+                rank=1,
+                media_id=MEDIA_ID,
+                generation_id=hit.generation_id,
+                modalities=("scene",),
+                score=0.9,
+                state=EvidenceDeliveryState.ready,
+                range=resolved,
+                keyframe=EvidenceKeyframe(
+                    match=EvidenceFrameMatch.exact_indexed_frame,
+                    timestamp_seconds=1.4,
+                    frame_index=7,
+                    width=1,
+                    height=1,
+                    artifact=EvidenceArtifact(
+                        artifact=frame,
+                        resource_uri=(
+                            f"vidxp://artifacts/{frame.artifact_id}/content.png"
+                        ),
+                    ),
+                ),
+                clip=(
+                    EvidenceArtifact(
+                        artifact=clip,
+                        resource_uri=(
+                            f"vidxp://artifacts/{clip.artifact_id}/content.mp4"
+                        ),
+                    )
+                    if clip is not None
+                    else None
+                ),
+            ),
+        ),
+    )
+    result = FusedSearchResult(
+        query_id="fused:known",
+        query="green frame",
+        modalities=("scene",),
+        moments=(
+            FusedMoment(
+                moment_id=evidence_id,
+                rank=1,
+                score=0.1,
+                media_id=MEDIA_ID,
+                start=1.0,
+                end=2.0,
+                modalities=("scene",),
+                hits=(hit,),
+            ),
+        ),
+        fusion=FusionProvenance(
+            requested_modalities=("scene",),
+            searched_modalities=("scene",),
+        ),
+        evidence_delivery=delivery,
+    )
+    return Job(
+        job_id=JOB_ID,
+        kind=JobKind.search,
+        state=JobState.succeeded,
+        queue=JobQueue.cpu,
+        result=SearchJobResult(result=result),
+    )
+
+
+def query_evidence_job(frame: Artifact, clip: Artifact) -> Job:
+    search_job = search_evidence_job(frame, clip)
+    search = search_job.result.result
+    item = search.evidence_delivery.items[0]
+    hit = search.moments[0].hits[0]
+    evidence = MomentEvidence(
+        evidence_id=item.evidence_id,
+        snapshot_id="623456781234423481234567890abcde",
+        media_id=hit.media_id,
+        generation_id=hit.generation_id,
+        modality=hit.modality,
+        source_id=hit.source_id,
+        start=hit.start,
+        end=hit.end,
+        hit=hit,
+    )
+    answer = QueryAnswer(
+        question="Which frame is green?",
+        mode=QueryAnswerMode.generated,
+        plan=QueryPlan(
+            steps=(SearchMomentsPlanStep(modality="scene", query="green frame"),)
+        ),
+        claims=(
+            GroundedClaim(
+                text="The indexed evidence contains the green frame.",
+                evidence_ids=(evidence.evidence_id,),
+            ),
+        ),
+        evidence=(evidence,),
+        moments=search.moments,
+        fusion=search.fusion,
+        evidence_delivery=search.evidence_delivery,
+    )
+    return Job(
+        job_id=JOB_ID,
+        kind=JobKind.query,
+        state=JobState.succeeded,
+        queue=JobQueue.cpu,
+        result=QueryJobResult(result=answer),
     )
 
 
@@ -295,9 +465,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             schema = tools[name].input_schema
             command_ref = schema["properties"]["command"]["$ref"]
             command_name = command_ref.rsplit("/", 1)[-1]
-            media_description = schema["$defs"][command_name]["properties"][
-                "media_id"
-            ]["description"]
+            media_description = schema["$defs"][command_name]["properties"]["media_id"][
+                "description"
+            ]
             self.assertIn("omit it", media_description)
             self.assertIn("active index snapshot", media_description)
         self.assertEqual(result.structured_content, {"items": []})
@@ -422,9 +592,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             seen.append(params)
             raise AssertionError("URL elicitation must not be used")
 
-        fixture = (
-            Path(__file__).parent / "fixtures" / "mcp_upload_server.py"
-        )
+        fixture = Path(__file__).parent / "fixtures" / "mcp_upload_server.py"
         parameters = StdioServerParameters(
             command=sys.executable,
             args=[str(fixture)],
@@ -467,9 +635,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 )
                 link = result.content[0]
                 downloaded = await client.read_resource(str(link.uri))
-                local_bytes = Path(
-                    result.structured_content["local_path"]
-                ).read_bytes()
+                local_bytes = Path(result.structured_content["local_path"]).read_bytes()
 
         self.assertFalse(result.is_error)
         self.assertIsInstance(link, ResourceLink)
@@ -480,7 +646,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("rendered%20clip.mp4", result.structured_content["file_uri"])
         self.assertIsNone(result.structured_content["download_url"])
-        self.assertEqual(downloaded.contents[0].blob, base64.b64encode(content).decode())
+        self.assertEqual(
+            downloaded.contents[0].blob, base64.b64encode(content).decode()
+        )
 
     def test_remote_mcp_is_stateless(self):
         with TemporaryDirectory() as directory:
@@ -611,14 +779,12 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 state=ArtifactState.ready,
                 created_at=datetime.now(timezone.utc),
             )
-            context.application.open_artifact_content.return_value = (
-                LocalFileResource(
-                    path=clip,
-                    filename=f"snippet-{ARTIFACT_ID}.mkv",
-                    mime_type="video/x-matroska",
-                    byte_size=len(content),
-                    etag=digest,
-                )
+            context.application.open_artifact_content.return_value = LocalFileResource(
+                path=clip,
+                filename=f"snippet-{ARTIFACT_ID}.mkv",
+                mime_type="video/x-matroska",
+                byte_size=len(content),
+                etag=digest,
             )
             server = uvicorn.Server(
                 uvicorn.Config(
@@ -659,11 +825,12 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         return result, link, downloaded, content
 
     async def test_real_streamable_http_artifact_delivery_hides_local_path(self):
-        result, link, downloaded, content = (
-            await self._real_streamable_http_artifact_delivery(
-                configure_download=True
-            )
-        )
+        (
+            result,
+            link,
+            downloaded,
+            content,
+        ) = await self._real_streamable_http_artifact_delivery(configure_download=True)
 
         self.assertFalse(result.is_error)
         self.assertIsInstance(link, ResourceLink)
@@ -675,16 +842,19 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(public.netloc, "public.example")
         self.assertEqual(public.query, "")
         self.assertTrue(public.fragment.startswith("capability="))
-        self.assertEqual(downloaded.contents[0].blob, base64.b64encode(content).decode())
+        self.assertEqual(
+            downloaded.contents[0].blob, base64.b64encode(content).decode()
+        )
 
     async def test_real_streamable_http_preserves_resource_without_public_download(
         self,
     ):
-        result, link, downloaded, content = (
-            await self._real_streamable_http_artifact_delivery(
-                configure_download=False
-            )
-        )
+        (
+            result,
+            link,
+            downloaded,
+            content,
+        ) = await self._real_streamable_http_artifact_delivery(configure_download=False)
 
         self.assertFalse(result.is_error)
         self.assertIsInstance(link, ResourceLink)
@@ -816,7 +986,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         rendered = output.getvalue()
         self.assertIn("OK VidXP MCP", rendered)
         self.assertIn("Index state: missing", rendered)
-        self.assertIn("Tools: 19", rendered)
+        self.assertIn("Tools: 20", rendered)
         self.assertIn("get_index_status", rendered)
 
     async def test_server_info_exposes_vidxp_branding(self):
@@ -953,6 +1123,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 question="What happens after the taxi arrives?",
                 media_id=MEDIA_ID,
                 modalities=("scene", "dialogue"),
+                evidence_delivery=EvidenceDeliveryPolicy(
+                    mode=EvidenceDeliveryMode.keyframes
+                ),
             ),
         )
         self.assertIn(
@@ -1034,6 +1207,317 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(error["retryable"])
         self.assertTrue(error["details"]["partial_files_preserved"])
 
+    async def test_completed_search_projects_inline_frame_and_readable_resource(self):
+        png_bytes = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNg"
+            "YAAAAAMAASsJTYQAAAAASUVORK5CYII="
+        )
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            frame_path = root / "frame.png"
+            frame_path.write_bytes(png_bytes)
+            frame = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                generation_id="523456781234423481234567890abcde",
+                job_id=JOB_ID,
+                kind=ArtifactKind.evidence_frame,
+                profile="png",
+                mime_type="image/png",
+                byte_size=len(png_bytes),
+                sha256=hashlib.sha256(png_bytes).hexdigest(),
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            for transport in ("local_stdio", "streamable_http"):
+                with self.subTest(transport=transport):
+                    context = self.context(root)
+                    context.jobs.get.return_value = search_evidence_job(frame)
+                    context.application.open_artifact_content.return_value = (
+                        LocalFileResource(
+                            path=frame_path,
+                            filename=f"evidence_frame-{ARTIFACT_ID}.png",
+                            mime_type="image/png",
+                            byte_size=len(png_bytes),
+                            etag=frame.sha256,
+                        )
+                    )
+                    server = create_mcp_server(
+                        context,
+                        default_principal=Principal(
+                            subject="agent",
+                            scopes=frozenset({"vidxp.read"}),
+                        ),
+                        artifact_delivery=transport,
+                    )
+                    async with Client(server) as client:
+                        result = await client.call_tool("get_job", {"job_id": JOB_ID})
+                        uri = f"vidxp://artifacts/{ARTIFACT_ID}/content.png"
+                        resource = await client.read_resource(uri)
+
+                    self.assertFalse(result.is_error)
+                    self.assertTrue(
+                        any(isinstance(block, ImageContent) for block in result.content)
+                    )
+                    self.assertTrue(
+                        any(isinstance(block, ResourceLink) for block in result.content)
+                    )
+                    projected = result.structured_content["result"]["result"][
+                        "evidence_delivery"
+                    ]["items"][0]["keyframe"]["artifact"]["delivery"]
+                    self.assertEqual(projected["resource_uri"], uri)
+                    self.assertEqual(len(resource.contents), 1)
+                    if transport == "local_stdio":
+                        self.assertEqual(projected["delivery_mode"], "local_file")
+                        self.assertEqual(Path(projected["local_path"]), frame_path)
+                    else:
+                        self.assertEqual(projected["delivery_mode"], "mcp_resource")
+                        self.assertIsNone(projected["local_path"])
+                        self.assertEqual(
+                            projected["delivery_error"]["code"],
+                            "public_download_origin_unavailable",
+                        )
+
+    async def test_create_evidence_clip_derives_range_from_source_job(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            context = self.context(root)
+            frame = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                generation_id="523456781234423481234567890abcde",
+                job_id=JOB_ID,
+                kind=ArtifactKind.evidence_frame,
+                profile="png",
+                mime_type="image/png",
+                byte_size=1,
+                sha256="a" * 64,
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            source = search_evidence_job(frame)
+            context.jobs.get.return_value = source
+            context.jobs.submit_snippet.return_value = queued_job().model_copy(
+                update={"kind": JobKind.snippet}
+            )
+            context.application.evidence_delivery = Mock()
+            resolved = source.result.result.evidence_delivery.items[0].range
+            context.application.evidence_delivery.resolve_job_evidence.return_value = (
+                SimpleNamespace(media_id=MEDIA_ID),
+                resolved,
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.write"}),
+                ),
+            )
+            arguments = {
+                "source_job_id": JOB_ID,
+                "evidence_id": "e" * 64,
+                "idempotency_key": "evidence-clip-0001",
+                "padding_before_seconds": 2,
+                "padding_after_seconds": 2,
+            }
+            async with Client(server) as client:
+                first = await client.call_tool("create_evidence_clip", arguments)
+                second = await client.call_tool("create_evidence_clip", arguments)
+
+            self.assertFalse(first.is_error)
+            self.assertFalse(second.is_error)
+            command = context.jobs.submit_snippet.call_args.args[0]
+            self.assertEqual(command.media_id, MEDIA_ID)
+            self.assertEqual(command.start_seconds, resolved.clip_start_seconds)
+            self.assertEqual(command.end_seconds, resolved.clip_end_seconds)
+            calls = context.jobs.submit_snippet.call_args_list
+            self.assertEqual(calls[0].kwargs["job_id"], calls[1].kwargs["job_id"])
+            resolver = context.application.evidence_delivery.resolve_job_evidence
+            resolver.assert_called_with(
+                source.result.result,
+                "e" * 64,
+                padding_before=2.0,
+                padding_after=2.0,
+            )
+
+    async def test_one_job_search_returns_frame_and_ready_clip(self):
+        if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+            self.skipTest("ffmpeg and ffprobe are required for the real MCP proof")
+        png_bytes = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNg"
+            "YAAAAAMAASsJTYQAAAAASUVORK5CYII="
+        )
+        clip_id = "423456781234423481234567890abcde"
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            frame_path = root / "frame.png"
+            clip_path = root / "clip.mp4"
+            frame_path.write_bytes(png_bytes)
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=green:s=64x48:d=4:r=2",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
+                    "-y",
+                    str(clip_path),
+                ],
+                check=True,
+            )
+            clip_bytes = clip_path.read_bytes()
+            now = datetime.now(timezone.utc)
+            frame = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                generation_id="523456781234423481234567890abcde",
+                job_id=JOB_ID,
+                kind=ArtifactKind.evidence_frame,
+                profile="png",
+                mime_type="image/png",
+                byte_size=len(png_bytes),
+                sha256=hashlib.sha256(png_bytes).hexdigest(),
+                state=ArtifactState.ready,
+                created_at=now,
+            )
+            clip = Artifact(
+                artifact_id=clip_id,
+                media_id=MEDIA_ID,
+                job_id=JOB_ID,
+                kind=ArtifactKind.snippet,
+                profile="compatible_mp4",
+                mime_type="video/mp4",
+                byte_size=len(clip_bytes),
+                sha256=hashlib.sha256(clip_bytes).hexdigest(),
+                state=ArtifactState.ready,
+                created_at=now,
+            )
+            context = self.context(root)
+            context.jobs.submit_search.return_value = queued_job().model_copy(
+                update={"kind": JobKind.search}
+            )
+            context.jobs.submit_query.return_value = queued_job().model_copy(
+                update={"kind": JobKind.query}
+            )
+            context.jobs.get.side_effect = (
+                search_evidence_job(frame, clip),
+                query_evidence_job(frame, clip),
+            )
+
+            def resource(artifact_id):
+                if artifact_id == ARTIFACT_ID:
+                    return LocalFileResource(
+                        path=frame_path,
+                        filename=f"evidence_frame-{ARTIFACT_ID}.png",
+                        mime_type="image/png",
+                        byte_size=len(png_bytes),
+                        etag=frame.sha256,
+                    )
+                return LocalFileResource(
+                    path=clip_path,
+                    filename=f"snippet-{clip_id}.mp4",
+                    mime_type="video/mp4",
+                    byte_size=len(clip_bytes),
+                    etag=clip.sha256,
+                )
+
+            context.application.open_artifact_content.side_effect = resource
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.read", "vidxp.write"}),
+                ),
+            )
+            async with Client(server) as client:
+                submitted = await client.call_tool(
+                    "search_moments",
+                    {
+                        "command": {
+                            "query": "green frame",
+                            "modalities": ["scene"],
+                            "evidence_delivery": {
+                                "mode": "keyframes_and_clips",
+                                "max_items": 1,
+                            },
+                        },
+                        "idempotency_key": "one-job-search-0001",
+                    },
+                )
+                completed = await client.call_tool("get_job", {"job_id": JOB_ID})
+                clip_resource = await client.read_resource(
+                    f"vidxp://artifacts/{clip_id}/content.mp4"
+                )
+                submitted_query = await client.call_tool(
+                    "query_video",
+                    {
+                        "command": {
+                            "question": "Which frame is green?",
+                            "modalities": ["scene"],
+                            "evidence_delivery": {
+                                "mode": "keyframes_and_clips",
+                                "max_items": 1,
+                            },
+                        },
+                        "idempotency_key": "one-job-query-0001",
+                    },
+                )
+                completed_query = await client.call_tool("get_job", {"job_id": JOB_ID})
+
+            self.assertFalse(submitted.is_error)
+            self.assertFalse(completed.is_error)
+            self.assertFalse(submitted_query.is_error)
+            self.assertFalse(completed_query.is_error)
+            item = completed.structured_content["result"]["result"][
+                "evidence_delivery"
+            ]["items"][0]
+            self.assertIsNotNone(item["keyframe"])
+            self.assertIsNotNone(item["clip"])
+            links = [
+                block for block in completed.content if isinstance(block, ResourceLink)
+            ]
+            self.assertEqual(len(links), 2)
+            self.assertEqual(len(clip_resource.contents), 1)
+            duration = float(
+                subprocess.check_output(
+                    [
+                        "ffprobe",
+                        "-v",
+                        "error",
+                        "-show_entries",
+                        "format=duration",
+                        "-of",
+                        "default=noprint_wrappers=1:nokey=1",
+                        str(clip_path),
+                    ],
+                    text=True,
+                ).strip()
+            )
+            self.assertAlmostEqual(duration, 4.0, places=2)
+            self.assertEqual(
+                hashlib.sha256(clip_path.read_bytes()).hexdigest(), clip.sha256
+            )
+            query_result = completed_query.structured_content["result"]["result"]
+            cited = query_result["claims"][0]["evidence_ids"][0]
+            self.assertEqual(cited, query_result["evidence"][0]["evidence_id"])
+            self.assertEqual(
+                cited,
+                query_result["evidence_delivery"]["items"][0]["evidence_id"],
+            )
+            context.jobs.submit_search.assert_called_once()
+            context.jobs.submit_query.assert_called_once()
+            context.jobs.submit_snippet.assert_not_called()
+            context.application.get_artifact.assert_not_called()
+
     async def test_retry_job_uses_shared_stable_idempotency(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
@@ -1071,8 +1555,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             clip = root / "clip.mp4"
             clip.write_bytes(b"clip-content")
             context = self.context(root)
-            context.jobs.submit_snippet.return_value = (
-                queued_job().model_copy(update={"kind": JobKind.snippet})
+            context.jobs.submit_snippet.return_value = queued_job().model_copy(
+                update={"kind": JobKind.snippet}
             )
             context.application.get_artifact.return_value = Artifact(
                 artifact_id=ARTIFACT_ID,
@@ -1085,14 +1569,12 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 state=ArtifactState.ready,
                 created_at=datetime.now(timezone.utc),
             )
-            context.application.open_artifact_content.return_value = (
-                LocalFileResource(
-                    path=clip,
-                    filename=f"snippet-{ARTIFACT_ID}.mp4",
-                    mime_type="video/mp4",
-                    byte_size=12,
-                    etag="1" * 64,
-                )
+            context.application.open_artifact_content.return_value = LocalFileResource(
+                path=clip,
+                filename=f"snippet-{ARTIFACT_ID}.mp4",
+                mime_type="video/mp4",
+                byte_size=12,
+                etag="1" * 64,
             )
             server = create_mcp_server(
                 context,
@@ -1335,11 +1817,28 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         "idempotency_key": "agent-request-0001",
                     },
                 )
+                evidence_clip = await client.call_tool(
+                    "search_moments",
+                    {
+                        "command": {
+                            "query": "green frame",
+                            "evidence_delivery": {
+                                "mode": "keyframes_and_clips"
+                            },
+                        },
+                        "idempotency_key": "agent-request-0002",
+                    },
+                )
 
         self.assertTrue(result.is_error)
         self.assertIn('"protocol_code":-32003', result.content[0].text)
         self.assertIn('"required_scope":"vidxp.write"', result.content[0].text)
+        self.assertTrue(evidence_clip.is_error)
+        self.assertIn(
+            '"required_scope":"vidxp.write"', evidence_clip.content[0].text
+        )
         context.jobs.submit_index.assert_not_called()
+        context.jobs.submit_search.assert_not_called()
 
     async def test_stdio_entrypoint_serves_the_same_curated_surface(self):
         with TemporaryDirectory() as directory:
@@ -1414,7 +1913,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 19)
+        self.assertEqual(len(discovered.tools), 20)
         self.assertEqual(result.structured_content, {"items": []})
 
     async def test_oidc_verifier_projects_the_shared_validated_token(self):

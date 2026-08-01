@@ -40,6 +40,7 @@ class ArtifactRendererUnavailableError(RuntimeError):
 
 class ArtifactKind(StrEnum):
     actor_overlay = "actor_overlay"
+    evidence_frame = "evidence_frame"
     snippet = "snippet"
 
 

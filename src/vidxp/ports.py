@@ -222,6 +222,20 @@ class SnippetRendererPort(Protocol):
 
 
 @runtime_checkable
+class FrameRendererPort(Protocol):
+    def render(
+        self,
+        source: Path,
+        destination: Path,
+        *,
+        timestamp_seconds: float,
+        frame_index: int | None,
+        cancellation: CancellationToken,
+        progress: ProgressCallback | None,
+    ) -> None: ...
+
+
+@runtime_checkable
 class ResourceSchedulerPort(Protocol):
     def indexing(self): ...
 
@@ -337,6 +351,7 @@ class IndexStore(IndexReader, Protocol):
         batch_size: int,
         cancellation: CancellationToken,
     ) -> int: ...
+
 
 class IndexBackend(Protocol):
     """Infrastructure operations needed by the application layer."""

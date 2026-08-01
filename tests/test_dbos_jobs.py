@@ -225,6 +225,7 @@ class DBOSJobIntegrationTests(unittest.TestCase):
                 snapshot_id=SNAPSHOT_ID,
                 snapshot_sha256=SNAPSHOT_SHA256,
             ),
+            execution=ANY,
         )
 
     def test_grounded_query_runs_in_worker_and_returns_typed_result(self):
@@ -339,6 +340,7 @@ class DBOSJobIntegrationTests(unittest.TestCase):
                 snapshot_id=SNAPSHOT_ID,
                 snapshot_sha256=SNAPSHOT_SHA256,
             ),
+            execution=ANY,
         )
 
     def test_failed_legacy_search_retries_as_a_v2_workflow(self):
@@ -399,9 +401,7 @@ class DBOSJobIntegrationTests(unittest.TestCase):
         self.backend.client = Mock(wraps=self.backend.client)
 
         with self.assertRaises(InvalidJobBackendRequestError):
-            self.backend.list(
-                ListJobsCommand(page_size=1, cursor=cursor)
-            )
+            self.backend.list(ListJobsCommand(page_size=1, cursor=cursor))
 
         self.backend.client.list_workflows.assert_not_called()
 
@@ -451,9 +451,7 @@ class DBOSJobIntegrationTests(unittest.TestCase):
         later_id = "823456781234423481234567890abcde"
         sleep(0.01)
         self.jobs.submit_index(command, job_id=later_id)
-        second = self.jobs.list(
-            ListJobsCommand(page_size=2, cursor=first.next_cursor)
-        )
+        second = self.jobs.list(ListJobsCommand(page_size=2, cursor=first.next_cursor))
 
         paged_ids = {job.job_id for job in (*first.items, *second.items)}
         self.assertEqual(paged_ids, set(original_ids))

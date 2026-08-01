@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import json
+import base64
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
@@ -20,6 +21,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import (
     CallToolResult,
     Icon,
+    ImageContent,
     ResourceLink,
     TextContent,
     ToolAnnotations,
@@ -31,6 +33,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from vidxp import __version__
 from vidxp.application_models import (
     ApplicationError,
+    Artifact,
     ArtifactDeliveryMode,
     ArtifactDownload,
     CapabilityInfo,
@@ -39,10 +42,14 @@ from vidxp.application_models import (
     CreateIndexCommand,
     ErrorCategory,
     ErrorDetail,
+    EvidenceDeliveryMode,
+    EvidenceDeliveryPolicy,
     Identifier,
     IndexStatus,
     Job,
     JobId,
+    JobKind,
+    JobState,
     JobPage,
     ListJobsCommand,
     ListMediaCommand,
@@ -55,6 +62,8 @@ from vidxp.application_models import (
     QueryVideoCommand,
     RuntimeReadiness,
     SearchCommand,
+    Sha256,
+    SnippetProfile,
     WorkspaceOverview,
     UploadSessionId,
 )
@@ -345,10 +354,7 @@ class MCPTransportSecurityBoundary:
         receive: Receive,
         send: Send,
     ) -> None:
-        if (
-            scope["type"] == "http"
-            and str(scope.get("path", "")) in {"/mcp", "/mcp/"}
-        ):
+        if scope["type"] == "http" and str(scope.get("path", "")) in {"/mcp", "/mcp/"}:
             response = await self.security.validate_request(
                 Request(scope, receive=receive),
                 is_post=str(scope.get("method", "")).upper() == "POST",
@@ -372,12 +378,9 @@ def create_mcp_server(
     if oidc_authentication:
         assert settings.http_oidc_issuer is not None
         assert settings.mcp_public_url is not None
-        if (
-            isinstance(context, HttpApplicationContext)
-            and isinstance(
-                context.authenticator,
-                OIDCBearerAuthenticator,
-            )
+        if isinstance(context, HttpApplicationContext) and isinstance(
+            context.authenticator,
+            OIDCBearerAuthenticator,
         ):
             authenticator = context.authenticator.for_audience(
                 settings.mcp_public_url,
@@ -421,10 +424,12 @@ def create_mcp_server(
             "media included in the active index snapshot. For search_moments "
             "and query_video, provide command.media_id to restrict work to one "
             "video, or omit it to search/query across every media item in that "
-            "snapshot. To deliver a matching time range, submit create_clip, "
-            "poll get_job, then call get_artifact_download with the completed "
-            "job's artifact_id. Use list_jobs to recover job IDs across agent "
-            "sessions."
+            "snapshot. MCP defaults to three ranked evidence frames; request "
+            "keyframes_and_clips to receive bounded ready clips in the same "
+            "completed job. The ordinary flow is submit search/query, then poll "
+            "that job. create_evidence_clip, create_clip, and "
+            "get_artifact_download remain advanced fallbacks. Use list_jobs to "
+            "recover job IDs across agent sessions."
         ),
         version=__version__,
         token_verifier=token_verifier,
@@ -440,8 +445,8 @@ def create_mcp_server(
             context,
             default_principal=default_principal,
             permission=RepositoryPermission.read,
-            operation=lambda _actor: (
-                context.application.open_artifact_content(artifact_id)
+            operation=lambda _actor: context.application.open_artifact_content(
+                artifact_id
             ),
         )
         if resource.mime_type != expected_mime_type:
@@ -460,9 +465,7 @@ def create_mcp_server(
         "vidxp://artifacts/{artifact_id}/content.mp4",
         name="vidxp_artifact_mp4",
         title="VidXP MP4 artifact",
-        description=(
-            "Binary content for a generated VidXP clip or video artifact."
-        ),
+        description=("Binary content for a generated VidXP clip or video artifact."),
         mime_type="video/mp4",
     )
     async def read_mp4_artifact(artifact_id: ArtifactId) -> bytes:
@@ -475,9 +478,7 @@ def create_mcp_server(
         "vidxp://artifacts/{artifact_id}/content.mkv",
         name="vidxp_artifact_matroska",
         title="VidXP Matroska artifact",
-        description=(
-            "Binary content for a source-profile VidXP clip artifact."
-        ),
+        description=("Binary content for a source-profile VidXP clip artifact."),
         mime_type="video/x-matroska",
     )
     async def read_matroska_artifact(artifact_id: ArtifactId) -> bytes:
@@ -485,6 +486,111 @@ def create_mcp_server(
             artifact_id,
             expected_mime_type="video/x-matroska",
         )
+
+    @server.resource(
+        "vidxp://artifacts/{artifact_id}/content.png",
+        name="vidxp_evidence_frame_png",
+        title="VidXP evidence frame",
+        description="PNG frame extracted from authoritative indexed evidence.",
+        mime_type="image/png",
+    )
+    async def read_png_artifact(artifact_id: ArtifactId) -> bytes:
+        return await artifact_bytes(
+            artifact_id,
+            expected_mime_type="image/png",
+        )
+
+    async def project_artifact_delivery(
+        artifact: Artifact,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> tuple[ArtifactDownload, ResourceLink]:
+        binding = _translate_application_result(lambda: artifact_binding(artifact))
+        resource_uri = (
+            f"vidxp://artifacts/{artifact.artifact_id}/content.{binding.extension}"
+        )
+        link = ResourceLink(
+            name=binding.filename,
+            title=title or f"VidXP {artifact.kind.value.replace('_', ' ')}",
+            uri=resource_uri,
+            description=description
+            or (
+                f"Generated from media {artifact.media_id}; "
+                f"{artifact.byte_size:,} bytes."
+            ),
+            mimeType=artifact.mime_type,
+            size=artifact.byte_size,
+        )
+        local_path = None
+        file_uri = None
+        download_url = None
+        download_expires_at = None
+        delivery_error = None
+        if (
+            artifact_delivery == "streamable_http"
+            and context.settings.artifact_download_public_url is not None
+        ):
+            issued = _translate_application_result(
+                lambda: ArtifactDownloadCapabilities(context.settings).issue(artifact)
+            )
+            delivery_mode = ArtifactDeliveryMode.https_download
+            download_url = issued.url
+            download_expires_at = issued.expires_at
+        elif artifact_delivery == "streamable_http":
+            delivery_mode = ArtifactDeliveryMode.mcp_resource
+            delivery_error = _public_download_unavailable()
+        elif context.settings.mcp_stdio_filesystem_accessible:
+            resource = await _invoke_async(
+                context,
+                default_principal=default_principal,
+                permission=RepositoryPermission.read,
+                operation=lambda _actor: context.application.open_artifact_content(
+                    artifact.artifact_id
+                ),
+            )
+            _translate_application_result(
+                lambda: require_resource_binding(binding, resource)
+            )
+            resolved = _translate_application_result(
+                lambda: verified_local_path(resource.path)
+            )
+            delivery_mode = ArtifactDeliveryMode.local_file
+            local_path = str(resolved)
+            file_uri = resolved.as_uri()
+        elif context.settings.artifact_download_public_url is not None:
+            issued = _translate_application_result(
+                lambda: ArtifactDownloadCapabilities(context.settings).issue(artifact)
+            )
+            delivery_mode = ArtifactDeliveryMode.https_download
+            download_url = issued.url
+            download_expires_at = issued.expires_at
+        else:
+            delivery_mode = ArtifactDeliveryMode.mcp_resource
+            delivery_error = ErrorDetail(
+                code="local_path_unavailable",
+                category=ErrorCategory.unavailable,
+                message=(
+                    "The stdio client is configured as filesystem-isolated; "
+                    "read the MCP resource or configure a public download origin."
+                ),
+            )
+        return ArtifactDownload(
+            artifact_id=artifact.artifact_id,
+            filename=binding.filename,
+            mime_type=artifact.mime_type,
+            byte_size=artifact.byte_size,
+            sha256=artifact.sha256,
+            etag=f'"{artifact.sha256}"',
+            state=artifact.state,
+            resource_uri=resource_uri,
+            delivery_mode=delivery_mode,
+            local_path=local_path,
+            file_uri=file_uri,
+            download_url=download_url,
+            download_expires_at=download_expires_at,
+            delivery_error=delivery_error,
+        ), link
 
     @server.tool(
         description=(
@@ -749,7 +855,9 @@ def create_mcp_server(
         description=(
             "Submit a durable ranked moment search. Set command.media_id to "
             "search one registered video; omit it to search across every media "
-            "item in the active index snapshot. Poll get_job for top-k results."
+            "item in the active index snapshot. MCP defaults to the strongest "
+            "three keyframes. Request keyframes_and_clips for same-job clips, "
+            "then poll only this job for results and evidence."
         ),
         annotations=_SUBMIT,
         structured_output=True,
@@ -759,8 +867,17 @@ def create_mcp_server(
         idempotency_key: IdempotencyKey,
     ) -> Job:
         def submit(actor: Principal) -> Job:
+            projected = command
+            if command.evidence_delivery is None:
+                projected = command.model_copy(
+                    update={
+                        "evidence_delivery": EvidenceDeliveryPolicy(
+                            mode=EvidenceDeliveryMode.keyframes
+                        )
+                    }
+                )
             return context.jobs.submit_search(
-                command,
+                projected,
                 job_id=scoped_job_id(
                     principal=actor,
                     transport="mcp",
@@ -772,7 +889,13 @@ def create_mcp_server(
         return await _invoke_async(
             context,
             default_principal=default_principal,
-            permission=RepositoryPermission.read,
+            permission=(
+                RepositoryPermission.write
+                if command.evidence_delivery is not None
+                and command.evidence_delivery.mode
+                == EvidenceDeliveryMode.keyframes_and_clips
+                else RepositoryPermission.read
+            ),
             operation=submit,
         )
 
@@ -781,7 +904,9 @@ def create_mcp_server(
             "Submit a durable grounded natural-language query over indexed "
             "moments and actor evidence. Set command.media_id for one video, "
             "or omit it to query across every media item in the active index "
-            "snapshot. Poll get_job for the answer and evidence."
+            "snapshot. MCP defaults to the strongest three keyframes. Request "
+            "keyframes_and_clips for same-job clips, then poll only this job "
+            "for the grounded answer and inspectable evidence."
         ),
         annotations=_SUBMIT,
         structured_output=True,
@@ -791,8 +916,17 @@ def create_mcp_server(
         idempotency_key: IdempotencyKey,
     ) -> Job:
         def submit(actor: Principal) -> Job:
+            projected = command
+            if command.evidence_delivery is None:
+                projected = command.model_copy(
+                    update={
+                        "evidence_delivery": EvidenceDeliveryPolicy(
+                            mode=EvidenceDeliveryMode.keyframes
+                        )
+                    }
+                )
             return context.jobs.submit_query(
-                command,
+                projected,
                 job_id=scoped_job_id(
                     principal=actor,
                     transport="mcp",
@@ -804,7 +938,13 @@ def create_mcp_server(
         return await _invoke_async(
             context,
             default_principal=default_principal,
-            permission=RepositoryPermission.read,
+            permission=(
+                RepositoryPermission.write
+                if command.evidence_delivery is not None
+                and command.evidence_delivery.mode
+                == EvidenceDeliveryMode.keyframes_and_clips
+                else RepositoryPermission.read
+            ),
             operation=submit,
         )
 
@@ -841,6 +981,70 @@ def create_mcp_server(
 
     @server.tool(
         description=(
+            "Advanced fallback: create a clip from authoritative evidence in a "
+            "completed search/query job. VidXP resolves and clamps the range; "
+            "the caller never supplies timestamps."
+        ),
+        annotations=_SUBMIT,
+        structured_output=True,
+    )
+    async def create_evidence_clip(
+        source_job_id: JobId,
+        evidence_id: Sha256,
+        idempotency_key: IdempotencyKey,
+        padding_before_seconds: Annotated[float, Field(ge=0, le=30)] = 2.0,
+        padding_after_seconds: Annotated[float, Field(ge=0, le=30)] = 2.0,
+        profile: SnippetProfile = SnippetProfile.compatible_mp4,
+    ) -> Job:
+        def submit(actor: Principal) -> Job:
+            source = context.jobs.get(source_job_id)
+            if (
+                source.state != JobState.succeeded
+                or source.result is None
+                or source.kind not in {JobKind.search, JobKind.query}
+            ):
+                raise ApplicationError(
+                    "evidence_source_job_not_complete",
+                    ErrorCategory.conflict,
+                    "Evidence clips require a completed search or query job.",
+                )
+            result = source.result.result
+            candidate, resolved = (
+                context.application.evidence_delivery.resolve_job_evidence(
+                    result,
+                    evidence_id,
+                    padding_before=padding_before_seconds,
+                    padding_after=padding_after_seconds,
+                )
+            )
+            return context.jobs.submit_snippet(
+                CreateSnippetCommand(
+                    media_id=candidate.media_id,
+                    start_seconds=resolved.clip_start_seconds,
+                    end_seconds=resolved.clip_end_seconds,
+                    profile=profile,
+                ),
+                job_id=scoped_job_id(
+                    principal=actor,
+                    transport="mcp",
+                    operation=(
+                        f"evidence-clip:{source_job_id}:{evidence_id}:"
+                        f"{padding_before_seconds}:{padding_after_seconds}:"
+                        f"{profile.value}"
+                    ),
+                    idempotency_key=idempotency_key,
+                ),
+            )
+
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.write,
+            operation=submit,
+        )
+
+    @server.tool(
+        description=(
             "Return a readable MCP resource link plus transport-appropriate "
             "delivery metadata for a completed clip or video artifact. Local "
             "stdio may expose its verified path; Streamable HTTP returns a "
@@ -856,99 +1060,9 @@ def create_mcp_server(
             context,
             default_principal=default_principal,
             permission=RepositoryPermission.read,
-            operation=lambda _actor: (
-                context.application.get_artifact(artifact_id)
-            ),
+            operation=lambda _actor: context.application.get_artifact(artifact_id),
         )
-        binding = _translate_application_result(lambda: artifact_binding(artifact))
-        resource_uri = (
-            f"vidxp://artifacts/{artifact.artifact_id}/"
-            f"content.{binding.extension}"
-        )
-        link = ResourceLink(
-            name=binding.filename,
-            title=f"VidXP {artifact.kind.value.replace('_', ' ')}",
-            uri=resource_uri,
-            description=(
-                f"Generated from media {artifact.media_id}; "
-                f"{artifact.byte_size:,} bytes."
-            ),
-            mimeType=artifact.mime_type,
-            size=artifact.byte_size,
-        )
-        local_path = None
-        file_uri = None
-        download_url = None
-        download_expires_at = None
-        delivery_error = None
-        if (
-            artifact_delivery == "streamable_http"
-            and context.settings.artifact_download_public_url is not None
-        ):
-            issued = _translate_application_result(
-                lambda: ArtifactDownloadCapabilities(context.settings).issue(
-                    artifact
-                )
-            )
-            delivery_mode = ArtifactDeliveryMode.https_download
-            download_url = issued.url
-            download_expires_at = issued.expires_at
-        elif artifact_delivery == "streamable_http":
-            delivery_mode = ArtifactDeliveryMode.mcp_resource
-            delivery_error = _public_download_unavailable()
-        elif context.settings.mcp_stdio_filesystem_accessible:
-            resource = await _invoke_async(
-                context,
-                default_principal=default_principal,
-                permission=RepositoryPermission.read,
-                operation=lambda _actor: (
-                    context.application.open_artifact_content(artifact_id)
-                ),
-            )
-            _translate_application_result(
-                lambda: require_resource_binding(binding, resource)
-            )
-            resolved = _translate_application_result(
-                lambda: verified_local_path(resource.path)
-            )
-            delivery_mode = ArtifactDeliveryMode.local_file
-            local_path = resolved
-            file_uri = resolved.as_uri()
-        elif context.settings.artifact_download_public_url is not None:
-            issued = _translate_application_result(
-                lambda: ArtifactDownloadCapabilities(context.settings).issue(
-                    artifact
-                )
-            )
-            delivery_mode = ArtifactDeliveryMode.https_download
-            download_url = issued.url
-            download_expires_at = issued.expires_at
-        else:
-            delivery_mode = ArtifactDeliveryMode.mcp_resource
-            delivery_error = ErrorDetail(
-                code="local_path_unavailable",
-                category=ErrorCategory.unavailable,
-                message=(
-                    "The stdio client is configured as filesystem-isolated; "
-                    "read the MCP resource or configure a public download origin."
-                ),
-            )
-        result = ArtifactDownload(
-            artifact_id=artifact.artifact_id,
-            filename=binding.filename,
-            mime_type=artifact.mime_type,
-            byte_size=artifact.byte_size,
-            sha256=artifact.sha256,
-            etag=f'"{artifact.sha256}"',
-            state=artifact.state,
-            resource_uri=resource_uri,
-            delivery_mode=delivery_mode,
-            local_path=local_path,
-            file_uri=file_uri,
-            download_url=download_url,
-            download_expires_at=download_expires_at,
-            delivery_error=delivery_error,
-        )
+        result, link = await project_artifact_delivery(artifact)
         return CallToolResult(
             content=[link],
             structured_content=result.model_dump(mode="json"),
@@ -976,16 +1090,117 @@ def create_mcp_server(
         )
 
     @server.tool(
-        description="Poll a durable VidXP job and its typed result.",
+        description=(
+            "Poll a durable VidXP job and its typed result. Completed search "
+            "and query jobs include ranked evidence frames/resources and any "
+            "requested ready clips in this same response."
+        ),
         annotations=_READ_ONLY,
         structured_output=True,
     )
-    async def get_job(job_id: JobId) -> Job:
-        return await _invoke_async(
+    async def get_job(job_id: JobId) -> Annotated[CallToolResult, Job]:
+        job = await _invoke_async(
             context,
             default_principal=default_principal,
             permission=RepositoryPermission.read,
             operation=lambda _actor: context.jobs.get(job_id),
+        )
+        blocks: list[ImageContent | ResourceLink | TextContent] = []
+        projected = job
+        if (
+            job.state == JobState.succeeded
+            and job.result is not None
+            and job.kind in {JobKind.search, JobKind.query}
+        ):
+            result = job.result.result
+            delivery = result.evidence_delivery
+            if delivery is not None:
+                projected_items = []
+                for item in delivery.items:
+                    keyframe = item.keyframe
+                    clip = item.clip
+                    label = (
+                        f"evidence {item.evidence_id} rank {item.rank}; "
+                        f"media {item.media_id}; "
+                        f"{','.join(item.modalities)}"
+                    )
+                    if item.range is not None:
+                        label += (
+                            f"; {item.range.source_start_seconds:.3f}-"
+                            f"{item.range.source_end_seconds:.3f}s"
+                        )
+                    if keyframe is not None:
+                        frame_delivery, frame_link = await project_artifact_delivery(
+                            keyframe.artifact.artifact,
+                            title=f"VidXP evidence frame #{item.rank}",
+                            description=label,
+                        )
+                        projected_frame_artifact = keyframe.artifact.model_copy(
+                            update={"delivery": frame_delivery}
+                        )
+                        keyframe = keyframe.model_copy(
+                            update={"artifact": projected_frame_artifact}
+                        )
+                        if (
+                            keyframe.artifact.artifact.byte_size <= 512_000
+                            and keyframe.width <= 1280
+                            and keyframe.height <= 1280
+                        ):
+                            resource = await _invoke_async(
+                                context,
+                                default_principal=default_principal,
+                                permission=RepositoryPermission.read,
+                                operation=lambda _actor, artifact_id=(keyframe.artifact.artifact.artifact_id): (
+                                    context.application.open_artifact_content(
+                                        artifact_id
+                                    )
+                                ),
+                            )
+                            image_bytes = await anyio.to_thread.run_sync(
+                                resource.path.read_bytes
+                            )
+                            blocks.append(
+                                ImageContent(
+                                    data=base64.b64encode(image_bytes).decode(),
+                                    mimeType=resource.mime_type,
+                                )
+                            )
+                        blocks.append(frame_link)
+                    if clip is not None and item.range is not None:
+                        clip_delivery, clip_link = await project_artifact_delivery(
+                            clip.artifact,
+                            title=f"VidXP evidence clip #{item.rank}",
+                            description=(
+                                f"{label}; resolved clip "
+                                f"{item.range.clip_start_seconds:.3f}-"
+                                f"{item.range.clip_end_seconds:.3f}s"
+                            ),
+                        )
+                        clip = clip.model_copy(update={"delivery": clip_delivery})
+                        blocks.append(clip_link)
+                    projected_items.append(
+                        item.model_copy(update={"keyframe": keyframe, "clip": clip})
+                    )
+                projected_delivery = delivery.model_copy(
+                    update={"items": tuple(projected_items)}
+                )
+                projected_result = result.model_copy(
+                    update={"evidence_delivery": projected_delivery}
+                )
+                projected_job_result = job.result.model_copy(
+                    update={"result": projected_result}
+                )
+                projected = job.model_copy(update={"result": projected_job_result})
+        if not blocks:
+            blocks.append(
+                TextContent(
+                    type="text",
+                    text=(f"VidXP job {job.job_id} is {job.state.value}."),
+                )
+            )
+        return CallToolResult(
+            content=blocks,
+            structured_content=projected.model_dump(mode="json"),
         )
 
     @server.tool(
@@ -1032,9 +1247,7 @@ def create_mcp_server(
 
 
 def create_remote_mcp(context: ControlPlaneContext) -> RemoteMCP:
-    owns_authentication = (
-        context.settings.http_auth_mode == HttpAuthMode.oidc
-    )
+    owns_authentication = context.settings.http_auth_mode == HttpAuthMode.oidc
     server = create_mcp_server(
         context,
         oidc_authentication=owns_authentication,
@@ -1049,9 +1262,7 @@ def create_remote_mcp(context: ControlPlaneContext) -> RemoteMCP:
         streamable_http_path="/mcp",
         stateless_http=True,
         json_response=False,
-        max_request_body_size=(
-            context.settings.mcp_max_request_body_bytes
-        ),
+        max_request_body_size=(context.settings.mcp_max_request_body_bytes),
         transport_security=transport_security,
         host=context.settings.http_bind_host,
     )

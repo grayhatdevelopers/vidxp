@@ -173,8 +173,7 @@ class DependencyUnavailableError(ApplicationError):
         super().__init__(
             "dependency_unavailable",
             ErrorCategory.unavailable,
-            f"Dependencies for the {label} capability are unavailable. "
-            f"{install_hint}",
+            f"Dependencies for the {label} capability are unavailable. {install_hint}",
             details={
                 "capabilities": list(capabilities),
                 "install_hint": install_hint,
@@ -193,9 +192,7 @@ class ModelUnavailableError(ApplicationError):
             f"`vidxp prepare --modalities {modality}` before retrying.",
             details={
                 "capability": capability,
-                "remediation": (
-                    f"vidxp prepare --modalities {modality}"
-                ),
+                "remediation": (f"vidxp prepare --modalities {modality}"),
             },
         )
 
@@ -214,8 +211,7 @@ class ModelDownloadError(ApplicationError):
         modality = capability.split(".", 1)[0]
         remediation = f"vidxp prepare --modalities {modality}"
         retry_message = (
-            "Partial files were kept and the next preparation attempt will "
-            "resume them."
+            "Partial files were kept and the next preparation attempt will resume them."
             if resumable
             else "The next preparation attempt will restart this file."
         )
@@ -312,9 +308,7 @@ class CapabilitySummary(ApplicationModel):
     supports_indexing: bool
     prepares_models: bool
     roles: tuple[CapabilityRole, ...] = ()
-    identity_mode: CapabilityIdentityMode = (
-        CapabilityIdentityMode.not_applicable
-    )
+    identity_mode: CapabilityIdentityMode = CapabilityIdentityMode.not_applicable
     provenance: CapabilityProvenance | None = None
 
 
@@ -543,13 +537,8 @@ class CreateIndexCommand(ApplicationModel):
 
     @model_validator(mode="after")
     def _scene_sampling_requires_scene(self) -> "CreateIndexCommand":
-        if (
-            self.scene_sample_fps is not None
-            and "scene" not in self.modalities
-        ):
-            raise ValueError(
-                "scene_sample_fps requires the scene modality."
-            )
+        if self.scene_sample_fps is not None and "scene" not in self.modalities:
+            raise ValueError("scene_sample_fps requires the scene modality.")
         return self
 
 
@@ -566,9 +555,7 @@ class RemoveIndexCommand(ApplicationModel):
 
 
 class Artifact(ApplicationModel):
-    schema_version: Literal[ARTIFACT_SCHEMA_VERSION] = (
-        ARTIFACT_SCHEMA_VERSION
-    )
+    schema_version: Literal[ARTIFACT_SCHEMA_VERSION] = ARTIFACT_SCHEMA_VERSION
     artifact_id: ArtifactId
     media_id: MediaId
     generation_id: IndexGenerationId | None = None
@@ -599,7 +586,7 @@ class ArtifactDownload(ApplicationModel):
     state: ArtifactState
     resource_uri: str = Field(min_length=1, max_length=2048)
     delivery_mode: ArtifactDeliveryMode
-    local_path: Path | None = None
+    local_path: str | None = Field(default=None, max_length=4096)
     file_uri: str | None = Field(default=None, max_length=4096)
     download_url: str | None = Field(default=None, max_length=4096)
     download_expires_at: AwareDatetime | None = None
@@ -622,9 +609,7 @@ class SnippetProfile(StrEnum):
 
 class CreateSnippetCommand(ApplicationModel):
     media_id: MediaId = Field(
-        description=(
-            "Source video ID, normally copied from a search or query result."
-        )
+        description=("Source video ID, normally copied from a search or query result.")
     )
     start_seconds: float = Field(
         ge=0,
@@ -681,9 +666,7 @@ class IndexStatusSummary(ApplicationModel):
     def _validate_media_id_window(self) -> "IndexStatusSummary":
         if self.media_count < len(self.media_ids):
             raise ValueError("media_count must cover every returned media ID")
-        if self.media_ids_truncated != (
-            self.media_count > len(self.media_ids)
-        ):
+        if self.media_ids_truncated != (self.media_count > len(self.media_ids)):
             raise ValueError(
                 "media_ids_truncated must reflect the returned media-ID window"
             )
@@ -708,9 +691,7 @@ class WorkspaceMediaCapability(ApplicationModel):
         default=(),
         description="Capability roles currently usable for this media item.",
     )
-    identity_mode: CapabilityIdentityMode = (
-        CapabilityIdentityMode.not_applicable
-    )
+    identity_mode: CapabilityIdentityMode = CapabilityIdentityMode.not_applicable
 
 
 class WorkspaceMedia(ApplicationModel):
@@ -735,6 +716,20 @@ class FusionProfile(StrEnum):
     reciprocal_rank = "rrf_v1"
 
 
+class EvidenceDeliveryMode(StrEnum):
+    none = "none"
+    keyframes = "keyframes"
+    keyframes_and_clips = "keyframes_and_clips"
+
+
+class EvidenceDeliveryPolicy(ApplicationModel):
+    mode: EvidenceDeliveryMode = EvidenceDeliveryMode.none
+    max_items: int = Field(default=3, ge=1, le=5)
+    padding_before_seconds: float = Field(default=2.0, ge=0, le=30)
+    padding_after_seconds: float = Field(default=2.0, ge=0, le=30)
+    clip_profile: SnippetProfile = SnippetProfile.compatible_mp4
+
+
 class SearchCommand(ApplicationModel):
     query: SearchQuery = Field(description="Text to match against indexed moments.")
     modalities: tuple[Identifier, ...] = Field(
@@ -757,6 +752,14 @@ class SearchCommand(ApplicationModel):
         gt=0,
         le=100,
         description="Maximum fused moments to return across the selected scope.",
+    )
+    evidence_delivery: EvidenceDeliveryPolicy | None = Field(
+        default=None,
+        description=(
+            "Optional bounded frame/clip delivery. Omit to preserve the "
+            "transport-neutral application default; MCP supplies a useful "
+            "keyframe default."
+        ),
     )
 
     @field_validator("modalities")
@@ -808,9 +811,7 @@ class SearchHit(ApplicationModel):
 
         inspect(value)
         if forbidden:
-            raise ValueError(
-                "Search metadata contains internal location fields."
-            )
+            raise ValueError("Search metadata contains internal location fields.")
         return value
 
     @model_validator(mode="after")
@@ -834,17 +835,11 @@ class SearchResult(ApplicationModel):
         return self.model_dump(mode="json")
 
     def to_prediction(self) -> dict[str, list[dict[str, Any]]]:
-        return {
-            self.query_id: [
-                hit.model_dump(mode="json") for hit in self.hits
-            ]
-        }
+        return {self.query_id: [hit.model_dump(mode="json") for hit in self.hits]}
 
 
 class FusionProvenance(ApplicationModel):
-    profile: Literal[FusionProfile.reciprocal_rank] = (
-        FusionProfile.reciprocal_rank
-    )
+    profile: Literal[FusionProfile.reciprocal_rank] = FusionProfile.reciprocal_rank
     rank_constant: int = Field(default=60, gt=0)
     overlap_rule: Literal["connected_intervals"] = "connected_intervals"
     requested_modalities: tuple[Identifier, ...] = ()
@@ -852,6 +847,7 @@ class FusionProvenance(ApplicationModel):
 
 
 class FusedMoment(ApplicationModel):
+    moment_id: Sha256 | None = None
     rank: int = Field(gt=0)
     score: float = Field(gt=0)
     media_id: MediaId
@@ -878,6 +874,7 @@ class FusedSearchResult(ApplicationModel):
     modalities: tuple[Identifier, ...]
     moments: tuple[FusedMoment, ...] = ()
     fusion: FusionProvenance
+    evidence_delivery: "EvidenceDeliveryResult | None" = None
 
 
 class QueryVideoCommand(ApplicationModel):
@@ -905,6 +902,14 @@ class QueryVideoCommand(ApplicationModel):
         gt=0,
         le=50,
         description="Maximum ranked evidence moments used for the answer.",
+    )
+    evidence_delivery: EvidenceDeliveryPolicy | None = Field(
+        default=None,
+        description=(
+            "Optional bounded frame/clip delivery. Omit to preserve the "
+            "transport-neutral application default; MCP supplies a useful "
+            "keyframe default."
+        ),
     )
 
     @field_validator("modalities")
@@ -996,6 +1001,75 @@ Evidence = Annotated[
 ]
 
 
+class EvidenceFrameMatch(StrEnum):
+    exact_indexed_frame = "exact_indexed_frame"
+    representative = "representative"
+
+
+class EvidenceDeliveryState(StrEnum):
+    ready = "ready"
+    partial = "partial"
+    failed = "failed"
+
+
+class EvidenceRangeResolution(ApplicationModel):
+    source_start_seconds: float = Field(ge=0)
+    source_end_seconds: float = Field(ge=0)
+    representative_timestamp_seconds: float = Field(ge=0)
+    clip_start_seconds: float = Field(ge=0)
+    clip_end_seconds: float = Field(gt=0)
+    requested_padding_before_seconds: float = Field(ge=0)
+    requested_padding_after_seconds: float = Field(ge=0)
+    applied_padding_before_seconds: float = Field(ge=0)
+    applied_padding_after_seconds: float = Field(ge=0)
+    start_clamped: bool = False
+    end_clamped: bool = False
+    source_interval_truncated: bool = False
+
+    @model_validator(mode="after")
+    def _validate_ranges(self) -> "EvidenceRangeResolution":
+        if self.source_end_seconds < self.source_start_seconds:
+            raise ValueError("source evidence end must not precede its start")
+        if self.clip_end_seconds <= self.clip_start_seconds:
+            raise ValueError("resolved clip duration must be positive")
+        return self
+
+
+class EvidenceArtifact(ApplicationModel):
+    artifact: Artifact
+    resource_uri: str = Field(min_length=1, max_length=2048)
+    delivery: ArtifactDownload | None = None
+
+
+class EvidenceKeyframe(ApplicationModel):
+    match: EvidenceFrameMatch
+    timestamp_seconds: float = Field(ge=0)
+    frame_index: int | None = Field(default=None, ge=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    artifact: EvidenceArtifact
+
+
+class EvidenceDeliveryItem(ApplicationModel):
+    evidence_id: Sha256
+    rank: int = Field(gt=0)
+    media_id: MediaId
+    generation_id: IndexGenerationId
+    modalities: tuple[Identifier, ...] = Field(min_length=1)
+    score: float | None = None
+    provenance: dict[str, JsonValue] = Field(default_factory=dict)
+    state: EvidenceDeliveryState
+    range: EvidenceRangeResolution | None = None
+    keyframe: EvidenceKeyframe | None = None
+    clip: EvidenceArtifact | None = None
+    errors: tuple[ErrorDetail, ...] = ()
+
+
+class EvidenceDeliveryResult(ApplicationModel):
+    policy: EvidenceDeliveryPolicy
+    items: tuple[EvidenceDeliveryItem, ...] = Field(max_length=5)
+
+
 class DraftClaim(ApplicationModel):
     text: str = Field(min_length=1, max_length=4096)
     evidence_ids: tuple[Sha256, ...] = Field(min_length=1, max_length=10)
@@ -1051,15 +1125,14 @@ class QueryAnswer(ApplicationModel):
     evidence: tuple[Evidence, ...] = Field(default=(), max_length=200)
     moments: tuple[FusedMoment, ...] = ()
     fusion: FusionProvenance
+    evidence_delivery: EvidenceDeliveryResult | None = None
     fallback_reason: str | None = Field(default=None, max_length=512)
 
     @model_validator(mode="after")
     def _validate_answer_grounding(self) -> "QueryAnswer":
         evidence_ids = {item.evidence_id for item in self.evidence}
         cited_ids = {
-            evidence_id
-            for claim in self.claims
-            for evidence_id in claim.evidence_ids
+            evidence_id for claim in self.claims for evidence_id in claim.evidence_ids
         }
         if not cited_ids.issubset(evidence_ids):
             raise ValueError("Every claim citation must resolve to evidence.")
@@ -1198,9 +1271,7 @@ JobResult = Annotated[
 
 
 class JobProgress(ApplicationModel):
-    schema_version: Literal[JOB_PROGRESS_SCHEMA_VERSION] = (
-        JOB_PROGRESS_SCHEMA_VERSION
-    )
+    schema_version: Literal[JOB_PROGRESS_SCHEMA_VERSION] = JOB_PROGRESS_SCHEMA_VERSION
     stage: str = Field(min_length=1, max_length=128)
     message: str = Field(min_length=1, max_length=512)
     current: int | None = Field(default=None, ge=0)
@@ -1235,9 +1306,7 @@ class Job(ApplicationModel):
     def _validate_terminal_payload(self) -> "Job":
         if self.state == JobState.succeeded:
             if self.result is None or self.error is not None:
-                raise ValueError(
-                    "succeeded jobs require a result and no error"
-                )
+                raise ValueError("succeeded jobs require a result and no error")
             if self.result.kind != self.kind:
                 raise ValueError("job result kind must match job kind")
         elif self.result is not None:

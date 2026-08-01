@@ -173,6 +173,13 @@ scenes, ask questions about a library, and create clips or actor overlays.
 Local agents can connect over stdio; remote agents can connect to a
 self-hosted VidXP server.
 
+For ordinary evidence retrieval, an MCP client submits `search_moments` or
+`query_video` and polls that same job. Completed results include stable evidence
+IDs plus up to three directly inspectable frames by default. Request
+`keyframes_and_clips` to render bounded clips in the original job as well; no
+timestamp arithmetic, second clip job, or separate artifact lookup is required.
+The lower-level clip and artifact tools remain available for advanced workflows.
+
 On a configured remote server, an agent calls `create_media_upload` with only an
 idempotency key. VidXP returns a short-lived multi-file HTTPS session; the browser
 discovers authoritative filename, size, and MIME metadata after selection and

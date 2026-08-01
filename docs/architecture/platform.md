@@ -873,6 +873,18 @@ capability URL. Filesystem-isolated stdio can use that same HTTPS mode when a
 public artifact-download origin is configured, otherwise the MCP resource remains
 the portable fallback.
 
+Search and query jobs can request bounded evidence delivery. MCP defaults to the
+strongest three keyframes; callers may select `none`, `keyframes`, or
+`keyframes_and_clips`, with a hard maximum of five items. Scene evidence extracts
+the authoritative indexed frame number. Other intervals and anonymous actor
+clusters use a clearly labeled representative full frame. Requested clips are
+range-clamped and rendered through the same snippet artifact service before the
+original search/query job succeeds, so the ordinary agent path is one submit plus
+polling that same job. `create_evidence_clip` derives a fallback clip solely from a
+completed source job and its stable evidence ID; callers cannot supply authoritative
+timestamps. Keyframe-only retrieval keeps the existing read scope; requesting clip
+rendering requires repository write scope, matching the low-level clip operation.
+
 ## 18. FastAPI adapter
 
 FastAPI owns:
@@ -982,6 +994,9 @@ Initial curated tools:
 - `start_indexing`
 - `search_moments`
 - `query_video`
+- `create_clip`
+- `create_evidence_clip`
+- `get_artifact_download`
 - `list_jobs`
 - `get_job`
 - `retry_job`

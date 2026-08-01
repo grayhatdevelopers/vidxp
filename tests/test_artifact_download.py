@@ -13,6 +13,7 @@ from vidxp.api import create_app
 from vidxp.application_models import ApplicationError, Artifact
 from vidxp.artifact_delivery import (
     ArtifactDownloadCapabilities,
+    artifact_binding,
     verified_local_path,
 )
 from vidxp.authentication import create_authenticator
@@ -51,6 +52,15 @@ def _artifact(content: bytes, mime_type: str, *, artifact_id: str = ARTIFACT_ID)
         state=ArtifactState.ready,
         created_at=datetime.now(timezone.utc),
     )
+
+
+def test_png_evidence_frame_has_a_download_and_resource_binding() -> None:
+    artifact = _artifact(b"png", "image/png").model_copy(
+        update={"kind": ArtifactKind.evidence_frame, "profile": "png"}
+    )
+    binding = artifact_binding(artifact)
+    assert binding.extension == "png"
+    assert binding.filename == f"evidence_frame-{ARTIFACT_ID}.png"
 
 
 def _context(root: Path, artifact: Artifact, content_path: Path):

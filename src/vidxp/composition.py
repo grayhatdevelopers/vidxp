@@ -32,6 +32,7 @@ from vidxp.infrastructure.local_index import (
 )
 from vidxp.infrastructure.local_artifacts import (
     FFmpegSnippetRenderer,
+    FFmpegFrameRenderer,
     LocalActorRenderer,
     LocalArtifactStore,
 )
@@ -173,9 +174,7 @@ def _capability_registry(settings: VidXPSettings) -> CapabilityRegistry:
         external=settings.external_capabilities,
         allowlist=settings.capability_allowlist,
         platform_runtime_checks=(
-            SERVER_INDEX_RUNTIME_CHECKS
-            if server_mode
-            else LOCAL_INDEX_RUNTIME_CHECKS
+            SERVER_INDEX_RUNTIME_CHECKS if server_mode else LOCAL_INDEX_RUNTIME_CHECKS
         ),
         storage_requirements=(
             active_requirements(
@@ -279,12 +278,9 @@ def create_application(
         media=components.media,
         probe=components.probe,
         actor_renderer=LocalActorRenderer(),
-        snippet_renderer=FFmpegSnippetRenderer(
-            active_settings.ffmpeg_executable
-        ),
-        max_snippet_duration_seconds=(
-            active_settings.max_snippet_duration_seconds
-        ),
+        snippet_renderer=FFmpegSnippetRenderer(active_settings.ffmpeg_executable),
+        frame_renderer=FFmpegFrameRenderer(active_settings.ffmpeg_executable),
+        max_snippet_duration_seconds=(active_settings.max_snippet_duration_seconds),
     )
     upload_service = (
         RemoteUploadService(
@@ -319,9 +315,7 @@ def create_application(
         index_status=backend.repository.status,
         active_snapshot=components.snapshots.read_active,
         completed_upload_importer=(
-            upload_service.import_completed
-            if upload_service is not None
-            else None
+            upload_service.import_completed if upload_service is not None else None
         ),
         query_model=query_model,
     )
@@ -351,14 +345,12 @@ def create_job_service(
         backend=DBOSJobBackend(
             system_database_url=(
                 None
-                if settings.mode == ApplicationMode.server
-                and catalog is not None
+                if settings.mode == ApplicationMode.server and catalog is not None
                 else workflow_database_url(settings)
             ),
             system_database_engine=(
                 catalog.engine
-                if settings.mode == ApplicationMode.server
-                and catalog is not None
+                if settings.mode == ApplicationMode.server and catalog is not None
                 else None
             ),
             application_version=workflow_application_version(),

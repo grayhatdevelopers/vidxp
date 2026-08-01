@@ -21,6 +21,7 @@ _SESSION_AUDIENCE = "vidxp-artifact-download-session"
 _LINK_PURPOSE = "artifact-download-link-v1"
 _SESSION_PURPOSE = "artifact-download-session-v1"
 _SUPPORTED_MEDIA = {
+    "image/png": "png",
     "video/mp4": "mp4",
     "video/x-matroska": "mkv",
 }
@@ -48,7 +49,7 @@ def artifact_binding(artifact: Artifact) -> ArtifactBinding:
         raise ApplicationError(
             "artifact_type_unsupported",
             ErrorCategory.validation,
-            "Only completed MP4 and Matroska video artifacts can be delivered.",
+            "Only completed PNG, MP4, and Matroska artifacts can be delivered.",
             details={"mime_type": artifact.mime_type},
         )
     return ArtifactBinding(
@@ -97,10 +98,7 @@ class ArtifactDownloadCapabilities:
         expires_at = datetime.fromtimestamp(
             int(
                 (
-                    now
-                    + timedelta(
-                        seconds=self.settings.artifact_download_ttl_seconds
-                    )
+                    now + timedelta(seconds=self.settings.artifact_download_ttl_seconds)
                 ).timestamp()
             ),
             tz=now.tzinfo,
