@@ -222,6 +222,26 @@ describe('target-first setup', () => {
     expect(screen.getByRole('button', { name: 'Open VidXP' })).toBeDisabled();
   });
 
+  it('directs a managed target without a browser surface back to managed setup', async () => {
+    const managedProfile = {
+      ...localProfile,
+      id: 'managed-default',
+      display_name: 'Desktop-managed VidXP',
+      kind: 'managed',
+      lifecycle_ownership: 'desktop',
+      can_launch_frontend: false,
+    };
+    mocks.targetSetupState.mockResolvedValue({
+      profiles: [managedProfile],
+      selected_profile_id: managedProfile.id,
+      selected_profile: managedProfile,
+    });
+    renderApp();
+
+    expect(await screen.findByRole('heading', { name: 'Desktop-managed VidXP' })).toBeVisible();
+    expect(screen.getByText('Unavailable · return to managed setup to enable the browser surface')).toBeVisible();
+  });
+
   it('reveals managed installation only after an explicit confirmation', async () => {
     const user = userEvent.setup();
     mocks.chooseManagedTarget.mockResolvedValue({});

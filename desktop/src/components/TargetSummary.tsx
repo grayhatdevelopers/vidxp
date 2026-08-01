@@ -16,6 +16,11 @@ export function TargetSummary({ profile, validationError, notice, onChooseAnothe
   const [openError, setOpenError] = useState<string | null>(null);
   const executable = profile.canonical_executable || profile.executable;
   const desktopSurfaceUnavailable = profile.can_launch_frontend === false;
+  const desktopAction = desktopSurfaceUnavailable
+    ? profile.lifecycle_ownership === 'external'
+      ? 'Unavailable · enable the browser surface in the externally managed installation'
+      : 'Unavailable · return to managed setup to enable the browser surface'
+    : 'Browser interface available';
 
   async function open() {
     setOpening(true);
@@ -65,7 +70,7 @@ export function TargetSummary({ profile, validationError, notice, onChooseAnothe
           {profile.vidxp_version && <><Text>VidXP version</Text><strong>{profile.vidxp_version}</strong></>}
           {profile.data_root && <><Text>Data root</Text><Code className="pathCode">{profile.data_root}</Code></>}
           {profile.last_validated_at && <><Text>Last checked</Text><strong>{new Date(profile.last_validated_at).toLocaleString()}</strong></>}
-          <Text>Desktop action</Text><strong>{desktopSurfaceUnavailable ? 'Unavailable · setup required in the external environment' : 'Browser interface available'}</strong>
+          <Text>Desktop action</Text><strong>{desktopAction}</strong>
         </div>
         <Group justify="space-between" mt="xl">
           <Button variant="default" leftSection={<IconRefresh aria-hidden="true" size={17} />} onClick={onChooseAnother}>Choose another target</Button>
