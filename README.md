@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/grayhatdevelopers/vidxp/releases">
+  <a href="https://github.com/grayhatdevelopers/vidxp/releases/latest">
     <img src="https://img.shields.io/badge/Download-Desktop_app-5865F2?style=for-the-badge&logo=github" alt="Download VidXP desktop app">
   </a>
 </p>
@@ -245,7 +245,7 @@ Originally researched by students:
 - [Sarah Jawaid](https://github.com/sarr266)
 - [Talha Ahmed](https://github.com/talhaahmed1234)
 
-Working with [Dr Shahab Tahzeeb](https://scholar.google.com/citations?user=cryeRB0AAAAJ&hl=en) ([NED University of Engineering and Technology](https://www.neduet.edu.pk/)) and [Saad Bazaz](https://scholar.google.com/citations?user=mrJo09oAAAAJ&hl=en) ([Grayhat](https://grayhat.studio).
+Working with [Dr Shahab Tahzeeb](https://scholar.google.com/citations?user=cryeRB0AAAAJ&hl=en) ([NED University of Engineering and Technology](https://www.neduet.edu.pk/)) and [Saad Bazaz](https://scholar.google.com/citations?user=mrJo09oAAAAJ&hl=en) ([Grayhat](https://grayhat.studio)).
 
 Email: info@grayhat.studio
 
