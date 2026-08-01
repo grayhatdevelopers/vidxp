@@ -22,6 +22,7 @@ from vidxp.application_models import (
     InvalidRequestError,
     ListJobsCommand,
     MediaImportJobRequest,
+    ImportMediaCommand,
     PrepareModelsCommand,
     PrepareModelsJobRequest,
     QueryJobRequest,
@@ -204,6 +205,32 @@ class JobService:
         return enqueue(
             connection,
             MediaImportJobRequest(upload_id=upload_id),
+            queue=JobQueue.cpu,
+            job_id=job_id,
+        )
+
+    @job_boundary
+    def submit_completed_media_import(
+        self,
+        upload_id: str,
+        *,
+        job_id: str,
+    ) -> Job:
+        return self.backend.submit(
+            MediaImportJobRequest(upload_id=upload_id),
+            queue=JobQueue.cpu,
+            job_id=job_id,
+        )
+
+    @job_boundary
+    def submit_local_media_import(
+        self,
+        command: ImportMediaCommand,
+        *,
+        job_id: str,
+    ) -> Job:
+        return self.backend.submit(
+            MediaImportJobRequest(command=command),
             queue=JobQueue.cpu,
             job_id=job_id,
         )

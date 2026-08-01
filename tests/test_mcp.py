@@ -78,6 +78,7 @@ from vidxp.branding import (
     PROJECT_URL,
     icon_bytes,
 )
+from vidxp.capabilities.registry import create_capability_registry
 from vidxp.composition import HttpApplicationContext
 from vidxp.control_plane import ControlPlaneApplication
 from vidxp.core.artifacts import ArtifactKind, ArtifactState
@@ -116,6 +117,12 @@ MCP_TOOL_NAMES = [
     "get_job",
     "retry_job",
     "cancel_job",
+]
+STDIO_MCP_TOOL_NAMES = [
+    *MCP_TOOL_NAMES[:6],
+    "ingest_local_media",
+    "get_media_ingestion",
+    *MCP_TOOL_NAMES[8:],
 ]
 
 
@@ -422,7 +429,14 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(tools["create_media_upload"].annotations.idempotent_hint)
         self.assertTrue(tools["get_media_upload"].annotations.read_only_hint)
         upload_properties = tools["create_media_upload"].input_schema["properties"]
-        self.assertEqual(set(upload_properties), {"idempotency_key"})
+        self.assertEqual(
+            set(upload_properties),
+            {"idempotency_key", "index_after_import", "modalities"},
+        )
+        self.assertEqual(
+            upload_properties["index_after_import"]["default"],
+            True,
+        )
         serialized_upload_schema = json.dumps(
             tools["create_media_upload"].input_schema
         ).lower()
@@ -542,6 +556,36 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(request_keys), 3)
         self.assertEqual(len(set(request_keys)), 1)
         self.assertRegex(request_keys[0], r"^[0-9a-f]{64}$")
+
+    async def test_media_upload_rejects_unavailable_index_capabilities(self):
+        with TemporaryDirectory() as directory:
+            context, uploads = self.upload_context(Path(directory))
+            context.application.capabilities = SimpleNamespace(
+                registry=create_capability_registry()
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"*"}),
+                ),
+            )
+            async with Client(server) as client:
+                result = await client.call_tool(
+                    "create_media_upload",
+                    {
+                        "idempotency_key": "invalid-index-capability-0001",
+                        "modalities": ["not-installed"],
+                    },
+                )
+
+        self.assertTrue(result.is_error)
+        self.assertIn(
+            '"code":"ingestion_capabilities_unavailable"',
+            result.content[0].text,
+        )
+        self.assertIn("get_workspace", result.content[0].text)
+        uploads.create_upload_session.assert_not_called()
 
     async def test_oidc_upload_returns_capability_without_url_elicitation(self):
         seen = []
@@ -1822,9 +1866,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     {
                         "command": {
                             "query": "green frame",
-                            "evidence_delivery": {
-                                "mode": "keyframes_and_clips"
-                            },
+                            "evidence_delivery": {"mode": "keyframes_and_clips"},
                         },
                         "idempotency_key": "agent-request-0002",
                     },
@@ -1834,13 +1876,11 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"protocol_code":-32003', result.content[0].text)
         self.assertIn('"required_scope":"vidxp.write"', result.content[0].text)
         self.assertTrue(evidence_clip.is_error)
-        self.assertIn(
-            '"required_scope":"vidxp.write"', evidence_clip.content[0].text
-        )
+        self.assertIn('"required_scope":"vidxp.write"', evidence_clip.content[0].text)
         context.jobs.submit_index.assert_not_called()
         context.jobs.submit_search.assert_not_called()
 
-    async def test_stdio_entrypoint_serves_the_same_curated_surface(self):
+    async def test_stdio_entrypoint_serves_the_filesystem_aware_surface(self):
         with TemporaryDirectory() as directory:
             parameters = StdioServerParameters(
                 command=sys.executable,
@@ -1860,7 +1900,11 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [tool.name for tool in discovered.tools],
-            MCP_TOOL_NAMES,
+            STDIO_MCP_TOOL_NAMES,
+        )
+        self.assertNotIn(
+            "create_media_upload",
+            [tool.name for tool in discovered.tools],
         )
         self.assertEqual(
             [item["name"] for item in result.structured_content["items"]],

@@ -1,5 +1,6 @@
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Column,
     ForeignKey,
@@ -84,6 +85,13 @@ upload_intents = Table(
         ForeignKey("media.media_id"),
         nullable=True,
     ),
+    Column("transfer_backend", String(32), nullable=False, default="tus"),
+    Column("index_after_import", Boolean, nullable=False, default=True),
+    Column("index_modalities", JSON, nullable=False, default=list),
+    Column("index_job_id", String(36), nullable=True, unique=True),
+    Column("source_path", Text, nullable=True),
+    Column("failure_code", String(128), nullable=True),
+    Column("failure_message", String(512), nullable=True),
 )
 
 upload_sessions = Table(
@@ -104,6 +112,9 @@ upload_sessions = Table(
     Column("created_at", Text, nullable=False),
     Column("expires_at", Text, nullable=False),
     Column("browser_session_digest", String(64), nullable=True),
+    Column("transfer_backend", String(32), nullable=False, default="tus"),
+    Column("index_after_import", Boolean, nullable=False, default=True),
+    Column("index_modalities", JSON, nullable=False, default=list),
 )
 Index("upload_sessions_expiry", upload_sessions.c.expires_at, upload_sessions.c.state)
 

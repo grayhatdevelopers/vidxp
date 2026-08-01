@@ -78,7 +78,7 @@ class MediaService:
             raise MediaImportNotAllowedError(
                 "Local path imports are available only in local mode."
             )
-        source = self._resolve_import_source(command.path)
+        source = self.resolve_local_source(command.path)
         return self._import(
             source,
             original_filename=command.original_filename or source.name,
@@ -287,7 +287,13 @@ class MediaService:
             etag=record.sha256,
         )
 
-    def _resolve_import_source(self, path: Path) -> Path:
+    def resolve_local_source(self, path: Path) -> Path:
+        """Canonicalize a local import source against configured boundaries."""
+
+        if self.settings.mode != ApplicationMode.local:
+            raise MediaImportNotAllowedError(
+                "Local path imports are available only in local mode."
+            )
         try:
             source = path.expanduser().resolve(strict=True)
         except (FileNotFoundError, OSError) as exc:

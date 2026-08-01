@@ -45,6 +45,10 @@ from vidxp.infrastructure.dbos_jobs import DBOSJobBackend
 from vidxp.infrastructure.local_worker import LocalWorkerSupervisor
 from vidxp.job_service import JobService
 from vidxp.media_service import MediaService
+from vidxp.network_share import (
+    is_loopback_host,
+    load_or_create_native_upload_secret,
+)
 from vidxp.readiness_service import ReadinessService
 from vidxp.read_job_planner import LocalReadJobPlanner
 from vidxp.runtime import ModelRuntime, RuntimeBackendUnavailableError
@@ -282,14 +286,11 @@ def create_application(
         frame_renderer=FFmpegFrameRenderer(active_settings.ffmpeg_executable),
         max_snippet_duration_seconds=(active_settings.max_snippet_duration_seconds),
     )
-    upload_service = (
-        RemoteUploadService(
-            settings=active_settings,
-            catalog=components.catalog,
-            media=components.media,
-        )
-        if active_settings.mode == ApplicationMode.server
-        else None
+    upload_service = RemoteUploadService(
+        settings=active_settings,
+        catalog=components.catalog,
+        media=components.media,
+        default_index_modalities=components.registry.index_names(),
     )
     query_model = None
     if (
@@ -314,9 +315,7 @@ def create_application(
         artifacts=artifacts,
         index_status=backend.repository.status,
         active_snapshot=components.snapshots.read_active,
-        completed_upload_importer=(
-            upload_service.import_completed if upload_service is not None else None
-        ),
+        completed_upload_importer=(upload_service.import_completed),
         query_model=query_model,
     )
 
@@ -398,15 +397,12 @@ def create_control_plane_application(
         registry=components.registry,
         index_preflight=application.preflight_index,
     )
-    uploads = (
-        RemoteUploadService(
-            settings=active_settings,
-            catalog=components.catalog,
-            media=components.media,
-            jobs=jobs,
-        )
-        if active_settings.mode == ApplicationMode.server
-        else None
+    uploads = RemoteUploadService(
+        settings=active_settings,
+        catalog=components.catalog,
+        media=components.media,
+        jobs=jobs,
+        default_index_modalities=components.registry.index_names(),
     )
     return ControlPlaneContext(
         application=application,
@@ -422,6 +418,29 @@ def create_http_application(
     settings: VidXPSettings | None = None,
 ) -> HttpApplicationContext:
     active_settings = settings or VidXPSettings()
+    if (
+        active_settings.mode == ApplicationMode.local
+        and active_settings.upload_handoff_public_url is None
+        and active_settings.upload_handoff_secret is None
+        and is_loopback_host(active_settings.http_bind_host)
+    ):
+        host = active_settings.http_bind_host
+        if host in {"0.0.0.0", "::"}:
+            host = "127.0.0.1" if host == "0.0.0.0" else "[::1]"
+        elif ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        payload = active_settings.model_dump(mode="python")
+        payload.update(
+            {
+                "upload_handoff_public_url": (
+                    f"http://{host}:{active_settings.http_port}/upload-handoff"
+                ),
+                "upload_handoff_secret": load_or_create_native_upload_secret(
+                    active_settings.data_dir
+                ),
+            }
+        )
+        active_settings = VidXPSettings.model_validate(payload)
     active_settings.validate_http_server()
     control = create_control_plane_application(active_settings)
     authenticator = create_authenticator(active_settings)

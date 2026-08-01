@@ -11,9 +11,13 @@ from vidxp.infrastructure.sql_tables import (
     media,
     media_import_requests,
     metadata,
+    upload_intents,
+    upload_quota,
+    upload_session_files,
+    upload_sessions,
 )
 
-CATALOG_SCHEMA_VERSION = 3
+CATALOG_SCHEMA_VERSION = 4
 _local_metadata = MetaData()
 catalog_metadata = Table(
     "catalog_metadata",
@@ -38,6 +42,10 @@ class LocalCatalog(SQLCatalog):
                 artifacts,
                 artifact_requests,
                 media_import_requests,
+                upload_intents,
+                upload_sessions,
+                upload_session_files,
+                upload_quota,
             ),
         )
         _local_metadata.create_all(self.engine)
@@ -51,7 +59,7 @@ class LocalCatalog(SQLCatalog):
                         schema_version=CATALOG_SCHEMA_VERSION
                     )
                 )
-            elif version in {1, 2}:
+            elif version in {1, 2, 3}:
                 connection.execute(
                     update(catalog_metadata).values(
                         schema_version=CATALOG_SCHEMA_VERSION

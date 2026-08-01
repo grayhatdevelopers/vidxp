@@ -179,6 +179,7 @@ def main(arguments: Sequence[str] | None = None) -> None:
                 client_id="stdio",
                 scopes=frozenset({"*"}),
             ),
+            filesystem_accessible=(context.settings.mcp_stdio_filesystem_accessible),
         )
         if options.check:
             result = asyncio.run(_inspect_server(server))

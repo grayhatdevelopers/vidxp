@@ -10,6 +10,7 @@ from vidxp.app_paths import default_config_directory
 
 
 API_SHARE_TOKEN_FILE = "api-share-token"
+NATIVE_UPLOAD_SECRET_FILE = "native-upload-secret"
 
 
 def _usable_ipv4(value: str) -> bool:
@@ -91,6 +92,14 @@ def load_or_create_api_share_token(path: Path | None = None) -> str:
         destination.flush()
         os.fsync(destination.fileno())
     return token
+
+
+def load_or_create_native_upload_secret(data_directory: Path) -> str:
+    """Return the stable secret protecting native browser handoffs."""
+
+    return load_or_create_api_share_token(
+        data_directory.expanduser() / NATIVE_UPLOAD_SECRET_FILE
+    )
 
 
 def is_loopback_host(host: str) -> bool:

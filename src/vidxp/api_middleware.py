@@ -403,9 +403,17 @@ class RequestBodyLimitMiddleware:
         if str(scope.get("path", "")) in self.delegated_paths:
             await self.app(scope, receive, send)
             return
+        path = str(scope.get("path", ""))
+        segments = path.strip("/").split("/")
+        is_upload = path == UPLOAD_PATH or (
+            len(segments) == 5
+            and segments[0] == "upload-handoff"
+            and segments[2] == "files"
+            and segments[4] == "content"
+        )
         limit = (
             self.upload_limit + 1024 * 1024
-            if scope.get("path") == UPLOAD_PATH
+            if is_upload
             else self.json_limit
         )
         headers = Headers(scope=scope)

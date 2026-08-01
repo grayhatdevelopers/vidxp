@@ -21,7 +21,7 @@ class DatabaseCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 2)
 
-    def test_upload_session_migration_is_the_only_head(self):
+    def test_native_ingestion_migration_is_the_only_head(self):
         config = Config()
         config.set_main_option(
             "script_location",
@@ -30,7 +30,7 @@ class DatabaseCliTests(unittest.TestCase):
 
         scripts = ScriptDirectory.from_config(config)
 
-        self.assertEqual(scripts.get_heads(), ["20260801_01"])
+        self.assertEqual(scripts.get_heads(), ["20260802_01"])
 
 
 if __name__ == "__main__":

@@ -5,7 +5,18 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Engine, create_engine, delete, event, func, insert, select, update
+from sqlalchemy import (
+    Engine,
+    and_,
+    create_engine,
+    delete,
+    event,
+    func,
+    insert,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool
@@ -18,6 +29,7 @@ from vidxp.core.uploads import (
     UploadSessionRecord,
     UploadSessionState,
     UploadState,
+    UploadTransferBackend,
 )
 from vidxp.infrastructure.sql_tables import (
     artifact_requests,
@@ -67,6 +79,13 @@ def _upload_record(row: Any) -> UploadIntentRecord:
         upload_id=row.upload_id,
         job_id=row.job_id,
         media_id=row.media_id,
+        transfer_backend=UploadTransferBackend(row.transfer_backend),
+        index_after_import=bool(row.index_after_import),
+        index_modalities=tuple(row.index_modalities or ()),
+        index_job_id=row.index_job_id,
+        source_path=row.source_path,
+        failure_code=row.failure_code,
+        failure_message=row.failure_message,
     )
 
 
@@ -87,6 +106,9 @@ def _upload_session_record(row: Any) -> UploadSessionRecord:
         created_at=datetime.fromisoformat(row.created_at),
         expires_at=datetime.fromisoformat(row.expires_at),
         browser_session_digest=row.browser_session_digest,
+        transfer_backend=UploadTransferBackend(row.transfer_backend),
+        index_after_import=bool(row.index_after_import),
+        index_modalities=tuple(row.index_modalities or ()),
     )
 
 
@@ -543,6 +565,13 @@ class SQLCatalog:
                 upload_id=record.upload_id,
                 job_id=record.job_id,
                 media_id=record.media_id,
+                transfer_backend=record.transfer_backend.value,
+                index_after_import=record.index_after_import,
+                index_modalities=list(record.index_modalities),
+                index_job_id=record.index_job_id,
+                source_path=record.source_path,
+                failure_code=record.failure_code,
+                failure_message=record.failure_message,
             )
         )
 
@@ -568,6 +597,9 @@ class SQLCatalog:
                     created_at=record.created_at.isoformat(),
                     expires_at=record.expires_at.isoformat(),
                     browser_session_digest=record.browser_session_digest,
+                    transfer_backend=record.transfer_backend.value,
+                    index_after_import=record.index_after_import,
+                    index_modalities=list(record.index_modalities),
                 )
             )
         return record
@@ -735,7 +767,10 @@ class SQLCatalog:
             rows = active.execute(
                 select(upload_session_files)
                 .where(upload_session_files.c.session_id == session_id)
-                .order_by(upload_session_files.c.created_at)
+                .order_by(
+                    upload_session_files.c.created_at,
+                    upload_session_files.c.client_file_key,
+                )
             )
             items = []
             for row in rows:
@@ -894,6 +929,9 @@ class SQLCatalog:
         upload_id: str | None = None,
         job_id: str | None = None,
         media_id: str | None = None,
+        index_job_id: str | None = None,
+        failure_code: str | None = None,
+        failure_message: str | None = None,
         clear_upload_id: bool = False,
         expected_states: set[UploadState] | None = None,
     ) -> bool:
@@ -921,6 +959,12 @@ class SQLCatalog:
             values["job_id"] = job_id
         if media_id is not None:
             values["media_id"] = media_id
+        if index_job_id is not None:
+            values["index_job_id"] = index_job_id
+        if failure_code is not None:
+            values["failure_code"] = failure_code
+        if failure_message is not None:
+            values["failure_message"] = failure_message
         result = connection.execute(
             update(upload_intents)
             .where(upload_intents.c.intent_id == intent_id)
@@ -999,6 +1043,27 @@ class SQLCatalog:
             rows = connection.execute(
                 select(upload_intents).where(
                     upload_intents.c.state == UploadState.processing.value
+                )
+            )
+            return tuple(_upload_record(row) for row in rows)
+
+    def active_ingestions(self) -> tuple[UploadIntentRecord, ...]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(upload_intents).where(
+                    or_(
+                        upload_intents.c.state.in_(
+                            (
+                                UploadState.pending.value,
+                                UploadState.processing.value,
+                            )
+                        ),
+                        and_(
+                            upload_intents.c.state == UploadState.ready.value,
+                            upload_intents.c.index_after_import.is_(True),
+                            upload_intents.c.index_job_id.is_(None),
+                        ),
+                    )
                 )
             )
             return tuple(_upload_record(row) for row in rows)

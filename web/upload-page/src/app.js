@@ -2,6 +2,7 @@ import Uppy from '@uppy/core'
 import Dashboard from '@uppy/dashboard'
 import GoldenRetriever from '@uppy/golden-retriever'
 import Tus from '@uppy/tus'
+import XHRUpload from '@uppy/xhr-upload'
 
 import '@uppy/core/css/style.min.css'
 import '@uppy/dashboard/css/style.min.css'
@@ -13,6 +14,7 @@ const elements = {
   fileCount: document.querySelector('#file-count'),
   maximumFileSize: document.querySelector('#maximum-file-size'),
   maximumSessionSize: document.querySelector('#maximum-session-size'),
+  transferBackend: document.querySelector('#transfer-backend'),
   reservedSummary: document.querySelector('#reserved-summary'),
   uploadedSummary: document.querySelector('#uploaded-summary'),
   expiresAt: document.querySelector('#expires-at'),
@@ -20,6 +22,7 @@ const elements = {
   uploadState: document.querySelector('#upload-state'),
   nextAction: document.querySelector('#next-action'),
   sessionFiles: document.querySelector('#session-files'),
+  transferHint: document.querySelector('#transfer-hint'),
 }
 
 const POLL_INTERVAL_MS = 2000
@@ -179,7 +182,7 @@ function renderFiles() {
     size.textContent = formatBytes(item.byte_size)
     const state = document.createElement('span')
     state.className = 'file-state'
-    state.textContent = item.state
+    state.textContent = item.phase ?? item.state
     details.append(size, state)
     if (item.job_id) {
       const job = document.createElement('span')
@@ -247,6 +250,18 @@ function applySession(payload) {
   setText(elements.maximumFileSize, formatBytes(sessionStatus.maximum_file_bytes))
   setText(elements.maximumSessionSize, formatBytes(sessionStatus.maximum_aggregate_bytes))
   setText(
+    elements.transferBackend,
+    sessionStatus.resumable
+      ? 'Resumable tus transfer'
+      : 'Bounded direct multipart transfer',
+  )
+  setText(
+    elements.transferHint,
+    sessionStatus.resumable
+      ? `Files upload directly to the configured tus service and can resume after interruption. The effective per-file limit is ${formatBytes(sessionStatus.maximum_file_bytes)}.`
+      : `Files upload directly to this VidXP API. This backend is not resumable; the effective per-file limit is ${formatBytes(sessionStatus.maximum_file_bytes)}.`,
+  )
+  setText(
     elements.reservedSummary,
     `${sessionStatus.reserved_file_count} files · ${formatBytes(sessionStatus.reserved_bytes)}`,
   )
@@ -271,7 +286,7 @@ async function authorizeFile(file) {
   const current = uppy.getFile(file.id)
   const key = current?.meta?.client_file_key
   if (!current || !key) throw new Error('VidXP could not identify the selected file.')
-  if (current.tus?.uploadUrl) return
+  if (current.meta?.intent_id || current.tus?.uploadUrl) return
   const payload = await requestJson(apiUrl('./files'), {
     method: 'POST',
     body: JSON.stringify({
@@ -396,23 +411,39 @@ function configureUppy() {
     disabled: sessionStatus.session_state === 'expired',
     note: `Up to ${sessionStatus.maximum_files} videos; ${formatBytes(sessionStatus.maximum_file_bytes)} per file.`,
   })
-  uppy.use(Tus, {
-    endpoint: creationUrl,
-    allowedMetaFields: ['intent_id'],
-    limit: 1,
-    parallelUploads: 1,
-    overridePatchMethod: false,
-    uploadDataDuringCreation: false,
-    withCredentials: false,
-    removeFingerprintOnSuccess: true,
-    async onBeforeRequest(request, file) {
-      if (!isCreationRequest(request)) return
-      const key = file.meta?.client_file_key
-      const grant = creationGrants.get(key)
-      if (!grant) throw new Error('VidXP did not issue a creation grant for this file.')
-      request.setHeader('Authorization', `VidXP-Handoff ${grant}`)
-    },
-  })
+  if (sessionStatus.transfer_backend === 'tus') {
+    uppy.use(Tus, {
+      endpoint: creationUrl,
+      allowedMetaFields: ['intent_id'],
+      limit: 1,
+      parallelUploads: 1,
+      overridePatchMethod: false,
+      uploadDataDuringCreation: false,
+      withCredentials: false,
+      removeFingerprintOnSuccess: true,
+      async onBeforeRequest(request, file) {
+        if (!isCreationRequest(request)) return
+        const key = file.meta?.client_file_key
+        const grant = creationGrants.get(key)
+        if (!grant) throw new Error('VidXP did not issue a creation grant for this file.')
+        request.setHeader('Authorization', `VidXP-Handoff ${grant}`)
+      },
+    })
+  } else {
+    uppy.use(XHRUpload, {
+      endpoint(file) {
+        const intentID = file.meta?.intent_id
+        if (!intentID) throw new Error('VidXP did not bind the selected file.')
+        return apiUrl(`./files/${intentID}/content`)
+      },
+      fieldName: 'upload',
+      formData: true,
+      method: 'POST',
+      limit: 1,
+      withCredentials: true,
+      headers: { Accept: 'application/json' },
+    })
+  }
   uppy.use(GoldenRetriever, {
     id: `GoldenRetriever:${scopedId}`,
     expires: recoveryLifetime(),
@@ -487,7 +518,11 @@ async function bootstrap() {
   configureUppy()
   syncUppyFiles(payload.resume_urls ?? {})
   elements.closeSession.addEventListener('click', closeSession)
-  setUploadMessage('Choose one or more videos. Bytes upload directly to tusd.')
+  setUploadMessage(
+    sessionStatus.resumable
+      ? 'Choose one or more videos. Transfers use resumable tus.'
+      : 'Choose one or more videos. Transfers use bounded direct upload to VidXP and are not resumable.',
+  )
   scheduleStatusPoll(0)
 }
 

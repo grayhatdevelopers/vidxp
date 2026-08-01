@@ -13,7 +13,8 @@
     "@uppy/core": "5.2.0",
     "@uppy/dashboard": "5.1.1",
     "@uppy/golden-retriever": "5.2.1",
-    "@uppy/tus": "5.1.1"
+    "@uppy/tus": "5.1.1",
+    "@uppy/xhr-upload": "5.2.0"
   },
   "devDependencies": {
     "esbuild": "0.28.1"

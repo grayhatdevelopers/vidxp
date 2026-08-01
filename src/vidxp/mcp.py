@@ -53,6 +53,7 @@ from vidxp.application_models import (
     JobPage,
     ListJobsCommand,
     ListMediaCommand,
+    LocalMediaIngestionCommand,
     MediaAsset,
     MediaId,
     MediaPage,
@@ -73,6 +74,7 @@ from vidxp.artifact_delivery import (
     require_resource_binding,
     verified_local_path,
 )
+from vidxp.capabilities.contracts import CapabilityRequestError
 from vidxp.authentication import (
     OIDCBearerAuthenticator,
     create_authenticator,
@@ -206,9 +208,49 @@ def _uploads(context: ControlPlaneContext) -> RemoteUploadService:
         raise ApplicationError(
             "remote_upload_unavailable",
             ErrorCategory.unavailable,
-            "Remote resumable uploads are not configured.",
+            "Media ingestion is unavailable on this transport.",
         )
     return context.uploads
+
+
+def _ingestion_modalities(
+    context: ControlPlaneContext,
+    requested: tuple[Identifier, ...] | None,
+) -> tuple[str, ...] | None:
+    capabilities = getattr(context.application, "capabilities", None)
+    registry = getattr(capabilities, "registry", None)
+    if registry is None:
+        return None if requested is None else tuple(requested)
+    selected = registry.index_names() if requested is None else tuple(requested)
+    try:
+        validated = registry.validate_names(selected)
+    except CapabilityRequestError as exc:
+        raise ApplicationError(
+            "ingestion_capabilities_unavailable",
+            ErrorCategory.validation,
+            str(exc),
+            details={
+                "remediation": (
+                    "Choose indexable capabilities returned by get_workspace."
+                )
+            },
+        ) from exc
+    unsupported = tuple(
+        name for name in validated if name not in registry.index_names()
+    )
+    if unsupported:
+        raise ApplicationError(
+            "ingestion_capabilities_unavailable",
+            ErrorCategory.validation,
+            "Automatic ingestion requested capabilities that cannot be indexed.",
+            details={
+                "remediation": (
+                    "Choose indexable capabilities returned by get_workspace: "
+                    + ", ".join(registry.index_names())
+                )
+            },
+        )
+    return validated
 
 
 def _principal(default: Principal | None) -> Principal:
@@ -371,6 +413,7 @@ def create_mcp_server(
     default_principal: Principal | None = None,
     oidc_authentication: bool = False,
     artifact_delivery: Literal["local_stdio", "streamable_http"] = "local_stdio",
+    filesystem_accessible: bool = False,
 ) -> MCPServer:
     settings = context.settings
     token_verifier = None
@@ -400,6 +443,18 @@ def create_mcp_server(
             required_scopes=list(settings.http_required_scopes),
         )
 
+    ingestion_instructions = (
+        "Use ingest_local_media for up to ten local paths; no media bytes pass "
+        "through MCP. Poll get_media_ingestion until each successful file is "
+        "indexed and searchable. "
+        if filesystem_accessible
+        else (
+            "Use create_media_upload to give the user the returned capability "
+            "page, then poll get_media_upload until every successful file is "
+            "indexed and searchable. The returned status states whether the "
+            "active backend is bounded multipart or resumable tus. "
+        )
+    )
     server = MCPServer(
         name="vidxp",
         title="VidXP",
@@ -418,9 +473,11 @@ def create_mcp_server(
             "get_runtime_readiness before indexing. If selected model "
             "artifacts are missing, submit prepare_models and poll get_job "
             "until it completes. "
-            "Use create_media_upload to give the user a secure upload page, "
-            "then poll get_media_upload until it returns a media_id. Use that "
-            "media_id with start_indexing. get_index_status identifies the "
+            f"{ingestion_instructions}"
+            "Automatic indexing uses every indexable capability exposed by "
+            "the repository runtime unless modalities are supplied; set "
+            "index_after_import=false only for advanced registration-only "
+            "workflows. get_index_status identifies the "
             "media included in the active index snapshot. For search_moments "
             "and query_video, provide command.media_id to restrict work to one "
             "video, or omit it to search/query across every media item in that "
@@ -707,19 +764,21 @@ def create_mcp_server(
             "Create an idempotent multi-file upload session and return its "
             "short-lived capability link. The user selects files in the "
             "browser; filenames, sizes, MIME types, and video bytes are not "
-            "tool inputs."
+            "tool inputs. Native vidxp-api uses bounded non-resumable "
+            "multipart transfer; deployed server mode retains resumable tus. "
+            "Automatic indexing defaults on. Poll only get_media_upload."
         ),
         annotations=_SUBMIT,
         structured_output=True,
     )
     async def create_media_upload(
         idempotency_key: IdempotencyKey,
+        index_after_import: bool = True,
+        modalities: tuple[Identifier, ...] | None = None,
     ) -> Annotated[CallToolResult, MediaUploadSessionLink]:
-        link = await _invoke_async(
-            context,
-            default_principal=default_principal,
-            permission=RepositoryPermission.write,
-            operation=lambda actor: _uploads(context).create_upload_session(
+        def create(actor: Principal):
+            selected = _ingestion_modalities(context, modalities)
+            return _uploads(context).create_upload_session(
                 principal=actor,
                 request_key=scoped_request_key(
                     principal=actor,
@@ -727,7 +786,15 @@ def create_mcp_server(
                     operation="media-upload-session",
                     idempotency_key=idempotency_key,
                 ),
-            ),
+                index_after_import=index_after_import,
+                index_modalities=selected,
+            )
+
+        link = await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.write,
+            operation=create,
         )
         assert context.settings.upload_handoff_public_url is not None
         page_url = (
@@ -755,8 +822,10 @@ def create_mcp_server(
     @server.tool(
         description=(
             "Get durable aggregate and per-file state for an upload session. "
-            "Ready children include media_id; processing or failed children "
-            "include job_id and actionable next steps."
+            "Poll this single operation through uploaded, importing, "
+            "registered, indexing, indexed, or failed. Each item reports the "
+            "import job, index job, media, generation, snapshot, and structured "
+            "failure without losing successful siblings."
         ),
         annotations=_READ_ONLY,
         structured_output=True,
@@ -770,6 +839,64 @@ def create_mcp_server(
             permission=RepositoryPermission.read,
             operation=lambda actor: _uploads(context).get_status(
                 upload_session_id,
+                principal=actor,
+            ),
+        )
+
+    @server.tool(
+        description=(
+            "Local stdio only: ingest one to ten filesystem paths without "
+            "transferring media bytes through MCP. Paths are canonicalized and "
+            "checked against trusted import roots. Automatic indexing defaults "
+            "on; poll only get_media_ingestion for partial per-file results."
+        ),
+        annotations=_SUBMIT,
+        structured_output=True,
+    )
+    async def ingest_local_media(
+        command: LocalMediaIngestionCommand,
+        idempotency_key: IdempotencyKey,
+    ) -> MediaUploadSessionStatus:
+        def ingest(actor: Principal) -> MediaUploadSessionStatus:
+            selected = _ingestion_modalities(context, command.modalities)
+            return _uploads(context).create_local_ingestion(
+                command.paths,
+                principal=actor,
+                request_key=scoped_request_key(
+                    principal=actor,
+                    transport="mcp-stdio",
+                    operation="local-media-ingestion",
+                    idempotency_key=idempotency_key,
+                ),
+                index_after_import=command.index_after_import,
+                index_modalities=selected,
+            )
+
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.write,
+            operation=ingest,
+        )
+
+    @server.tool(
+        description=(
+            "Local stdio only: recover and poll one durable local-path "
+            "ingestion batch until every successful file is indexed/searchable "
+            "or has an explicit terminal failure."
+        ),
+        annotations=_READ_ONLY,
+        structured_output=True,
+    )
+    async def get_media_ingestion(
+        ingestion_id: UploadSessionId,
+    ) -> MediaUploadSessionStatus:
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=lambda actor: _uploads(context).get_status(
+                ingestion_id,
                 principal=actor,
             ),
         )
@@ -1150,7 +1277,8 @@ def create_mcp_server(
                                 context,
                                 default_principal=default_principal,
                                 permission=RepositoryPermission.read,
-                                operation=lambda _actor, artifact_id=(keyframe.artifact.artifact.artifact_id): (
+                                operation=lambda _actor,
+                                artifact_id=(keyframe.artifact.artifact.artifact_id): (
                                     context.application.open_artifact_content(
                                         artifact_id
                                     )
@@ -1243,6 +1371,12 @@ def create_mcp_server(
             operation=lambda _actor: context.jobs.cancel(job_id),
         )
 
+    if filesystem_accessible:
+        server.remove_tool("create_media_upload")
+        server.remove_tool("get_media_upload")
+    else:
+        server.remove_tool("ingest_local_media")
+        server.remove_tool("get_media_ingestion")
     return server
 
 

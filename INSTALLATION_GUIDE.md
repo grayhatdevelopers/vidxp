@@ -298,6 +298,21 @@ The unauthenticated local default is deliberately loopback-only:
 Native installs default to port `32191` to avoid the heavily reused development
 port `8000`. Use `vidxp-api --port <port>` when a specific port is required.
 
+The Streamable HTTP MCP endpoint includes `create_media_upload`. Its returned
+capability link uses the actual listener host and port; opening `/` manually is
+not an upload flow. Native mode serves the packaged Uppy page and receives bounded,
+non-resumable multipart uploads directly in the API process. It requires no Docker,
+PostgreSQL, Chroma server, tusd, or separately started helper. The session result
+reports the effective per-file and aggregate limits, and `get_media_upload` follows
+the durable import and automatic-indexing lifecycle through `indexed` and
+`searchable=true`.
+
+Local stdio exposes `ingest_local_media` instead. Pass one to ten paths that are
+inside the configured import boundaries and poll `get_media_ingestion`; file bytes
+do not cross MCP. Both ingestion tools default to the repository's advertised
+capability set. Supply `modalities` to narrow it or
+`index_after_import=false` for the advanced registration-only workflow.
+
 Do not bind an unauthenticated API to a non-loopback address. Public
 deployments require static bearer or OIDC authentication and should use the
 supported server Compose topology.

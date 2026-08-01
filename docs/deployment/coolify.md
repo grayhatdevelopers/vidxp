@@ -104,12 +104,14 @@ reverse-proxy access logging for `/uploads/`; VidXP cannot control logs written 
 an upstream proxy.
 
 Video bytes do not travel through MCP. A remote MCP client calls
-`create_media_upload` with only an idempotency key and gives the returned HTTPS
-session to the user. Uppy Dashboard supports multiple selections, pause, resume,
-retry, accessible controls, and browser recovery. The browser supplies the actual
-metadata after selection; VidXP creates and reserves each child atomically. The
-client polls `get_media_upload` with the session ID and passes each completed
-`media_id` to `start_indexing`.
+`create_media_upload` with an idempotency key and gives the returned HTTPS session
+to the user. Uppy Dashboard supports multiple selections, pause, resume, retry,
+accessible controls, and browser recovery. The browser supplies the actual metadata
+after selection; VidXP creates and reserves each child atomically. Automatic
+indexing defaults to the deployed repository's advertised capability set. The
+client polls only `get_media_upload` until each child is searchable (or failed);
+`modalities` can narrow the set and `index_after_import=false` is the explicit
+registration-only opt-out.
 
 The page exchanges its fragment capability for an `HttpOnly`, `Secure`,
 `SameSite=Strict` session cookie without a login or manual API-token field. Each

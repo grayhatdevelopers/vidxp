@@ -78,7 +78,17 @@ class LocalCatalogTests(unittest.TestCase):
                         "catalog_metadata",
                         "media",
                         "media_import_requests",
+                        "upload_intents",
+                        "upload_quota",
+                        "upload_session_files",
+                        "upload_sessions",
                     },
+                )
+                self.assertEqual(
+                    connection.exec_driver_sql(
+                        "SELECT schema_version FROM catalog_metadata"
+                    ).scalar_one(),
+                    4,
                 )
                 self.assertEqual(
                     connection.exec_driver_sql(

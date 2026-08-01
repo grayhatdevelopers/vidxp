@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from importlib.resources import files
 from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
+from starlette.datastructures import UploadFile
 
 from vidxp.api_models import (
     UploadCreationGrantResponse,
@@ -12,6 +14,7 @@ from vidxp.api_models import (
     UploadPageSessionResponse,
 )
 from vidxp.api_routes.dependencies import context
+from vidxp.api_routes.dependencies import copy_upload
 from vidxp.application_models import (
     ApplicationError,
     CreateUploadFileCommand,
@@ -197,6 +200,57 @@ def create_upload_grant(
         expires_at=authorization.grant_expires_at,
         resume_url=authorization.resume_url,
     )
+
+
+@router.post(
+    "/{session_id}/files/{intent_id}/content",
+    response_model=MediaUploadSessionStatus,
+    include_in_schema=False,
+)
+async def upload_multipart_file(
+    session_id: UploadSessionId,
+    intent_id: UploadIntentId,
+    request: Request,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+    session_token: Annotated[
+        str | None,
+        Cookie(alias=_SESSION_COOKIE),
+    ] = None,
+) -> MediaUploadSessionStatus:
+    _require_same_origin(request, service)
+    uploads = _uploads(service)
+    await asyncio.to_thread(
+        uploads.browser_session,
+        session_id,
+        session_token=session_token,
+    )
+    async with request.form(max_files=1, max_fields=0) as form:
+        upload = form.get("upload")
+        if not isinstance(upload, UploadFile):
+            raise ApplicationError(
+                "upload_body_invalid",
+                ErrorCategory.validation,
+                "The multipart request must contain one upload file.",
+            )
+        staged = await asyncio.to_thread(
+            copy_upload,
+            upload,
+            maximum=service.settings.http_max_small_upload_bytes,
+            directory=service.settings.quarantine_root,
+        )
+        try:
+            return await asyncio.to_thread(
+                uploads.complete_multipart_file,
+                session_id,
+                intent_id,
+                staged_path=staged,
+                original_filename=upload.filename or "",
+                declared_mime_type=upload.content_type,
+                byte_size=staged.stat().st_size,
+                session_token=session_token,
+            )
+        finally:
+            staged.unlink(missing_ok=True)
 
 
 @router.post(

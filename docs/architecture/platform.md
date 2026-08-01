@@ -1,7 +1,7 @@
 # VidXP Platform Architecture
 
 Status: accepted
-Last validated: 2026-07-28
+Last validated: 2026-08-02
 Scope: CLI, API, MCP, Streamlit, desktop, media ingestion, indexing, search,
 artifacts, natural-language query, CPU/GPU execution, and deployment
 
@@ -20,7 +20,8 @@ VidXP must support:
 3. A future packaged desktop UI using the same application layer.
 4. A remotely accessible HTTP API.
 5. A remotely accessible MCP server over Streamable HTTP.
-6. Local MCP over stdio for adjacent clients; stdio is not the media path.
+6. Local MCP over stdio for adjacent clients, including path-based local media
+   ingestion without transporting video bytes through MCP.
 7. Durable indexing and artifact jobs with progress and cancellation.
 8. CPU execution first and an explicit, tested GPU runtime afterwards.
 9. Natural-language questions over all indexed collectors with timestamped evidence.
@@ -36,7 +37,9 @@ VidXP must support:
 2. FastAPI and MCP are sibling adapters. MCP never calls VidXP's HTTP API internally.
 3. Public transports reuse the same Pydantic command and result models.
 4. Video bytes are never passed as MCP tool arguments or over stdio.
-5. Remote MCP clients reference previously registered media by `media_id`.
+5. MCP clients reference registered media by `media_id`; Streamable HTTP may first
+   create a browser handoff, while filesystem-accessible stdio may submit bounded
+   local path lists.
 6. A failed or cancelled indexing job cannot damage the last committed index.
 7. Search reads an immutable committed index generation.
 8. Job state and index state are separate.
@@ -312,9 +315,9 @@ configured import roots when a boundary is required.
 
 Local media does not need to travel through an HTTP upload endpoint.
 
-### 9.3 Remote upload
+### 9.3 Browser upload
 
-The reusable data plane is a four-stage protocol:
+The deployed resumable data plane is a four-stage protocol:
 
 1. VidXP creates a fully bound upload intent and reserves quota in one database
    transaction.
@@ -326,12 +329,12 @@ The reusable data plane is a four-stage protocol:
 4. The non-blocking `post-finish` hook idempotently upserts completion by upload ID
    and enqueues the durable ffprobe/import workflow.
 
-The authenticated HTTP API may create a single intent directly. Remote MCP instead
-uses a session-first browser handoff. `create_media_upload` accepts only an
-idempotency key, creates no child intent and reserves no quota. It returns a
-short-lived session capability link in ordinary structured and text tool output on
-both stdio and Streamable HTTP. VidXP deliberately does not invoke native URL
-elicitation or retain transport session state for this workflow.
+Streamable HTTP MCP uses a session-first browser handoff.
+`create_media_upload` accepts an idempotency key plus optional automatic-indexing
+policy, creates no child intent and reserves no quota, and returns a short-lived
+session capability link in ordinary structured and text tool output. It is not
+exposed on filesystem-accessible stdio. VidXP deliberately does not invoke native
+URL elicitation or retain transport session state for this workflow.
 
 The capability appears only in the URL fragment and possession of the complete
 link is the browser authorization. Bootstrap verifies the signed capability and
@@ -346,21 +349,32 @@ filename, byte size, and MIME type with a stable browser-generated client file k
 VidXP then validates the metadata, per-file/session/repository limits and quota,
 creates the child intent, reserves its bytes, and binds the client key atomically.
 An exact repeated key is idempotent; conflicting reuse is rejected, while separate
-keys may use the same filename. Each child receives its own one-time, five-minute
-tus creation grant. Only grant digests, expiry, and consumption time are stored.
-Cancelling or failing one child does not cancel its siblings, and closing the
-session prevents new selections without interrupting already-authorized transfers.
+keys may use the same filename. In deployed server mode each child receives its own
+one-time, five-minute tus creation grant. Native local mode instead streams a
+bounded multipart body to quarantine after that same atomic metadata/quota step;
+it neither issues a tus grant nor claims resumability. Cancelling or failing one
+child does not cancel its siblings, and closing the session prevents new selections
+without interrupting already-authorized transfers.
 
-The packaged page uses Uppy Dashboard, Tus, and Golden Retriever. Dashboard owns
-selection, restrictions, progress, pause/resume, retry, accessibility, and ghost
-recovery; custom UI shows only aggregate and durable per-file VidXP state. It
-limits tus metadata to the intent identifier and does not choose a tus chunk size,
-so small and large files follow the same resumable path. Scripts and stylesheets
-are self-hosted under a strict CSP. Style attributes are allowed because Dashboard
-computes dimensions, progress, colors, and transitions at runtime; inline scripts
-remain blocked. The handoff API is same-origin and tus CORS accepts only a
-startup-validated, grouped list of exact HTTPS origins (or HTTP only on loopback)
-using syntax shared by Python validation and Go's RE2 engine.
+The packaged page uses Uppy Dashboard and Golden Retriever, selecting maintained
+Uppy Tus or XHR Upload adapters from the server-provided transfer contract.
+Dashboard owns selection, restrictions, progress, retry, accessibility, and ghost
+recovery; deployed tus sessions additionally provide pause/resume. Custom UI shows
+only aggregate and durable per-file VidXP state. Tus metadata is limited to the
+intent identifier and no custom chunk implementation exists. Scripts and
+stylesheets are self-hosted under a strict CSP. Style attributes are allowed
+because Dashboard computes dimensions, progress, colors, and transitions at
+runtime; inline scripts remain blocked. Native multipart is same-origin. Deployed
+tus CORS accepts only a startup-validated, grouped list of exact HTTPS origins (or
+HTTP only on loopback) using syntax shared by Python validation and Go's RE2 engine.
+
+The native adapter adds the exact dependency `@uppy/xhr-upload` 5.2.0 (MIT,
+published from the maintained
+[transloadit/uppy](https://github.com/transloadit/uppy) source). The existing
+`@uppy/tus` adapter implements the tus protocol and cannot send the bounded
+multipart form contract; using XHR Upload avoids a second custom JavaScript upload
+state machine. The dependency lock and packaged third-party notices record the
+resolved source and license.
 
 `get_media_upload` takes the stable session ID and returns a durable aggregate:
 session and aggregate state, configured limits, counts and bytes, and every child
@@ -386,7 +400,10 @@ mount that volume: it discovers created resumable resources with an internal tus
 `HEAD` and combines that result with the authoritative intent state in Postgres.
 Managed media and artifacts use the stack's named content volume. The whole
 deployment is single-node and one deployed stack is one repository boundary.
-Clients upload directly to tusd; FastAPI does not proxy large video bodies.
+Deployed clients upload directly to tusd; FastAPI does not proxy large video
+bodies. Native local `vidxp-api` uses the existing small-body multipart boundary,
+with an effective per-file maximum equal to the lower of the local import and HTTP
+small-upload limits (256 MiB by default).
 
 S3-compatible storage is deferred and not implemented. If revisited, it would
 apply only to upload quarantine, source media, and generated artifacts—never to
@@ -402,10 +419,10 @@ locks and deletion.
 The blocking `pre-terminate` hook prevents deletion while import is processing and
 admits completed/expired cleanup only with the private cleanup credential.
 
-FastAPI retains one small multipart compatibility endpoint with a central hard
-maximum of 256 MiB. It rejects oversized declared `Content-Length` before reading
-and enforces the same maximum while streaming to quarantine. It is never used for
-multi-gigabyte media.
+FastAPI retains the central small multipart path used by native local browser
+sessions. It rejects oversized declared `Content-Length` before reading and
+enforces the same maximum while streaming to quarantine. It is never used for
+multi-gigabyte media; those remain on deployed tus.
 
 URL ingestion is deferred. If added later, it is an asynchronous downloader with
 SSRF controls, redirect and DNS revalidation, size/time limits, quarantine, and
@@ -413,15 +430,22 @@ ffprobe validation.
 
 ### 9.4 MCP and media
 
-Remote MCP workflow:
+MCP ingestion workflows:
 
 ```text
-MCP create_media_upload -> user HTTPS page -> direct tus upload
-MCP get_media_upload -> media_id -> MCP start_indexing(media_id)
+Streamable HTTP -> create_media_upload -> user page -> multipart (native) or tus (deployed)
+                -> get_media_upload -> import -> automatic index -> searchable
+Local stdio     -> ingest_local_media(paths) -> get_media_ingestion
+                -> import -> automatic index -> searchable
 ```
 
-MCP does not carry video bytes, base64 video, or arbitrary server paths. Stdio may
-operate on an existing local `media_id`, but is not a video injection protocol.
+MCP does not carry video bytes or base64 video. Filesystem-accessible stdio accepts
+one to ten canonicalized paths under configured import boundaries and never exposes
+that behavior on Streamable HTTP or isolated stdio. Both paths reuse the durable
+import and indexing jobs, default capabilities to the repository runtime contract,
+permit an explicit `index_after_import=false` opt-out, and project per-file import
+job, index job, media, generation, snapshot, searchable, and structured failure
+state through one status tool.
 
 ## 10. Index generations and repository snapshots
 
@@ -979,8 +1003,9 @@ Primary remote transport:
 Local transport:
 
 - stdio for clients running beside VidXP
-- identical tools and shared contracts
-- media referenced by `media_id`
+- shared contracts with a filesystem-aware ingestion surface
+- local paths accepted only by `ingest_local_media`; browser-upload tools omitted
+- media referenced by `media_id` after durable import
 
 Initial curated tools:
 
@@ -988,8 +1013,8 @@ Initial curated tools:
 - `get_capability`
 - `list_media`
 - `get_media`
-- `create_media_upload`
-- `get_media_upload`
+- Streamable HTTP: `create_media_upload`, `get_media_upload`
+- Filesystem-accessible stdio: `ingest_local_media`, `get_media_ingestion`
 - `get_index_status`
 - `start_indexing`
 - `search_moments`
@@ -1103,7 +1128,9 @@ The same command and result contracts support three composition profiles:
 1. **Native local:** the CLI, Streamlit, or desktop adapter composes the application
    with a local worker, DBOS SQLite, embedded Chroma, and a platform app-data
    repository. Media can be imported from allowlisted local paths. This is the
-   default Apple Silicon experience and does not require Docker.
+   default Apple Silicon experience and does not require Docker. `vidxp-api` also
+   composes Streamable HTTP MCP and a same-process bounded multipart browser handoff
+   using the actual loopback listener; stdio uses direct local-path ingestion.
 2. **Remote client (planned):** a thin CLI, UI, or desktop adapter will connect
    to a self-hosted VidXP deployment without local models or a vector database.
    The current release rejects `VIDXP_MODE=remote` instead of silently composing

@@ -735,17 +735,25 @@ class VidXPSettings(BaseSettings):
             )
         )
         if handoff_configured and (
-            self.upload_public_endpoint is None
-            or self.upload_handoff_public_url is None
+            self.upload_handoff_public_url is None
             or self.upload_handoff_secret is None
-            or self.upload_cors_origin_regex is None
             or len(self.upload_handoff_secret.get_secret_value()) < 32
         ):
             raise ValueError(
-                "Upload handoffs require remote uploads, an HTTPS public "
-                "handoff URL (or loopback HTTP), a matching tusd CORS "
-                "origin regex, and a "
-                "dedicated secret of at least 32 characters."
+                "Upload handoffs require an HTTPS public handoff URL (or "
+                "loopback HTTP) and a dedicated secret of at least 32 characters."
+            )
+        if (
+            handoff_configured
+            and self.mode == ApplicationMode.server
+            and (
+                self.upload_public_endpoint is None
+                or self.upload_cors_origin_regex is None
+            )
+        ):
+            raise ValueError(
+                "Server upload handoffs require the resumable upload endpoint "
+                "and matching tusd CORS origin policy."
             )
         download_configured = any(
             value is not None

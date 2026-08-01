@@ -16,8 +16,10 @@ from vidxp.application_models import (
     ApplicationError,
     CreateUploadFileCommand,
     CreateUploadIntentCommand,
+    ErrorCategory,
     JobState,
     Principal,
+    ResourceNotFoundError,
 )
 from vidxp.core.media import utc_now
 from vidxp.core.uploads import UploadIntentRecord, UploadSessionState, UploadState
@@ -50,6 +52,107 @@ class _Jobs:
 
     def get(self, job_id: str):
         return SimpleNamespace(state=self.states[job_id])
+
+
+class _RecoveringNativeJobs:
+    def __init__(self) -> None:
+        self.available = False
+        self.submitted = False
+        self.submissions: list[tuple[str, str]] = []
+
+    def submit_completed_media_import(self, upload_id: str, *, job_id: str):
+        self.submissions.append((upload_id, job_id))
+        if not self.available:
+            raise ApplicationError(
+                "job_backend_unavailable",
+                ErrorCategory.unavailable,
+                "The durable job backend is unavailable.",
+            )
+        self.submitted = True
+        return SimpleNamespace(
+            job_id=job_id,
+            state=JobState.queued,
+            result=None,
+            error=None,
+        )
+
+    def get(self, job_id: str):
+        if not self.submitted:
+            raise ResourceNotFoundError("job")
+        return SimpleNamespace(
+            job_id=job_id,
+            state=JobState.queued,
+            result=None,
+            error=None,
+        )
+
+
+def test_native_multipart_import_submission_recovers_after_linking(
+    tmp_path: Path,
+) -> None:
+    catalog = SQLCatalog(
+        f"sqlite:///{(tmp_path / 'native.sqlite3').resolve().as_posix()}",
+        initialize=True,
+    )
+    jobs = _RecoveringNativeJobs()
+    settings = VidXPSettings(
+        repository_root=tmp_path,
+        upload_handoff_public_url="http://127.0.0.1:8765/upload-handoff",
+        upload_handoff_secret="h" * 32,
+        upload_max_bytes=100,
+        upload_quota_bytes=100,
+        upload_session_max_files=3,
+        upload_session_max_bytes=100,
+        max_local_import_bytes=100,
+        http_max_small_upload_bytes=100,
+    )
+    service = RemoteUploadService(
+        settings=settings,
+        catalog=catalog,
+        media=_Media(),
+        jobs=jobs,
+    )
+    link, browser = _open_session(service)
+    authorization = service.authorize_session_file(
+        link.status.session_id,
+        _file("native-01", size=20),
+        session_token=browser.session_token,
+    )
+    staged = tmp_path / "staged-upload"
+    staged.write_bytes(b"x" * 20)
+
+    with pytest.raises(ApplicationError) as unavailable:
+        service.complete_multipart_file(
+            link.status.session_id,
+            authorization.status.intent_id,
+            staged_path=staged,
+            original_filename="sample.mp4",
+            declared_mime_type="video/mp4",
+            byte_size=20,
+            session_token=browser.session_token,
+        )
+
+    assert unavailable.value.detail.code == "job_backend_unavailable"
+    stored = catalog.get_upload_intent(authorization.status.intent_id)
+    assert stored is not None
+    assert stored.state == UploadState.processing
+    assert stored.job_id is not None
+    assert jobs.submissions == [(stored.intent_id, stored.job_id)]
+    assert (settings.quarantine_root / stored.intent_id).is_file()
+
+    jobs.available = True
+    recovered = service.get_status(
+        link.status.session_id,
+        principal=Principal(subject="owner", client_id="mcp-client"),
+    )
+
+    assert recovered.items[0].phase == "importing"
+    assert jobs.submissions == [
+        (stored.intent_id, stored.job_id),
+        (stored.intent_id, stored.job_id),
+    ]
+    assert jobs.submitted is True
+    catalog.close()
 
 
 def _service(
@@ -519,6 +622,7 @@ def test_sibling_success_failure_and_cancellation_are_independent(
     assert len(jobs.calls) == 2
     catalog.close()
 
+
 def test_upload_status_projects_processing_failed_and_ready_actions(
     tmp_path: Path,
 ) -> None:
@@ -554,7 +658,8 @@ def test_upload_status_projects_processing_failed_and_ready_actions(
         ),
     )
     assert processing.job_id is not None
-    assert "get_job" in processing.next_action
+    assert processing.phase == "importing"
+    assert "ingestion status" in processing.next_action
 
     failed = service.file_status(
         link,
@@ -566,7 +671,8 @@ def test_upload_status_projects_processing_failed_and_ready_actions(
             }
         ),
     )
-    assert "failure" in failed.next_action
+    assert failed.phase == "failed"
+    assert "structured error" in failed.next_action
 
     ready = service.file_status(
         link,
@@ -582,6 +688,7 @@ def test_upload_status_projects_processing_failed_and_ready_actions(
     assert ready.media_id is not None
     assert "start_indexing" in ready.next_action
     catalog.close()
+
 
 def test_upload_quota_is_reserved_and_released_atomically(
     tmp_path: Path,
@@ -780,9 +887,7 @@ def test_active_resumable_upload_is_not_expired(tmp_path: Path) -> None:
     catalog.create_upload_intent(record, quota_limit=100)
     service.settings.quarantine_root.mkdir(parents=True, exist_ok=True)
     (service.settings.quarantine_root / f"{upload_id}.info").write_text(
-        '{"MetaData":{"intent_id":"'
-        + record.intent_id
-        + '"},"Size":60,"Offset":10}',
+        '{"MetaData":{"intent_id":"' + record.intent_id + '"},"Size":60,"Offset":10}',
         encoding="utf-8",
     )
     result = service.reconcile()

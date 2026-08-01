@@ -58,6 +58,7 @@ class PackagingTests(unittest.TestCase):
                 "@uppy/dashboard": "5.1.1",
                 "@uppy/golden-retriever": "5.2.1",
                 "@uppy/tus": "5.1.1",
+                "@uppy/xhr-upload": "5.2.0",
             },
         )
         self.assertEqual(package["devDependencies"], {"esbuild": "0.28.1"})
@@ -103,6 +104,8 @@ class PackagingTests(unittest.TestCase):
             "theme: 'dark'",
             "history.replaceState",
             "uppy.addPreProcessor(authorizeFiles)",
+            "uppy.use(XHRUpload",
+            "sessionStatus.transfer_backend === 'tus'",
             "maxTotalFileSize: sessionStatus.maximum_aggregate_bytes",
             "maxNumberOfFiles: sessionStatus.maximum_files",
             "client_file_key",
@@ -123,6 +126,10 @@ class PackagingTests(unittest.TestCase):
         )
         self.assertIn(
             "@uppy/dashboard@5.1.1",
+            (assets / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "@uppy/xhr-upload@5.2.0",
             (assets / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8"),
         )
 

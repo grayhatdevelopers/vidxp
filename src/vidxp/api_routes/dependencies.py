@@ -115,9 +115,7 @@ def _etag_matches(request: Request, etag: str) -> bool:
         return False
     return any(
         candidate == "*" or candidate.removeprefix("W/") == etag
-        for candidate in (
-            item.strip() for item in supplied.split(",")
-        )
+        for candidate in (item.strip() for item in supplied.split(","))
     )
 
 
@@ -148,12 +146,16 @@ def copy_upload(
     upload: UploadFile,
     *,
     maximum: int,
+    directory: Path | None = None,
 ) -> Path:
     suffix = safe_media_suffix(Path(upload.filename or "upload.bin"))
+    if directory is not None:
+        directory.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
         mode="w+b",
         prefix="vidxp-upload-",
         suffix=suffix,
+        dir=directory,
         delete=False,
     )
     path = Path(handle.name)

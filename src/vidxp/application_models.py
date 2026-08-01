@@ -42,7 +42,11 @@ from vidxp.core.media import (
     MediaStream,
     validate_display_filename,
 )
-from vidxp.core.uploads import UploadSessionState, UploadState
+from vidxp.core.uploads import (
+    UploadSessionState,
+    UploadState,
+    UploadTransferBackend,
+)
 from vidxp.index_state import INDEX_STATUS_MEDIA_ID_LIMIT
 
 T = TypeVar("T")
@@ -416,12 +420,30 @@ class MediaUploadStatus(ApplicationModel):
     client_file_key: str = Field(min_length=1, max_length=255)
     state: UploadState
     original_filename: str = Field(min_length=1, max_length=255)
-    byte_size: int = Field(gt=0)
+    byte_size: int = Field(ge=0)
     declared_mime_type: MimeType | None = None
     expires_at: AwareDatetime
-    transport: Literal["tus"] = "tus"
+    phase: Literal[
+        "transferring",
+        "uploaded",
+        "importing",
+        "registered",
+        "indexing",
+        "indexed",
+        "failed",
+    ] = "transferring"
+    transport: UploadTransferBackend = UploadTransferBackend.tus
+    resumable: bool = True
     job_id: JobId | None = None
+    import_job_id: JobId | None = None
+    index_job_id: JobId | None = None
     media_id: MediaId | None = None
+    generation_id: IndexGenerationId | None = None
+    snapshot_id: IndexSnapshotId | None = None
+    searchable: bool = False
+    index_after_import: bool = True
+    index_modalities: tuple[str, ...] = ()
+    error: ErrorDetail | None = None
     status: str = Field(min_length=1, max_length=512)
     next_action: str = Field(min_length=1, max_length=1024)
 
@@ -442,6 +464,39 @@ class CreateUploadFileCommand(ApplicationModel):
         return validate_display_filename(value)
 
 
+class MediaIngestionOptions(ApplicationModel):
+    index_after_import: bool = True
+    modalities: tuple[Identifier, ...] | None = Field(
+        default=None,
+        description=(
+            "Indexable capabilities to run after registration. Omit to use "
+            "the repository runtime's complete indexable capability set."
+        ),
+    )
+
+    @field_validator("modalities")
+    @classmethod
+    def _unique_modalities(
+        cls,
+        values: tuple[Identifier, ...] | None,
+    ) -> tuple[Identifier, ...] | None:
+        if values is not None and len(values) != len(set(values)):
+            raise ValueError("Ingestion modalities must be unique.")
+        return values
+
+
+class LocalMediaIngestionCommand(MediaIngestionOptions):
+    paths: tuple[str, ...] = Field(min_length=1, max_length=10)
+
+    @field_validator("paths")
+    @classmethod
+    def _nonempty_paths(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        cleaned = tuple(value.strip() for value in values)
+        if any(not value for value in cleaned):
+            raise ValueError("Local media paths must not be empty.")
+        return cleaned
+
+
 class MediaUploadSessionStatus(ApplicationModel):
     session_id: UploadSessionId
     session_state: UploadSessionState
@@ -453,6 +508,10 @@ class MediaUploadSessionStatus(ApplicationModel):
         "partial_failure",
         "failed",
     ]
+    transfer_backend: UploadTransferBackend = UploadTransferBackend.tus
+    resumable: bool = True
+    index_after_import: bool = True
+    index_modalities: tuple[str, ...] = ()
     expires_at: AwareDatetime
     maximum_files: int = Field(gt=0)
     maximum_file_bytes: int = Field(gt=0)
@@ -464,6 +523,7 @@ class MediaUploadSessionStatus(ApplicationModel):
     uploaded_file_count: NonNegativeInt
     uploaded_bytes: NonNegativeInt
     ready_file_count: NonNegativeInt
+    searchable_file_count: NonNegativeInt = 0
     failed_file_count: NonNegativeInt
     items: tuple[MediaUploadStatus, ...] = ()
     status: str = Field(min_length=1, max_length=512)
@@ -1186,7 +1246,14 @@ class IndexJobRequest(ApplicationModel):
 
 class MediaImportJobRequest(ApplicationModel):
     kind: Literal[JobKind.media_import] = JobKind.media_import
-    upload_id: Identifier
+    upload_id: Identifier | None = None
+    command: ImportMediaCommand | None = None
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "MediaImportJobRequest":
+        if (self.upload_id is None) == (self.command is None):
+            raise ValueError("Media import jobs require exactly one source.")
+        return self
 
 
 class SearchJobRequest(ApplicationModel):

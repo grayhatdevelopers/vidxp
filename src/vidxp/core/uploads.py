@@ -22,6 +22,12 @@ class UploadState(StrEnum):
     expired = "expired"
 
 
+class UploadTransferBackend(StrEnum):
+    tus = "tus"
+    multipart = "multipart"
+    local_path = "local_path"
+
+
 class UploadSessionState(StrEnum):
     open = "open"
     closed = "closed"
@@ -40,7 +46,7 @@ class UploadIntentRecord(BaseModel):
     intent_id: Uuid4Hex
     request_key: str = Field(pattern=r"^[0-9a-f]{64}$")
     original_filename: str = Field(min_length=1, max_length=255)
-    byte_size: int = Field(gt=0)
+    byte_size: int = Field(ge=0)
     declared_mime_type: MimeType | None = None
     state: UploadState
     created_at: AwareDatetime
@@ -53,6 +59,18 @@ class UploadIntentRecord(BaseModel):
     )
     job_id: JobId | None = None
     media_id: MediaId | None = None
+    transfer_backend: UploadTransferBackend = UploadTransferBackend.tus
+    index_after_import: bool = True
+    index_modalities: tuple[str, ...] = ()
+    index_job_id: JobId | None = None
+    source_path: str | None = Field(default=None, max_length=32767)
+    failure_code: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-z0-9_]+$",
+    )
+    failure_message: str | None = Field(default=None, min_length=1, max_length=512)
 
     @model_validator(mode="after")
     def _validate_state(self) -> "UploadIntentRecord":
@@ -64,12 +82,10 @@ class UploadIntentRecord(BaseModel):
         if self.state in {
             UploadState.accepted,
             UploadState.processing,
-            UploadState.failed,
         } and self.upload_id is None:
             raise ValueError(f"{self.state} uploads require an upload identifier")
         if self.state in {
             UploadState.processing,
-            UploadState.failed,
             UploadState.ready,
         } and self.job_id is None:
             raise ValueError(f"{self.state} uploads require a job identifier")
@@ -80,8 +96,22 @@ class UploadIntentRecord(BaseModel):
             raise ValueError(f"{self.state} uploads cannot have a job identifier")
         if self.state == UploadState.ready and self.media_id is None:
             raise ValueError("ready uploads require a media identifier")
-        if self.media_id is not None and self.state != UploadState.ready:
-            raise ValueError("only ready uploads may reference media")
+        if self.media_id is not None and self.state not in {
+            UploadState.ready,
+            UploadState.failed,
+        }:
+            raise ValueError("only registered uploads may reference media")
+        if self.transfer_backend == UploadTransferBackend.local_path:
+            if self.source_path is None:
+                raise ValueError("local-path ingestion requires its canonical source")
+        elif self.source_path is not None:
+            raise ValueError("only local-path ingestion may retain a source path")
+        if self.index_job_id is not None and self.media_id is None:
+            raise ValueError("index jobs require a registered media identifier")
+        if not self.index_after_import and self.index_job_id is not None:
+            raise ValueError("index opt-out cannot reference an index job")
+        if (self.failure_code is None) != (self.failure_message is None):
+            raise ValueError("upload failure code and message must be stored together")
         return self
 
 
@@ -116,6 +146,9 @@ class UploadSessionRecord(BaseModel):
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
+    transfer_backend: UploadTransferBackend = UploadTransferBackend.tus
+    index_after_import: bool = True
+    index_modalities: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _validate_session(self) -> "UploadSessionRecord":

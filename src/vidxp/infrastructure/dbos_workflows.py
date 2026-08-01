@@ -176,7 +176,11 @@ class VidXPWorkerWorkflows(DBOSConfiguredInstance):
                     "message": "Validating and importing the completed upload.",
                 }
             )
-            result = self.application.import_completed_upload(request.upload_id)
+            result = (
+                self.application.import_media(request.command)
+                if request.command is not None
+                else self.application.import_completed_upload(request.upload_id or "")
+            )
             _publish_progress(
                 {
                     "stage": "complete",

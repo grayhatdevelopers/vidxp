@@ -180,12 +180,22 @@ IDs plus up to three directly inspectable frames by default. Request
 timestamp arithmetic, second clip job, or separate artifact lookup is required.
 The lower-level clip and artifact tools remain available for advanced workflows.
 
-On a configured remote server, an agent calls `create_media_upload` with only an
-idempotency key. VidXP returns a short-lived multi-file HTTPS session; the browser
-discovers authoritative filename, size, and MIME metadata after selection and
-uploads bytes directly to tusd, never through MCP. The agent polls
-`get_media_upload` with the session ID for aggregate and per-file results, then
-passes each completed `media_id` to `start_indexing`.
+Streamable HTTP agents call `create_media_upload` and give its short-lived
+multi-file session link to the user. The browser discovers authoritative filename,
+size, and MIME metadata after selection; video bytes never cross MCP. A native
+`vidxp-api` process receives bounded, non-resumable multipart transfers directly,
+while the deployed server retains resumable tus/tusd transfer for large files.
+The explicit session contract reports the backend and effective limits. Indexing
+starts automatically by default, so the agent polls only `get_media_upload` until
+each file is `indexed`, `failed`, or (with the advanced
+`index_after_import=false` opt-out) `registered`.
+
+Filesystem-accessible stdio agents use `ingest_local_media` for up to ten local
+paths. VidXP canonicalizes the paths and submits the existing durable import and
+index jobs without base64, JSON chunks, a browser, or an upload helper. Poll
+`get_media_ingestion`; successful and failed siblings are reported independently.
+Browser-upload tools are intentionally absent from stdio, and local-path tools are
+intentionally absent from remote or filesystem-isolated transports.
 
 Agents can call `get_workspace` before acting to inspect registered media,
 active-index coverage, model readiness, and the searchable, queryable,
