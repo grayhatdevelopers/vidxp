@@ -223,7 +223,7 @@ pub struct ManagedRuntimeProjection {
     pub surfaces: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct ProbeRuntime {
     python_executable: PathBuf,
     python_version: String,
@@ -232,20 +232,20 @@ struct ProbeRuntime {
     base_prefix: PathBuf,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct ProbeLaunchContract {
     protocol_version: u32,
     surface: String,
     command: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 struct ProbeCapabilities {
     #[serde(default)]
     frontend: FrontendCapability,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct ProbeDocument {
     product: String,
     product_version: String,
@@ -272,6 +272,29 @@ struct DecodedState {
 struct ProbeOutput {
     success: bool,
     stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InspectionState {
+    ReadyToUse,
+    UpdateRequired,
+    CannotStart,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TargetInspection {
+    pub state: InspectionState,
+    pub adoptable: bool,
+    pub executable: PathBuf,
+    pub reported_version: Option<String>,
+    pub probe_compatible: bool,
+    pub launch_compatible: bool,
+    pub validated: Option<ValidatedTarget>,
+    pub message: String,
+    pub remediation: String,
+    pub technical_details: Option<String>,
 }
 
 fn unix_timestamp() -> Result<u64, TargetError> {
@@ -416,6 +439,82 @@ fn collect_probe_output(
     Ok(ProbeOutput {
         success: status.success(),
         stdout,
+        stderr,
+    })
+}
+
+fn collect_version_output(executable: &Path) -> Result<ProbeOutput, TargetError> {
+    let mut child = Command::new(executable)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            TargetError::new(
+                TargetErrorCode::ProbeCouldNotStart,
+                format!("The selected executable could not start: {error}"),
+            )
+        })?;
+    let stdout_reader = read_stream(child.stdout.take().expect("piped stdout is available"));
+    let stderr_reader = read_stream(child.stderr.take().expect("piped stderr is available"));
+    let status = match child.wait_timeout(PROBE_TIMEOUT).map_err(|error| {
+        TargetError::new(
+            TargetErrorCode::ProbeFailed,
+            format!("The version check could not be monitored: {error}"),
+        )
+    })? {
+        Some(status) => status,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err(TargetError::new(
+                TargetErrorCode::ProbeTimeout,
+                "The selected executable did not complete the version check within 10 seconds.",
+            ));
+        }
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| {
+            TargetError::new(
+                TargetErrorCode::ProbeFailed,
+                "The version output reader stopped unexpectedly.",
+            )
+        })?
+        .map_err(|error| {
+            TargetError::new(
+                TargetErrorCode::ProbeFailed,
+                format!("The version output could not be read: {error}"),
+            )
+        })?;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| {
+            TargetError::new(
+                TargetErrorCode::ProbeFailed,
+                "The version error reader stopped unexpectedly.",
+            )
+        })?
+        .map_err(|error| {
+            TargetError::new(
+                TargetErrorCode::ProbeFailed,
+                format!("The version error output could not be read: {error}"),
+            )
+        })?;
+    if stdout.len() as u64 > MAX_PROBE_STREAM_BYTES || stderr.len() as u64 > MAX_PROBE_STREAM_BYTES
+    {
+        return Err(TargetError::new(
+            TargetErrorCode::ProbeOutputTooLarge,
+            "The selected executable returned more version output than VidXP accepts.",
+        ));
+    }
+    Ok(ProbeOutput {
+        success: status.success(),
+        stdout,
+        stderr,
     })
 }
 
@@ -539,11 +638,115 @@ fn validate_executable_with(
     validate_probe_document(&canonical, &request_id, document, unix_timestamp()?)
 }
 
+fn inspect_executable_with(
+    path: &Path,
+    desktop_version: &str,
+    run_probe: impl FnOnce(&Path, &str, &str) -> Result<ProbeOutput, TargetError>,
+    run_version: impl FnOnce(&Path) -> Result<ProbeOutput, TargetError>,
+) -> Result<TargetInspection, TargetError> {
+    let canonical = canonical_executable(path)?;
+    let request_id = challenge_for(&canonical)?;
+    let probe_result = run_probe(&canonical, desktop_version, &request_id).and_then(|output| {
+        if !output.success {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            return Err(TargetError::new(
+                TargetErrorCode::ProbeFailed,
+                if detail.is_empty() {
+                    "The selected executable rejected the VidXP compatibility probe.".into()
+                } else {
+                    format!("The compatibility probe failed: {detail}")
+                },
+            ));
+        }
+        let document: ProbeDocument = serde_json::from_slice(&output.stdout).map_err(|_| {
+            TargetError::new(
+                TargetErrorCode::MalformedProbe,
+                "The selected executable did not return a valid VidXP compatibility response.",
+            )
+        })?;
+        validate_probe_document(&canonical, &request_id, document, unix_timestamp()?)
+    });
+    match probe_result {
+        Ok(validated) => Ok(TargetInspection {
+            state: InspectionState::ReadyToUse,
+            adoptable: true,
+            executable: canonical,
+            reported_version: Some(validated.product_version.clone()),
+            probe_compatible: true,
+            launch_compatible: true,
+            validated: Some(validated),
+            message: "This installation supports the Desktop compatibility and launch contracts."
+                .into(),
+            remediation: String::new(),
+            technical_details: None,
+        }),
+        Err(probe_error) => {
+            let version = run_version(&canonical);
+            match version {
+                Ok(output) if output.success && !output.stdout.is_empty() => {
+                    let reported = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                    Ok(TargetInspection {
+                        state: InspectionState::UpdateRequired,
+                        adoptable: false,
+                        executable: canonical,
+                        reported_version: Some(reported.strip_prefix("VidXP ").unwrap_or(&reported).to_owned()),
+                        probe_compatible: false,
+                        launch_compatible: false,
+                        validated: None,
+                        message: "This VidXP installation does not provide a compatible Desktop probe and launch contract.".into(),
+                        remediation: "Update this external installation with its own package-management workflow, then check it again.".into(),
+                        technical_details: Some(probe_error.message),
+                    })
+                }
+                Ok(output) => {
+                    let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                    Ok(TargetInspection {
+                        state: InspectionState::CannotStart,
+                        adoptable: false,
+                        executable: canonical,
+                        reported_version: None,
+                        probe_compatible: false,
+                        launch_compatible: false,
+                        validated: None,
+                        message: "This executable could not start well enough to report its version.".into(),
+                        remediation: "Repair this external installation with its own package-management workflow, then check it again.".into(),
+                        technical_details: Some(if detail.is_empty() { probe_error.message } else { detail }),
+                    })
+                }
+                Err(version_error) => Ok(TargetInspection {
+                    state: InspectionState::CannotStart,
+                    adoptable: false,
+                    executable: canonical,
+                    reported_version: None,
+                    probe_compatible: false,
+                    launch_compatible: false,
+                    validated: None,
+                    message: "This executable could not start well enough to report its version.".into(),
+                    remediation: "Repair this external installation with its own package-management workflow, then check it again.".into(),
+                    technical_details: Some(format!("{} {}", probe_error.message, version_error.message)),
+                }),
+            }
+        }
+    }
+}
+
 pub fn validate_executable(
     path: &Path,
     desktop_version: &str,
 ) -> Result<ValidatedTarget, TargetError> {
     validate_executable_with(path, desktop_version, collect_probe_output)
+}
+
+pub fn inspect_executable(
+    path: &Path,
+    desktop_version: &str,
+) -> Result<TargetInspection, TargetError> {
+    inspect_executable_with(
+        path,
+        desktop_version,
+        collect_probe_output,
+        collect_version_output,
+    )
 }
 
 pub fn discover_local_targets() -> Vec<DiscoveredTarget> {
@@ -1312,6 +1515,7 @@ mod tests {
                 Ok(ProbeOutput {
                     success: true,
                     stdout: b"not json".to_vec(),
+                    stderr: Vec::new(),
                 })
             })
             .expect_err("malformed")
@@ -1331,6 +1535,7 @@ mod tests {
                 Ok(ProbeOutput {
                     success: false,
                     stdout: Vec::new(),
+                    stderr: Vec::new(),
                 })
             })
             .expect_err("failed")
@@ -1415,6 +1620,94 @@ mod tests {
                 .expect_err("launch protocol")
                 .code,
             TargetErrorCode::UnsupportedLaunchProtocol
+        );
+    }
+
+    #[test]
+    fn inspection_accepts_a_compatible_contract_with_a_different_package_version() {
+        let executable = std::env::current_exe().expect("current executable");
+        let inspected = inspect_executable_with(
+            &executable,
+            "0.4.0-b",
+            |canonical, _, request_id| {
+                let mut payload = document(canonical, request_id);
+                payload.product_version = "0.3.0".into();
+                Ok(ProbeOutput {
+                    success: true,
+                    stdout: serde_json::to_vec(&payload).expect("probe json"),
+                    stderr: Vec::new(),
+                })
+            },
+            |_| panic!("a compatible probe must not fall back to package version"),
+        )
+        .expect("inspection");
+
+        assert_eq!(inspected.state, InspectionState::ReadyToUse);
+        assert!(inspected.adoptable);
+        assert_eq!(inspected.reported_version.as_deref(), Some("0.3.0"));
+        assert!(inspected.probe_compatible);
+        assert!(inspected.launch_compatible);
+    }
+
+    #[test]
+    fn version_fallback_is_diagnostic_only_and_cannot_make_a_target_adoptable() {
+        let executable = std::env::current_exe().expect("current executable");
+        let inspected = inspect_executable_with(
+            &executable,
+            "0.4.0-b",
+            |_, _, _| {
+                Ok(ProbeOutput {
+                    success: false,
+                    stdout: Vec::new(),
+                    stderr: b"No such command: desktop-probe".to_vec(),
+                })
+            },
+            |_| {
+                Ok(ProbeOutput {
+                    success: true,
+                    stdout: b"VidXP 0.4.0b0\n".to_vec(),
+                    stderr: Vec::new(),
+                })
+            },
+        )
+        .expect("inspection");
+
+        assert_eq!(inspected.state, InspectionState::UpdateRequired);
+        assert!(!inspected.adoptable);
+        assert_eq!(inspected.reported_version.as_deref(), Some("0.4.0b0"));
+        assert!(!inspected.probe_compatible);
+        assert!(inspected.validated.is_none());
+    }
+
+    #[test]
+    fn executable_that_cannot_report_a_version_is_not_adoptable() {
+        let executable = std::env::current_exe().expect("current executable");
+        let inspected = inspect_executable_with(
+            &executable,
+            "0.4.0-b",
+            |_, _, _| {
+                Ok(ProbeOutput {
+                    success: false,
+                    stdout: Vec::new(),
+                    stderr: b"missing dependency".to_vec(),
+                })
+            },
+            |_| {
+                Ok(ProbeOutput {
+                    success: false,
+                    stdout: Vec::new(),
+                    stderr: b"ModuleNotFoundError: SQLAlchemy".to_vec(),
+                })
+            },
+        )
+        .expect("inspection");
+
+        assert_eq!(inspected.state, InspectionState::CannotStart);
+        assert!(!inspected.adoptable);
+        assert!(
+            inspected
+                .remediation
+                .contains("package-management workflow")
         );
     }
 

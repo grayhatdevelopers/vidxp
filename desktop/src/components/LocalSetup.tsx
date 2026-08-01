@@ -19,17 +19,16 @@ import {
   IconFolderOpen,
   IconRefresh,
 } from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   activateLocalTarget,
   chooseLocalExecutable,
   discoverLocalTargets,
   errorMessage,
-  isCompatible,
-  validateLocalTarget,
+  inspectLocalTarget,
   type LocalTargetCandidate,
-  type LocalTargetValidation,
+  type LocalTargetInspection,
 } from '../tauri';
 
 interface LocalSetupProps {
@@ -38,8 +37,9 @@ interface LocalSetupProps {
 }
 
 interface CandidateState extends LocalTargetCandidate {
-  validation?: LocalTargetValidation;
-  validationError?: string;
+  checking?: boolean;
+  inspection?: LocalTargetInspection;
+  inspectionError?: string;
 }
 
 function candidatePath(candidate: LocalTargetCandidate): string {
@@ -50,38 +50,30 @@ function candidateDisplayPath(candidate: LocalTargetCandidate): string {
   return candidate.display_path || candidatePath(candidate);
 }
 
+const stateLabel = {
+  ready_to_use: 'Ready to use',
+  update_required: 'Update required',
+  cannot_start: 'Cannot start',
+} as const;
+
 export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
   const [candidates, setCandidates] = useState<CandidateState[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('Local VidXP');
-  const [busy, setBusy] = useState<'discover' | 'browse' | 'validate' | 'activate' | null>(
-    'discover',
-  );
-  const [failure, setFailure] = useState<{ code?: string; message: string; action?: string } | null>(
-    null,
-  );
-
-  const selected = useMemo(
-    () => candidates.find((candidate) => candidatePath(candidate) === selectedPath) ?? null,
-    [candidates, selectedPath],
-  );
-  const validation = selected?.validation ?? null;
+  const [busy, setBusy] = useState<'discover' | 'browse' | 'activate' | null>('discover');
+  const [failure, setFailure] = useState<string | null>(null);
 
   async function discover() {
     setBusy('discover');
     setFailure(null);
     try {
       const discovered = await discoverLocalTargets();
-      setCandidates((current) => discovered.map((candidate) => {
-        const previous = current.find((item) => candidatePath(item) === candidatePath(candidate));
-        return {
-          ...candidate,
-          validation: previous?.validation,
-          validationError: previous?.validationError,
-        };
-      }));
+      setCandidates((current) => discovered.map((candidate) => ({
+        ...candidate,
+        ...current.find((item) => candidatePath(item) === candidatePath(candidate)),
+      })));
     } catch (error) {
-      setFailure({ message: errorMessage(error, 'VidXP discovery could not be completed.') });
+      setFailure(errorMessage(error, 'VidXP discovery could not be completed.'));
     } finally {
       setBusy(null);
     }
@@ -91,10 +83,33 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
     void discover();
   }, []);
 
+  async function checkCandidate(path: string) {
+    setCandidates((current) => current.map((candidate) => (
+      candidatePath(candidate) === path
+        ? { ...candidate, checking: true, inspection: undefined, inspectionError: undefined }
+        : candidate
+    )));
+    try {
+      const inspection = await inspectLocalTarget(path);
+      setCandidates((current) => current.map((candidate) => (
+        candidatePath(candidate) === path
+          ? { ...candidate, checking: false, inspection, inspectionError: undefined }
+          : candidate
+      )));
+    } catch (error) {
+      const message = errorMessage(error, 'This executable could not be inspected.');
+      setCandidates((current) => current.map((candidate) => (
+        candidatePath(candidate) === path
+          ? { ...candidate, checking: false, inspection: undefined, inspectionError: message }
+          : candidate
+      )));
+    }
+  }
+
   function selectCandidate(path: string) {
     setSelectedPath(path);
     const candidate = candidates.find((item) => candidatePath(item) === path);
-    setFailure(candidate?.validationError ? { message: candidate.validationError } : null);
+    if (!candidate?.checking && !candidate?.inspection) void checkCandidate(path);
   }
 
   async function browse() {
@@ -105,224 +120,130 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
       if (!candidate) return;
       const path = candidatePath(candidate);
       setCandidates((current) => [candidate, ...current.filter((item) => candidatePath(item) !== path)]);
-      selectCandidate(path);
+      setSelectedPath(path);
+      void checkCandidate(path);
     } catch (error) {
-      setFailure({ message: errorMessage(error, 'The selected executable could not be opened.') });
+      setFailure(errorMessage(error, 'The selected executable could not be opened.'));
     } finally {
       setBusy(null);
     }
   }
 
-  async function validate() {
-    if (!selectedPath) return;
-    setBusy('validate');
-    setFailure(null);
-    try {
-      const result = await validateLocalTarget(selectedPath);
-      setCandidates((current) => current.map((candidate) => (
-        candidatePath(candidate) === selectedPath
-          ? { ...candidate, validation: result, validationError: undefined }
-          : candidate
-      )));
-      if (!isCompatible(result)) {
-        setFailure({
-          code: result.error?.code,
-          message: result.error?.message ?? result.error?.detail ?? 'This VidXP target is not compatible.',
-          action: result.error?.action,
-        });
-      }
-    } catch (error) {
-      const message = errorMessage(error, 'VidXP validation failed.');
-      setCandidates((current) => current.map((candidate) => (
-        candidatePath(candidate) === selectedPath
-          ? { ...candidate, validation: undefined, validationError: message }
-          : candidate
-      )));
-      setFailure({ message });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function activate() {
-    if (!validation || !isCompatible(validation)) return;
+  async function activate(inspection: LocalTargetInspection) {
+    if (!inspection.adoptable || !inspection.validation) return;
     setBusy('activate');
     setFailure(null);
     try {
       await activateLocalTarget({
-        executable: validation.canonical_executable || validation.executable || selectedPath || '',
+        executable: inspection.validation.canonical_executable || inspection.executable,
         displayName: displayName.trim() || undefined,
       });
       await onActivated();
     } catch (error) {
-      setFailure({ message: errorMessage(error, 'The validated target could not be activated.') });
+      setFailure(errorMessage(error, 'The inspected target could not be activated.'));
       setBusy(null);
     }
   }
 
-  const compatible = validation && isCompatible(validation);
-  const desktopSurfaceUnavailable = compatible && validation.can_launch_frontend === false;
-
   return (
     <section aria-labelledby="local-setup-title">
-      <Button variant="subtle" leftSection={<IconArrowLeft aria-hidden="true" size={17} />} onClick={onBack}>
-        Back
-      </Button>
+      <Button variant="subtle" leftSection={<IconArrowLeft aria-hidden="true" size={17} />} onClick={onBack}>Back</Button>
       <div className="sectionHeading compactHeading">
         <Text className="eyebrow">EXISTING INSTALLATION</Text>
-        <Title id="local-setup-title" order={1} className="pageTitle">
-          Connect this desktop to VidXP
-        </Title>
-        <Text className="lede">
-          Select a candidate, review its resolved path, then validate it. Discovery never selects or
-          changes an installation for you.
-        </Text>
+        <Title id="local-setup-title" order={1} className="pageTitle">Connect this desktop to VidXP</Title>
+        <Text className="lede">Choose an installation to check whether it supports this Desktop. Checking and connecting it will not modify it.</Text>
       </div>
 
       <div className="setupPanel">
         <Group justify="space-between" align="flex-start" mb="md">
           <div>
             <Title order={2} className="panelTitle">Found on this computer</Title>
-            <Text className="mutedText" size="sm">Choose one candidate or browse to another executable.</Text>
+            <Text className="mutedText" size="sm">Select one candidate to check it, or browse to another executable.</Text>
           </div>
-          <Button
-            variant="default"
-            leftSection={<IconRefresh aria-hidden="true" size={16} />}
-            loading={busy === 'discover'}
-            onClick={() => void discover()}
-          >
-            Scan again
-          </Button>
+          <Button variant="default" leftSection={<IconRefresh aria-hidden="true" size={16} />} loading={busy === 'discover'} onClick={() => void discover()}>Scan again</Button>
         </Group>
 
         {busy === 'discover' && candidates.length === 0 ? (
-          <div className="emptyState" role="status" aria-live="polite">
-            <Loader size="sm" /> Looking for VidXP executables…
-          </div>
+          <div className="emptyState" role="status" aria-live="polite"><Loader size="sm" /> Looking for VidXP executables…</div>
         ) : candidates.length > 0 ? (
-          <Radio.Group
-            value={selectedPath}
-            onChange={selectCandidate}
-            aria-label="Discovered VidXP executables"
-          >
+          <Radio.Group value={selectedPath} onChange={selectCandidate} aria-label="Discovered VidXP executables">
             <Stack gap="xs">
               {candidates.map((candidate) => {
                 const path = candidatePath(candidate);
-                const candidateValidation = candidate.validation;
-                const validated = candidateValidation && isCompatible(candidateValidation);
+                const selected = selectedPath === path;
+                const inspection = candidate.inspection;
+                const validation = inspection?.validation;
+                const title = inspection?.reported_version ? `VidXP ${inspection.reported_version}` : candidate.display_name || 'VidXP executable';
+                const color = inspection?.state === 'ready_to_use' ? 'teal' : inspection?.state === 'update_required' ? 'yellow' : inspection?.state === 'cannot_start' || candidate.inspectionError ? 'red' : 'gray';
                 return (
-                  <Radio.Card className="candidateCard" key={path} value={path}>
-                    <Group wrap="nowrap" align="flex-start">
-                      <Radio.Indicator aria-hidden="true" />
-                      <div className="candidateCopy">
-                        <Group justify="space-between" align="flex-start" gap="xs">
-                          <Text fw={650}>{candidate.display_name || 'Candidate executable'}</Text>
-                          <Badge color={validated ? 'teal' : candidate.validationError ? 'red' : 'gray'} variant="light">
-                            {validated ? 'Compatible' : candidate.validationError ? 'Validation failed' : 'Not validated'}
-                          </Badge>
-                        </Group>
-                        <Code className="pathCode">{candidateDisplayPath(candidate)}</Code>
-                        {candidate.source && <Text size="xs" className="mutedText">Discovered via {candidate.source}</Text>}
-                        {candidateValidation && (
-                          <div className="candidateMetadata">
-                            <Text size="xs">VidXP {candidateValidation.vidxp_version || 'reported'} · Python {candidateValidation.python_version || 'reported'}</Text>
-                            <Text size="xs">Probe {candidateValidation.protocol_version ?? candidateValidation.probe_version ?? 'compatible'} · Browser surface {candidateValidation.can_launch_frontend === false ? 'unavailable' : 'available'}</Text>
-                          </div>
+                  <div className="candidateWrapper" key={path}>
+                    <Radio.Card className="candidateCard" value={path}>
+                      <Group wrap="nowrap" align="flex-start">
+                        <Radio.Indicator aria-hidden="true" />
+                        <div className="candidateCopy">
+                          <Group justify="space-between" align="flex-start" gap="xs">
+                            <Text fw={650}>{title}</Text>
+                            <Badge color={color} variant="light">
+                              {candidate.checking ? 'Checking…' : inspection ? stateLabel[inspection.state] : candidate.inspectionError ? 'Cannot start' : 'Found'}
+                            </Badge>
+                          </Group>
+                          <Code className="pathCode">{candidateDisplayPath(candidate)}</Code>
+                          <Text size="xs" className="mutedText">{candidate.checking ? 'Checking compatibility…' : inspection || candidate.inspectionError ? candidate.source && `Discovered via ${candidate.source}` : 'Not checked'}</Text>
+                        </div>
+                      </Group>
+                    </Radio.Card>
+
+                    {selected && candidate.checking && (
+                      <div className="inlineInspection" role="status" aria-live="polite"><Loader size="xs" /> Checking identity, probe, and launch compatibility…</div>
+                    )}
+                    {selected && candidate.inspectionError && (
+                      <Alert m="sm" color="red" icon={<IconAlertCircle aria-hidden="true" />} title="Cannot start">{candidate.inspectionError}</Alert>
+                    )}
+                    {selected && inspection && (
+                      <div className="inlineInspection">
+                        <Text size="sm">{inspection.message}</Text>
+                        <div className="validationGrid">
+                          <span>Desktop probe</span><strong>{inspection.probe_compatible ? `Compatible · protocol ${validation?.protocol_version ?? 'supported'}` : 'Unavailable or incompatible'}</strong>
+                          <span>Launch contract</span><strong>{inspection.launch_compatible ? `Compatible · protocol ${validation?.launch_protocol_version ?? 'supported'}` : 'Not accepted'}</strong>
+                          {validation?.python_version && <><span>Python</span><strong>{validation.python_version}</strong></>}
+                          {validation?.display_data_root && <><span>Data root</span><Code className="pathCode">{validation.display_data_root}</Code></>}
+                          {validation?.frontend && <><span>Browser interface</span><strong>{validation.frontend.launchable ? 'Available' : 'Unavailable'}</strong></>}
+                        </div>
+                        {inspection.remediation && <Text size="sm" mt="sm"><strong>What to do:</strong> {inspection.remediation}</Text>}
+                        {validation?.can_launch_frontend === false && (
+                          <Alert mt="sm" color="yellow" title="Desktop action required">
+                            <Text size="sm"><strong>Usable:</strong> This installation remains available through its own command-line workflows.</Text>
+                            <Text size="sm" mt="xs"><strong>Missing:</strong> {validation.frontend?.message}</Text>
+                            <Text size="sm" mt="xs"><strong>Enable it:</strong> {validation.frontend?.remediation}</Text>
+                          </Alert>
                         )}
-                        {candidate.validationError && <Text size="xs" c="red.3" mt="xs">{candidate.validationError}</Text>}
+                        {inspection.technical_details && <details className="technicalDetails"><summary>Technical details</summary><Code block>{inspection.technical_details}</Code></details>}
+                        {inspection.adoptable && validation && (
+                          <Stack gap="sm" mt="md">
+                            <TextInput label="Target name" description="Used only to identify this connection in VidXP Desktop." value={displayName} onChange={(event) => setDisplayName(event.currentTarget.value)} />
+                            <Group justify="flex-end">
+                              <Button color={validation.can_launch_frontend === false ? 'yellow' : 'teal'} leftSection={validation.can_launch_frontend === false ? <IconAlertCircle size={16} /> : <IconCheck size={16} />} loading={busy === 'activate'} onClick={() => void activate(inspection)}>
+                                {validation.can_launch_frontend === false ? 'Save external target' : 'Use this installation'}
+                              </Button>
+                            </Group>
+                          </Stack>
+                        )}
                       </div>
-                    </Group>
-                  </Radio.Card>
+                    )}
+                  </div>
                 );
               })}
             </Stack>
           </Radio.Group>
         ) : (
-          <div className="emptyState">
-            <IconFileSearch aria-hidden="true" size={22} />
-            <span>No candidates were found automatically. Your installation may still be usable.</span>
-          </div>
+          <div className="emptyState"><IconFileSearch aria-hidden="true" size={22} /><span>No candidates were found automatically. Your installation may still be usable.</span></div>
         )}
 
-        <Button
-          mt="md"
-          variant="light"
-          leftSection={<IconFolderOpen aria-hidden="true" size={17} />}
-          loading={busy === 'browse'}
-          onClick={() => void browse()}
-        >
-          Browse for an executable…
-        </Button>
+        <Button mt="md" variant="light" leftSection={<IconFolderOpen aria-hidden="true" size={17} />} loading={busy === 'browse'} onClick={() => void browse()}>Browse for an executable…</Button>
       </div>
 
-      {selected && (
-        <div className="setupPanel" aria-labelledby="review-candidate-title">
-          <Group justify="space-between" mb="lg">
-            <Title id="review-candidate-title" order={2} className="panelTitle">Review and validate</Title>
-            <Badge variant="light">No downloads</Badge>
-          </Group>
-          <Stack gap="md">
-            <div>
-              <Text className="fieldLabel">Resolved executable</Text>
-              <Code className="resolvedPath">{candidateDisplayPath(selected)}</Code>
-            </div>
-            <TextInput
-              label="Target name"
-              description="Used only to identify this connection in VidXP Desktop."
-              value={displayName}
-              onChange={(event) => setDisplayName(event.currentTarget.value)}
-            />
-            <Text size="sm" className="mutedText">
-              Validation will report the installation&apos;s configured data root; VidXP Desktop does not rewrite it.
-            </Text>
-            <Group justify="flex-end">
-              <Button loading={busy === 'validate'} disabled={Boolean(busy) || !selectedPath} onClick={() => void validate()}>
-                Validate installation
-              </Button>
-            </Group>
-          </Stack>
-        </div>
-      )}
-
-      <div className="statusRegion" role="status" aria-live="polite" aria-atomic="true">
-        {busy === 'validate' && <><Loader size="xs" /> Checking identity, compatibility, and client support…</>}
-        {busy === 'activate' && <><Loader size="xs" /> Saving and activating this target…</>}
-      </div>
-
-      {failure && (
-        <Alert icon={<IconAlertCircle aria-hidden="true" />} color="red" title={failure.code ? `Could not validate · ${failure.code}` : 'Could not continue'} role="alert">
-          <Text size="sm">{failure.message}</Text>
-          {failure.action && <Text size="sm" mt="xs" fw={600}>{failure.action}</Text>}
-        </Alert>
-      )}
-
-      {compatible && (
-        <Alert
-          icon={desktopSurfaceUnavailable ? <IconAlertCircle aria-hidden="true" /> : <IconCheck aria-hidden="true" />}
-          color={desktopSurfaceUnavailable ? 'yellow' : 'teal'}
-          title={desktopSurfaceUnavailable ? 'Compatible installation · desktop action required' : 'Compatible VidXP installation'}
-        >
-          <div className="validationGrid">
-            <span>VidXP</span><strong>{validation.vidxp_version || 'Verified'}</strong>
-            <span>Protocol</span><strong>{validation.protocol_version ?? validation.probe_version ?? 'Compatible'}</strong>
-            <span>Python</span><strong>{validation.python_version || validation.display_python_executable || validation.python_executable || 'Reported by target'}</strong>
-            {validation.display_data_root && <><span>Data root</span><Code className="pathCode">{validation.display_data_root}</Code></>}
-            <span>Desktop action</span><strong>{desktopSurfaceUnavailable ? 'Unavailable' : 'Browser interface available'}</strong>
-          </div>
-          {desktopSurfaceUnavailable && (
-            <>
-              <Text size="sm" mt="md"><strong>Usable:</strong> The installation remains available through its own command-line and package-managed workflows.</Text>
-              <Text size="sm" mt="xs"><strong>Missing:</strong> {validation.frontend?.message || validation.warnings?.[0] || 'The supported browser interface cannot currently be launched.'}</Text>
-              <Text size="sm" mt="xs"><strong>How to enable it:</strong> {validation.frontend?.remediation || "Use this installation's own package-management workflow to enable the VidXP browser interface, then revalidate."}</Text>
-            </>
-          )}
-          <Group justify="flex-end" mt="md">
-            <Button color={desktopSurfaceUnavailable ? 'yellow' : 'teal'} loading={busy === 'activate'} onClick={() => void activate()}>
-              {desktopSurfaceUnavailable ? 'Save external target' : 'Use this installation'}
-            </Button>
-          </Group>
-        </Alert>
-      )}
+      {busy === 'activate' && <div className="statusRegion" role="status" aria-live="polite"><Loader size="xs" /> Saving and activating this target…</div>}
+      {failure && <Alert icon={<IconAlertCircle aria-hidden="true" />} color="red" title="Could not continue" role="alert">{failure}</Alert>}
     </section>
   );
 }

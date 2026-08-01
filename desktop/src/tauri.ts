@@ -99,6 +99,19 @@ export interface LocalTargetValidation {
   warnings?: string[];
 }
 
+export interface LocalTargetInspection {
+  state: 'ready_to_use' | 'update_required' | 'cannot_start';
+  adoptable: boolean;
+  executable: string;
+  reported_version?: string | null;
+  probe_compatible: boolean;
+  launch_compatible: boolean;
+  validation?: LocalTargetValidation | null;
+  message: string;
+  remediation: string;
+  technical_details?: string | null;
+}
+
 interface RustRuntimeIdentity {
   python_executable: string;
   python_version: string;
@@ -135,6 +148,19 @@ interface RustValidatedTarget {
   validated_at: number;
 }
 
+interface RustTargetInspection {
+  state: LocalTargetInspection['state'];
+  adoptable: boolean;
+  executable: string;
+  reported_version?: string | null;
+  probe_compatible: boolean;
+  launch_compatible: boolean;
+  validated?: RustValidatedTarget | null;
+  message: string;
+  remediation: string;
+  technical_details?: string | null;
+}
+
 export interface CapabilitySpec {
   extra: string;
   label: string;
@@ -155,11 +181,30 @@ export interface RuntimeManifest {
 }
 
 export interface RuntimeStatus {
+  state: 'never_configured' | 'ready' | 'broken';
   ready: boolean;
   package_version: string;
   capabilities: string[];
   surfaces: string[];
   model_directory: string;
+  detail: string;
+}
+
+export interface CachedModelEntry {
+  id: string;
+  label: string;
+}
+
+export interface ModelDirectoryInventory {
+  directory: string;
+  exists: boolean;
+  readable: boolean;
+  total_bytes: number;
+  file_count: number;
+  recognized_models: CachedModelEntry[];
+  empty: boolean;
+  verification_required: boolean;
+  truncated: boolean;
   detail: string;
 }
 
@@ -259,6 +304,35 @@ export function validateLocalTarget(executable: string): Promise<LocalTargetVali
   }));
 }
 
+function normalizeValidatedTarget(result: RustValidatedTarget): LocalTargetValidation {
+  return {
+    compatible: true,
+    executable: result.executable,
+    canonical_executable: result.executable,
+    display_executable: displayPath(result.executable),
+    vidxp_version: result.product_version,
+    protocol_version: result.probe_protocol_version,
+    probe_version: result.probe_schema_version,
+    launch_protocol_version: result.launch_protocol_version,
+    python_executable: result.runtime.python_executable,
+    display_python_executable: displayPath(result.runtime.python_executable),
+    python_version: result.runtime.python_version,
+    data_root: result.data_root,
+    display_data_root: displayPath(result.data_root),
+    can_launch_frontend: result.frontend.launchable,
+    frontend: result.frontend,
+    warnings:
+      result.frontend.optional && !result.frontend.available ? [result.frontend.message] : undefined,
+  };
+}
+
+export function inspectLocalTarget(executable: string): Promise<LocalTargetInspection> {
+  return invoke<RustTargetInspection>('inspect_local_target', { executable }).then((result) => ({
+    ...result,
+    validation: result.validated ? normalizeValidatedTarget(result.validated) : null,
+  }));
+}
+
 export function activateLocalTarget(request: {
   executable: string;
   displayName?: string;
@@ -280,6 +354,10 @@ export function runtimeManifest(): Promise<RuntimeManifest> {
 
 export function runtimeStatus(): Promise<RuntimeStatus> {
   return invoke('runtime_status');
+}
+
+export function modelDirectoryInventory(directory?: string): Promise<ModelDirectoryInventory> {
+  return invoke('model_directory_inventory', { directory: directory || null });
 }
 
 export function chooseModelDirectory(): Promise<string | null> {

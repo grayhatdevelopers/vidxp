@@ -92,11 +92,40 @@ struct InstallResult {
 
 #[derive(Serialize)]
 struct RuntimeStatus {
+    state: RuntimeState,
     ready: bool,
     package_version: String,
     capabilities: Vec<String>,
     surfaces: Vec<String>,
     model_directory: String,
+    detail: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RuntimeState {
+    NeverConfigured,
+    Ready,
+    Broken,
+}
+
+#[derive(Clone, Serialize)]
+struct CachedModelEntry {
+    id: String,
+    label: String,
+}
+
+#[derive(Serialize)]
+struct ModelDirectoryInventory {
+    directory: String,
+    exists: bool,
+    readable: bool,
+    total_bytes: u64,
+    file_count: u64,
+    recognized_models: Vec<CachedModelEntry>,
+    empty: bool,
+    verification_required: bool,
+    truncated: bool,
     detail: String,
 }
 
@@ -317,6 +346,127 @@ fn model_directory(paths: &DesktopPaths, requested: Option<&str>) -> Result<Path
         return Err("The selected model location is a file, not a directory.".into());
     }
     Ok(directory)
+}
+
+const MAX_MODEL_INVENTORY_ENTRIES: u64 = 100_000;
+
+fn recognize_cached_model(relative: &Path) -> Option<CachedModelEntry> {
+    let path = relative
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    let (id, label) = if path.contains("models--dropbox-dash--faster-whisper-large-v3-turbo") {
+        (
+            "faster-whisper-large-v3-turbo",
+            "Faster Whisper large-v3-turbo",
+        )
+    } else if path.contains("models--google--siglip2-base-patch16-224") {
+        ("siglip2-base", "Google SigLIP2 base")
+    } else if path.contains("models--qwen--qwen3-embedding-0.6b") {
+        ("qwen3-embedding-0.6b", "Qwen3 Embedding 0.6B")
+    } else if path.ends_with("opencv-zoo/face_detection_yunet_2026may.onnx") {
+        ("yunet", "YuNet")
+    } else if path.ends_with("opencv-zoo/face_recognition_sface_2021dec.onnx") {
+        ("sface", "SFace")
+    } else {
+        return None;
+    };
+    Some(CachedModelEntry {
+        id: id.into(),
+        label: label.into(),
+    })
+}
+
+fn inventory_model_directory(directory: &Path) -> ModelDirectoryInventory {
+    let resolved = fs::canonicalize(directory).unwrap_or_else(|_| directory.to_path_buf());
+    let mut inventory = ModelDirectoryInventory {
+        directory: resolved.to_string_lossy().into_owned(),
+        exists: directory.exists(),
+        readable: true,
+        total_bytes: 0,
+        file_count: 0,
+        recognized_models: Vec::new(),
+        empty: true,
+        verification_required: false,
+        truncated: false,
+        detail: String::new(),
+    };
+    if !inventory.exists {
+        inventory.detail = "No model directory exists yet; no cached models were found.".into();
+        return inventory;
+    }
+    if !directory.is_dir() {
+        inventory.readable = false;
+        inventory.detail = "The selected model location is not a readable directory.".into();
+        return inventory;
+    }
+    let root = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            inventory.readable = false;
+            inventory.detail = format!("The selected model directory could not be read: {error}");
+            return inventory;
+        }
+    };
+    let mut pending = vec![(directory.to_path_buf(), root)];
+    let mut recognized = BTreeMap::<String, String>::new();
+    let mut visited = 0_u64;
+    while let Some((_parent, entries)) = pending.pop() {
+        for entry in entries {
+            visited += 1;
+            if visited > MAX_MODEL_INVENTORY_ENTRIES {
+                inventory.truncated = true;
+                break;
+            }
+            let Ok(entry) = entry else {
+                inventory.truncated = true;
+                continue;
+            };
+            let Ok(file_type) = entry.file_type() else {
+                inventory.truncated = true;
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if file_type.is_dir() {
+                match fs::read_dir(&path) {
+                    Ok(children) => pending.push((path, children)),
+                    Err(_) => inventory.truncated = true,
+                }
+            } else if file_type.is_file() {
+                inventory.file_count += 1;
+                if let Ok(metadata) = entry.metadata() {
+                    inventory.total_bytes = inventory.total_bytes.saturating_add(metadata.len());
+                } else {
+                    inventory.truncated = true;
+                }
+                if let Ok(relative) = path.strip_prefix(directory)
+                    && let Some(model) = recognize_cached_model(relative)
+                {
+                    recognized.insert(model.id, model.label);
+                }
+            }
+        }
+        if inventory.truncated && visited > MAX_MODEL_INVENTORY_ENTRIES {
+            break;
+        }
+    }
+    inventory.recognized_models = recognized
+        .into_iter()
+        .map(|(id, label)| CachedModelEntry { id, label })
+        .collect();
+    inventory.empty = inventory.file_count == 0;
+    inventory.verification_required = inventory.file_count > 0;
+    inventory.detail = if inventory.empty {
+        "No cached models were found.".into()
+    } else if inventory.truncated {
+        "Cached files were found. The bounded inventory is partial; preparation must verify required artifacts.".into()
+    } else {
+        "Cached files detected; verification required. VidXP will reuse valid cached files and download only missing material.".into()
+    };
+    inventory
 }
 
 fn selected_capabilities(
@@ -1000,6 +1150,17 @@ fn validate_local_target(
 }
 
 #[tauri::command]
+fn inspect_local_target(
+    executable: String,
+) -> Result<target_profiles::TargetInspection, target_profiles::TargetError> {
+    let manifest = manifest().map_err(|error| target_profiles::TargetError {
+        code: target_profiles::TargetErrorCode::ValidationRequired,
+        message: error,
+    })?;
+    target_profiles::inspect_executable(Path::new(&executable), &manifest.desktop_version)
+}
+
+#[tauri::command]
 fn adopt_local_target(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
@@ -1155,8 +1316,20 @@ fn runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
     let manifest = manifest()?;
     let mut paths = desktop_paths(&app)?;
     let default_model_directory = paths.models.to_string_lossy().into_owned();
+    if !paths.active_runtime.exists() {
+        return Ok(RuntimeStatus {
+            state: RuntimeState::NeverConfigured,
+            ready: false,
+            package_version: manifest.package_version,
+            capabilities: Vec::new(),
+            surfaces: Vec::new(),
+            model_directory: default_model_directory,
+            detail: "No Desktop-managed runtime has been created yet.".into(),
+        });
+    }
     if let Err(detail) = verified_media_runtime() {
         return Ok(RuntimeStatus {
+            state: RuntimeState::Broken,
             ready: false,
             package_version: manifest.package_version,
             capabilities: Vec::new(),
@@ -1169,6 +1342,7 @@ fn runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
         Ok(active) => active,
         Err(detail) => {
             return Ok(RuntimeStatus {
+                state: RuntimeState::Broken,
                 ready: false,
                 package_version: manifest.package_version,
                 capabilities: Vec::new(),
@@ -1198,6 +1372,11 @@ fn runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
         }
     });
     Ok(RuntimeStatus {
+        state: if version.is_ok() {
+            RuntimeState::Ready
+        } else {
+            RuntimeState::Broken
+        },
         ready: version.is_ok(),
         package_version: active.package_version,
         capabilities: active.capabilities,
@@ -1207,6 +1386,16 @@ fn runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
             .err()
             .unwrap_or_else(|| "Local video processing is ready.".into()),
     })
+}
+
+#[tauri::command]
+fn model_directory_inventory(
+    app: AppHandle,
+    directory: Option<String>,
+) -> Result<ModelDirectoryInventory, String> {
+    let paths = desktop_paths(&app)?;
+    let selected = model_directory(&paths, directory.as_deref())?;
+    Ok(inventory_model_directory(&selected))
 }
 
 #[tauri::command]
@@ -1745,6 +1934,7 @@ pub fn run() {
             discover_local_targets,
             choose_local_executable,
             validate_local_target,
+            inspect_local_target,
             adopt_local_target,
             select_target_profile,
             delete_target_profile,
@@ -1753,6 +1943,7 @@ pub fn run() {
             choose_model_directory,
             install_media_runtime,
             runtime_status,
+            model_directory_inventory,
             install_runtime,
             launch_ui,
             hide_to_tray
@@ -1797,12 +1988,15 @@ pub fn run() {
 mod tests {
     use super::{
         base_package_specification, capability_command_arguments,
-        dependency_installation_arguments, desktop_paths_from_roots, display_command, manifest,
-        normalize_line_endings, normalized_runtime_constraints, package_acquisition_arguments,
-        package_index, package_specification, required_encoder_missing, selected_capabilities,
-        selected_surfaces,
+        dependency_installation_arguments, desktop_paths_from_roots, display_command,
+        inventory_model_directory, manifest, normalize_line_endings,
+        normalized_runtime_constraints, package_acquisition_arguments, package_index,
+        package_specification, required_encoder_missing, selected_capabilities, selected_surfaces,
     };
-    use std::path::{Path, PathBuf};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     #[test]
     fn desktop_runtime_is_private_while_product_data_is_shared() {
@@ -1961,5 +2155,60 @@ mod tests {
             ]),
             "winget install --id Gyan.FFmpeg"
         );
+    }
+
+    #[test]
+    fn populated_model_inventory_reports_totals_and_known_cache_conventions() {
+        let root =
+            std::env::temp_dir().join(format!("vidxp-model-inventory-{}", std::process::id()));
+        let siglip = root
+            .join("models--google--siglip2-base-patch16-224")
+            .join("snapshots")
+            .join("revision");
+        let opencv = root.join("opencv-zoo");
+        fs::create_dir_all(&siglip).expect("siglip directory");
+        fs::create_dir_all(&opencv).expect("opencv directory");
+        fs::write(siglip.join("model.safetensors"), [0_u8; 7]).expect("model file");
+        fs::write(opencv.join("face_detection_yunet_2026may.onnx"), [0_u8; 5])
+            .expect("artifact file");
+
+        let inventory = inventory_model_directory(&root);
+
+        assert!(inventory.exists);
+        assert!(inventory.readable);
+        assert_eq!(inventory.file_count, 2);
+        assert_eq!(inventory.total_bytes, 12);
+        assert_eq!(
+            inventory
+                .recognized_models
+                .iter()
+                .map(|model| model.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Google SigLIP2 base", "YuNet"]
+        );
+        assert!(inventory.verification_required);
+        assert!(inventory.detail.contains("verification required"));
+        fs::remove_dir_all(root).expect("remove test inventory");
+    }
+
+    #[test]
+    fn empty_and_unreadable_model_locations_are_typed_states() {
+        let root = std::env::temp_dir().join(format!(
+            "vidxp-empty-model-inventory-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("empty directory");
+        let empty = inventory_model_directory(&root);
+        assert!(empty.empty);
+        assert!(empty.readable);
+        assert!(!empty.verification_required);
+
+        let file = root.join("not-a-directory");
+        fs::write(&file, b"x").expect("file location");
+        let unreadable = inventory_model_directory(&file);
+        assert!(unreadable.exists);
+        assert!(!unreadable.readable);
+        assert!(unreadable.detail.contains("not a readable directory"));
+        fs::remove_dir_all(root).expect("remove test inventory");
     }
 }

@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   targetSetupState: vi.fn(),
   discoverLocalTargets: vi.fn(),
   chooseLocalExecutable: vi.fn(),
-  validateLocalTarget: vi.fn(),
+  inspectLocalTarget: vi.fn(),
   activateLocalTarget: vi.fn(),
   chooseManagedTarget: vi.fn(),
   installMediaRuntime: vi.fn(),
@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   launchUi: vi.fn(),
   hideToTray: vi.fn(),
   chooseModelDirectory: vi.fn(),
+  modelDirectoryInventory: vi.fn(),
 }));
 
 const windowMocks = vi.hoisted(() => ({
@@ -92,14 +93,26 @@ describe('target-first setup', () => {
         source: 'PATH',
       },
     ]);
-    mocks.validateLocalTarget.mockResolvedValue({
-      compatible: true,
-      canonical_executable: 'C:\\Tools\\VidXP\\vidxp.exe',
-      vidxp_version: '0.4.0',
-      protocol_version: 1,
-      python_version: '3.14.6',
-      can_launch_frontend: true,
+    mocks.inspectLocalTarget.mockResolvedValue({
+      state: 'ready_to_use',
+      adoptable: true,
+      executable: 'C:\\Tools\\VidXP\\vidxp.exe',
+      reported_version: '0.4.0',
+      probe_compatible: true,
+      launch_compatible: true,
+      message: 'Compatible contracts.',
+      remediation: '',
+      validation: {
+        compatible: true,
+        canonical_executable: 'C:\\Tools\\VidXP\\vidxp.exe',
+        vidxp_version: '0.4.0',
+        protocol_version: 1,
+        launch_protocol_version: 1,
+        python_version: '3.14.6',
+        can_launch_frontend: true,
+      },
     });
+    mocks.modelDirectoryInventory.mockResolvedValue({ directory: 'models', exists: false, readable: true, total_bytes: 0, file_count: 0, recognized_models: [], empty: true, verification_required: false, truncated: false, detail: 'No cached models were found.' });
     mocks.activateLocalTarget.mockResolvedValue(localProfile);
   });
 
@@ -170,11 +183,12 @@ describe('target-first setup', () => {
     renderApp();
     await enterLocalFlow(user);
 
-    const candidate = await screen.findByRole('radio', { name: /Candidate executable/i });
+    const candidate = await screen.findByRole('radio', { name: /VidXP executable/i });
     expect(candidate).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByText('Not validated')).toBeVisible();
+    expect(screen.getByText('Found')).toBeVisible();
+    expect(screen.getByText('Not checked')).toBeVisible();
     expect(screen.queryByText(/VidXP 0\.4/)).not.toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Review and validate' })).not.toBeInTheDocument();
+    expect(mocks.inspectLocalTarget).not.toHaveBeenCalled();
   });
 
   it('validates and activates a local target without invoking any install command', async () => {
@@ -187,17 +201,41 @@ describe('target-first setup', () => {
       selected_profile: localProfile,
     });
 
-    await user.click(await screen.findByRole('radio', { name: /Candidate executable/i }));
-    expect(screen.getAllByText('C:\\Tools\\VidXP\\vidxp.exe')).toHaveLength(2);
-    await user.click(screen.getByRole('button', { name: 'Validate installation' }));
-    expect(await screen.findByText('Compatible VidXP installation')).toBeVisible();
+    await user.click(await screen.findByRole('radio', { name: /VidXP executable/i }));
+    expect((await screen.findAllByText('Ready to use'))[0]).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Use this installation' }));
 
     await screen.findByRole('heading', { name: 'Studio VidXP' });
-    expect(mocks.validateLocalTarget).toHaveBeenCalledWith('C:\\Tools\\VidXP\\vidxp.exe');
+    expect(mocks.inspectLocalTarget).toHaveBeenCalledWith('C:\\Tools\\VidXP\\vidxp.exe');
     expect(mocks.activateLocalTarget).toHaveBeenCalledTimes(1);
     expect(mocks.installMediaRuntime).not.toHaveBeenCalled();
     expect(mocks.installRuntime).not.toHaveBeenCalled();
+  });
+
+  it('moves a selected candidate through checking into a compatible result', async () => {
+    const user = userEvent.setup();
+    let resolveInspection!: (value: any) => void;
+    mocks.inspectLocalTarget.mockReturnValue(new Promise((resolve) => { resolveInspection = resolve; }));
+    renderApp();
+    await enterLocalFlow(user);
+
+    await user.click(await screen.findByRole('radio', { name: /VidXP executable/i }));
+    expect(screen.getByText('Checking…')).toBeVisible();
+    await act(async () => resolveInspection({ state: 'ready_to_use', adoptable: true, executable: 'C:\\Tools\\VidXP\\vidxp.exe', reported_version: '0.3.0', probe_compatible: true, launch_compatible: true, message: 'Compatible contracts.', remediation: '', validation: { compatible: true, canonical_executable: 'C:\\Tools\\VidXP\\vidxp.exe', protocol_version: 1, launch_protocol_version: 1, python_version: '3.14.6', can_launch_frontend: true } }));
+    expect((await screen.findAllByText('Ready to use'))[0]).toBeVisible();
+    expect(screen.getAllByText('Compatible · protocol 1')).toHaveLength(2);
+  });
+
+  it('shows a broken executable as cannot start with remediation', async () => {
+    const user = userEvent.setup();
+    mocks.inspectLocalTarget.mockResolvedValue({ state: 'cannot_start', adoptable: false, executable: 'C:\\Tools\\VidXP\\vidxp.exe', reported_version: null, probe_compatible: false, launch_compatible: false, message: 'This executable could not start well enough to report its version.', remediation: 'Repair this external installation with its own package-management workflow, then check it again.', technical_details: 'ModuleNotFoundError: SQLAlchemy' });
+    renderApp();
+    await enterLocalFlow(user);
+
+    await user.click(await screen.findByRole('radio', { name: /VidXP executable/i }));
+    expect((await screen.findAllByText('Cannot start'))[0]).toBeVisible();
+    expect(screen.getByText(/Repair this external installation/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Use this installation' })).not.toBeInTheDocument();
   });
 
   it('saves an external target without a frontend as action-required, not operationally complete', async () => {
@@ -215,24 +253,18 @@ describe('target-first setup', () => {
         remediation,
       },
     };
-    mocks.validateLocalTarget.mockResolvedValue({
-      compatible: true,
-      canonical_executable: 'C:\\Tools\\VidXP\\vidxp.exe',
-      vidxp_version: '0.3.0',
-      protocol_version: 1,
-      launch_protocol_version: 1,
-      python_version: '3.14.6',
-      can_launch_frontend: false,
-      frontend: externalWithoutFrontend.frontend,
+    mocks.inspectLocalTarget.mockResolvedValue({
+      state: 'ready_to_use', adoptable: true, executable: 'C:\\Tools\\VidXP\\vidxp.exe', reported_version: '0.3.0', probe_compatible: true, launch_compatible: true, message: 'Compatible contracts.', remediation: '',
+      validation: {
+        compatible: true, canonical_executable: 'C:\\Tools\\VidXP\\vidxp.exe', vidxp_version: '0.3.0', protocol_version: 1, launch_protocol_version: 1, python_version: '3.14.6', can_launch_frontend: false, frontend: externalWithoutFrontend.frontend,
+      },
     });
     mocks.activateLocalTarget.mockResolvedValue(externalWithoutFrontend);
     renderApp();
     await enterLocalFlow(user);
 
-    await user.click(await screen.findByRole('radio', { name: /Candidate executable/i }));
-    await user.click(screen.getByRole('button', { name: 'Validate installation' }));
-
-    expect(await screen.findByText('Compatible installation · desktop action required')).toBeVisible();
+    await user.click(await screen.findByRole('radio', { name: /VidXP executable/i }));
+    expect(await screen.findByText('Desktop action required')).toBeVisible();
     expect(screen.getByText(/command-line installation is usable/i)).toBeVisible();
     expect(screen.getByText(remediation)).toBeVisible();
     expect(screen.queryByText('Ready to launch')).not.toBeInTheDocument();
@@ -266,45 +298,33 @@ describe('target-first setup', () => {
         source: 'PATH',
       },
     ]);
-    mocks.validateLocalTarget.mockResolvedValue({
-      compatible: true,
-      canonical_executable: '\\\\?\\C:\\Tools\\VidXP\\vidxp.exe',
-      display_executable: 'C:\\Tools\\VidXP\\vidxp.exe',
-      vidxp_version: '0.3.0',
-      protocol_version: 1,
-      launch_protocol_version: 1,
-      python_version: '3.14.6',
-      can_launch_frontend: true,
+    mocks.inspectLocalTarget.mockResolvedValue({
+      state: 'ready_to_use', adoptable: true, executable: '\\\\?\\C:\\Tools\\VidXP\\vidxp.exe', reported_version: '0.3.0', probe_compatible: true, launch_compatible: true, message: 'Compatible contracts.', remediation: '',
+      validation: { compatible: true, canonical_executable: '\\\\?\\C:\\Tools\\VidXP\\vidxp.exe', display_executable: 'C:\\Tools\\VidXP\\vidxp.exe', vidxp_version: '0.3.0', protocol_version: 1, launch_protocol_version: 1, python_version: '3.14.6', can_launch_frontend: true },
     });
     renderApp();
     await enterLocalFlow(user);
 
     const candidate = await screen.findByRole('radio', { name: /C:\\Tools\\VidXP\\vidxp\.exe/i });
     await user.click(candidate);
-    await user.click(screen.getByRole('button', { name: 'Validate installation' }));
-
-    expect(await screen.findByText('VidXP 0.3.0 · Python 3.14.6')).toBeVisible();
-    expect(screen.getByText('Probe 1 · Browser surface available')).toBeVisible();
-    expect(screen.getByText('Compatible')).toBeVisible();
-    expect(screen.getAllByText('Not validated')).toHaveLength(1);
-    expect(mocks.validateLocalTarget).toHaveBeenCalledWith('\\\\?\\C:\\Tools\\VidXP\\vidxp.exe');
+    expect((await screen.findAllByText('VidXP 0.3.0'))[0]).toBeVisible();
+    expect(screen.getAllByText('Compatible · protocol 1')).toHaveLength(2);
+    expect(screen.getByText('Python')).toBeVisible();
+    expect(screen.getAllByText('Found')).toHaveLength(1);
+    expect(mocks.inspectLocalTarget).toHaveBeenCalledWith('\\\\?\\C:\\Tools\\VidXP\\vidxp.exe');
     expect(screen.queryByText('\\\\?\\C:\\Tools\\VidXP\\vidxp.exe')).not.toBeInTheDocument();
   });
 
-  it('keeps a failed compatibility result attached to the selected candidate', async () => {
+  it('shows an old executable as update required without making it adoptable', async () => {
     const user = userEvent.setup();
-    mocks.validateLocalTarget.mockRejectedValue(
-      'UNSUPPORTED_PROBE_PROTOCOL · This executable uses desktop probe protocol 2.',
-    );
+    mocks.inspectLocalTarget.mockResolvedValue({ state: 'update_required', adoptable: false, executable: 'C:\\Tools\\VidXP\\vidxp.exe', reported_version: '0.4.0b0', probe_compatible: false, launch_compatible: false, message: 'This VidXP installation does not provide a compatible Desktop probe and launch contract.', remediation: 'Update this external installation with its own package-management workflow, then check it again.', technical_details: 'No such command: desktop-probe' });
     renderApp();
     await enterLocalFlow(user);
 
-    await user.click(await screen.findByRole('radio', { name: /Candidate executable/i }));
-    await user.click(screen.getByRole('button', { name: 'Validate installation' }));
-
-    expect(await screen.findByText('Validation failed')).toBeVisible();
-    expect(screen.getAllByText(/This executable uses desktop probe protocol 2/)).toHaveLength(2);
-    expect(screen.queryByText('Compatible VidXP installation')).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('radio', { name: /VidXP executable/i }));
+    expect((await screen.findAllByText('Update required'))[0]).toBeVisible();
+    expect(screen.getAllByText('VidXP 0.4.0b0')[0]).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Use this installation' })).not.toBeInTheDocument();
   });
 
   it('allows explicit browsing when discovery is empty', async () => {
@@ -317,8 +337,8 @@ describe('target-first setup', () => {
     expect(await screen.findByText(/No candidates were found automatically/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: /Browse for an executable/ }));
 
-    expect(await screen.findAllByText('/opt/vidxp/bin/vidxp')).toHaveLength(2);
-    expect(screen.getByRole('heading', { name: 'Review and validate' })).toBeVisible();
+    expect(await screen.findByText('/opt/vidxp/bin/vidxp')).toBeVisible();
+    expect(mocks.inspectLocalTarget).toHaveBeenCalledWith('/opt/vidxp/bin/vidxp');
   });
 
   it('restores the selected profile and reports validation problems accessibly', async () => {
@@ -363,7 +383,7 @@ describe('target-first setup', () => {
     const user = userEvent.setup();
     mocks.chooseManagedTarget.mockResolvedValue({});
     mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', capabilities: {}, surfaces: {} });
-    mocks.runtimeStatus.mockResolvedValue({ ready: false, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'models', detail: 'FFmpeg was not found. ffprobe was not found. Run guided setup, then retry.' });
+    mocks.runtimeStatus.mockResolvedValue({ state: 'broken', ready: false, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'models', detail: 'FFmpeg was not found. ffprobe was not found. Run guided setup, then retry.' });
     renderApp();
     await screen.findByRole('heading', { name: 'Where should VidXP run?' });
 
@@ -378,6 +398,51 @@ describe('target-first setup', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Media tools required');
     expect(mocks.chooseManagedTarget).toHaveBeenCalledTimes(1);
     expect(mocks.installRuntime).not.toHaveBeenCalled();
+  });
+
+  it('renders first-time managed setup as neutral and shows cached model reuse', async () => {
+    const user = userEvent.setup();
+    mocks.chooseManagedTarget.mockResolvedValue({});
+    mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', capabilities: {}, surfaces: {} });
+    mocks.runtimeStatus.mockResolvedValue({ state: 'never_configured', ready: false, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'C:\\Models', detail: 'No Desktop-managed runtime has been created yet.' });
+    mocks.modelDirectoryInventory.mockResolvedValue({ directory: 'C:\\Models', exists: true, readable: true, total_bytes: 4413072968, file_count: 34, recognized_models: [{ id: 'siglip2-base', label: 'Google SigLIP2 base' }, { id: 'yunet', label: 'YuNet' }], empty: false, verification_required: true, truncated: false, detail: 'Cached files detected; verification required.' });
+    renderApp();
+    await screen.findByRole('heading', { name: 'Where should VidXP run?' });
+    await user.click(screen.getByRole('radio', { name: /Set up VidXP for me/i }));
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.click(screen.getByRole('button', { name: 'Continue to setup' }));
+
+    expect(await screen.findByText('No Desktop-managed runtime has been created yet.')).toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText(/4\.11 GiB of cached model files found/)).toBeVisible();
+    expect(screen.getByText('Google SigLIP2 base')).toBeVisible();
+    expect(screen.getByText(/verification required.*reuse valid cached files/i)).toBeVisible();
+    expect(screen.getByRole('switch', { name: /Verify cached models and download anything missing/i })).toBeChecked();
+  });
+
+  it('refreshes inventory after a folder change and installs with that same path', async () => {
+    const user = userEvent.setup();
+    const firstStatus = { state: 'never_configured', ready: false, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'C:\\Models', detail: 'No Desktop-managed runtime has been created yet.' };
+    mocks.chooseManagedTarget.mockResolvedValue({});
+    mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', capabilities: { scene: { extra: 'scene', label: 'Visual scene search', description: 'Scene models' } }, surfaces: {} });
+    mocks.runtimeStatus.mockResolvedValueOnce(firstStatus).mockResolvedValue({ ...firstStatus, state: 'ready', ready: true, capabilities: ['scene'] });
+    mocks.chooseModelDirectory.mockResolvedValue('D:\\VidXP models');
+    mocks.modelDirectoryInventory.mockImplementation(async (directory: string) => ({ directory, exists: true, readable: true, total_bytes: 10, file_count: 1, recognized_models: [], empty: false, verification_required: true, truncated: false, detail: 'Cached files detected; verification required.' }));
+    mocks.installMediaRuntime.mockResolvedValue({ ready: true });
+    mocks.installRuntime.mockResolvedValue({ package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'D:\\VidXP models', prepared: true });
+    renderApp();
+    await screen.findByRole('heading', { name: 'Where should VidXP run?' });
+    await user.click(screen.getByRole('radio', { name: /Set up VidXP for me/i }));
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.click(screen.getByRole('button', { name: 'Continue to setup' }));
+    await screen.findByText('Visual scene search');
+
+    await user.click(screen.getByRole('button', { name: 'Choose folder…' }));
+    await waitFor(() => expect(mocks.modelDirectoryInventory).toHaveBeenCalledWith('D:\\VidXP models'));
+    await user.click(screen.getByRole('button', { name: 'Configure VidXP' }));
+
+    await waitFor(() => expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({ model_directory: 'D:\\VidXP models' })));
+    expect(mocks.modelDirectoryInventory).toHaveBeenCalledWith('D:\\VidXP models');
   });
 
   it('renders the setup flow without console errors', async () => {

@@ -92,6 +92,12 @@ button, [role='radio'], [role='checkbox'], input { -webkit-tap-highlight-color: 
 .panelTitle { font-size: 1rem; letter-spacing: -.01em; }
 .candidateCard, .optionCard { padding: 1rem; border-radius: .75rem; }
 .candidateCopy, .folderCopy { min-width: 0; flex: 1; }
+.candidateWrapper { border-radius: .75rem; overflow: hidden; background: rgba(17,21,32,.72); }
+.candidateWrapper .candidateCard { border-radius: .75rem; }
+.inlineInspection { padding: 1rem; border: 1px solid rgba(139,124,255,.28); border-top: 0; background: rgba(11,15,25,.72); }
+.technicalDetails { margin-top: .75rem; color: var(--mantine-color-dimmed); }
+.technicalDetails summary { cursor: pointer; font-size: .82rem; }
+.technicalDetails code { margin-top: .5rem; max-height: 9rem; overflow: auto; white-space: pre-wrap; }
 .candidateMetadata { margin-top: .65rem; padding-top: .55rem; border-top: 1px solid rgba(255,255,255,.07); color: #b9c0ce; }
 .pathCode, .resolvedPath { display: block; max-width: 100%; margin-top: .35rem; overflow-wrap: anywhere; white-space: normal; color: #cbd1dd; background: rgba(0,0,0,.22); }
 .resolvedPath { padding: .7rem; border: 1px solid rgba(255,255,255,.08); }
@@ -106,6 +112,8 @@ button, [role='radio'], [role='checkbox'], input { -webkit-tap-highlight-color: 
 .summaryGrid strong, .summaryGrid code { min-width: 0; overflow-wrap: anywhere; }
 .managedFooter { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: 1rem; }
 .managedAttention { margin-top: 1rem; border-color: rgba(255, 212, 59, .3); background: rgba(255, 212, 59, .09); }
+.neutralSetupNote, .runtimeSummary { margin-top: 1rem; padding: .9rem 1rem; border: 1px solid rgba(139,124,255,.22); border-radius: .75rem; background: rgba(35,31,65,.3); color: var(--mantine-color-dimmed); }
+.runtimeSummary { color: inherit; }
 .confirmationPanel { max-width: 42rem; margin: .75rem auto 0; padding: clamp(1.25rem, 3dvh, 2.25rem); border-radius: 1.25rem; text-align: center; }
 .ownershipNote { display: grid; grid-template-columns: auto 1fr; gap: .35rem 1rem; margin-top: 1.5rem; padding: 1rem; border-radius: .75rem; background: rgba(121,80,242,.12); text-align: left; }
 .ownershipNote span { color: #aeb5c4; }

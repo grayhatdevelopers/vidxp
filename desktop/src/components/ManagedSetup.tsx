@@ -1,5 +1,6 @@
 import {
   Alert,
+  Badge,
   Button,
   Checkbox,
   Group,
@@ -20,10 +21,12 @@ import {
   installMediaRuntime,
   installRuntime,
   launchUi,
+  modelDirectoryInventory,
   runtimeManifest,
   runtimeStatus,
   type RuntimeManifest,
   type RuntimeStatus,
+  type ModelDirectoryInventory,
 } from '../tauri';
 
 interface ManagedSetupProps {
@@ -38,6 +41,8 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
   const [surfaces, setSurfaces] = useState<string[]>([]);
   const [prepareModels, setPrepareModels] = useState(true);
   const [modelDirectory, setModelDirectory] = useState('');
+  const [inventory, setInventory] = useState<ModelDirectoryInventory | null>(null);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
   const [busy, setBusy] = useState<'load' | 'folder' | 'install' | 'launch' | null>('load');
   const [message, setMessage] = useState('Loading managed runtime options…');
   const [failure, setFailure] = useState<string | null>(null);
@@ -60,11 +65,26 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
               .map(([id]) => id),
       );
       setModelDirectory(nextStatus.model_directory);
+      setInventoryLoading(true);
+      setInventory(await modelDirectoryInventory(nextStatus.model_directory));
       setMessage(nextStatus.ready ? 'The managed runtime is ready.' : nextStatus.detail);
     } catch (error) {
       setFailure(errorMessage(error, 'Managed setup could not be loaded.'));
     } finally {
+      setInventoryLoading(false);
       setBusy((current) => (current === 'load' ? null : current));
+    }
+  }
+
+  async function refreshInventory(directory: string) {
+    setInventoryLoading(true);
+    try {
+      setInventory(await modelDirectoryInventory(directory));
+    } catch (error) {
+      setInventory(null);
+      setFailure(errorMessage(error, 'The selected model folder could not be inventoried.'));
+    } finally {
+      setInventoryLoading(false);
     }
   }
 
@@ -80,7 +100,10 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
     setBusy('folder');
     try {
       const selected = await chooseModelDirectory();
-      if (selected) setModelDirectory(selected);
+      if (selected) {
+        setModelDirectory(selected);
+        await refreshInventory(selected);
+      }
     } catch (error) {
       setFailure(errorMessage(error, 'The model folder could not be selected.'));
     } finally {
@@ -100,7 +123,7 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
       await installMediaRuntime();
       setMessage(
         prepareModels
-          ? 'Creating the managed runtime and downloading selected models…'
+          ? 'Creating the managed runtime, verifying cached models, and downloading anything missing…'
           : 'Creating the managed runtime…',
       );
       const result = await installRuntime({
@@ -110,6 +133,7 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
         model_directory: modelDirectory || undefined,
       });
       setModelDirectory(result.model_directory);
+      await refreshInventory(result.model_directory);
       const nextStatus = await runtimeStatus();
       setStatus(nextStatus);
       setMessage(result.prepared ? 'Runtime and selected models are ready.' : 'Runtime ready. Model downloads were deferred.');
@@ -134,9 +158,19 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
   }
 
   const isBusy = busy === 'load' || busy === 'folder' || busy === 'install' || busy === 'launch';
-  const attentionTitle = /ffmpeg|ffprobe/i.test(message)
-    ? 'Media tools required'
-    : 'Managed runtime not ready';
+  const attentionTitle = /ffmpeg|ffprobe/i.test(message) ? 'Media tools required' : 'Managed runtime needs attention';
+
+  function formatBytes(bytes: number) {
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+    let value = bytes;
+    let unit = -1;
+    do {
+      value /= 1024;
+      unit += 1;
+    } while (value >= 1024 && unit < units.length - 1);
+    return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[unit]}`;
+  }
 
   return (
     <section aria-labelledby="managed-setup-title">
@@ -181,12 +215,33 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
               <div className="folderCopy"><Text fw={650}>Model storage</Text><Text size="sm" className="pathText">{modelDirectory ? displayPath(modelDirectory) : 'Using the default location'}</Text></div>
               <Button variant="default" leftSection={<IconFolderOpen aria-hidden="true" size={16} />} loading={busy === 'folder'} onClick={() => void chooseFolder()}>Choose folder…</Button>
             </Group>
-            <Switch mt="lg" checked={prepareModels} onChange={(event) => setPrepareModels(event.currentTarget.checked)} label="Download selected models now" description="Turn this off to defer model downloads until later." />
+            <div className="cacheInventory" aria-live="polite">
+              {inventoryLoading ? (
+                <Text size="sm" mt="md"><Loader size="xs" /> Checking cached model files…</Text>
+              ) : inventory && !inventory.readable ? (
+                <Alert mt="md" color="red" title="Model folder cannot be read">{inventory.detail}</Alert>
+              ) : inventory?.empty ? (
+                <Text size="sm" mt="md">No cached models were found in this folder.</Text>
+              ) : inventory ? (
+                <>
+                  <Text fw={650} mt="md">{formatBytes(inventory.total_bytes)} of cached model files found <Text span fw={400} className="mutedText">({inventory.file_count} files)</Text></Text>
+                  {inventory.recognized_models.length > 0 && (
+                    <Group gap="xs" mt="xs">{inventory.recognized_models.map((model) => <Badge key={model.id} variant="light">{model.label}</Badge>)}</Group>
+                  )}
+                  <Text size="sm" mt="xs">Cached files detected; verification required. VidXP will reuse valid cached files and download only missing material.</Text>
+                </>
+              ) : null}
+            </div>
+            <Switch mt="lg" checked={prepareModels} onChange={(event) => setPrepareModels(event.currentTarget.checked)} label="Verify cached models and download anything missing" description={prepareModels ? 'Valid cached files in this folder will be reused.' : 'Preparation is deferred; missing models can be downloaded later.'} />
           </div>
         </Stack>
       )}
 
-      {status && !status.ready && busy !== 'install' && (
+      {status?.state === 'never_configured' && busy !== 'install' && (
+        <div className="neutralSetupNote" role="status">{status.detail}</div>
+      )}
+
+      {status?.state === 'broken' && busy !== 'install' && (
         <Alert
           className="managedAttention"
           icon={<IconAlertCircle aria-hidden="true" />}
@@ -196,6 +251,14 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
         >
           {message}
         </Alert>
+      )}
+
+      {status?.state === 'ready' && (
+        <div className="runtimeSummary">
+          <Text fw={700}>Existing managed runtime is ready</Text>
+          <Text size="sm">VidXP {status.package_version} · Capabilities: {status.capabilities.join(', ') || 'none'} · Interfaces: {status.surfaces.join(', ') || 'processing only'}</Text>
+          <Text size="sm" className="pathText">Models: {displayPath(status.model_directory)}</Text>
+        </div>
       )}
 
       <div className="managedFooter">
