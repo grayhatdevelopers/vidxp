@@ -347,14 +347,20 @@ KiB gzip by adopting Dashboard, a deliberate cost for removing duplicated upload
 controls and accessibility behavior. The page validates the expected filename
 and byte size, limits tus metadata to the intent identifier, and does not choose
 a tus chunk size, so a few-MiB file follows the same resumable path rather than a
-separate MCP or small-upload path. Scripts and styles are self-hosted under a
-strict CSP; the handoff API is same-origin and tus CORS remains restricted to a
-startup-validated origin policy.
+separate MCP or small-upload path. Scripts and stylesheets are self-hosted under
+a strict CSP. Style attributes are allowed because Dashboard computes dimensions,
+progress, colors, and transitions at runtime; inline scripts remain blocked. The
+handoff API is same-origin and tus CORS accepts only a startup-validated, grouped
+list of exact HTTPS origins using syntax shared by Python validation and Go's RE2
+engine.
 
 When the MCP client advertises `elicitation.url`, `create_media_upload` also uses
 URL-mode elicitation and records accept, decline, or cancel in its structured
 result. The structured `upload_page_url` is always retained for clients without
-URL mode or for a later manual attempt.
+URL mode or for a later manual attempt. After acceptance, VidXP associates the
+elicitation ID and originating MCP session with the upload intent. Receipt of the
+complete upload (transition to processing or a later state), or handoff expiry,
+triggers a best-effort `notifications/elicitation/complete` on that session.
 
 Application responses carrying upload URLs use `private, no-store` and
 `no-referrer`; hook payloads and MCP results do not persist them. The opaque path is
@@ -935,6 +941,7 @@ Primary remote transport:
 - Streamable HTTP
 - stateful transport sessions so capability-negotiated URL elicitation has a
   request back-channel
+- a 30-minute idle timeout for the in-memory transport session map
 - `json_response=False` so disconnect cancellation uses the streaming/SSE path
 - application state persisted outside MCP sessions
 - explicit lifecycle through the application composition root
@@ -996,6 +1003,7 @@ The MCP ASGI app is created with:
 - JSON-only responses disabled
 - configured MCP body limit
 - explicit transport-security settings
+- the configured stateful-session idle timeout (30 minutes by default)
 
 It is mounted at the outer application's root after concrete FastAPI routes. This
 keeps both `/mcp` and the RFC 9728 host-root
@@ -1005,6 +1013,12 @@ The composition-root lifespan enters `mcp.session_manager.run()` exactly once an
 orders shared application startup, MCP startup, MCP shutdown, and application
 shutdown explicitly. A mounted Starlette child lifespan is not relied on, and MCP
 does not start a second copy of shared database/storage/model resources.
+
+Stateful HTTP sessions and their notification channels are process-local. The
+supported topology therefore runs exactly one API/MCP instance. If an unsupported
+multi-instance deployment is attempted, the proxy must at minimum keep every
+`Mcp-Session-Id` on one instance for its full lifetime; sticky routing does not
+add failover or shared session state.
 
 The public/proxy Host and Origin policy is configured explicitly. Binding to
 `0.0.0.0` must not disable DNS-rebinding protections. Deployment validation confirms

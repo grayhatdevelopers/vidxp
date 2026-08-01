@@ -292,6 +292,7 @@ class UploadHandoffSecurityHeadersMiddleware:
             ),
             "Content-Security-Policy": (
                 "default-src 'none'; script-src 'self'; style-src 'self'; "
+                "style-src-elem 'self'; style-src-attr 'unsafe-inline'; "
                 f"connect-src {connect_sources}; img-src 'self' data:; "
                 "font-src 'self'; object-src 'none'; base-uri 'none'; "
                 "form-action 'none'; frame-ancestors 'none'; worker-src 'none'"

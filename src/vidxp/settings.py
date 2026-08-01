@@ -27,6 +27,43 @@ from vidxp.repository_layout import RepositoryLayout
 
 
 DEFAULT_HTTP_PORT = 32191
+_TUSD_EXACT_ORIGIN = re.compile(
+    r"https://(?P<host>"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
+    r")(?::(?P<port>[0-9]{1,5}))?"
+)
+
+
+def _tusd_cors_origins(pattern: str) -> tuple[str, ...]:
+    """Parse the deliberately small regex subset shared with Go's RE2."""
+    if not (pattern.startswith("^(") and pattern.endswith(")$")):
+        raise ValueError(
+            "The upload CORS origin regex must use the RE2-safe exact-origin "
+            r"form ^(https://api\.example|https://app\.example)$."
+        )
+    alternatives = pattern[2:-2].split("|")
+    if not alternatives or any(not value for value in alternatives):
+        raise ValueError("The upload CORS origin regex has an empty origin.")
+    origins: list[str] = []
+    for value in alternatives:
+        match = _TUSD_EXACT_ORIGIN.fullmatch(value)
+        if match is None:
+            raise ValueError(
+                "The upload CORS origin regex may contain only exact HTTPS "
+                r"origins with escaped dots, grouped as ^(origin|origin)$."
+            )
+        port_text = match.group("port")
+        if port_text is not None and not 1 <= int(port_text) <= 65535:
+            raise ValueError(
+                "The upload CORS origin regex contains an invalid port."
+            )
+        origins.append(value.replace(r"\.", ".").lower())
+    if len(set(origins)) != len(origins):
+        raise ValueError(
+            "The upload CORS origin regex contains a duplicate origin."
+        )
+    return tuple(origins)
 
 
 class ApplicationMode(StrEnum):
@@ -128,6 +165,11 @@ class VidXPSettings(BaseSettings):
         default=4 * 1024 * 1024,
         gt=0,
         le=16 * 1024 * 1024,
+    )
+    mcp_session_idle_timeout_seconds: int = Field(
+        default=30 * 60,
+        ge=60,
+        le=24 * 60 * 60,
     )
     mcp_allowed_hosts: tuple[str, ...] = (
         "127.0.0.1:*",
@@ -651,22 +693,25 @@ class VidXPSettings(BaseSettings):
                 "handoff URL, a matching tusd CORS origin regex, and a "
                 "dedicated secret of at least 32 characters."
             )
+        if (
+            handoff_configured
+            and self.mcp_session_idle_timeout_seconds
+            <= self.upload_handoff_ttl_seconds
+        ):
+            raise ValueError(
+                "The MCP session idle timeout must be longer than the upload "
+                "handoff TTL so accepted URL elicitations can complete."
+            )
         if self.upload_cors_origin_regex is not None:
-            if not (
-                self.upload_cors_origin_regex.startswith("^")
-                and self.upload_cors_origin_regex.endswith("$")
-            ):
-                raise ValueError("The upload CORS origin regex must be anchored.")
-            try:
-                origin_policy = re.compile(self.upload_cors_origin_regex)
-            except re.error as exc:
-                raise ValueError("The upload CORS origin regex is invalid.") from exc
+            allowed_origins = _tusd_cors_origins(
+                self.upload_cors_origin_regex
+            )
             if self.upload_handoff_public_url is not None:
                 parsed_handoff = urlsplit(self.upload_handoff_public_url)
                 handoff_origin = (
                     f"{parsed_handoff.scheme}://{parsed_handoff.netloc}"
-                )
-                if origin_policy.fullmatch(handoff_origin) is None:
+                ).lower()
+                if handoff_origin not in allowed_origins:
                     raise ValueError(
                         "The upload CORS origin regex must allow the handoff origin."
                     )

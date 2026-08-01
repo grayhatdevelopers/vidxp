@@ -40,7 +40,7 @@ def _hooks(tmp_path: Path):
         upload_cleanup_token="c" * 32,
         upload_handoff_public_url="https://upload.example/upload-handoff",
         upload_handoff_secret="h" * 32,
-        upload_cors_origin_regex=r"^https://upload\.example$",
+        upload_cors_origin_regex=r"^(https://upload\.example)$",
     )
     uploads = RemoteUploadService(
         settings=settings,

@@ -9,12 +9,13 @@ x-vidxp-environment: &vidxp-environment
   VIDXP_HTTP_STATIC_BEARER_TOKEN: ${VIDXP_HTTP_STATIC_BEARER_TOKEN:?Set a bearer token of at least 32 characters}
   VIDXP_HTTP_TRUSTED_HOSTS: '["127.0.0.1","localhost","${VIDXP_PUBLIC_API_HOST:?Set the public API host}"]'
   VIDXP_MCP_ALLOWED_HOSTS: '["127.0.0.1:*","localhost:*","${VIDXP_PUBLIC_API_HOST:?Set the public API host}"]'
+  VIDXP_MCP_SESSION_IDLE_TIMEOUT_SECONDS: ${VIDXP_MCP_SESSION_IDLE_TIMEOUT_SECONDS:-1800}
   VIDXP_UPLOAD_PUBLIC_ENDPOINT: ${VIDXP_UPLOAD_PUBLIC_ENDPOINT:?Set the public tusd endpoint ending in /uploads/}
   VIDXP_UPLOAD_INTERNAL_ENDPOINT: http://tusd:8080/uploads/
   VIDXP_UPLOAD_CLEANUP_TOKEN: ${VIDXP_UPLOAD_CLEANUP_TOKEN:?Set a cleanup token of at least 32 characters}
   VIDXP_UPLOAD_HANDOFF_PUBLIC_URL: ${VIDXP_UPLOAD_HANDOFF_PUBLIC_URL:?Set the HTTPS VidXP URL ending in /upload-handoff}
   VIDXP_UPLOAD_HANDOFF_SECRET: ${VIDXP_UPLOAD_HANDOFF_SECRET:?Set a dedicated handoff secret of at least 32 characters}
-  VIDXP_UPLOAD_CORS_ORIGIN_REGEX: ${VIDXP_UPLOAD_CORS_ORIGIN_REGEX:?Set an anchored policy that permits the handoff origin}
+  VIDXP_UPLOAD_CORS_ORIGIN_REGEX: ${VIDXP_UPLOAD_CORS_ORIGIN_REGEX:?Set a grouped exact-origin policy that permits the handoff origin}
   VIDXP_UPLOAD_QUARANTINE_ROOT: /var/lib/vidxp/uploads
   VIDXP_UPLOAD_MAX_BYTES: ${VIDXP_UPLOAD_MAX_BYTES:-53687091200}
   VIDXP_UPLOAD_QUOTA_BYTES: ${VIDXP_UPLOAD_QUOTA_BYTES:-107374182400}
@@ -181,7 +182,7 @@ services:
       - -hooks-http-size-limit=5120
       - -hooks-http-retry=3
       - -hooks-http-backoff=1s
-      - -cors-allow-origin=${VIDXP_UPLOAD_CORS_ORIGIN_REGEX:?Set an anchored browser-origin regex}
+      - -cors-allow-origin=${VIDXP_UPLOAD_CORS_ORIGIN_REGEX:?Set a grouped exact-origin browser policy}
       - -cors-allow-headers=Authorization
       - -cors-expose-headers=X-VidXP-Error
       - -cors-max-age=600

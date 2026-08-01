@@ -85,7 +85,7 @@ def test_live_tusd_split_topology_resumes_five_mib(tmp_path: Path) -> None:
         upload_cleanup_token="c" * 32,
         upload_handoff_public_url="https://upload.example/upload-handoff",
         upload_handoff_secret="h" * 32,
-        upload_cors_origin_regex=r"^https://upload\.example$",
+        upload_cors_origin_regex=r"^(https://upload\.example)$",
         upload_max_bytes=2 * size,
         upload_quota_bytes=2 * size,
         upload_recovery_interval_seconds=3600,

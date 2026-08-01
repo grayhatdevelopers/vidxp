@@ -30,7 +30,7 @@ def _fixture(root: Path):
         upload_cleanup_token="c" * 32,
         upload_handoff_public_url="https://testserver/upload-handoff",
         upload_handoff_secret="h" * 32,
-        upload_cors_origin_regex=r"^https://testserver$",
+        upload_cors_origin_regex=r"^(https://testserver)$",
     )
     catalog = SQLCatalog(
         f"sqlite:///{(root / 'server.sqlite3').resolve().as_posix()}",
@@ -78,9 +78,11 @@ def _assert_security_headers(response) -> None:
     assert "default-src 'none'" in csp
     assert "script-src 'self'" in csp
     assert "style-src 'self'" in csp
+    assert "style-src-elem 'self'" in csp
+    assert "style-src-attr 'unsafe-inline'" in csp
     assert "connect-src 'self' https://uploads.example" in csp
     assert "frame-ancestors 'none'" in csp
-    assert "unsafe-inline" not in csp
+    assert "script-src 'self' 'unsafe-inline'" not in csp
 
 
 def test_upload_page_bootstrap_session_assets_and_security(tmp_path: Path) -> None:

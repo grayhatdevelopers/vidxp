@@ -27,7 +27,7 @@ VIDXP_PUBLIC_API_HOST=api.example.com
 VIDXP_UPLOAD_PUBLIC_ENDPOINT=https://uploads.example.com/uploads/
 VIDXP_UPLOAD_HANDOFF_PUBLIC_URL=https://api.example.com/upload-handoff
 VIDXP_UPLOAD_HANDOFF_SECRET=<third-random-secret-at-least-32-characters>
-VIDXP_UPLOAD_CORS_ORIGIN_REGEX=^https://(api|app)\.example\.com$
+VIDXP_UPLOAD_CORS_ORIGIN_REGEX=^(https://api\.example\.com|https://app\.example\.com)$
 ```
 
 `VIDXP_UPLOAD_HANDOFF_PUBLIC_URL` must be the externally reachable HTTPS API
@@ -35,6 +35,10 @@ URL ending exactly in `/upload-handoff`. Keep its secret distinct from the MCP
 bearer and upload-cleanup credentials. The generated handoff URL contains a
 short-lived capability in its fragment; the fragment is not sent in HTTP
 requests, and the page removes it from browser history after bootstrap.
+The CORS value intentionally accepts only this grouped list of exact HTTPS
+origins with escaped dots. VidXP validates that restricted syntax instead of
+using Python's broader regex dialect, and tusd evaluates the same value with
+Go's RE2 engine.
 
 Optional deployment-wide upload limits use `VIDXP_UPLOAD_MAX_BYTES` for one object
 and `VIDXP_UPLOAD_QUOTA_BYTES` for all reserved upload bytes in the singleton
@@ -49,6 +53,15 @@ to preserve `Authorization`, `Accept`, `Content-Type`, `MCP-Protocol-Version`,
 `Mcp-Method`, `Mcp-Name`, and `Mcp-Param-*` headers and disable response buffering
 for `/mcp`. Static bearer mode intentionally publishes no OAuth metadata; configure
 the bearer header in the remote MCP client.
+
+Remote MCP transport sessions are stateful so the server can complete accepted
+URL elicitations. Idle sessions are removed after 1,800 seconds by default;
+`VIDXP_MCP_SESSION_IDLE_TIMEOUT_SECONDS` may set 60 through 86,400 seconds and
+must be longer than `VIDXP_UPLOAD_HANDOFF_TTL_SECONDS`. The session map and
+its server-to-client channel are process-local. Keep exactly one API/MCP replica
+in the supported deployment. A custom multi-replica deployment would require
+sticky routing by `Mcp-Session-Id` for the entire session lifetime (and still
+would not provide failover or shared session state).
 
 The upload path is a capability URL used to resume an upload. Disable or redact
 reverse-proxy access logging for `/uploads/`; VidXP cannot control logs written by
@@ -67,8 +80,10 @@ The page exchanges its fragment capability for an `HttpOnly`, `Secure`,
 five-minute creation grant; the MCP bearer never enters the page or tusd. Keep
 access logging disabled or redacted for `/uploads/`, because the tus resume URL
 is itself a bearer capability. The page's Content Security Policy permits only
-same-origin scripts/styles and connections to the configured tus origin, so
-both public URLs must be correct before startup.
+self-hosted scripts and stylesheets, the style attributes Uppy Dashboard needs
+for dimensions/progress/transitions, and connections to the configured tus
+origin. Inline scripts remain blocked, so both public URLs must be correct before
+startup.
 
 ## Prepare worker models
 

@@ -23,7 +23,7 @@ def main() -> None:
         upload_cleanup_token="c" * 32,
         upload_handoff_public_url="https://vidxp.example/upload-handoff",
         upload_handoff_secret="h" * 32,
-        upload_cors_origin_regex=r"^https://vidxp\.example$",
+        upload_cors_origin_regex=r"^(https://vidxp\.example)$",
     )
     now = datetime.now(timezone.utc)
     status = MediaUploadStatus(
@@ -42,6 +42,13 @@ def main() -> None:
         status=status,
         capability="fixture-capability",
         expires_at=now + timedelta(minutes=15),
+    )
+    uploads.get_status.return_value = status.model_copy(
+        update={
+            "state": UploadState.processing,
+            "status": "The upload completed and import started.",
+            "next_action": "Poll the import job.",
+        }
     )
     context = ControlPlaneContext(
         application=Mock(spec=ControlPlaneApplication),

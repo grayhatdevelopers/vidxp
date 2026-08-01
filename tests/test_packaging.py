@@ -1,5 +1,4 @@
 import json
-import re
 import unittest
 from pathlib import Path
 import tomllib
@@ -9,6 +8,7 @@ from packaging.requirements import Requirement
 from packaging.version import Version
 
 from vidxp.capabilities.registry import create_capability_registry
+from vidxp.settings import VidXPSettings
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,14 +25,20 @@ class PackagingTests(unittest.TestCase):
                 key, value = line.split("=", 1)
                 example[key] = value
 
-        handoff = urlsplit(example["VIDXP_UPLOAD_HANDOFF_PUBLIC_URL"])
-        handoff_origin = f"{handoff.scheme}://{handoff.netloc}"
-        self.assertIsNotNone(
-            re.fullmatch(
-                example["VIDXP_UPLOAD_CORS_ORIGIN_REGEX"],
-                handoff_origin,
-            )
+        settings = VidXPSettings(
+            upload_public_endpoint=example["VIDXP_UPLOAD_PUBLIC_ENDPOINT"],
+            upload_internal_endpoint="http://tusd:8080/uploads/",
+            upload_cleanup_token="c" * 32,
+            upload_handoff_public_url=(
+                example["VIDXP_UPLOAD_HANDOFF_PUBLIC_URL"]
+            ),
+            upload_handoff_secret="h" * 32,
+            upload_cors_origin_regex=(
+                example["VIDXP_UPLOAD_CORS_ORIGIN_REGEX"]
+            ),
         )
+        handoff = urlsplit(settings.upload_handoff_public_url)
+        self.assertEqual(handoff.hostname, "api.example.com")
 
         compose = (ROOT / "compose.coolify.yaml").read_text(encoding="utf-8")
         self.assertIn("VIDXP_UPLOAD_CORS_ORIGIN_REGEX:", compose)

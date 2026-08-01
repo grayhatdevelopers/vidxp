@@ -65,7 +65,7 @@ def _service(
         upload_cleanup_token="x" * 32,
         upload_handoff_public_url="https://upload.example/upload-handoff",
         upload_handoff_secret="h" * 32,
-        upload_cors_origin_regex=r"^https://upload\.example$",
+        upload_cors_origin_regex=r"^(https://upload\.example)$",
         upload_max_bytes=quota,
         upload_quota_bytes=quota,
     )

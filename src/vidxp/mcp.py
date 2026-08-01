@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import logging
 import json
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import partial
-from typing import Annotated, Callable, Literal, TypeVar
+from typing import Annotated, AsyncIterator, Callable, Literal, TypeVar
 from urllib.parse import quote
 from uuid import uuid4
 
 import anyio
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
+from mcp.server.session import ServerSession
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
@@ -71,6 +74,7 @@ from vidxp.idempotency import (
     scoped_request_key,
 )
 from vidxp.core.identifiers import ArtifactId
+from vidxp.core.uploads import UploadState
 from vidxp.settings import HttpAuthMode
 from vidxp.upload_service import RemoteUploadService
 
@@ -110,6 +114,72 @@ _CANCEL = ToolAnnotations(
     idempotent_hint=True,
     open_world_hint=False,
 )
+_UPLOAD_ELICITATION_COMPLETE_STATES = frozenset(
+    {
+        UploadState.processing,
+        UploadState.ready,
+        UploadState.failed,
+        UploadState.expired,
+    }
+)
+_UPLOAD_ELICITATION_POLL_SECONDS = 1.0
+
+
+@dataclass(frozen=True)
+class _MCPLifespan:
+    task_group: anyio.abc.TaskGroup
+
+
+@asynccontextmanager
+async def _mcp_lifespan(_server: MCPServer) -> AsyncIterator[_MCPLifespan]:
+    async with anyio.create_task_group() as task_group:
+        try:
+            yield _MCPLifespan(task_group=task_group)
+        finally:
+            task_group.cancel_scope.cancel()
+
+
+async def _complete_upload_elicitation(
+    service: RemoteUploadService,
+    principal: Principal,
+    intent_id: UploadIntentId,
+    handoff_expires_at: AwareDatetime,
+    elicitation_id: str,
+    session: ServerSession,
+) -> None:
+    """Notify the originating MCP session once the browser upload is done."""
+    while datetime.now(timezone.utc) < handoff_expires_at:
+        try:
+            status = await anyio.to_thread.run_sync(
+                partial(
+                    service.get_status,
+                    intent_id,
+                    principal=principal,
+                )
+            )
+        except Exception:
+            _LOGGER.debug(
+                "Could not poll upload %s for elicitation completion.",
+                intent_id,
+                exc_info=True,
+            )
+        else:
+            if status.state in _UPLOAD_ELICITATION_COMPLETE_STATES:
+                break
+        remaining = (
+            handoff_expires_at - datetime.now(timezone.utc)
+        ).total_seconds()
+        await anyio.sleep(
+            min(_UPLOAD_ELICITATION_POLL_SECONDS, max(0, remaining))
+        )
+    try:
+        await session.send_elicit_complete(elicitation_id)
+    except Exception:
+        _LOGGER.debug(
+            "Could not deliver completion for upload elicitation %s.",
+            elicitation_id,
+            exc_info=True,
+        )
 
 
 class PrincipalBridge:
@@ -437,6 +507,7 @@ def create_mcp_server(
         version=__version__,
         token_verifier=token_verifier,
         auth=auth,
+        lifespan=_mcp_lifespan,
     )
 
     async def artifact_bytes(
@@ -618,7 +689,9 @@ def create_mcp_server(
         idempotency_key: IdempotencyKey,
         mcp_context: Context,
     ) -> MediaUploadHandoff:
-        def create(actor: Principal) -> MediaUploadHandoff:
+        def create(
+            actor: Principal,
+        ) -> tuple[MediaUploadHandoff, Principal]:
             service = _uploads(context)
             handoff = service.create_handoff(
                 command,
@@ -636,13 +709,16 @@ def create_mcp_server(
                 f"{handoff.status.intent_id}#capability="
                 f"{quote(handoff.capability, safe='')}"
             )
-            return MediaUploadHandoff(
-                **handoff.status.model_dump(),
-                upload_page_url=page_url,
-                handoff_expires_at=handoff.expires_at,
+            return (
+                MediaUploadHandoff(
+                    **handoff.status.model_dump(),
+                    upload_page_url=page_url,
+                    handoff_expires_at=handoff.expires_at,
+                ),
+                actor,
             )
 
-        result = await _invoke_async(
+        result, actor = await _invoke_async(
             context,
             default_principal=default_principal,
             permission=RepositoryPermission.write,
@@ -652,6 +728,7 @@ def create_mcp_server(
         elicitation = capabilities.elicitation if capabilities is not None else None
         if elicitation is None or elicitation.url is None:
             return _upload_handoff_after_elicitation(result, "unsupported")
+        elicitation_id = f"vidxp-upload-{result.intent_id}-{uuid4().hex}"
         try:
             response = await mcp_context.elicit_url(
                 message=(
@@ -659,13 +736,22 @@ def create_mcp_server(
                     "directly to the resumable upload service."
                 ),
                 url=result.upload_page_url,
-                elicitation_id=(
-                    f"vidxp-upload-{result.intent_id}-{uuid4().hex}"
-                ),
+                elicitation_id=elicitation_id,
             )
         except MCPError:
             _LOGGER.warning("The MCP client rejected URL elicitation delivery.")
             return _upload_handoff_after_elicitation(result, "unavailable")
+        if response.action == "accept":
+            lifespan = mcp_context.request_context.lifespan_context
+            lifespan.task_group.start_soon(
+                _complete_upload_elicitation,
+                _uploads(context),
+                actor,
+                result.intent_id,
+                result.handoff_expires_at,
+                elicitation_id,
+                mcp_context.session,
+            )
         return _upload_handoff_after_elicitation(result, response.action)
 
     @server.tool(
@@ -1001,6 +1087,9 @@ def create_remote_mcp(context: ControlPlaneContext) -> RemoteMCP:
         ),
         transport_security=transport_security,
         host=context.settings.http_bind_host,
+    )
+    server.session_manager.session_idle_timeout = (
+        context.settings.mcp_session_idle_timeout_seconds
     )
     return RemoteMCP(
         server=server,

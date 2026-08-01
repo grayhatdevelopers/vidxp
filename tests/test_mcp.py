@@ -20,7 +20,7 @@ from mcp.client import Client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
-from mcp.types import ElicitResult, ResourceLink
+from mcp.types import ElicitCompleteNotification, ElicitResult, ResourceLink
 
 from vidxp.application_models import (
     ApplicationError,
@@ -57,7 +57,7 @@ from vidxp.control_plane import ControlPlaneApplication
 from vidxp.core.artifacts import ArtifactKind, ArtifactState
 from vidxp.core.uploads import UploadState
 from vidxp.job_service import JobService
-from vidxp.mcp import VidXPTokenVerifier, create_mcp_server
+from vidxp.mcp import VidXPTokenVerifier, create_mcp_server, create_remote_mcp
 from vidxp.mcp_cli import main as mcp_main
 from vidxp.mcp_cli import stdio_client_config
 from vidxp.ports import LocalFileResource
@@ -166,7 +166,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             upload_cleanup_token="c" * 32,
             upload_handoff_public_url=("https://vidxp.example/upload-handoff"),
             upload_handoff_secret="h" * 32,
-            upload_cors_origin_regex=r"^https://vidxp\.example$",
+            upload_cors_origin_regex=r"^(https://vidxp\.example)$",
         )
         uploads = Mock(spec=RemoteUploadService)
         return (
@@ -298,6 +298,19 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     arguments,
                 )
 
+            async def cancel_url(_context, _params):
+                return ElicitResult(action="cancel")
+
+            async with Client(
+                server,
+                elicitation_callback=cancel_url,
+                mode="legacy",
+            ) as client:
+                cancelled = await client.call_tool(
+                    "create_media_upload",
+                    arguments,
+                )
+
         self.assertEqual(first.structured_content, second.structured_content)
         self.assertEqual(first.structured_content["transport"], "tus")
         self.assertEqual(
@@ -317,19 +330,30 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             "remains available",
             declined.structured_content["next_action"],
         )
+        self.assertEqual(
+            cancelled.structured_content["elicitation_action"],
+            "cancel",
+        )
         request_keys = [
             call.kwargs["request_key"] for call in uploads.create_handoff.call_args_list
         ]
-        self.assertEqual(len(request_keys), 3)
+        self.assertEqual(len(request_keys), 4)
         self.assertEqual(len(set(request_keys)), 1)
         self.assertRegex(request_keys[0], r"^[0-9a-f]{64}$")
 
     async def test_stdio_upload_negotiates_url_elicitation(self):
         seen = []
+        completed = []
+        completion_received = asyncio.Event()
 
         async def accept_url(_context, params):
             seen.append(params)
             return ElicitResult(action="accept")
+
+        async def handle_message(message):
+            if isinstance(message, ElicitCompleteNotification):
+                completed.append(message)
+                completion_received.set()
 
         fixture = (
             Path(__file__).parent / "fixtures" / "mcp_upload_server.py"
@@ -350,27 +374,55 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         async with Client(
             stdio_client(parameters),
             elicitation_callback=accept_url,
+            message_handler=handle_message,
             mode="legacy",
         ) as client:
             result = await client.call_tool("create_media_upload", arguments)
+            await asyncio.wait_for(completion_received.wait(), timeout=5)
 
         self.assertFalse(result.is_error)
         self.assertEqual(result.structured_content["elicitation_action"], "accept")
         self.assertEqual(len(seen), 1)
         self.assertEqual(seen[0].mode, "url")
         self.assertEqual(seen[0].url, result.structured_content["upload_page_url"])
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(
+            completed[0].params.elicitation_id,
+            seen[0].elicitation_id,
+        )
 
-    async def test_streamable_http_upload_handles_cancelled_url_elicitation(self):
+    def test_remote_mcp_bounds_stateful_session_idle_time(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            settings = context.settings.model_copy(
+                update={"mcp_session_idle_timeout_seconds": 123}
+            )
+            remote = create_remote_mcp(replace(context, settings=settings))
+
+        self.assertFalse(remote.server.session_manager.stateless)
+        self.assertEqual(
+            remote.server.session_manager.session_idle_timeout,
+            123,
+        )
+
+    async def test_streamable_http_completes_accepted_url_elicitation(self):
         token = "s" * 32
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
         listener.close()
         seen = []
+        completed = []
+        completion_received = asyncio.Event()
 
-        async def cancel_url(_context, params):
+        async def accept_url(_context, params):
             seen.append(params)
-            return ElicitResult(action="cancel")
+            return ElicitResult(action="accept")
+
+        async def handle_message(message):
+            if isinstance(message, ElicitCompleteNotification):
+                completed.append(message)
+                completion_received.set()
 
         with TemporaryDirectory() as directory:
             context, uploads = self.upload_context(
@@ -392,6 +444,13 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 status=status,
                 capability="http-capability",
                 expires_at=now + timedelta(minutes=15),
+            )
+            uploads.get_status.return_value = status.model_copy(
+                update={
+                    "state": UploadState.processing,
+                    "status": "The upload completed and import started.",
+                    "next_action": "Poll the import job.",
+                }
             )
             server = uvicorn.Server(
                 uvicorn.Config(
@@ -420,7 +479,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     )
                     async with Client(
                         transport,
-                        elicitation_callback=cancel_url,
+                        elicitation_callback=accept_url,
+                        message_handler=handle_message,
                         mode="legacy",
                     ) as client:
                         result = await client.call_tool(
@@ -433,15 +493,23 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                                 "idempotency_key": "http-upload-0001",
                             },
                         )
+                        await asyncio.wait_for(
+                            completion_received.wait(),
+                            timeout=5,
+                        )
             finally:
                 server.should_exit = True
                 await serving
 
         self.assertFalse(result.is_error)
-        self.assertEqual(result.structured_content["elicitation_action"], "cancel")
-        self.assertIn("remains available", result.structured_content["next_action"])
+        self.assertEqual(result.structured_content["elicitation_action"], "accept")
         self.assertEqual(len(seen), 1)
         self.assertEqual(seen[0].mode, "url")
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(
+            completed[0].params.elicitation_id,
+            seen[0].elicitation_id,
+        )
 
     async def test_media_upload_tools_enforce_permissions_and_availability(self):
         with TemporaryDirectory() as directory:
