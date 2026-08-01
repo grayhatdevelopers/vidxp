@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import platform
 import sys
 from pathlib import Path
@@ -22,6 +23,37 @@ PRODUCT_ID = "dev.grayhat.vidxp"
 
 def _resolved_path(value: str | Path) -> str:
     return str(Path(value).expanduser().resolve(strict=False))
+
+
+def _windows_executable_extensions() -> tuple[str, ...]:
+    configured = os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    extensions: list[str] = []
+    for value in configured.split(";"):
+        extension = value.strip()
+        if not extension:
+            continue
+        if not extension.startswith("."):
+            extension = f".{extension}"
+        normalized = extension.lower()
+        if normalized not in extensions:
+            extensions.append(normalized)
+    return tuple(extensions)
+
+
+def _resolved_launcher_path(
+    value: str | Path,
+    *,
+    windows: bool | None = None,
+) -> str:
+    launcher = Path(value).expanduser()
+    windows = os.name == "nt" if windows is None else windows
+    if windows and not launcher.exists() and launcher.suffix == "":
+        for extension in _windows_executable_extensions():
+            candidate = launcher.with_name(f"{launcher.name}{extension}")
+            if candidate.is_file():
+                launcher = candidate
+                break
+    return str(launcher.resolve(strict=False))
 
 
 def _module_available(name: str) -> bool:
@@ -108,7 +140,7 @@ def build_desktop_probe(
             "command": "ui",
         },
         "request_id": request_id,
-        "launcher": _resolved_path(resolved_launcher),
+        "launcher": _resolved_launcher_path(resolved_launcher),
         "runtime": {
             "python_executable": _resolved_path(sys.executable),
             "python_version": platform.python_version(),

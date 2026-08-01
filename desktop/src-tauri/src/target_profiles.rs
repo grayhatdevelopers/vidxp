@@ -16,6 +16,8 @@ use tauri::{AppHandle, Wry};
 use tauri_plugin_store::{Store, StoreExt};
 use wait_timeout::ChildExt;
 
+use crate::hide_child_console;
+
 const STORE_FILE: &str = "target-profiles.json";
 const STORE_SCHEMA_KEY: &str = "schema_version";
 const PROFILES_KEY: &str = "profiles";
@@ -333,6 +335,51 @@ fn canonical_executable(path: &Path) -> Result<PathBuf, TargetError> {
     })
 }
 
+#[cfg(windows)]
+fn windows_executable_extensions() -> Vec<String> {
+    std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
+        .split(';')
+        .filter_map(|value| {
+            let value = value.trim();
+            if value.is_empty() {
+                None
+            } else if value.starts_with('.') {
+                Some(value.to_ascii_lowercase())
+            } else {
+                Some(format!(".{}", value.to_ascii_lowercase()))
+            }
+        })
+        .collect()
+}
+
+fn canonical_reported_launcher(reported: &Path, selected: &Path) -> Result<PathBuf, TargetError> {
+    if let Ok(canonical) = canonical_executable(reported) {
+        return (canonical == selected).then_some(canonical).ok_or_else(|| {
+            TargetError::new(
+                TargetErrorCode::LauncherIdentityMismatch,
+                "The probe response belongs to a different launcher than the selected executable.",
+            )
+        });
+    }
+    #[cfg(windows)]
+    if !reported.exists() && reported.extension().is_none() {
+        for extension in windows_executable_extensions() {
+            let mut candidate = reported.as_os_str().to_os_string();
+            candidate.push(extension);
+            if let Ok(canonical) = canonical_executable(Path::new(&candidate))
+                && canonical == selected
+            {
+                return Ok(canonical);
+            }
+        }
+    }
+    Err(TargetError::new(
+        TargetErrorCode::LauncherIdentityMismatch,
+        "The probe did not report a usable VidXP launcher identity.",
+    ))
+}
+
 fn challenge_for(executable: &Path) -> Result<String, TargetError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -357,12 +404,19 @@ fn read_stream(stream: impl Read + Send + 'static) -> thread::JoinHandle<std::io
     })
 }
 
+fn background_command(executable: &Path) -> Command {
+    let mut command = Command::new(executable);
+    hide_child_console(&mut command);
+    command
+}
+
 fn collect_probe_output(
     executable: &Path,
     desktop_version: &str,
     request_id: &str,
 ) -> Result<ProbeOutput, TargetError> {
-    let mut child = Command::new(executable)
+    let mut command = background_command(executable);
+    command
         .args([
             "desktop-probe",
             "--json",
@@ -373,14 +427,13 @@ fn collect_probe_output(
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| {
-            TargetError::new(
-                TargetErrorCode::ProbeCouldNotStart,
-                format!("The VidXP compatibility probe could not start: {error}"),
-            )
-        })?;
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| {
+        TargetError::new(
+            TargetErrorCode::ProbeCouldNotStart,
+            format!("The VidXP compatibility probe could not start: {error}"),
+        )
+    })?;
     let stdout_reader = read_stream(child.stdout.take().expect("piped stdout is available"));
     let stderr_reader = read_stream(child.stderr.take().expect("piped stderr is available"));
     let status = match child.wait_timeout(PROBE_TIMEOUT).map_err(|error| {
@@ -444,18 +497,18 @@ fn collect_probe_output(
 }
 
 fn collect_version_output(executable: &Path) -> Result<ProbeOutput, TargetError> {
-    let mut child = Command::new(executable)
+    let mut command = background_command(executable);
+    command
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| {
-            TargetError::new(
-                TargetErrorCode::ProbeCouldNotStart,
-                format!("The selected executable could not start: {error}"),
-            )
-        })?;
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| {
+        TargetError::new(
+            TargetErrorCode::ProbeCouldNotStart,
+            format!("The selected executable could not start: {error}"),
+        )
+    })?;
     let stdout_reader = read_stream(child.stdout.take().expect("piped stdout is available"));
     let stderr_reader = read_stream(child.stderr.take().expect("piped stderr is available"));
     let status = match child.wait_timeout(PROBE_TIMEOUT).map_err(|error| {
@@ -569,18 +622,7 @@ fn validate_probe_document(
             "This executable does not provide the supported VidXP browser launch contract.",
         ));
     }
-    let launcher = canonical_executable(&document.launcher).map_err(|_| {
-        TargetError::new(
-            TargetErrorCode::LauncherIdentityMismatch,
-            "The probe did not report a usable VidXP launcher identity.",
-        )
-    })?;
-    if launcher != canonical {
-        return Err(TargetError::new(
-            TargetErrorCode::LauncherIdentityMismatch,
-            "The probe response belongs to a different launcher than the selected executable.",
-        ));
-    }
+    canonical_reported_launcher(&document.launcher, canonical)?;
     for (label, path) in [
         ("data", &document.data_root),
         ("repository", &document.repository_root),
@@ -1609,6 +1651,87 @@ mod tests {
     }
 
     #[test]
+    fn exact_and_canonical_symlink_launchers_preserve_selected_identity() {
+        let executable = std::env::current_exe().expect("current executable");
+        let canonical = fs::canonicalize(&executable).expect("canonical executable");
+        let exact = document(&canonical, "nonce");
+        assert!(validate_probe_document(&canonical, "nonce", exact, 100).is_ok());
+
+        let link = std::env::temp_dir().join(format!(
+            "vidxp-launcher-link-{}{}",
+            std::process::id(),
+            std::env::consts::EXE_SUFFIX
+        ));
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&canonical, &link);
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&canonical, &link);
+        if linked.is_err() {
+            return;
+        }
+        let linked_document = document(&link, "nonce");
+        assert!(validate_probe_document(&canonical, "nonce", linked_document, 100).is_ok());
+        fs::remove_file(link).expect("remove launcher symlink");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn extensionless_windows_console_script_identity_resolves_only_selected_shim() {
+        let root =
+            std::env::temp_dir().join(format!("vidxp-launcher-identity-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("launcher test directory");
+        let selected = root.join("vidxp.exe");
+        let similar = root.join("vidxp-helper.exe");
+        fs::write(&selected, b"shim").expect("selected shim");
+        fs::write(&similar, b"other").expect("similar shim");
+        let canonical = fs::canonicalize(&selected).expect("canonical selected shim");
+
+        let mut extensionless = document(&canonical, "nonce");
+        extensionless.launcher = root.join("vidxp");
+        assert!(validate_probe_document(&canonical, "nonce", extensionless, 100).is_ok());
+
+        let mut unrelated = document(&canonical, "nonce");
+        unrelated.launcher = similar;
+        assert_eq!(
+            validate_probe_document(&canonical, "nonce", unrelated, 100)
+                .expect_err("similar sibling")
+                .code,
+            TargetErrorCode::LauncherIdentityMismatch
+        );
+
+        let mut missing = document(&canonical, "nonce");
+        missing.launcher = root.join("missing");
+        assert_eq!(
+            validate_probe_document(&canonical, "nonce", missing, 100)
+                .expect_err("missing launcher")
+                .code,
+            TargetErrorCode::LauncherIdentityMismatch
+        );
+        fs::remove_dir_all(root).expect("remove launcher test directory");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn non_windows_launcher_identity_does_not_resolve_executable_suffixes() {
+        let root =
+            std::env::temp_dir().join(format!("vidxp-launcher-identity-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("launcher test directory");
+        let selected = root.join("vidxp.exe");
+        fs::write(&selected, b"shim").expect("selected shim");
+        let canonical = fs::canonicalize(&selected).expect("canonical selected shim");
+        let mut extensionless = document(&canonical, "nonce");
+        extensionless.launcher = root.join("vidxp");
+
+        assert_eq!(
+            validate_probe_document(&canonical, "nonce", extensionless, 100)
+                .expect_err("ordinary non-Windows path")
+                .code,
+            TargetErrorCode::LauncherIdentityMismatch
+        );
+        fs::remove_dir_all(root).expect("remove launcher test directory");
+    }
+
+    #[test]
     fn probe_rejects_an_incompatible_launch_protocol() {
         let executable = std::env::current_exe().expect("current executable");
         let canonical = fs::canonicalize(executable).expect("canonical executable");
@@ -1709,6 +1832,28 @@ mod tests {
                 .remediation
                 .contains("package-management workflow")
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn real_windows_console_script_passes_the_desktop_inspection_path_when_requested() {
+        let Some(executable) = std::env::var_os("VIDXP_DESKTOP_INTEGRATION_EXECUTABLE") else {
+            return;
+        };
+        let inspected =
+            inspect_executable(Path::new(&executable), "0.4.0-b").expect("real Desktop inspection");
+        let validated = inspected.validated.expect("validated target");
+
+        assert_eq!(inspected.state, InspectionState::ReadyToUse);
+        assert!(inspected.adoptable);
+        assert_eq!(validated.product_version, "0.4.0b0");
+        assert_eq!(validated.probe_protocol_version, 1);
+        assert_eq!(validated.launch_protocol_version, 1);
+        assert_eq!(validated.runtime.python_version, "3.14.0");
+        assert!(validated.frontend.launchable);
+        let expected_data_root =
+            std::env::var_os("VIDXP_DESKTOP_INTEGRATION_DATA_ROOT").expect("integration data root");
+        assert_eq!(validated.data_root, PathBuf::from(expected_data_root));
     }
 
     #[test]

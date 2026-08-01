@@ -866,7 +866,7 @@ fn configured_command(executable_path: &Path, paths: &DesktopPaths) -> Command {
 }
 
 #[cfg(windows)]
-fn hide_child_console(command: &mut Command) {
+pub(crate) fn hide_child_console(command: &mut Command) {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -874,7 +874,7 @@ fn hide_child_console(command: &mut Command) {
 }
 
 #[cfg(not(windows))]
-fn hide_child_console(_command: &mut Command) {}
+pub(crate) fn hide_child_console(_command: &mut Command) {}
 
 fn checked_output(mut command: Command, operation: &str) -> Result<Output, String> {
     hide_child_console(&mut command);

@@ -224,7 +224,14 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
                 <Text size="sm" mt="md">No cached models were found in this folder.</Text>
               ) : inventory ? (
                 <>
-                  <Text fw={650} mt="md">{formatBytes(inventory.total_bytes)} of cached model files found <Text span fw={400} className="mutedText">({inventory.file_count} files)</Text></Text>
+                  {inventory.truncated ? (
+                    <>
+                      <Text fw={650} mt="md">At least {formatBytes(inventory.total_bytes)} across {inventory.file_count} cached files scanned <Text span fw={400} className="mutedText">(partial inventory)</Text></Text>
+                      <Text size="sm" mt="xs">{inventory.detail}</Text>
+                    </>
+                  ) : (
+                    <Text fw={650} mt="md">{formatBytes(inventory.total_bytes)} of cached model files found <Text span fw={400} className="mutedText">({inventory.file_count} files)</Text></Text>
+                  )}
                   {inventory.recognized_models.length > 0 && (
                     <Group gap="xs" mt="xs">{inventory.recognized_models.map((model) => <Badge key={model.id} variant="light">{model.label}</Badge>)}</Group>
                   )}

@@ -14,6 +14,7 @@ from vidxp.local_probe import (
     DESKTOP_LAUNCH_PROTOCOL_VERSION,
     PRODUCT_ID,
     build_desktop_probe,
+    _resolved_launcher_path,
 )
 
 
@@ -169,6 +170,54 @@ class LocalProbeTests(unittest.TestCase):
             payload["compatibility"]["desktop_version"],
             "desktop-development-build",
         )
+
+    def test_windows_extensionless_console_script_resolves_adjacent_exe(self):
+        with TemporaryDirectory() as directory:
+            launcher = Path(directory) / "vidxp"
+            executable = launcher.with_suffix(".exe")
+            executable.write_bytes(b"shim")
+
+            with patch.dict(os.environ, {"PATHEXT": ".COM;.EXE;.BAT;.CMD"}):
+                resolved = _resolved_launcher_path(launcher, windows=True)
+
+        self.assertEqual(resolved, str(executable.resolve()))
+
+    def test_exact_launcher_and_symlink_keep_canonical_identity(self):
+        with TemporaryDirectory() as directory:
+            executable = Path(directory) / "vidxp.exe"
+            executable.write_bytes(b"shim")
+            self.assertEqual(
+                _resolved_launcher_path(executable, windows=True),
+                str(executable.resolve()),
+            )
+            link = Path(directory) / "linked-vidxp.exe"
+            try:
+                link.symlink_to(executable)
+            except OSError:
+                self.skipTest("Creating symlinks is unavailable")
+            self.assertEqual(
+                _resolved_launcher_path(link, windows=True),
+                str(executable.resolve()),
+            )
+
+    def test_windows_launcher_does_not_resolve_unrelated_or_similar_siblings(self):
+        with TemporaryDirectory() as directory:
+            launcher = Path(directory) / "vidxp"
+            (Path(directory) / "vidxp-helper.exe").write_bytes(b"other")
+            (Path(directory) / "other.exe").write_bytes(b"other")
+
+            resolved = _resolved_launcher_path(launcher, windows=True)
+
+        self.assertEqual(resolved, str(launcher.resolve(strict=False)))
+
+    def test_non_windows_launcher_resolution_does_not_add_executable_suffix(self):
+        with TemporaryDirectory() as directory:
+            launcher = Path(directory) / "vidxp"
+            launcher.with_suffix(".exe").write_bytes(b"shim")
+
+            resolved = _resolved_launcher_path(launcher, windows=False)
+
+        self.assertEqual(resolved, str(launcher.resolve(strict=False)))
 
 
 if __name__ == "__main__":

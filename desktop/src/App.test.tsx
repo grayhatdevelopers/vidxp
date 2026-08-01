@@ -445,6 +445,24 @@ describe('target-first setup', () => {
     expect(mocks.modelDirectoryInventory).toHaveBeenCalledWith('D:\\VidXP models');
   });
 
+  it('labels bounded model inventory totals as partial when the scan is truncated', async () => {
+    const user = userEvent.setup();
+    mocks.chooseManagedTarget.mockResolvedValue({});
+    mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', capabilities: {}, surfaces: {} });
+    mocks.runtimeStatus.mockResolvedValue({ state: 'never_configured', ready: false, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'C:\\Models', detail: 'No Desktop-managed runtime has been created yet.' });
+    mocks.modelDirectoryInventory.mockResolvedValue({ directory: 'C:\\Models', exists: true, readable: true, total_bytes: 1073741824, file_count: 100000, recognized_models: [], empty: false, verification_required: true, truncated: true, detail: 'Cached files were found. The bounded inventory is partial; preparation must verify required artifacts.' });
+    renderApp();
+    await screen.findByRole('heading', { name: 'Where should VidXP run?' });
+    await user.click(screen.getByRole('radio', { name: /Set up VidXP for me/i }));
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.click(screen.getByRole('button', { name: 'Continue to setup' }));
+
+    expect(await screen.findByText(/At least 1\.00 GiB across 100000 cached files scanned/)).toBeVisible();
+    expect(screen.getByText(/bounded inventory is partial/)).toBeVisible();
+    expect(screen.queryByText(/1\.00 GiB of cached model files found/)).not.toBeInTheDocument();
+    expect(screen.getByText(/verification required.*reuse valid cached files/i)).toBeVisible();
+  });
+
   it('renders the setup flow without console errors', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     renderApp();
