@@ -1667,10 +1667,8 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
             command
         }
     };
+    configure_ui_service_command(&mut command, &profile.repository_root, port);
     command
-        .arg("--index-dir")
-        .arg(&profile.repository_root)
-        .args(["ui", "--host", "127.0.0.1", "--port", &port.to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -1703,6 +1701,17 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
     let _ = process.kill();
     let _ = process.wait();
     Err("The VidXP interface did not become ready in 30 seconds.".into())
+}
+
+fn configure_ui_service_command(command: &mut Command, repository_root: &Path, port: u16) {
+    command
+        // The desktop owns the one intentional browser open after readiness. Without
+        // headless mode Streamlit also opens the URL, producing duplicate tabs and
+        // potentially visible launcher consoles on Windows.
+        .env("STREAMLIT_SERVER_HEADLESS", "true")
+        .arg("--index-dir")
+        .arg(repository_root)
+        .args(["ui", "--host", "127.0.0.1", "--port", &port.to_string()]);
 }
 
 fn hide_main_window(app: &AppHandle) -> Result<(), String> {
@@ -1987,15 +1996,17 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        base_package_specification, capability_command_arguments,
+        base_package_specification, capability_command_arguments, configure_ui_service_command,
         dependency_installation_arguments, desktop_paths_from_roots, display_command,
         inventory_model_directory, manifest, normalize_line_endings,
         normalized_runtime_constraints, package_acquisition_arguments, package_index,
         package_specification, required_encoder_missing, selected_capabilities, selected_surfaces,
     };
     use std::{
+        ffi::OsStr,
         fs,
         path::{Path, PathBuf},
+        process::Command,
     };
 
     #[test]
@@ -2142,6 +2153,32 @@ mod tests {
         assert!(!required_encoder_missing(encoders, "libx264"));
         assert!(!required_encoder_missing(encoders, "aac"));
         assert!(required_encoder_missing(encoders, "libx265"));
+    }
+
+    #[test]
+    fn desktop_ui_service_is_headless_so_only_the_desktop_opens_the_browser() {
+        let mut command = Command::new("vidxp");
+
+        configure_ui_service_command(&mut command, Path::new("repository"), 43123);
+
+        assert!(command.get_envs().any(|(key, value)| {
+            key == OsStr::new("STREAMLIT_SERVER_HEADLESS") && value == Some(OsStr::new("true"))
+        }));
+        assert_eq!(
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "--index-dir",
+                "repository",
+                "ui",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "43123",
+            ]
+        );
     }
 
     #[test]
