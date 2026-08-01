@@ -164,7 +164,7 @@ mdurl==0.1.2
     # via markdown-it-py
 mmh3==5.2.1
     # via chromadb
-mpmath==1.3.0
+mpmath==1.4.1
     # via sympy
 multidict==6.7.1
     # via
@@ -292,7 +292,7 @@ pydantic==2.13.4
     #   vidxp
 pydantic-ai-slim==2.20.0
     # via vidxp
-pydantic-core==2.46.4
+pydantic-core==2.47.0
     # via pydantic
 pydantic-graph==2.20.0
     # via pydantic-ai-slim
@@ -400,7 +400,7 @@ threadpoolctl==3.6.0
     # via scikit-learn
 tiktoken==0.13.0
     # via pydantic-ai-slim
-tokenizers==0.22.2
+tokenizers==0.23.1
     # via
     #   chromadb
     #   faster-whisper
@@ -478,7 +478,7 @@ urllib3==2.7.0
     # via
     #   kubernetes
     #   requests
-uvicorn==0.51.0
+uvicorn==0.52.0
     # via
     #   chromadb
     #   streamlit
