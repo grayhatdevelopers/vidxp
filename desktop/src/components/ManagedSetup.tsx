@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 
 import {
   chooseModelDirectory,
+  displayPath,
   errorMessage,
   hideToTray,
   installMediaRuntime,
@@ -133,6 +134,9 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
   }
 
   const isBusy = busy === 'load' || busy === 'folder' || busy === 'install' || busy === 'launch';
+  const attentionTitle = /ffmpeg|ffprobe/i.test(message)
+    ? 'Media tools required'
+    : 'Managed runtime not ready';
 
   return (
     <section aria-labelledby="managed-setup-title">
@@ -174,7 +178,7 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
 
           <div className="setupPanel">
             <Group justify="space-between" align="center" wrap="nowrap">
-              <div className="folderCopy"><Text fw={650}>Model storage</Text><Text size="sm" className="pathText">{modelDirectory || 'Using the default location'}</Text></div>
+              <div className="folderCopy"><Text fw={650}>Model storage</Text><Text size="sm" className="pathText">{modelDirectory ? displayPath(modelDirectory) : 'Using the default location'}</Text></div>
               <Button variant="default" leftSection={<IconFolderOpen aria-hidden="true" size={16} />} loading={busy === 'folder'} onClick={() => void chooseFolder()}>Choose folder…</Button>
             </Group>
             <Switch mt="lg" checked={prepareModels} onChange={(event) => setPrepareModels(event.currentTarget.checked)} label="Download selected models now" description="Turn this off to defer model downloads until later." />
@@ -182,8 +186,20 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
         </Stack>
       )}
 
+      {status && !status.ready && busy !== 'install' && (
+        <Alert
+          className="managedAttention"
+          icon={<IconAlertCircle aria-hidden="true" />}
+          color="yellow"
+          title={attentionTitle}
+          role="alert"
+        >
+          {message}
+        </Alert>
+      )}
+
       <div className="managedFooter">
-        <div className="statusRegion" role="status" aria-live="polite" aria-atomic="true">{isBusy && <Loader size="xs" />}{message}</div>
+        <div className="statusRegion" role="status" aria-live="polite" aria-atomic="true">{isBusy && <Loader size="xs" />}{(isBusy || status?.ready) && message}</div>
         {status?.ready ? (
           <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={busy === 'launch'} onClick={() => void launch()}>Open VidXP</Button>
         ) : (

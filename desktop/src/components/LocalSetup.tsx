@@ -37,15 +37,23 @@ interface LocalSetupProps {
   onActivated: () => Promise<void>;
 }
 
+interface CandidateState extends LocalTargetCandidate {
+  validation?: LocalTargetValidation;
+  validationError?: string;
+}
+
 function candidatePath(candidate: LocalTargetCandidate): string {
   return candidate.canonical_executable || candidate.executable;
 }
 
+function candidateDisplayPath(candidate: LocalTargetCandidate): string {
+  return candidate.display_path || candidatePath(candidate);
+}
+
 export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
-  const [candidates, setCandidates] = useState<LocalTargetCandidate[]>([]);
+  const [candidates, setCandidates] = useState<CandidateState[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('Local VidXP');
-  const [validation, setValidation] = useState<LocalTargetValidation | null>(null);
   const [busy, setBusy] = useState<'discover' | 'browse' | 'validate' | 'activate' | null>(
     'discover',
   );
@@ -57,12 +65,21 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
     () => candidates.find((candidate) => candidatePath(candidate) === selectedPath) ?? null,
     [candidates, selectedPath],
   );
+  const validation = selected?.validation ?? null;
 
   async function discover() {
     setBusy('discover');
     setFailure(null);
     try {
-      setCandidates(await discoverLocalTargets());
+      const discovered = await discoverLocalTargets();
+      setCandidates((current) => discovered.map((candidate) => {
+        const previous = current.find((item) => candidatePath(item) === candidatePath(candidate));
+        return {
+          ...candidate,
+          validation: previous?.validation,
+          validationError: previous?.validationError,
+        };
+      }));
     } catch (error) {
       setFailure({ message: errorMessage(error, 'VidXP discovery could not be completed.') });
     } finally {
@@ -76,8 +93,8 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
 
   function selectCandidate(path: string) {
     setSelectedPath(path);
-    setValidation(null);
-    setFailure(null);
+    const candidate = candidates.find((item) => candidatePath(item) === path);
+    setFailure(candidate?.validationError ? { message: candidate.validationError } : null);
   }
 
   async function browse() {
@@ -99,11 +116,14 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
   async function validate() {
     if (!selectedPath) return;
     setBusy('validate');
-    setValidation(null);
     setFailure(null);
     try {
       const result = await validateLocalTarget(selectedPath);
-      setValidation(result);
+      setCandidates((current) => current.map((candidate) => (
+        candidatePath(candidate) === selectedPath
+          ? { ...candidate, validation: result, validationError: undefined }
+          : candidate
+      )));
       if (!isCompatible(result)) {
         setFailure({
           code: result.error?.code,
@@ -112,7 +132,13 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
         });
       }
     } catch (error) {
-      setFailure({ message: errorMessage(error, 'VidXP validation failed.') });
+      const message = errorMessage(error, 'VidXP validation failed.');
+      setCandidates((current) => current.map((candidate) => (
+        candidatePath(candidate) === selectedPath
+          ? { ...candidate, validation: undefined, validationError: message }
+          : candidate
+      )));
+      setFailure({ message });
     } finally {
       setBusy(null);
     }
@@ -182,14 +208,28 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
             <Stack gap="xs">
               {candidates.map((candidate) => {
                 const path = candidatePath(candidate);
+                const candidateValidation = candidate.validation;
+                const validated = candidateValidation && isCompatible(candidateValidation);
                 return (
                   <Radio.Card className="candidateCard" key={path} value={path}>
                     <Group wrap="nowrap" align="flex-start">
                       <Radio.Indicator aria-hidden="true" />
                       <div className="candidateCopy">
-                        <Text fw={650}>{candidate.display_name || 'VidXP executable'}</Text>
-                        <Code className="pathCode">{path}</Code>
-                        {candidate.source && <Text size="xs" className="mutedText">{candidate.source}</Text>}
+                        <Group justify="space-between" align="flex-start" gap="xs">
+                          <Text fw={650}>{candidate.display_name || 'Candidate executable'}</Text>
+                          <Badge color={validated ? 'teal' : candidate.validationError ? 'red' : 'gray'} variant="light">
+                            {validated ? 'Compatible' : candidate.validationError ? 'Validation failed' : 'Not validated'}
+                          </Badge>
+                        </Group>
+                        <Code className="pathCode">{candidateDisplayPath(candidate)}</Code>
+                        {candidate.source && <Text size="xs" className="mutedText">Discovered via {candidate.source}</Text>}
+                        {candidateValidation && (
+                          <div className="candidateMetadata">
+                            <Text size="xs">VidXP {candidateValidation.vidxp_version || 'reported'} · Python {candidateValidation.python_version || 'reported'}</Text>
+                            <Text size="xs">Probe {candidateValidation.protocol_version ?? candidateValidation.probe_version ?? 'compatible'} · Browser surface {candidateValidation.can_launch_frontend === false ? 'unavailable' : 'available'}</Text>
+                          </div>
+                        )}
+                        {candidate.validationError && <Text size="xs" c="red.3" mt="xs">{candidate.validationError}</Text>}
                       </div>
                     </Group>
                   </Radio.Card>
@@ -224,7 +264,7 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
           <Stack gap="md">
             <div>
               <Text className="fieldLabel">Resolved executable</Text>
-              <Code className="resolvedPath">{candidatePath(selected)}</Code>
+              <Code className="resolvedPath">{candidateDisplayPath(selected)}</Code>
             </div>
             <TextInput
               label="Target name"
@@ -265,7 +305,8 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
           <div className="validationGrid">
             <span>VidXP</span><strong>{validation.vidxp_version || 'Verified'}</strong>
             <span>Protocol</span><strong>{validation.protocol_version ?? validation.probe_version ?? 'Compatible'}</strong>
-            <span>Python</span><strong>{validation.python_version || validation.python_executable || 'Reported by target'}</strong>
+            <span>Python</span><strong>{validation.python_version || validation.display_python_executable || validation.python_executable || 'Reported by target'}</strong>
+            {validation.display_data_root && <><span>Data root</span><Code className="pathCode">{validation.display_data_root}</Code></>}
             <span>Desktop action</span><strong>{desktopSurfaceUnavailable ? 'Unavailable' : 'Browser interface available'}</strong>
           </div>
           {desktopSurfaceUnavailable && (

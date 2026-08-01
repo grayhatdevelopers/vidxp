@@ -1,5 +1,5 @@
 import { MantineProvider } from '@mantine/core';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -19,6 +19,18 @@ const mocks = vi.hoisted(() => ({
   chooseModelDirectory: vi.fn(),
 }));
 
+const windowMocks = vi.hoisted(() => ({
+  close: vi.fn(),
+  isMaximized: vi.fn(),
+  minimize: vi.fn(),
+  onResized: vi.fn(),
+  toggleMaximize: vi.fn(),
+}));
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => windowMocks,
+}));
+
 vi.mock('./tauri', () => ({
   ...mocks,
   selectedProfile: (state: any) =>
@@ -29,6 +41,7 @@ vi.mock('./tauri', () => ({
     validation.compatible === true || validation.status === 'compatible',
   errorMessage: (error: unknown, fallback: string) =>
     typeof error === 'string' ? error : fallback,
+  displayPath: (path: string) => path,
 }));
 
 import { App } from './App';
@@ -66,12 +79,16 @@ async function enterLocalFlow(user: ReturnType<typeof userEvent.setup>) {
 describe('target-first setup', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    windowMocks.isMaximized.mockResolvedValue(false);
+    windowMocks.onResized.mockResolvedValue(vi.fn());
+    windowMocks.toggleMaximize.mockResolvedValue(undefined);
+    windowMocks.minimize.mockResolvedValue(undefined);
+    windowMocks.close.mockResolvedValue(undefined);
     mocks.targetSetupState.mockResolvedValue(emptyState);
     mocks.discoverLocalTargets.mockResolvedValue([
       {
         executable: 'C:\\Tools\\VidXP\\vidxp.exe',
         canonical_executable: 'C:\\Tools\\VidXP\\vidxp.exe',
-        display_name: 'VidXP 0.4',
         source: 'PATH',
       },
     ]);
@@ -95,6 +112,47 @@ describe('target-first setup', () => {
     expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
   });
 
+  it('renders the real VidXP identity once in an accessible custom title bar', async () => {
+    renderApp();
+
+    await screen.findByRole('heading', { name: 'Where should VidXP run?' });
+    expect(screen.getAllByText('VidXP', { exact: true })).toHaveLength(1);
+    expect(screen.getByTestId('vidxp-logo')).toHaveAttribute('src', '/icon.png');
+    expect(document.querySelector('.brandMark')).not.toBeInTheDocument();
+  });
+
+  it('exposes minimize, maximize, restore, and normal close requests', async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderApp();
+    await screen.findByRole('heading', { name: 'Where should VidXP run?' });
+
+    await user.click(screen.getByRole('button', { name: 'Minimize window' }));
+    await user.click(screen.getByRole('button', { name: 'Maximize window' }));
+    await user.click(screen.getByRole('button', { name: 'Close window' }));
+    await user.dblClick(document.querySelector('.titleBar') as HTMLElement);
+
+    expect(windowMocks.minimize).toHaveBeenCalledTimes(1);
+    expect(windowMocks.toggleMaximize).toHaveBeenCalledTimes(2);
+    expect(windowMocks.close).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('.titleBar')).toHaveAttribute('data-tauri-drag-region');
+    expect(screen.getByRole('button', { name: 'Minimize window' })).not.toHaveAttribute('data-tauri-drag-region');
+    unmount();
+  });
+
+  it('updates the maximize control when the native window state changes', async () => {
+    let resized: (() => void) | undefined;
+    windowMocks.onResized.mockImplementation(async (handler: () => void) => {
+      resized = handler;
+      return vi.fn();
+    });
+    renderApp();
+    expect(await screen.findByRole('button', { name: 'Maximize window' })).toBeVisible();
+
+    windowMocks.isMaximized.mockResolvedValue(true);
+    await act(async () => resized?.());
+    expect(await screen.findByRole('button', { name: 'Restore window' })).toBeVisible();
+  });
+
   it('supports keyboard target selection and exposes visible semantic controls', async () => {
     const user = userEvent.setup();
     renderApp();
@@ -112,8 +170,10 @@ describe('target-first setup', () => {
     renderApp();
     await enterLocalFlow(user);
 
-    const candidate = await screen.findByRole('radio', { name: /VidXP 0.4/i });
+    const candidate = await screen.findByRole('radio', { name: /Candidate executable/i });
     expect(candidate).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText('Not validated')).toBeVisible();
+    expect(screen.queryByText(/VidXP 0\.4/)).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Review and validate' })).not.toBeInTheDocument();
   });
 
@@ -127,7 +187,7 @@ describe('target-first setup', () => {
       selected_profile: localProfile,
     });
 
-    await user.click(await screen.findByRole('radio', { name: /VidXP 0.4/i }));
+    await user.click(await screen.findByRole('radio', { name: /Candidate executable/i }));
     expect(screen.getAllByText('C:\\Tools\\VidXP\\vidxp.exe')).toHaveLength(2);
     await user.click(screen.getByRole('button', { name: 'Validate installation' }));
     expect(await screen.findByText('Compatible VidXP installation')).toBeVisible();
@@ -169,7 +229,7 @@ describe('target-first setup', () => {
     renderApp();
     await enterLocalFlow(user);
 
-    await user.click(await screen.findByRole('radio', { name: /VidXP 0.4/i }));
+    await user.click(await screen.findByRole('radio', { name: /Candidate executable/i }));
     await user.click(screen.getByRole('button', { name: 'Validate installation' }));
 
     expect(await screen.findByText('Compatible installation · desktop action required')).toBeVisible();
@@ -188,6 +248,63 @@ describe('target-first setup', () => {
     expect(screen.getByRole('button', { name: 'Open VidXP' })).toBeDisabled();
     expect(mocks.installMediaRuntime).not.toHaveBeenCalled();
     expect(mocks.installRuntime).not.toHaveBeenCalled();
+  });
+
+  it('keeps validated details associated with the canonical candidate identity', async () => {
+    const user = userEvent.setup();
+    mocks.discoverLocalTargets.mockResolvedValue([
+      {
+        executable: '\\\\?\\C:\\Tools\\VidXP\\vidxp.exe',
+        canonical_executable: '\\\\?\\C:\\Tools\\VidXP\\vidxp.exe',
+        display_path: 'C:\\Tools\\VidXP\\vidxp.exe',
+        source: 'PATH',
+      },
+      {
+        executable: '\\\\?\\D:\\Apps\\vidxp.exe',
+        canonical_executable: '\\\\?\\D:\\Apps\\vidxp.exe',
+        display_path: 'D:\\Apps\\vidxp.exe',
+        source: 'PATH',
+      },
+    ]);
+    mocks.validateLocalTarget.mockResolvedValue({
+      compatible: true,
+      canonical_executable: '\\\\?\\C:\\Tools\\VidXP\\vidxp.exe',
+      display_executable: 'C:\\Tools\\VidXP\\vidxp.exe',
+      vidxp_version: '0.3.0',
+      protocol_version: 1,
+      launch_protocol_version: 1,
+      python_version: '3.14.6',
+      can_launch_frontend: true,
+    });
+    renderApp();
+    await enterLocalFlow(user);
+
+    const candidate = await screen.findByRole('radio', { name: /C:\\Tools\\VidXP\\vidxp\.exe/i });
+    await user.click(candidate);
+    await user.click(screen.getByRole('button', { name: 'Validate installation' }));
+
+    expect(await screen.findByText('VidXP 0.3.0 · Python 3.14.6')).toBeVisible();
+    expect(screen.getByText('Probe 1 · Browser surface available')).toBeVisible();
+    expect(screen.getByText('Compatible')).toBeVisible();
+    expect(screen.getAllByText('Not validated')).toHaveLength(1);
+    expect(mocks.validateLocalTarget).toHaveBeenCalledWith('\\\\?\\C:\\Tools\\VidXP\\vidxp.exe');
+    expect(screen.queryByText('\\\\?\\C:\\Tools\\VidXP\\vidxp.exe')).not.toBeInTheDocument();
+  });
+
+  it('keeps a failed compatibility result attached to the selected candidate', async () => {
+    const user = userEvent.setup();
+    mocks.validateLocalTarget.mockRejectedValue(
+      'UNSUPPORTED_PROBE_PROTOCOL · This executable uses desktop probe protocol 2.',
+    );
+    renderApp();
+    await enterLocalFlow(user);
+
+    await user.click(await screen.findByRole('radio', { name: /Candidate executable/i }));
+    await user.click(screen.getByRole('button', { name: 'Validate installation' }));
+
+    expect(await screen.findByText('Validation failed')).toBeVisible();
+    expect(screen.getAllByText(/This executable uses desktop probe protocol 2/)).toHaveLength(2);
+    expect(screen.queryByText('Compatible VidXP installation')).not.toBeInTheDocument();
   });
 
   it('allows explicit browsing when discovery is empty', async () => {
@@ -246,7 +363,7 @@ describe('target-first setup', () => {
     const user = userEvent.setup();
     mocks.chooseManagedTarget.mockResolvedValue({});
     mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', capabilities: {}, surfaces: {} });
-    mocks.runtimeStatus.mockResolvedValue({ ready: false, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'models', detail: 'Not installed.' });
+    mocks.runtimeStatus.mockResolvedValue({ ready: false, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'models', detail: 'FFmpeg was not found. ffprobe was not found. Run guided setup, then retry.' });
     renderApp();
     await screen.findByRole('heading', { name: 'Where should VidXP run?' });
 
@@ -258,6 +375,7 @@ describe('target-first setup', () => {
 
     await user.click(screen.getByRole('button', { name: 'Continue to setup' }));
     await screen.findByRole('heading', { name: 'Set up local processing' });
+    expect(screen.getByRole('alert')).toHaveTextContent('Media tools required');
     expect(mocks.chooseManagedTarget).toHaveBeenCalledTimes(1);
     expect(mocks.installRuntime).not.toHaveBeenCalled();
   });

@@ -1,11 +1,12 @@
 import { Alert, Button, Group, Loader, Text, ThemeIcon, Title } from '@mantine/core';
-import { IconAlertCircle, IconArrowLeft, IconBrandSpeedtest, IconDownload } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowLeft, IconDownload } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 
 import { LocalSetup } from './components/LocalSetup';
 import { ManagedSetup } from './components/ManagedSetup';
 import { TargetChoice } from './components/TargetChoice';
 import { TargetSummary } from './components/TargetSummary';
+import { TitleBar } from './components/TitleBar';
 import {
   chooseManagedTarget,
   errorMessage,
@@ -74,24 +75,14 @@ export function App() {
   const profile = setupState ? selectedProfile(setupState) : null;
 
   return (
-    <div className="appBackdrop">
-      <div className="aurora auroraOne" aria-hidden="true" />
-      <div className="aurora auroraTwo" aria-hidden="true" />
-      <main className="appShell">
-        <header className="brandHeader">
-          <Group gap="sm">
-            <ThemeIcon className="brandMark" size={36} radius="md" variant="gradient" gradient={{ from: 'violet', to: 'cyan' }}>
-              <IconBrandSpeedtest aria-hidden="true" size={22} />
-            </ThemeIcon>
-            <div>
-              <Text fw={750} lh={1.1}>VidXP</Text>
-              <Text size="xs" className="mutedText">Desktop</Text>
-            </div>
-          </Group>
-          <Text size="xs" className="privateLabel">LOCAL SETUP</Text>
-        </header>
-
-        <div className="contentFrame">
+    <div className="appViewport">
+      <TitleBar />
+      <div className="appBackdrop">
+        <div className="aurora auroraOne" aria-hidden="true" />
+        <div className="aurora auroraTwo" aria-hidden="true" />
+        <div className="mainScroller">
+          <main className="appShell">
+            <div className="contentFrame">
           {failure && (
             <Alert icon={<IconAlertCircle aria-hidden="true" />} color="red" title="Desktop initialization issue" role="alert" mb="lg">
               {failure}
@@ -153,13 +144,15 @@ export function App() {
               <Button mt="md" variant="light" onClick={() => setStage('choice')}>Choose a target</Button>
             </Alert>
           )}
-        </div>
+            </div>
 
-        <footer className="appFooter">
-          <span>Target metadata stays private to VidXP Desktop.</span>
-          <span>Credentials are never stored in this setup profile.</span>
-        </footer>
-      </main>
+            <footer className="appFooter">
+              <span>Target metadata stays private to VidXP Desktop.</span>
+              <span>Credentials are never stored in this setup profile.</span>
+            </footer>
+          </main>
+        </div>
+      </div>
     </div>
   );
 }

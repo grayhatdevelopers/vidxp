@@ -30,7 +30,6 @@ export function TargetChoice({ value, onChange, onContinue }: TargetChoiceProps)
   return (
     <section aria-labelledby="target-choice-title">
       <div className="sectionHeading">
-        <Text className="eyebrow">FIRST, CHOOSE A TARGET</Text>
         <Title id="target-choice-title" order={1} className="displayTitle">
           Where should VidXP run?
         </Title>

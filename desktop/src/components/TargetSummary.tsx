@@ -14,7 +14,7 @@ interface TargetSummaryProps {
 export function TargetSummary({ profile, validationError, notice, onChooseAnother }: TargetSummaryProps) {
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
-  const executable = profile.canonical_executable || profile.executable;
+  const executable = profile.display_executable || profile.canonical_executable || profile.executable;
   const desktopSurfaceUnavailable = profile.can_launch_frontend === false;
   const desktopAction = desktopSurfaceUnavailable
     ? profile.lifecycle_ownership === 'external'
@@ -68,7 +68,7 @@ export function TargetSummary({ profile, validationError, notice, onChooseAnothe
           <Text>Ownership</Text><strong>{profile.lifecycle_ownership === 'external' ? 'You manage this installation' : 'VidXP Desktop manages this runtime'}</strong>
           {executable && <><Text>Executable</Text><Code className="pathCode">{executable}</Code></>}
           {profile.vidxp_version && <><Text>VidXP version</Text><strong>{profile.vidxp_version}</strong></>}
-          {profile.data_root && <><Text>Data root</Text><Code className="pathCode">{profile.data_root}</Code></>}
+          {profile.data_root && <><Text>Data root</Text><Code className="pathCode">{profile.display_data_root || profile.data_root}</Code></>}
           {profile.last_validated_at && <><Text>Last checked</Text><strong>{new Date(profile.last_validated_at).toLocaleString()}</strong></>}
           <Text>Desktop action</Text><strong>{desktopAction}</strong>
         </div>

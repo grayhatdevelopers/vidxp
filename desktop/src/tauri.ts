@@ -3,6 +3,22 @@ import { invoke } from '@tauri-apps/api/core';
 export type TargetKind = 'existing_local' | 'managed';
 export type LifecycleOwnership = 'external' | 'desktop';
 
+const WINDOWS_EXTENDED_PATH_PREFIX = '\\\\?\\';
+const WINDOWS_EXTENDED_UNC_PREFIX = 'UNC\\';
+
+export function displayPath(path: string): string {
+  if (!path.startsWith(WINDOWS_EXTENDED_PATH_PREFIX)) return path;
+
+  const remainder = path.slice(WINDOWS_EXTENDED_PATH_PREFIX.length);
+  if (/^[a-z]:\\/i.test(remainder)) return remainder;
+  if (remainder.slice(0, WINDOWS_EXTENDED_UNC_PREFIX.length).toUpperCase() === WINDOWS_EXTENDED_UNC_PREFIX) {
+    const uncPath = remainder.slice(WINDOWS_EXTENDED_UNC_PREFIX.length);
+    const [server, share] = uncPath.split('\\');
+    if (server && share) return `\\\\${uncPath}`;
+  }
+  return path;
+}
+
 export interface TargetError {
   code?: string;
   message?: string;
@@ -27,7 +43,13 @@ export interface TargetProfile {
   lifecycle_ownership: LifecycleOwnership;
   executable?: string | null;
   canonical_executable?: string | null;
+  display_executable?: string | null;
   data_root?: string | null;
+  display_data_root?: string | null;
+  repository_root?: string | null;
+  display_repository_root?: string | null;
+  model_directory?: string | null;
+  display_model_directory?: string | null;
   vidxp_version?: string | null;
   probe_version?: string | number | null;
   compatibility_version?: string | number | null;
@@ -50,6 +72,7 @@ export interface TargetSetupState {
 export interface LocalTargetCandidate {
   executable: string;
   canonical_executable?: string | null;
+  display_path?: string | null;
   display_name?: string | null;
   source?: string | null;
 }
@@ -60,13 +83,16 @@ export interface LocalTargetValidation {
   canonical_executable?: string | null;
   executable?: string | null;
   executable_identity?: string | null;
+  display_executable?: string | null;
   vidxp_version?: string | null;
   protocol_version?: string | number | null;
   probe_version?: string | number | null;
   launch_protocol_version?: string | number | null;
   python_executable?: string | null;
+  display_python_executable?: string | null;
   python_version?: string | null;
   data_root?: string | null;
+  display_data_root?: string | null;
   can_launch_frontend?: boolean | null;
   frontend?: FrontendCapability | null;
   error?: TargetError | null;
@@ -79,6 +105,9 @@ interface RustRuntimeIdentity {
 }
 
 interface RustTargetProfile extends Omit<TargetProfile, 'vidxp_version' | 'probe_version' | 'last_validated_at'> {
+  executable: string;
+  data_root: string;
+  repository_root: string;
   observed_vidxp_version: string;
   probe_schema_version: number;
   probe_protocol_version: number;
@@ -152,6 +181,10 @@ function normalizeProfile(profile: RustTargetProfile): TargetProfile {
   return {
     ...profile,
     canonical_executable: profile.executable,
+    display_executable: displayPath(profile.executable),
+    display_data_root: displayPath(profile.data_root),
+    display_repository_root: displayPath(profile.repository_root),
+    display_model_directory: profile.model_directory ? displayPath(profile.model_directory) : null,
     vidxp_version: profile.observed_vidxp_version,
     probe_version: profile.probe_protocol_version,
     compatibility_version: profile.probe_schema_version,
@@ -183,12 +216,25 @@ export async function discoverLocalTargets(): Promise<LocalTargetCandidate[]> {
   const result = await invoke<LocalTargetCandidate[] | { candidates: LocalTargetCandidate[] }>(
     'discover_local_targets',
   );
-  return Array.isArray(result) ? result : result.candidates;
+  const candidates = Array.isArray(result) ? result : result.candidates;
+  return candidates.map((candidate) => ({
+    ...candidate,
+    canonical_executable: candidate.canonical_executable || candidate.executable,
+    display_path: candidate.display_path || displayPath(candidate.executable),
+    source: candidate.source || 'PATH',
+  }));
 }
 
 export async function chooseLocalExecutable(): Promise<LocalTargetCandidate | null> {
   const result = await invoke<string | LocalTargetCandidate | null>('choose_local_executable');
-  return typeof result === 'string' ? { executable: result, source: 'Selected file' } : result;
+  if (!result) return null;
+  const candidate = typeof result === 'string' ? { executable: result } : result;
+  return {
+    ...candidate,
+    canonical_executable: candidate.canonical_executable || candidate.executable,
+    display_path: candidate.display_path || displayPath(candidate.executable),
+    source: candidate.source || 'Selected file',
+  };
 }
 
 export function validateLocalTarget(executable: string): Promise<LocalTargetValidation> {
@@ -196,13 +242,16 @@ export function validateLocalTarget(executable: string): Promise<LocalTargetVali
     compatible: true,
     executable: result.executable,
     canonical_executable: result.executable,
+    display_executable: displayPath(result.executable),
     vidxp_version: result.product_version,
     protocol_version: result.probe_protocol_version,
     probe_version: result.probe_schema_version,
     launch_protocol_version: result.launch_protocol_version,
     python_executable: result.runtime.python_executable,
+    display_python_executable: displayPath(result.runtime.python_executable),
     python_version: result.runtime.python_version,
     data_root: result.data_root,
+    display_data_root: displayPath(result.data_root),
     can_launch_frontend: result.frontend.launchable,
     frontend: result.frontend,
     warnings:
