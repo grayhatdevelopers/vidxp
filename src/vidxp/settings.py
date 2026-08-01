@@ -28,7 +28,7 @@ from vidxp.repository_layout import RepositoryLayout
 
 DEFAULT_HTTP_PORT = 32191
 _TUSD_EXACT_ORIGIN = re.compile(
-    r"https://(?P<host>"
+    r"(?P<scheme>https|http)://(?P<host>"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
     r"(?:\\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
     r")(?::(?P<port>[0-9]{1,5}))?"
@@ -51,7 +51,16 @@ def _tusd_cors_origins(pattern: str) -> tuple[str, ...]:
         if match is None:
             raise ValueError(
                 "The upload CORS origin regex may contain only exact HTTPS "
-                r"origins with escaped dots, grouped as ^(origin|origin)$."
+                "origins or loopback HTTP origins with escaped dots, grouped "
+                r"as ^(origin|origin)$."
+            )
+        decoded_host = match.group("host").replace(r"\.", ".").lower()
+        if match.group("scheme") == "http" and decoded_host not in {
+            "localhost",
+            "127.0.0.1",
+        }:
+            raise ValueError(
+                "The upload CORS origin regex may use HTTP only for loopback."
             )
         port_text = match.group("port")
         if port_text is not None and not 1 <= int(port_text) <= 65535:
@@ -166,11 +175,6 @@ class VidXPSettings(BaseSettings):
         gt=0,
         le=16 * 1024 * 1024,
     )
-    mcp_session_idle_timeout_seconds: int = Field(
-        default=30 * 60,
-        ge=60,
-        le=24 * 60 * 60,
-    )
     mcp_allowed_hosts: tuple[str, ...] = (
         "127.0.0.1:*",
         "[::1]:*",
@@ -219,10 +223,19 @@ class VidXPSettings(BaseSettings):
         min_length=3,
         max_length=2048,
     )
-    upload_handoff_ttl_seconds: int = Field(
-        default=15 * 60,
+    upload_session_max_files: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+    )
+    upload_session_max_bytes: int = Field(
+        default=100 * 1024 * 1024 * 1024,
+        gt=0,
+    )
+    upload_session_ttl_seconds: int = Field(
+        default=24 * 60 * 60,
         ge=300,
-        le=60 * 60,
+        le=7 * 24 * 60 * 60,
     )
     slm_base_url: str | None = Field(
         default=None,
@@ -571,7 +584,7 @@ class VidXPSettings(BaseSettings):
             )
         parsed = urlsplit(value)
         if (
-            parsed.scheme != "https"
+            parsed.scheme not in {"http", "https"}
             or parsed.hostname is None
             or parsed.username is not None
             or parsed.password is not None
@@ -580,8 +593,16 @@ class VidXPSettings(BaseSettings):
             or parsed.path.rstrip("/") != "/upload-handoff"
         ):
             raise ValueError(
-                "upload_handoff_public_url must be an HTTPS URL ending in "
+                "upload_handoff_public_url must be an HTTP(S) URL ending in "
                 "/upload-handoff."
+            )
+        if parsed.scheme != "https" and parsed.hostname.lower() not in {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        }:
+            raise ValueError(
+                "upload_handoff_public_url must use HTTPS outside loopback."
             )
         try:
             parsed.port
@@ -690,17 +711,14 @@ class VidXPSettings(BaseSettings):
         ):
             raise ValueError(
                 "Upload handoffs require remote uploads, an HTTPS public "
-                "handoff URL, a matching tusd CORS origin regex, and a "
+                "handoff URL (or loopback HTTP), a matching tusd CORS "
+                "origin regex, and a "
                 "dedicated secret of at least 32 characters."
             )
-        if (
-            handoff_configured
-            and self.mcp_session_idle_timeout_seconds
-            <= self.upload_handoff_ttl_seconds
-        ):
+        if self.upload_session_max_bytes < self.upload_max_bytes:
             raise ValueError(
-                "The MCP session idle timeout must be longer than the upload "
-                "handoff TTL so accepted URL elicitations can complete."
+                "The upload session aggregate limit must be at least the "
+                "per-file upload limit."
             )
         if self.upload_cors_origin_regex is not None:
             allowed_origins = _tusd_cors_origins(

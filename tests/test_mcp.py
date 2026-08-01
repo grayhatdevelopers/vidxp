@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import httpx2
 import uvicorn
@@ -20,7 +20,7 @@ from mcp.client import Client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
-from mcp.types import ElicitCompleteNotification, ElicitResult, ResourceLink
+from mcp.types import ResourceLink
 
 from vidxp.application_models import (
     ApplicationError,
@@ -34,6 +34,7 @@ from vidxp.application_models import (
     JobQueue,
     JobState,
     MediaPage,
+    MediaUploadSessionStatus,
     MediaUploadStatus,
     Principal,
     QueryVideoCommand,
@@ -55,19 +56,20 @@ from vidxp.branding import (
 from vidxp.composition import HttpApplicationContext
 from vidxp.control_plane import ControlPlaneApplication
 from vidxp.core.artifacts import ArtifactKind, ArtifactState
-from vidxp.core.uploads import UploadState
+from vidxp.core.uploads import UploadSessionState
 from vidxp.job_service import JobService
 from vidxp.mcp import VidXPTokenVerifier, create_mcp_server, create_remote_mcp
 from vidxp.mcp_cli import main as mcp_main
 from vidxp.mcp_cli import stdio_client_config
 from vidxp.ports import LocalFileResource
 from vidxp.settings import VidXPSettings
-from vidxp.upload_service import RemoteUploadService, UploadHandoff
+from vidxp.upload_service import RemoteUploadService, UploadSessionLink
 
 
 MEDIA_ID = "123456781234423481234567890abcde"
 JOB_ID = "223456781234423481234567890abcde"
 ARTIFACT_ID = "323456781234423481234567890abcde"
+UPLOAD_SESSION_ID = "423456781234423481234567890abcde"
 MCP_TOOL_NAMES = [
     "get_workspace",
     "list_capabilities",
@@ -97,6 +99,35 @@ def queued_job() -> Job:
         kind=JobKind.index,
         state=JobState.queued,
         queue=JobQueue.cpu,
+    )
+
+
+def upload_session_status(
+    *,
+    state: UploadSessionState = UploadSessionState.open,
+    items: tuple[MediaUploadStatus, ...] = (),
+) -> MediaUploadSessionStatus:
+    now = datetime.now(timezone.utc)
+    total_bytes = sum(item.byte_size for item in items)
+    return MediaUploadSessionStatus(
+        session_id=UPLOAD_SESSION_ID,
+        session_state=state,
+        aggregate_state="empty" if not items else "uploading",
+        expires_at=now + timedelta(hours=24),
+        maximum_files=10,
+        maximum_file_bytes=50 * 1024 * 1024 * 1024,
+        maximum_aggregate_bytes=100 * 1024 * 1024 * 1024,
+        file_count=len(items),
+        total_bytes=total_bytes,
+        reserved_file_count=len(items),
+        reserved_bytes=total_bytes,
+        uploaded_file_count=0,
+        uploaded_bytes=0,
+        ready_file_count=0,
+        failed_file_count=0,
+        items=items,
+        status="No files selected yet." if not items else "Uploads are in progress.",
+        next_action="Open the upload session and select one or more videos.",
     )
 
 
@@ -213,13 +244,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(tools["create_media_upload"].annotations.read_only_hint)
         self.assertTrue(tools["create_media_upload"].annotations.idempotent_hint)
         self.assertTrue(tools["get_media_upload"].annotations.read_only_hint)
-        upload_properties = tools["create_media_upload"].input_schema["$defs"][
-            "CreateUploadIntentCommand"
-        ]["properties"]
-        self.assertEqual(
-            set(upload_properties),
-            {"original_filename", "byte_size", "declared_mime_type"},
-        )
+        upload_properties = tools["create_media_upload"].input_schema["properties"]
+        self.assertEqual(set(upload_properties), {"idempotency_key"})
         serialized_upload_schema = json.dumps(
             tools["create_media_upload"].input_schema
         ).lower()
@@ -230,6 +256,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             '"chunks"',
             '"content"',
             '"data"',
+            '"original_filename"',
+            '"byte_size"',
+            '"declared_mime_type"',
         ):
             self.assertNotIn(forbidden, serialized_upload_schema)
         for name in ("search_moments", "query_video"):
@@ -244,25 +273,13 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.structured_content, {"items": []})
         self.assertFalse(result.is_error)
 
-    async def test_media_upload_tools_return_bounded_idempotent_handoff(self):
+    async def test_media_upload_tools_return_idempotent_session_link(self):
         with TemporaryDirectory() as directory:
             context, uploads = self.upload_context(Path(directory))
-            now = datetime.now(timezone.utc)
-            status = MediaUploadStatus(
-                intent_id=MEDIA_ID,
-                state=UploadState.pending,
-                original_filename="sample.mp4",
-                byte_size=5 * 1024 * 1024,
-                declared_mime_type="video/mp4",
-                maximum_bytes=50 * 1024 * 1024 * 1024,
-                expires_at=now + timedelta(hours=24),
-                status="Waiting for the expected video to be selected.",
-                next_action="Open the upload page.",
-            )
-            uploads.create_handoff.return_value = UploadHandoff(
+            status = upload_session_status()
+            uploads.create_upload_session.return_value = UploadSessionLink(
                 status=status,
                 capability="v1.selector.signature",
-                expires_at=now + timedelta(minutes=15),
             )
             uploads.get_status.return_value = status
             server = create_mcp_server(
@@ -272,14 +289,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     scopes=frozenset({"*"}),
                 ),
             )
-            arguments = {
-                "command": {
-                    "original_filename": "sample.mp4",
-                    "byte_size": 5 * 1024 * 1024,
-                    "declared_mime_type": "video/mp4",
-                },
-                "idempotency_key": "agent-upload-0001",
-            }
+            arguments = {"idempotency_key": "agent-upload-0001"}
             async with Client(server) as client:
                 first = await client.call_tool(
                     "create_media_upload",
@@ -291,14 +301,14 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 )
                 current = await client.call_tool(
                     "get_media_upload",
-                    {"intent_id": MEDIA_ID},
+                    {"upload_session_id": UPLOAD_SESSION_ID},
                 )
 
             elicited = []
 
             async def record_url(_context, params):
                 elicited.append(params)
-                return ElicitResult(action="accept")
+                raise AssertionError("URL elicitation must not be used")
 
             async with Client(
                 server,
@@ -311,60 +321,44 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertEqual(first.structured_content, second.structured_content)
-        self.assertEqual(first.structured_content["transport"], "tus")
-        self.assertEqual(
-            first.structured_content["elicitation_action"],
-            "disabled",
-        )
-        self.assertEqual(
-            first.structured_content["browser_authentication"],
-            "capability",
-        )
-        page_url = urlsplit(first.structured_content["upload_page_url"])
+        page_url = urlsplit(first.structured_content["upload_session_url"])
         self.assertEqual(page_url.scheme, "https")
         self.assertEqual(page_url.query, "")
-        self.assertTrue(page_url.fragment.startswith("capability="))
-        self.assertEqual(current.structured_content["state"], "pending")
+        self.assertEqual(
+            parse_qs(page_url.fragment)["capability"],
+            ["v1.selector.signature"],
+        )
+        self.assertEqual(current.structured_content["aggregate_state"], "empty")
         self.assertEqual(disabled.structured_content, first.structured_content)
         self.assertEqual(elicited, [])
         self.assertIn(
-            "Native URL elicitation is disabled",
-            first.structured_content["next_action"],
+            first.structured_content["upload_session_url"],
+            first.content[0].text,
         )
         request_keys = [
-            call.kwargs["request_key"] for call in uploads.create_handoff.call_args_list
+            call.kwargs["request_key"]
+            for call in uploads.create_upload_session.call_args_list
         ]
         self.assertEqual(len(request_keys), 3)
         self.assertEqual(len(set(request_keys)), 1)
         self.assertRegex(request_keys[0], r"^[0-9a-f]{64}$")
 
-    async def test_oidc_upload_elicitation_uses_identity_bound_public_url(self):
+    async def test_oidc_upload_returns_capability_without_url_elicitation(self):
         seen = []
 
         async def decline_url(_context, params):
             seen.append(params)
-            return ElicitResult(action="decline")
+            raise AssertionError("URL elicitation must not be used")
 
         with TemporaryDirectory() as directory:
             context, uploads = self.upload_context(
                 Path(directory),
                 oidc_mcp_url="https://vidxp.example/mcp",
             )
-            now = datetime.now(timezone.utc)
-            status = MediaUploadStatus(
-                intent_id=MEDIA_ID,
-                state=UploadState.pending,
-                original_filename="sample.mp4",
-                byte_size=1024,
-                maximum_bytes=2048,
-                expires_at=now + timedelta(hours=1),
-                status="Waiting for the expected video.",
-                next_action="Open the upload page.",
-            )
-            uploads.create_handoff.return_value = UploadHandoff(
+            status = upload_session_status()
+            uploads.create_upload_session.return_value = UploadSessionLink(
                 status=status,
-                capability="must-not-leak",
-                expires_at=now + timedelta(minutes=15),
+                capability="ordinary-result-capability",
             )
             server = create_mcp_server(
                 context,
@@ -381,38 +375,22 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             ) as client:
                 result = await client.call_tool(
                     "create_media_upload",
-                    {
-                        "command": {
-                            "original_filename": "sample.mp4",
-                            "byte_size": 1024,
-                        },
-                        "idempotency_key": "oidc-upload-0001",
-                    },
+                    {"idempotency_key": "oidc-upload-0001"},
                 )
 
         self.assertFalse(result.is_error)
-        self.assertEqual(result.structured_content["elicitation_action"], "decline")
-        self.assertEqual(result.structured_content["browser_authentication"], "oidc")
-        self.assertEqual(len(seen), 1)
-        elicited = urlsplit(seen[0].url)
-        self.assertEqual(elicited.fragment, "")
-        self.assertEqual(elicited.query, "")
-        self.assertEqual(seen[0].url, result.structured_content["upload_page_url"])
-        self.assertNotIn("must-not-leak", json.dumps(result.structured_content))
+        self.assertEqual(seen, [])
+        self.assertIn(
+            "#capability=ordinary-result-capability",
+            result.structured_content["upload_session_url"],
+        )
 
-    async def test_stdio_upload_negotiates_url_elicitation(self):
+    async def test_stdio_upload_returns_plain_session_link(self):
         seen = []
-        completed = []
-        completion_received = asyncio.Event()
 
         async def accept_url(_context, params):
             seen.append(params)
-            return ElicitResult(action="accept")
-
-        async def handle_message(message):
-            if isinstance(message, ElicitCompleteNotification):
-                completed.append(message)
-                completion_received.set()
+            raise AssertionError("URL elicitation must not be used")
 
         fixture = (
             Path(__file__).parent / "fixtures" / "mcp_upload_server.py"
@@ -422,96 +400,49 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             args=[str(fixture)],
             cwd=Path(__file__).parents[1],
         )
-        arguments = {
-            "command": {
-                "original_filename": "sample.mp4",
-                "byte_size": 5 * 1024 * 1024,
-                "declared_mime_type": "video/mp4",
-            },
-            "idempotency_key": "stdio-upload-0001",
-        }
+        arguments = {"idempotency_key": "stdio-upload-0001"}
         async with Client(
             stdio_client(parameters),
             elicitation_callback=accept_url,
-            message_handler=handle_message,
             mode="legacy",
         ) as client:
             result = await client.call_tool("create_media_upload", arguments)
-            await asyncio.wait_for(completion_received.wait(), timeout=5)
 
         self.assertFalse(result.is_error)
-        self.assertEqual(result.structured_content["elicitation_action"], "accept")
-        self.assertEqual(len(seen), 1)
-        self.assertEqual(seen[0].mode, "url")
-        self.assertEqual(seen[0].url, result.structured_content["upload_page_url"])
-        self.assertEqual(urlsplit(seen[0].url).fragment, "")
-        self.assertNotIn("fixture-capability", json.dumps(result.structured_content))
-        self.assertEqual(len(completed), 1)
-        self.assertEqual(
-            completed[0].params.elicitation_id,
-            seen[0].elicitation_id,
+        self.assertEqual(seen, [])
+        self.assertIn(
+            "#capability=fixture-capability",
+            result.structured_content["upload_session_url"],
         )
 
-    def test_remote_mcp_bounds_stateful_session_idle_time(self):
+    def test_remote_mcp_is_stateless(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
-            settings = context.settings.model_copy(
-                update={"mcp_session_idle_timeout_seconds": 123}
-            )
-            remote = create_remote_mcp(replace(context, settings=settings))
+            remote = create_remote_mcp(context)
 
-        self.assertFalse(remote.server.session_manager.stateless)
-        self.assertEqual(
-            remote.server.session_manager.session_idle_timeout,
-            123,
-        )
+        self.assertTrue(remote.server.session_manager.stateless)
 
-    async def test_streamable_http_completes_accepted_url_elicitation(self):
+    async def test_streamable_http_returns_plain_session_link(self):
         token = "s" * 32
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
         listener.close()
         seen = []
-        completed = []
-        completion_received = asyncio.Event()
 
         async def accept_url(_context, params):
             seen.append(params)
-            return ElicitResult(action="accept")
-
-        async def handle_message(message):
-            if isinstance(message, ElicitCompleteNotification):
-                completed.append(message)
-                completion_received.set()
+            raise AssertionError("URL elicitation must not be used")
 
         with TemporaryDirectory() as directory:
             context, uploads = self.upload_context(
                 Path(directory),
                 oidc_mcp_url=f"http://127.0.0.1:{port}/mcp",
             )
-            now = datetime.now(timezone.utc)
-            status = MediaUploadStatus(
-                intent_id=MEDIA_ID,
-                state=UploadState.pending,
-                original_filename="sample.mp4",
-                byte_size=1024,
-                maximum_bytes=2048,
-                expires_at=now + timedelta(hours=1),
-                status="Waiting for the expected video.",
-                next_action="Open the upload page.",
-            )
-            uploads.create_handoff.return_value = UploadHandoff(
+            status = upload_session_status()
+            uploads.create_upload_session.return_value = UploadSessionLink(
                 status=status,
                 capability="http-capability",
-                expires_at=now + timedelta(minutes=15),
-            )
-            uploads.get_status.return_value = status.model_copy(
-                update={
-                    "state": UploadState.processing,
-                    "status": "The upload completed and import started.",
-                    "next_action": "Poll the import job.",
-                }
             )
             verified = AuthenticatedBearer(
                 principal=Principal(
@@ -557,22 +488,11 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     async with Client(
                         transport,
                         elicitation_callback=accept_url,
-                        message_handler=handle_message,
                         mode="legacy",
                     ) as client:
                         result = await client.call_tool(
                             "create_media_upload",
-                            {
-                                "command": {
-                                    "original_filename": "sample.mp4",
-                                    "byte_size": 1024,
-                                },
-                                "idempotency_key": "http-upload-0001",
-                            },
-                        )
-                        await asyncio.wait_for(
-                            completion_received.wait(),
-                            timeout=5,
+                            {"idempotency_key": "http-upload-0001"},
                         )
             finally:
                 server.should_exit = True
@@ -580,27 +500,16 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 authentication.stop()
 
         self.assertFalse(result.is_error)
-        self.assertEqual(result.structured_content["elicitation_action"], "accept")
-        self.assertEqual(len(seen), 1)
-        self.assertEqual(seen[0].mode, "url")
-        self.assertEqual(urlsplit(seen[0].url).fragment, "")
-        self.assertNotIn("http-capability", json.dumps(result.structured_content))
-        self.assertEqual(len(completed), 1)
-        self.assertEqual(
-            completed[0].params.elicitation_id,
-            seen[0].elicitation_id,
+        self.assertEqual(seen, [])
+        self.assertIn(
+            "#capability=http-capability",
+            result.structured_content["upload_session_url"],
         )
 
     async def test_media_upload_tools_enforce_permissions_and_availability(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
-            arguments = {
-                "command": {
-                    "original_filename": "sample.mp4",
-                    "byte_size": 1024,
-                },
-                "idempotency_key": "agent-upload-0001",
-            }
+            arguments = {"idempotency_key": "agent-upload-0001"}
             write_server = create_mcp_server(
                 context,
                 default_principal=Principal(
@@ -627,7 +536,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 )
                 read_denied = await client.call_tool(
                     "get_media_upload",
-                    {"intent_id": MEDIA_ID},
+                    {"upload_session_id": UPLOAD_SESSION_ID},
                 )
 
         self.assertIn('"required_scope":"vidxp.write"', denied.content[0].text)

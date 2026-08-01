@@ -171,11 +171,12 @@ scenes, ask questions about a library, and create clips or actor overlays.
 Local agents can connect over stdio; remote agents can connect to a
 self-hosted VidXP server.
 
-On a configured remote server, an agent calls `create_media_upload` with the
-expected filename, byte size, and MIME type. VidXP returns a short-lived HTTPS
-handoff page for the user; video bytes go from that page directly to tusd and
-never pass through MCP. The agent polls `get_media_upload` until it receives a
-`media_id`, then passes that ID to `start_indexing`.
+On a configured remote server, an agent calls `create_media_upload` with only an
+idempotency key. VidXP returns a short-lived multi-file HTTPS session; the browser
+discovers authoritative filename, size, and MIME metadata after selection and
+uploads bytes directly to tusd, never through MCP. The agent polls
+`get_media_upload` with the session ID for aggregate and per-file results, then
+passes each completed `media_id` to `start_indexing`.
 
 Agents can call `get_workspace` before acting to inspect registered media,
 active-index coverage, model readiness, and the searchable, queryable,

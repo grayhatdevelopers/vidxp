@@ -24,7 +24,11 @@ UPLOAD_PATH = "/api/v1/media"
 _UPLOAD_HANDOFF_PAGE = re.compile(r"^/upload-handoff/[0-9a-f]{32}$")
 _UPLOAD_HANDOFF_STATUS = re.compile(r"^/upload-handoff/[0-9a-f]{32}/status$")
 _UPLOAD_HANDOFF_BOOTSTRAP = re.compile(r"^/upload-handoff/[0-9a-f]{32}/bootstrap$")
-_UPLOAD_HANDOFF_GRANT = re.compile(r"^/upload-handoff/[0-9a-f]{32}/creation-grant$")
+_UPLOAD_SESSION_FILES = re.compile(r"^/upload-handoff/[0-9a-f]{32}/files$")
+_UPLOAD_SESSION_CANCEL = re.compile(
+    r"^/upload-handoff/[0-9a-f]{32}/files/[0-9a-f]{32}/cancel$"
+)
+_UPLOAD_SESSION_CLOSE = re.compile(r"^/upload-handoff/[0-9a-f]{32}/close$")
 _UPLOAD_HANDOFF_ASSETS = frozenset(
     {
         "/upload-handoff/assets/upload-page.js",
@@ -48,7 +52,9 @@ def _public_upload_handoff_request(scope: Scope) -> bool:
         method == "POST"
         and (
             _UPLOAD_HANDOFF_BOOTSTRAP.fullmatch(path) is not None
-            or _UPLOAD_HANDOFF_GRANT.fullmatch(path) is not None
+            or _UPLOAD_SESSION_FILES.fullmatch(path) is not None
+            or _UPLOAD_SESSION_CANCEL.fullmatch(path) is not None
+            or _UPLOAD_SESSION_CLOSE.fullmatch(path) is not None
         )
     )
 

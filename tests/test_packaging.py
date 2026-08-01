@@ -91,6 +91,7 @@ class PackagingTests(unittest.TestCase):
         )
         for contract in (
             "allowedMetaFields: ['intent_id']",
+            "limit: 1",
             "parallelUploads: 1",
             "overridePatchMethod: false",
             "uploadDataDuringCreation: false",
@@ -101,6 +102,10 @@ class PackagingTests(unittest.TestCase):
             "showProgressDetails: true",
             "theme: 'dark'",
             "history.replaceState",
+            "uppy.addPreProcessor(authorizeFiles)",
+            "maxTotalFileSize: sessionStatus.maximum_aggregate_bytes",
+            "maxNumberOfFiles: sessionStatus.maximum_files",
+            "client_file_key",
         ):
             self.assertIn(contract, source)
         self.assertGreater(
@@ -108,6 +113,8 @@ class PackagingTests(unittest.TestCase):
             source.index("await requestJson(apiUrl('./bootstrap')"),
         )
         self.assertNotIn("8 * 1024 * 1024", source)
+        self.assertNotIn("./authenticate", source)
+        self.assertNotIn("OIDC access token", source)
         self.assertNotIn("innerHTML", source)
         self.assertNotIn("outerHTML", source)
         self.assertIn(

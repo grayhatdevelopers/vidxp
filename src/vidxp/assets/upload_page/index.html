@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="no-referrer">
-    <title>Upload video · VidXP</title>
+    <title>Upload videos · VidXP</title>
     <link rel="stylesheet" href="./assets/upload-page.css">
     <script type="module" src="./assets/upload-page.js"></script>
   </head>
@@ -12,69 +12,45 @@
     <main class="shell">
       <header>
         <p class="eyebrow">VidXP media intake</p>
-        <h1>Upload your video</h1>
-        <p id="summary" class="lede">Opening the secure upload handoff…</p>
+        <h1>Upload your videos</h1>
+        <p id="summary" class="lede">Opening the secure upload session…</p>
       </header>
 
-      <section id="authentication-card" class="card" aria-labelledby="authentication-heading" hidden>
-        <h2 id="authentication-heading">Confirm your VidXP identity</h2>
-        <p class="hint">
-          Sign in with a VidXP API OIDC access token. The token is sent only
-          to this VidXP origin, is not stored by the page, and must identify
-          the same user who started the MCP upload.
-        </p>
-        <form id="authentication-form">
-          <label for="authentication-token">OIDC access token</label>
-          <div class="authentication-controls">
-            <input
-              id="authentication-token"
-              name="token"
-              type="password"
-              autocomplete="off"
-              autocapitalize="none"
-              spellcheck="false"
-              required
-            >
-            <button type="submit">Continue</button>
-          </div>
-        </form>
-        <p id="authentication-state" class="state" role="status" aria-live="polite"></p>
-      </section>
-
-      <section class="card" aria-labelledby="expected-heading">
-        <h2 id="expected-heading">Expected file</h2>
+      <section class="card" aria-labelledby="session-heading">
+        <div class="section-heading">
+          <h2 id="session-heading">Upload session</h2>
+          <button id="close-session" class="secondary" type="button">Close session</button>
+        </div>
         <dl class="facts">
-          <div><dt>Filename</dt><dd id="expected-filename">—</dd></div>
-          <div><dt>Size</dt><dd id="expected-size">—</dd></div>
-          <div><dt>Maximum</dt><dd id="maximum-size">—</dd></div>
+          <div><dt>State</dt><dd id="session-state">—</dd></div>
+          <div><dt>Files</dt><dd id="file-count">—</dd></div>
+          <div><dt>Per-file maximum</dt><dd id="maximum-file-size">—</dd></div>
+          <div><dt>Session maximum</dt><dd id="maximum-session-size">—</dd></div>
+          <div><dt>Reserved</dt><dd id="reserved-summary">—</dd></div>
+          <div><dt>Uploaded</dt><dd id="uploaded-summary">—</dd></div>
           <div><dt>Expires</dt><dd id="expires-at">—</dd></div>
         </dl>
         <p class="hint">
-          VidXP checks the selected name and size before transfer. After upload,
-          the server probes and validates the media before it becomes available.
+          The complete link authorizes this session. VidXP binds each selected
+          file and reserves quota before its bytes travel directly to tusd.
         </p>
       </section>
 
       <section class="card" aria-labelledby="upload-heading">
-        <h2 id="upload-heading">Choose and upload</h2>
+        <h2 id="upload-heading">Choose and upload videos</h2>
         <div id="uppy-dashboard"></div>
         <p id="upload-state" class="state" role="status" aria-live="polite">
-          Waiting for a valid handoff.
+          Waiting for a valid upload session.
         </p>
       </section>
 
       <section class="card" aria-labelledby="status-heading">
-        <h2 id="status-heading">VidXP status</h2>
-        <p><span class="label">State</span> <strong id="intent-state">—</strong></p>
+        <h2 id="status-heading">Per-file results</h2>
         <p id="next-action">The page will refresh the server-owned status automatically.</p>
-        <dl class="facts compact">
-          <div><dt>Upload intent</dt><dd id="intent-id">—</dd></div>
-          <div><dt>Import job</dt><dd id="job-id">—</dd></div>
-          <div><dt>Media ID</dt><dd id="media-id">—</dd></div>
-        </dl>
+        <ul id="session-files" class="session-files" aria-live="polite"></ul>
       </section>
 
-      <noscript>This upload page requires JavaScript to transfer the selected video.</noscript>
+      <noscript>This upload page requires JavaScript to transfer selected videos.</noscript>
     </main>
   </body>
 </html>

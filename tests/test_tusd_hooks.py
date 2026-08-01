@@ -4,6 +4,7 @@ from pathlib import Path
 
 from vidxp.application_models import (
     CreateUploadIntentCommand,
+    CreateUploadFileCommand,
     Principal,
 )
 from vidxp.authentication import StaticBearerAuthenticator
@@ -113,48 +114,50 @@ def test_pre_create_authenticates_and_assigns_stored_id(
     catalog.close()
 
 
-def test_pre_create_accepts_bounded_handoff_for_five_mib(
+def test_pre_create_accepts_session_file_grant_for_five_mib(
     tmp_path: Path,
 ) -> None:
     hooks, catalog, _, _ = _hooks(tmp_path)
     size = 5 * 1024 * 1024
-    handoff = hooks.uploads.create_handoff(
-        CreateUploadIntentCommand(
+    session = hooks.uploads.create_upload_session(
+        principal=Principal(subject="agent", scopes=frozenset({"*"})),
+        request_key="b" * 64,
+    )
+    browser = hooks.uploads.exchange_upload_session(
+        session.status.session_id,
+        capability=session.capability,
+    )
+    authorization = hooks.uploads.authorize_session_file(
+        session.status.session_id,
+        CreateUploadFileCommand(
+            client_file_key="five-mib-file",
             original_filename="five-mib.mp4",
             byte_size=size,
             declared_mime_type="video/mp4",
         ),
-        principal=Principal(subject="agent", scopes=frozenset({"*"})),
-        request_key="b" * 64,
+        session_token=browser.session_token,
     )
-    session = hooks.uploads.exchange_handoff(
-        handoff.status.intent_id,
-        capability=handoff.capability,
-    )
-    grant = hooks.uploads.issue_creation_grant(
-        handoff.status.intent_id,
-        session_token=session.session_token,
-    )
+    assert authorization.grant is not None
 
     response = hooks.handle(
         _pre_create(
-            handoff.status.intent_id,
-            grant.token,
+            authorization.status.intent_id,
+            authorization.grant,
             size=size,
             scheme="VidXP-Handoff",
         )
     )
 
     assert not response.reject_upload
-    stored = catalog.get_upload_intent(handoff.status.intent_id)
+    stored = catalog.get_upload_intent(authorization.status.intent_id)
     assert stored is not None and stored.state.value == "accepted"
     assert response.change_file_info is not None
-    assert grant.token not in stored.model_dump_json()
+    assert authorization.grant not in stored.model_dump_json()
 
     replay = hooks.handle(
         _pre_create(
-            handoff.status.intent_id,
-            grant.token,
+            authorization.status.intent_id,
+            authorization.grant,
             size=size,
             scheme="VidXP-Handoff",
         )
@@ -162,7 +165,9 @@ def test_pre_create_accepts_bounded_handoff_for_five_mib(
     assert replay.reject_upload
     assert replay.http_response is not None
     assert replay.http_response.status_code == 409
-    assert replay.http_response.headers["X-VidXP-Error"] == ("upload_handoff_replayed")
+    assert replay.http_response.headers["X-VidXP-Error"] == (
+        "upload_creation_grant_replayed"
+    )
     catalog.close()
 
 

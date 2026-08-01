@@ -20,7 +20,7 @@ body {
 }
 
 .shell {
-  width: min(48rem, calc(100% - 2rem));
+  width: min(60rem, calc(100% - 2rem));
   margin: 0 auto;
   padding: 3rem 0 5rem;
 }
@@ -97,40 +97,91 @@ h2 {
   grid-template-columns: 1fr;
 }
 
-#authentication-form label {
-  display: block;
-  margin-bottom: 0.45rem;
-  color: #b6c4df;
-  font-weight: 650;
-}
-
-.authentication-controls {
+.section-heading {
   display: flex;
-  gap: 0.65rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
 }
 
-.authentication-controls input {
-  min-width: 0;
-  flex: 1;
+.section-heading h2 {
+  margin-bottom: 0;
+}
+
+button {
   padding: 0.7rem 0.8rem;
   border: 1px solid #49618d;
   border-radius: 0.55rem;
-  background: #08101f;
   color: #e8eefc;
-}
-
-.authentication-controls button {
-  padding: 0.7rem 1rem;
-  border: 0;
-  border-radius: 0.55rem;
-  background: #78a2ff;
-  color: #08101f;
+  background: #182945;
   font-weight: 750;
   cursor: pointer;
 }
 
+button:hover {
+  background: #233b62;
+}
+
+button:focus-visible {
+  outline: 3px solid #96b6ff;
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 #uppy-dashboard {
   margin-top: 1rem;
+}
+
+.session-files {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem 1rem;
+  padding: 1rem;
+  border: 1px solid #2c3d60;
+  border-radius: 0.75rem;
+  background: #08101f99;
+}
+
+.session-file strong,
+.session-file span {
+  overflow-wrap: anywhere;
+}
+
+.file-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.8rem;
+  color: #b6c4df;
+  font-size: 0.88rem;
+}
+
+.file-state {
+  color: #96b6ff;
+  font-weight: 700;
+}
+
+.file-action {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #b6c4df;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.empty-state {
+  color: #8fa0bd;
 }
 
 .state {
@@ -161,8 +212,13 @@ noscript {
     grid-template-columns: 1fr;
   }
 
-  .authentication-controls {
+  .section-heading,
+  .session-file {
     align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .section-heading {
     flex-direction: column;
   }
 

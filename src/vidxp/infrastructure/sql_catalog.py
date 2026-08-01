@@ -13,8 +13,10 @@ from sqlalchemy.pool import NullPool
 from vidxp.core.artifacts import ArtifactRecord, ArtifactState
 from vidxp.core.media import MediaRecord, utc_now
 from vidxp.core.uploads import (
-    UploadHandoffRecord,
     UploadIntentRecord,
+    UploadSessionFileRecord,
+    UploadSessionRecord,
+    UploadSessionState,
     UploadState,
 )
 from vidxp.infrastructure.sql_tables import (
@@ -23,9 +25,10 @@ from vidxp.infrastructure.sql_tables import (
     media,
     media_import_requests,
     metadata,
-    upload_handoffs,
     upload_intents,
     upload_quota,
+    upload_session_files,
+    upload_sessions,
 )
 
 _RESERVED_UPLOAD_STATES = {
@@ -67,17 +70,32 @@ def _upload_record(row: Any) -> UploadIntentRecord:
     )
 
 
-def _upload_handoff_record(row: Any) -> UploadHandoffRecord:
-    return UploadHandoffRecord(
+def _upload_session_record(row: Any) -> UploadSessionRecord:
+    return UploadSessionRecord(
+        session_id=row.session_id,
+        request_key=row.request_key,
         selector=row.selector,
-        intent_id=row.intent_id,
-        principal_subject=row.principal_subject,
-        principal_client_id=row.principal_client_id,
+        capability_digest=row.capability_digest,
+        initiating_subject=row.initiating_subject,
+        initiating_client_id=row.initiating_client_id,
         repository_binding=row.repository_binding,
-        byte_size=row.byte_size,
+        purpose=row.purpose,
+        state=row.state,
+        maximum_files=row.maximum_files,
+        maximum_file_bytes=row.maximum_file_bytes,
+        maximum_aggregate_bytes=row.maximum_aggregate_bytes,
         created_at=datetime.fromisoformat(row.created_at),
         expires_at=datetime.fromisoformat(row.expires_at),
-        session_digest=row.session_digest,
+        browser_session_digest=row.browser_session_digest,
+    )
+
+
+def _upload_session_file_record(row: Any) -> UploadSessionFileRecord:
+    return UploadSessionFileRecord(
+        session_id=row.session_id,
+        client_file_key=row.client_file_key,
+        intent_id=row.intent_id,
+        created_at=datetime.fromisoformat(row.created_at),
         creation_grant_digest=row.creation_grant_digest,
         creation_grant_expires_at=(
             datetime.fromisoformat(row.creation_grant_expires_at)
@@ -493,68 +511,88 @@ class SQLCatalog:
         quota_limit: int,
     ) -> UploadIntentRecord:
         with self._write_transaction() as connection:
-            self._reserve_upload_quota(
-                connection,
-                byte_size=record.byte_size,
+            self.create_upload_intent_in_transaction(
+                record,
                 quota_limit=quota_limit,
-            )
-            connection.execute(
-                insert(upload_intents).values(
-                    intent_id=record.intent_id,
-                    request_key=record.request_key,
-                    original_filename=record.original_filename,
-                    byte_size=record.byte_size,
-                    declared_mime_type=record.declared_mime_type,
-                    state=record.state.value,
-                    created_at=record.created_at.isoformat(),
-                    expires_at=record.expires_at.isoformat(),
-                    upload_id=record.upload_id,
-                    job_id=record.job_id,
-                    media_id=record.media_id,
-                )
+                connection=connection,
             )
         return record
 
-    def create_upload_handoff(
+    def create_upload_intent_in_transaction(
         self,
-        record: UploadHandoffRecord,
-    ) -> UploadHandoffRecord:
+        record: UploadIntentRecord,
+        *,
+        quota_limit: int,
+        connection: Connection,
+    ) -> None:
+        self._reserve_upload_quota(
+            connection,
+            byte_size=record.byte_size,
+            quota_limit=quota_limit,
+        )
+        connection.execute(
+            insert(upload_intents).values(
+                intent_id=record.intent_id,
+                request_key=record.request_key,
+                original_filename=record.original_filename,
+                byte_size=record.byte_size,
+                declared_mime_type=record.declared_mime_type,
+                state=record.state.value,
+                created_at=record.created_at.isoformat(),
+                expires_at=record.expires_at.isoformat(),
+                upload_id=record.upload_id,
+                job_id=record.job_id,
+                media_id=record.media_id,
+            )
+        )
+
+    def create_upload_session(
+        self,
+        record: UploadSessionRecord,
+    ) -> UploadSessionRecord:
         with self._write_transaction() as connection:
             connection.execute(
-                insert(upload_handoffs).values(
+                insert(upload_sessions).values(
+                    session_id=record.session_id,
+                    request_key=record.request_key,
                     selector=record.selector,
-                    intent_id=record.intent_id,
-                    principal_subject=record.principal_subject,
-                    principal_client_id=record.principal_client_id,
+                    capability_digest=record.capability_digest,
+                    initiating_subject=record.initiating_subject,
+                    initiating_client_id=record.initiating_client_id,
                     repository_binding=record.repository_binding,
-                    byte_size=record.byte_size,
+                    purpose=record.purpose,
+                    state=record.state.value,
+                    maximum_files=record.maximum_files,
+                    maximum_file_bytes=record.maximum_file_bytes,
+                    maximum_aggregate_bytes=record.maximum_aggregate_bytes,
                     created_at=record.created_at.isoformat(),
                     expires_at=record.expires_at.isoformat(),
-                    session_digest=record.session_digest,
-                    creation_grant_digest=record.creation_grant_digest,
-                    creation_grant_expires_at=(
-                        record.creation_grant_expires_at.isoformat()
-                        if record.creation_grant_expires_at is not None
-                        else None
-                    ),
-                    creation_grant_consumed_at=(
-                        record.creation_grant_consumed_at.isoformat()
-                        if record.creation_grant_consumed_at is not None
-                        else None
-                    ),
+                    browser_session_digest=record.browser_session_digest,
                 )
             )
         return record
 
-    def get_upload_handoff_by_intent(
+    def get_upload_session_by_request(
         self,
-        intent_id: str,
+        request_key: str,
+    ) -> UploadSessionRecord | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(upload_sessions).where(
+                    upload_sessions.c.request_key == request_key
+                )
+            ).one_or_none()
+        return None if row is None else _upload_session_record(row)
+
+    def get_upload_session(
+        self,
+        session_id: str,
         *,
         connection: Connection | None = None,
         for_update: bool = False,
-    ) -> UploadHandoffRecord | None:
-        statement = select(upload_handoffs).where(
-            upload_handoffs.c.intent_id == intent_id
+    ) -> UploadSessionRecord | None:
+        statement = select(upload_sessions).where(
+            upload_sessions.c.session_id == session_id
         )
         if for_update:
             statement = statement.with_for_update()
@@ -563,17 +601,17 @@ class SQLCatalog:
         else:
             with self.engine.connect() as active:
                 row = active.execute(statement).one_or_none()
-        return None if row is None else _upload_handoff_record(row)
+        return None if row is None else _upload_session_record(row)
 
-    def get_upload_handoff(
+    def get_upload_session_by_selector(
         self,
         selector: str,
         *,
         connection: Connection | None = None,
         for_update: bool = False,
-    ) -> UploadHandoffRecord | None:
-        statement = select(upload_handoffs).where(
-            upload_handoffs.c.selector == selector
+    ) -> UploadSessionRecord | None:
+        statement = select(upload_sessions).where(
+            upload_sessions.c.selector == selector
         )
         if for_update:
             statement = statement.with_for_update()
@@ -582,49 +620,154 @@ class SQLCatalog:
         else:
             with self.engine.connect() as active:
                 row = active.execute(statement).one_or_none()
-        return None if row is None else _upload_handoff_record(row)
+        return None if row is None else _upload_session_record(row)
 
-    def get_upload_handoff_by_creation_grant(
+    def update_upload_session(
+        self,
+        session_id: str,
+        *,
+        connection: Connection,
+        state: UploadSessionState | None = None,
+        browser_session_digest: str | None = None,
+    ) -> None:
+        values: dict[str, Any] = {}
+        if state is not None:
+            values["state"] = state.value
+        if browser_session_digest is not None:
+            values["browser_session_digest"] = browser_session_digest
+        if not values:
+            return
+        result = connection.execute(
+            update(upload_sessions)
+            .where(upload_sessions.c.session_id == session_id)
+            .values(**values)
+        )
+        if result.rowcount != 1:
+            raise RuntimeError("The upload session update was lost.")
+
+    def create_upload_session_file(
+        self,
+        record: UploadSessionFileRecord,
+        intent: UploadIntentRecord,
+        *,
+        quota_limit: int,
+        connection: Connection,
+    ) -> None:
+        self.create_upload_intent_in_transaction(
+            intent,
+            quota_limit=quota_limit,
+            connection=connection,
+        )
+        connection.execute(
+            insert(upload_session_files).values(
+                session_id=record.session_id,
+                client_file_key=record.client_file_key,
+                intent_id=record.intent_id,
+                created_at=record.created_at.isoformat(),
+                creation_grant_digest=record.creation_grant_digest,
+                creation_grant_expires_at=(
+                    record.creation_grant_expires_at.isoformat()
+                    if record.creation_grant_expires_at is not None
+                    else None
+                ),
+                creation_grant_consumed_at=(
+                    record.creation_grant_consumed_at.isoformat()
+                    if record.creation_grant_consumed_at is not None
+                    else None
+                ),
+            )
+        )
+
+    def get_upload_session_file(
+        self,
+        session_id: str,
+        client_file_key: str,
+        *,
+        connection: Connection,
+        for_update: bool = False,
+    ) -> UploadSessionFileRecord | None:
+        statement = select(upload_session_files).where(
+            upload_session_files.c.session_id == session_id,
+            upload_session_files.c.client_file_key == client_file_key,
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        row = connection.execute(statement).one_or_none()
+        return None if row is None else _upload_session_file_record(row)
+
+    def get_upload_session_file_by_intent(
+        self,
+        intent_id: str,
+        *,
+        connection: Connection,
+        for_update: bool = False,
+    ) -> UploadSessionFileRecord | None:
+        statement = select(upload_session_files).where(
+            upload_session_files.c.intent_id == intent_id
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        row = connection.execute(statement).one_or_none()
+        return None if row is None else _upload_session_file_record(row)
+
+    def get_upload_session_file_by_creation_grant(
         self,
         digest: str,
         *,
         connection: Connection,
         for_update: bool = False,
-    ) -> UploadHandoffRecord | None:
-        statement = select(upload_handoffs).where(
-            upload_handoffs.c.creation_grant_digest == digest
+    ) -> UploadSessionFileRecord | None:
+        statement = select(upload_session_files).where(
+            upload_session_files.c.creation_grant_digest == digest
         )
         if for_update:
             statement = statement.with_for_update()
         row = connection.execute(statement).one_or_none()
-        return None if row is None else _upload_handoff_record(row)
+        return None if row is None else _upload_session_file_record(row)
 
-    def set_upload_handoff_session(
+    def list_upload_session_files(
         self,
-        selector: str,
+        session_id: str,
         *,
-        session_digest: str,
-        connection: Connection,
-    ) -> None:
-        result = connection.execute(
-            update(upload_handoffs)
-            .where(upload_handoffs.c.selector == selector)
-            .values(session_digest=session_digest)
-        )
-        if result.rowcount != 1:
-            raise RuntimeError("The upload handoff session update was lost.")
+        connection: Connection | None = None,
+    ) -> tuple[tuple[UploadSessionFileRecord, UploadIntentRecord], ...]:
+        def read(active: Connection):
+            rows = active.execute(
+                select(upload_session_files)
+                .where(upload_session_files.c.session_id == session_id)
+                .order_by(upload_session_files.c.created_at)
+            )
+            items = []
+            for row in rows:
+                link = _upload_session_file_record(row)
+                intent_row = active.execute(
+                    select(upload_intents).where(
+                        upload_intents.c.intent_id == link.intent_id
+                    )
+                ).one()
+                items.append((link, _upload_record(intent_row)))
+            return tuple(items)
 
-    def set_upload_creation_grant(
+        if connection is not None:
+            return read(connection)
+        with self.engine.connect() as active:
+            return read(active)
+
+    def set_upload_session_file_grant(
         self,
-        selector: str,
+        session_id: str,
+        client_file_key: str,
         *,
         digest: str,
         expires_at: datetime,
         connection: Connection,
     ) -> None:
         result = connection.execute(
-            update(upload_handoffs)
-            .where(upload_handoffs.c.selector == selector)
+            update(upload_session_files)
+            .where(
+                upload_session_files.c.session_id == session_id,
+                upload_session_files.c.client_file_key == client_file_key,
+            )
             .values(
                 creation_grant_digest=digest,
                 creation_grant_expires_at=expires_at.isoformat(),
@@ -634,22 +777,26 @@ class SQLCatalog:
         if result.rowcount != 1:
             raise RuntimeError("The upload creation grant update was lost.")
 
-    def consume_upload_creation_grant(
+    def consume_upload_session_file_grant(
         self,
-        selector: str,
+        session_id: str,
+        client_file_key: str,
         *,
         consumed_at: datetime,
         connection: Connection,
     ) -> None:
         result = connection.execute(
-            update(upload_handoffs)
-            .where(upload_handoffs.c.selector == selector)
+            update(upload_session_files)
+            .where(
+                upload_session_files.c.session_id == session_id,
+                upload_session_files.c.client_file_key == client_file_key,
+            )
             .values(
                 creation_grant_consumed_at=consumed_at.isoformat(),
             )
         )
         if result.rowcount != 1:
-            raise RuntimeError("The upload creation grant update was lost.")
+            raise RuntimeError("The upload session file grant update was lost.")
 
     @staticmethod
     def _reserve_upload_quota(

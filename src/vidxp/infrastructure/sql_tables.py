@@ -4,6 +4,7 @@ from sqlalchemy import (
     Column,
     ForeignKey,
     Index,
+    Integer,
     JSON,
     MetaData,
     String,
@@ -85,10 +86,37 @@ upload_intents = Table(
     ),
 )
 
-upload_handoffs = Table(
-    "upload_handoffs",
+upload_sessions = Table(
+    "upload_sessions",
     metadata,
-    Column("selector", String(32), primary_key=True),
+    Column("session_id", String(32), primary_key=True),
+    Column("request_key", String(64), nullable=False, unique=True),
+    Column("selector", String(32), nullable=False, unique=True),
+    Column("capability_digest", String(64), nullable=False, unique=True),
+    Column("initiating_subject", String(255), nullable=False),
+    Column("initiating_client_id", String(255), nullable=True),
+    Column("repository_binding", String(64), nullable=False),
+    Column("purpose", String(64), nullable=False),
+    Column("state", String(32), nullable=False),
+    Column("maximum_files", Integer, nullable=False),
+    Column("maximum_file_bytes", BigInteger, nullable=False),
+    Column("maximum_aggregate_bytes", BigInteger, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("expires_at", Text, nullable=False),
+    Column("browser_session_digest", String(64), nullable=True),
+)
+Index("upload_sessions_expiry", upload_sessions.c.expires_at, upload_sessions.c.state)
+
+upload_session_files = Table(
+    "upload_session_files",
+    metadata,
+    Column(
+        "session_id",
+        String(32),
+        ForeignKey("upload_sessions.session_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("client_file_key", String(255), primary_key=True),
     Column(
         "intent_id",
         String(32),
@@ -96,13 +124,7 @@ upload_handoffs = Table(
         nullable=False,
         unique=True,
     ),
-    Column("principal_subject", String(255), nullable=False),
-    Column("principal_client_id", String(255), nullable=True),
-    Column("repository_binding", String(64), nullable=False),
-    Column("byte_size", BigInteger, nullable=False),
     Column("created_at", Text, nullable=False),
-    Column("expires_at", Text, nullable=False),
-    Column("session_digest", String(64), nullable=True),
     Column("creation_grant_digest", String(64), nullable=True, unique=True),
     Column("creation_grant_expires_at", Text, nullable=True),
     Column("creation_grant_consumed_at", Text, nullable=True),

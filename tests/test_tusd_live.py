@@ -14,8 +14,7 @@ import pytest
 import uvicorn
 
 from vidxp.application_models import (
-    ApplicationError,
-    CreateUploadIntentCommand,
+    CreateUploadFileCommand,
     Principal,
 )
 from vidxp.authentication import StaticBearerAuthenticator
@@ -67,7 +66,7 @@ def _wait_for_http(url: str, *, process: subprocess.Popen[str] | None = None) ->
     raise AssertionError(f"Timed out waiting for {url}")
 
 
-def test_live_tusd_split_topology_resumes_five_mib(tmp_path: Path) -> None:
+def test_live_tusd_split_topology_resumes_ten_mib(tmp_path: Path) -> None:
     executable_value = os.environ.get("VIDXP_TUSD_EXECUTABLE")
     if not executable_value:
         pytest.skip("set VIDXP_TUSD_EXECUTABLE to run the live tusd integration")
@@ -77,7 +76,7 @@ def test_live_tusd_split_topology_resumes_five_mib(tmp_path: Path) -> None:
 
     hook_port = _free_port()
     tusd_port = _free_port()
-    size = 5 * 1024 * 1024
+    size = 10 * 1024 * 1024
     hook_settings = VidXPSettings(
         repository_root=tmp_path,
         upload_public_endpoint=f"http://127.0.0.1:{tusd_port}/uploads/",
@@ -160,24 +159,26 @@ def test_live_tusd_split_topology_resumes_five_mib(tmp_path: Path) -> None:
             f"http://127.0.0.1:{tusd_port}/metrics",
             process=tusd,
         )
-        handoff = api_uploads.create_handoff(
-            CreateUploadIntentCommand(
-                original_filename="five-mib.mp4",
-                byte_size=size,
-                declared_mime_type="video/mp4",
-            ),
+        upload_session = api_uploads.create_upload_session(
             principal=Principal(subject="agent", scopes=frozenset({"*"})),
             request_key="a" * 64,
         )
-        session = api_uploads.exchange_handoff(
-            handoff.status.intent_id,
-            capability=handoff.capability,
+        browser = api_uploads.exchange_upload_session(
+            upload_session.status.session_id,
+            capability=upload_session.capability,
         )
-        grant = api_uploads.issue_creation_grant(
-            handoff.status.intent_id,
-            session_token=session.session_token,
+        authorization = api_uploads.authorize_session_file(
+            upload_session.status.session_id,
+            CreateUploadFileCommand(
+                client_file_key="ten-mib-file",
+                original_filename="ten-mib.mp4",
+                byte_size=size,
+                declared_mime_type="video/mp4",
+            ),
+            session_token=browser.session_token,
         )
-        metadata = base64.b64encode(handoff.status.intent_id.encode()).decode()
+        assert authorization.grant is not None
+        metadata = base64.b64encode(authorization.status.intent_id.encode()).decode()
 
         with httpx.Client(timeout=15) as client:
             created = client.post(
@@ -186,7 +187,7 @@ def test_live_tusd_split_topology_resumes_five_mib(tmp_path: Path) -> None:
                     "Tus-Resumable": "1.0.0",
                     "Upload-Length": str(size),
                     "Upload-Metadata": f"intent_id {metadata}",
-                    "Authorization": f"VidXP-Handoff {grant.token}",
+                    "Authorization": f"VidXP-Handoff {authorization.grant}",
                 },
             )
             assert created.status_code == 201, created.text
@@ -213,16 +214,10 @@ def test_live_tusd_split_topology_resumes_five_mib(tmp_path: Path) -> None:
 
             assert not api_settings.quarantine_root.exists()
             browser_session = api_uploads.browser_session(
-                handoff.status.intent_id,
-                session_token=session.session_token,
+                upload_session.status.session_id,
+                session_token=browser.session_token,
             )
-            assert browser_session.resume_url == upload_url
-            with pytest.raises(ApplicationError) as replayed:
-                api_uploads.issue_creation_grant(
-                    handoff.status.intent_id,
-                    session_token=session.session_token,
-                )
-            assert replayed.value.detail.code == "upload_handoff_replayed"
+            assert browser_session.resume_urls["ten-mib-file"] == upload_url
 
             resumed = client.patch(
                 upload_url,
@@ -243,12 +238,12 @@ def test_live_tusd_split_topology_resumes_five_mib(tmp_path: Path) -> None:
             assert completed.headers["Upload-Offset"] == str(size)
 
         deadline = time.monotonic() + 5
-        record = api_catalog.get_upload_intent(handoff.status.intent_id)
+        record = api_catalog.get_upload_intent(authorization.status.intent_id)
         while record is not None and record.state != UploadState.processing:
             if time.monotonic() >= deadline:
                 break
             time.sleep(0.05)
-            record = api_catalog.get_upload_intent(handoff.status.intent_id)
+            record = api_catalog.get_upload_intent(authorization.status.intent_id)
 
         assert record is not None
         assert record.state == UploadState.processing
@@ -260,8 +255,8 @@ def test_live_tusd_split_topology_resumes_five_mib(tmp_path: Path) -> None:
         info = (
             hook_settings.quarantine_root / f"{record.upload_id}.info"
         ).read_text(encoding="utf-8")
-        assert grant.token not in info
-        assert session.session_token not in info
+        assert authorization.grant not in info
+        assert browser.session_token not in info
         assert "Authorization" not in info
     finally:
         tusd.terminate()

@@ -7,6 +7,7 @@ from pydantic import AwareDatetime, Field
 from vidxp.application_models import (
     ApplicationModel,
     ErrorDetail,
+    MediaUploadSessionStatus,
     MediaUploadStatus,
     UploadIntent,
 )
@@ -37,12 +38,14 @@ class UploadHandoffBootstrapRequest(ApplicationModel):
 
 
 class UploadPageSessionResponse(ApplicationModel):
-    status: MediaUploadStatus
+    status: MediaUploadSessionStatus
     creation_url: str = Field(min_length=1, max_length=2048)
-    resume_url: str | None = Field(default=None, max_length=4096)
+    resume_urls: dict[str, str] = Field(default_factory=dict)
 
 
 class UploadCreationGrantResponse(ApplicationModel):
     scheme: Literal["VidXP-Handoff"] = "VidXP-Handoff"
-    grant: str = Field(min_length=32, max_length=512)
-    expires_at: AwareDatetime
+    status: MediaUploadStatus
+    grant: str | None = Field(default=None, min_length=32, max_length=512)
+    expires_at: AwareDatetime | None = None
+    resume_url: str | None = Field(default=None, max_length=4096)

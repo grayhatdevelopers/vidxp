@@ -11,12 +11,14 @@ from vidxp.api_models import (
     UploadHandoffBootstrapRequest,
     UploadPageSessionResponse,
 )
-from vidxp.api_routes.dependencies import context, write_principal
+from vidxp.api_routes.dependencies import context
 from vidxp.application_models import (
     ApplicationError,
+    CreateUploadFileCommand,
     ErrorCategory,
-    Principal,
+    MediaUploadSessionStatus,
     UploadIntentId,
+    UploadSessionId,
 )
 from vidxp.composition import HttpApplicationContext
 from vidxp.upload_service import RemoteUploadService, UploadBrowserSession
@@ -85,22 +87,22 @@ def _session_response(
     return UploadPageSessionResponse(
         status=session.status,
         creation_url=session.creation_url,
-        resume_url=session.resume_url,
+        resume_urls=session.resume_urls,
     )
 
 
 def _set_session_cookie(
     response: Response,
-    intent_id: UploadIntentId,
+    session_id: UploadSessionId,
     session: UploadBrowserSession,
     service: HttpApplicationContext,
 ) -> None:
     response.set_cookie(
         _SESSION_COOKIE,
         session.session_token,
-        max_age=service.settings.upload_intent_ttl_seconds,
+        max_age=service.settings.upload_session_ttl_seconds,
         expires=session.session_expires_at,
-        path=f"/upload-handoff/{intent_id}",
+        path=f"/upload-handoff/{session_id}",
         secure=True,
         httponly=True,
         samesite="strict",
@@ -112,9 +114,9 @@ def upload_page_asset(asset_name: str) -> Response:
     return Response(content=_asset(asset_name), media_type=_ASSETS[asset_name])
 
 
-@router.get("/{intent_id}", include_in_schema=False)
-def upload_page(intent_id: UploadIntentId) -> Response:
-    del intent_id
+@router.get("/{session_id}", include_in_schema=False)
+def upload_page(session_id: UploadSessionId) -> Response:
+    del session_id
     content = (
         files("vidxp").joinpath("assets", "upload_page", "index.html").read_bytes()
     )
@@ -122,12 +124,12 @@ def upload_page(intent_id: UploadIntentId) -> Response:
 
 
 @router.post(
-    "/{intent_id}/bootstrap",
+    "/{session_id}/bootstrap",
     response_model=UploadPageSessionResponse,
     include_in_schema=False,
 )
 def bootstrap_upload_page(
-    intent_id: UploadIntentId,
+    session_id: UploadSessionId,
     command: UploadHandoffBootstrapRequest,
     request: Request,
     response: Response,
@@ -138,48 +140,22 @@ def bootstrap_upload_page(
     ] = None,
 ) -> UploadPageSessionResponse:
     _require_same_origin(request, service)
-    session = _uploads(service).exchange_handoff(
-        intent_id,
+    session = _uploads(service).exchange_upload_session(
+        session_id,
         capability=command.capability,
         current_session=current_session,
     )
-    _set_session_cookie(response, intent_id, session, service)
-    return _session_response(session)
-
-
-@router.post(
-    "/{intent_id}/authenticate",
-    response_model=UploadPageSessionResponse,
-    include_in_schema=False,
-)
-def authenticate_upload_page(
-    intent_id: UploadIntentId,
-    request: Request,
-    response: Response,
-    service: Annotated[HttpApplicationContext, Depends(context)],
-    actor: Annotated[Principal, Depends(write_principal)],
-    current_session: Annotated[
-        str | None,
-        Cookie(alias=_SESSION_COOKIE),
-    ] = None,
-) -> UploadPageSessionResponse:
-    _require_same_origin(request, service)
-    session = _uploads(service).exchange_authenticated_handoff(
-        intent_id,
-        principal=actor,
-        current_session=current_session,
-    )
-    _set_session_cookie(response, intent_id, session, service)
+    _set_session_cookie(response, session_id, session, service)
     return _session_response(session)
 
 
 @router.get(
-    "/{intent_id}/status",
+    "/{session_id}/status",
     response_model=UploadPageSessionResponse,
     include_in_schema=False,
 )
 def upload_page_status(
-    intent_id: UploadIntentId,
+    session_id: UploadSessionId,
     service: Annotated[HttpApplicationContext, Depends(context)],
     session_token: Annotated[
         str | None,
@@ -188,19 +164,20 @@ def upload_page_status(
 ) -> UploadPageSessionResponse:
     return _session_response(
         _uploads(service).browser_session(
-            intent_id,
+            session_id,
             session_token=session_token,
         )
     )
 
 
 @router.post(
-    "/{intent_id}/creation-grant",
+    "/{session_id}/files",
     response_model=UploadCreationGrantResponse,
     include_in_schema=False,
 )
 def create_upload_grant(
-    intent_id: UploadIntentId,
+    session_id: UploadSessionId,
+    command: CreateUploadFileCommand,
     request: Request,
     service: Annotated[HttpApplicationContext, Depends(context)],
     session_token: Annotated[
@@ -209,11 +186,58 @@ def create_upload_grant(
     ] = None,
 ) -> UploadCreationGrantResponse:
     _require_same_origin(request, service)
-    grant = _uploads(service).issue_creation_grant(
-        intent_id,
+    authorization = _uploads(service).authorize_session_file(
+        session_id,
+        command,
         session_token=session_token,
     )
     return UploadCreationGrantResponse(
-        grant=grant.token,
-        expires_at=grant.expires_at,
+        status=authorization.status,
+        grant=authorization.grant,
+        expires_at=authorization.grant_expires_at,
+        resume_url=authorization.resume_url,
+    )
+
+
+@router.post(
+    "/{session_id}/files/{intent_id}/cancel",
+    response_model=MediaUploadSessionStatus,
+    include_in_schema=False,
+)
+def cancel_upload_file(
+    session_id: UploadSessionId,
+    intent_id: UploadIntentId,
+    request: Request,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+    session_token: Annotated[
+        str | None,
+        Cookie(alias=_SESSION_COOKIE),
+    ] = None,
+) -> MediaUploadSessionStatus:
+    _require_same_origin(request, service)
+    return _uploads(service).cancel_browser_file(
+        session_id,
+        intent_id,
+        session_token=session_token,
+    )
+
+
+@router.post(
+    "/{session_id}/close",
+    response_model=MediaUploadSessionStatus,
+    include_in_schema=False,
+)
+def close_upload_session(
+    session_id: UploadSessionId,
+    request: Request,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+    session_token: Annotated[
+        str | None,
+        Cookie(alias=_SESSION_COOKIE),
+    ] = None,
+) -> MediaUploadSessionStatus:
+    _require_same_origin(request, service)
+    return _uploads(service).close_browser_session(
+        session_id,
+        session_token=session_token,
     )

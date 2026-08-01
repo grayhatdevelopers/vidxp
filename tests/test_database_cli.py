@@ -21,7 +21,7 @@ class DatabaseCliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 2)
 
-    def test_upload_handoff_migration_is_the_only_head(self):
+    def test_upload_session_migration_is_the_only_head(self):
         config = Config()
         config.set_main_option(
             "script_location",

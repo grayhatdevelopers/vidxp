@@ -78,3 +78,4 @@ IndexSnapshotId: TypeAlias = Uuid4Hex
 JobId: TypeAlias = WorkflowUuid
 ArtifactId: TypeAlias = Uuid4Hex
 UploadIntentId: TypeAlias = Uuid4Hex
+UploadSessionId: TypeAlias = Uuid4Hex

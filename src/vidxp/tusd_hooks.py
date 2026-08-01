@@ -107,7 +107,7 @@ class TusdHookService:
             )
         authorization = _authorization(hook.event.request)
         if authorization is not None and authorization[0] == "vidxp-handoff":
-            record = self.uploads.accept_handoff_creation(
+            record = self.uploads.accept_session_creation(
                 upload.metadata["intent_id"],
                 grant=authorization[1],
                 byte_size=upload.size,

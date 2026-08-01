@@ -27,6 +27,7 @@ from vidxp.core.identifiers import (
     MimeType,
     Sha256,
     UploadIntentId as UploadIntentId,
+    UploadSessionId as UploadSessionId,
     VideoId as VideoId,
 )
 from vidxp.core.artifacts import (
@@ -41,7 +42,7 @@ from vidxp.core.media import (
     MediaStream,
     validate_display_filename,
 )
-from vidxp.core.uploads import UploadState
+from vidxp.core.uploads import UploadSessionState, UploadState
 from vidxp.index_state import INDEX_STATUS_MEDIA_ID_LIMIT
 
 T = TypeVar("T")
@@ -418,15 +419,59 @@ class MediaUploadStatus(ApplicationModel):
     """Actionable public projection of the shared upload intent state."""
 
     intent_id: UploadIntentId
+    client_file_key: str = Field(min_length=1, max_length=255)
     state: UploadState
     original_filename: str = Field(min_length=1, max_length=255)
     byte_size: int = Field(gt=0)
     declared_mime_type: MimeType | None = None
-    maximum_bytes: int = Field(gt=0)
     expires_at: AwareDatetime
     transport: Literal["tus"] = "tus"
     job_id: JobId | None = None
     media_id: MediaId | None = None
+    status: str = Field(min_length=1, max_length=512)
+    next_action: str = Field(min_length=1, max_length=1024)
+
+
+class CreateUploadFileCommand(ApplicationModel):
+    client_file_key: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9._~-]+$",
+    )
+    original_filename: str = Field(min_length=1, max_length=255)
+    byte_size: int = Field(gt=0)
+    declared_mime_type: MimeType | None = None
+
+    @field_validator("original_filename")
+    @classmethod
+    def _filename_only(cls, value: str) -> str:
+        return validate_display_filename(value)
+
+
+class MediaUploadSessionStatus(ApplicationModel):
+    session_id: UploadSessionId
+    session_state: UploadSessionState
+    aggregate_state: Literal[
+        "empty",
+        "uploading",
+        "processing",
+        "ready",
+        "partial_failure",
+        "failed",
+    ]
+    expires_at: AwareDatetime
+    maximum_files: int = Field(gt=0)
+    maximum_file_bytes: int = Field(gt=0)
+    maximum_aggregate_bytes: int = Field(gt=0)
+    file_count: NonNegativeInt
+    total_bytes: NonNegativeInt
+    reserved_file_count: NonNegativeInt
+    reserved_bytes: NonNegativeInt
+    uploaded_file_count: NonNegativeInt
+    uploaded_bytes: NonNegativeInt
+    ready_file_count: NonNegativeInt
+    failed_file_count: NonNegativeInt
+    items: tuple[MediaUploadStatus, ...] = ()
     status: str = Field(min_length=1, max_length=512)
     next_action: str = Field(min_length=1, max_length=1024)
 

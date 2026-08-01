@@ -18,17 +18,21 @@ from sqlalchemy.exc import IntegrityError
 
 from vidxp.application_models import (
     ApplicationError,
+    CreateUploadFileCommand,
     CreateUploadIntentCommand,
     ErrorCategory,
     JobState,
+    MediaUploadSessionStatus,
     MediaUploadStatus,
     Principal,
     UploadIntent,
 )
 from vidxp.core.media import QuarantinedMedia, utc_now
 from vidxp.core.uploads import (
-    UploadHandoffRecord,
     UploadIntentRecord,
+    UploadSessionFileRecord,
+    UploadSessionRecord,
+    UploadSessionState,
     UploadState,
 )
 from vidxp.infrastructure.sql_catalog import (
@@ -36,32 +40,33 @@ from vidxp.infrastructure.sql_catalog import (
     UploadQuotaExceededError,
 )
 from vidxp.media_service import MediaService
-from vidxp.settings import HttpAuthMode, VidXPSettings
+from vidxp.settings import VidXPSettings
 
 LOGGER = logging.getLogger(__name__)
 _CREATION_GRANT_TTL_SECONDS = 5 * 60
 
 
 @dataclass(frozen=True)
-class UploadHandoff:
-    status: MediaUploadStatus
+class UploadSessionLink:
+    status: MediaUploadSessionStatus
     capability: str
-    expires_at: datetime
 
 
 @dataclass(frozen=True)
 class UploadBrowserSession:
-    status: MediaUploadStatus
+    status: MediaUploadSessionStatus
     session_token: str
     session_expires_at: datetime
     creation_url: str
-    resume_url: str | None
+    resume_urls: dict[str, str]
 
 
 @dataclass(frozen=True)
-class UploadCreationGrant:
-    token: str
-    expires_at: datetime
+class UploadFileAuthorization:
+    status: MediaUploadStatus
+    grant: str | None
+    grant_expires_at: datetime | None
+    resume_url: str | None
 
 
 def _token_digest(token: str) -> str:
@@ -150,87 +155,97 @@ class RemoteUploadService:
                 return _public_intent(replay)
             raise
 
-    def create_handoff(
+    def create_upload_session(
         self,
-        command: CreateUploadIntentCommand,
         *,
         principal: Principal,
         request_key: str,
-    ) -> UploadHandoff:
-        self._require_handoff_configured()
-        intent = self.create_intent(
-            command,
-            principal=principal,
+    ) -> UploadSessionLink:
+        self._require_session_configured()
+        if existing := self.catalog.get_upload_session_by_request(request_key):
+            self._require_session_binding(existing)
+            return self._session_link(existing)
+        now = utc_now()
+        record = UploadSessionRecord(
+            session_id=uuid4().hex,
             request_key=request_key,
+            selector=secrets.token_hex(16),
+            capability_digest="0" * 64,
+            initiating_subject=principal.subject,
+            initiating_client_id=principal.client_id,
+            repository_binding=self._repository_binding(),
+            state=UploadSessionState.open,
+            maximum_files=self.settings.upload_session_max_files,
+            maximum_file_bytes=self.settings.upload_max_bytes,
+            maximum_aggregate_bytes=self.settings.upload_session_max_bytes,
+            created_at=now,
+            expires_at=now
+            + timedelta(seconds=self.settings.upload_session_ttl_seconds),
         )
-        record = self.catalog.get_upload_handoff_by_intent(intent.intent_id)
-        if record is None:
-            now = utc_now()
-            record = UploadHandoffRecord(
-                selector=secrets.token_hex(16),
-                intent_id=intent.intent_id,
-                principal_subject=principal.subject,
-                principal_client_id=principal.client_id,
-                repository_binding=self._repository_binding(),
-                byte_size=intent.byte_size,
-                created_at=now,
-                expires_at=min(
-                    intent.expires_at,
-                    now + timedelta(seconds=self.settings.upload_handoff_ttl_seconds),
-                ),
-            )
-            try:
-                self.catalog.create_upload_handoff(record)
-            except IntegrityError:
-                replay = self.catalog.get_upload_handoff_by_intent(intent.intent_id)
-                if replay is None:
-                    raise
-                record = replay
-        self._require_handoff_binding(record, intent, principal=principal)
-        return UploadHandoff(
-            status=self.status(intent),
-            capability=self._handoff_capability(record),
-            expires_at=record.expires_at,
+        capability = self._session_capability(record)
+        record = record.model_copy(
+            update={"capability_digest": _token_digest(capability)}
+        )
+        try:
+            self.catalog.create_upload_session(record)
+        except IntegrityError:
+            replay = self.catalog.get_upload_session_by_request(request_key)
+            if replay is None:
+                raise
+            record = replay
+        self._require_session_binding(record)
+        return self._session_link(record)
+
+    def _session_link(self, record: UploadSessionRecord) -> UploadSessionLink:
+        capability = self._session_capability(record)
+        if not compare_digest(
+            record.capability_digest,
+            _token_digest(capability),
+        ):
+            raise RuntimeError("The stored upload session capability is invalid.")
+        return UploadSessionLink(
+            status=self._session_status(record),
+            capability=capability,
         )
 
-    def status(self, intent: UploadIntent) -> MediaUploadStatus:
+    def file_status(
+        self,
+        link: UploadSessionFileRecord,
+        intent: UploadIntentRecord,
+    ) -> MediaUploadStatus:
         status, next_action = {
             UploadState.pending: (
-                "Waiting for the expected video to be selected.",
-                "Open the upload page and upload the declared file, then "
-                "call get_media_upload again.",
+                "The selected file is authorized and waiting for tus creation.",
+                "Start or retry this file from the upload page.",
             ),
             UploadState.accepted: (
                 "The tus upload is accepted or still transferring.",
-                "Resume or finish the upload in the browser, then call "
-                "get_media_upload again.",
+                "Resume or finish this file from the upload page.",
             ),
             UploadState.processing: (
                 "The uploaded video is being validated and imported.",
-                "Call get_job with job_id to inspect import progress, and "
-                "continue polling get_media_upload.",
+                "Call get_job with job_id to inspect import progress.",
             ),
             UploadState.ready: (
                 "The video is registered and ready for indexing.",
-                "Call start_indexing with media_id.",
+                "Use media_id with start_indexing.",
             ),
             UploadState.failed: (
                 "Validation or durable import failed.",
-                "Call get_job with job_id to inspect the failure, then create "
-                "a new media upload with a new idempotency key.",
+                "Call get_job with job_id for actionable failure details.",
             ),
             UploadState.expired: (
-                "The upload intent expired before it became ready.",
-                "Call create_media_upload with a new idempotency key.",
+                "This file upload was cancelled or expired.",
+                "Select the file again with a new client file key if the session is open.",
             ),
         }[intent.state]
         return MediaUploadStatus(
             intent_id=intent.intent_id,
+            client_file_key=link.client_file_key,
             state=intent.state,
             original_filename=intent.original_filename,
             byte_size=intent.byte_size,
             declared_mime_type=intent.declared_mime_type,
-            maximum_bytes=self.settings.upload_max_bytes,
             expires_at=intent.expires_at,
             job_id=intent.job_id,
             media_id=intent.media_id,
@@ -238,195 +253,498 @@ class RemoteUploadService:
             next_action=next_action,
         )
 
+    def _session_status(
+        self,
+        record: UploadSessionRecord,
+        *,
+        children: tuple[
+            tuple[UploadSessionFileRecord, UploadIntentRecord],
+            ...,
+        ]
+        | None = None,
+    ) -> MediaUploadSessionStatus:
+        children = (
+            self.catalog.list_upload_session_files(record.session_id)
+            if children is None
+            else children
+        )
+        items = tuple(self.file_status(link, intent) for link, intent in children)
+        states = tuple(intent.state for _, intent in children)
+        failed_states = {UploadState.failed, UploadState.expired}
+        uploaded_states = {
+            UploadState.processing,
+            UploadState.ready,
+            UploadState.failed,
+        }
+        reserved_states = {
+            UploadState.pending,
+            UploadState.accepted,
+            UploadState.processing,
+            UploadState.failed,
+        }
+        if not states:
+            aggregate_state = "empty"
+        elif all(state == UploadState.ready for state in states):
+            aggregate_state = "ready"
+        elif all(state in failed_states for state in states):
+            aggregate_state = "failed"
+        elif any(state in failed_states for state in states):
+            aggregate_state = "partial_failure"
+        elif any(
+            state in {UploadState.pending, UploadState.accepted}
+            for state in states
+        ):
+            aggregate_state = "uploading"
+        else:
+            aggregate_state = "processing"
+        now = utc_now()
+        session_state = (
+            UploadSessionState.expired
+            if record.expires_at <= now
+            else record.state
+        )
+        file_count = len(children)
+        total_bytes = sum(intent.byte_size for _, intent in children)
+        reserved = [
+            intent for _, intent in children if intent.state in reserved_states
+        ]
+        uploaded = [
+            intent for _, intent in children if intent.state in uploaded_states
+        ]
+        ready_count = sum(state == UploadState.ready for state in states)
+        failed_count = sum(state in failed_states for state in states)
+        if session_state == UploadSessionState.open:
+            status = "The upload session is open for file selection."
+            next_action = (
+                "Give the capability link to the user, then poll "
+                "get_media_upload for per-file results."
+            )
+        elif session_state == UploadSessionState.expired:
+            status = "The upload session expired."
+            next_action = (
+                "Create a new upload session; existing processing or ready "
+                "child results remain visible."
+            )
+        else:
+            status = "The upload session is closed to new files."
+            next_action = (
+                "Poll get_media_upload until active children finish, then "
+                "use each ready media_id."
+            )
+        return MediaUploadSessionStatus(
+            session_id=record.session_id,
+            session_state=session_state,
+            aggregate_state=aggregate_state,
+            expires_at=record.expires_at,
+            maximum_files=record.maximum_files,
+            maximum_file_bytes=record.maximum_file_bytes,
+            maximum_aggregate_bytes=record.maximum_aggregate_bytes,
+            file_count=file_count,
+            total_bytes=total_bytes,
+            reserved_file_count=len(reserved),
+            reserved_bytes=sum(intent.byte_size for intent in reserved),
+            uploaded_file_count=len(uploaded),
+            uploaded_bytes=sum(intent.byte_size for intent in uploaded),
+            ready_file_count=ready_count,
+            failed_file_count=failed_count,
+            items=items,
+            status=status,
+            next_action=next_action,
+        )
+
     def get_status(
         self,
-        intent_id: str,
+        session_id: str,
         *,
         principal: Principal,
-    ) -> MediaUploadStatus:
-        return self.status(self.get_intent(intent_id, principal=principal))
+    ) -> MediaUploadSessionStatus:
+        del principal
+        record = self.catalog.get_upload_session(session_id)
+        if record is None or record.repository_binding != self._repository_binding():
+            raise ApplicationError(
+                "resource_not_found",
+                ErrorCategory.not_found,
+                "The requested upload session was not found.",
+            )
+        return self._session_status(record)
 
-    def exchange_handoff(
+    def exchange_upload_session(
         self,
-        intent_id: str,
+        session_id: str,
         *,
         capability: str,
         current_session: str | None = None,
     ) -> UploadBrowserSession:
-        return self._exchange_browser_session(
-            intent_id,
-            record_loader=lambda connection: self._handoff_from_capability(
+        now = utc_now()
+
+        def exchange(connection: Connection) -> tuple[str, UploadSessionRecord]:
+            record = self._session_from_capability(
                 capability,
                 connection=connection,
                 for_update=True,
-            ),
-            current_session=current_session,
-        )
-
-    def exchange_authenticated_handoff(
-        self,
-        intent_id: str,
-        *,
-        principal: Principal,
-        current_session: str | None = None,
-    ) -> UploadBrowserSession:
-        """Create the browser session after independently verified OIDC auth."""
-        if self.settings.http_auth_mode != HttpAuthMode.oidc:
-            raise ApplicationError(
-                "upload_handoff_identity_unavailable",
-                ErrorCategory.unavailable,
-                "Identity-bound browser handoffs require OIDC authentication.",
             )
-        return self._exchange_browser_session(
-            intent_id,
-            record_loader=lambda connection: (
-                self.catalog.get_upload_handoff_by_intent(
-                    intent_id,
-                    connection=connection,
-                    for_update=True,
-                )
-            ),
-            principal=principal,
-            current_session=current_session,
-        )
-
-    def _exchange_browser_session(
-        self,
-        intent_id: str,
-        *,
-        record_loader: Callable[[Connection], UploadHandoffRecord | None],
-        current_session: str | None,
-        principal: Principal | None = None,
-    ) -> UploadBrowserSession:
-        now = utc_now()
-
-        def exchange(connection: Connection) -> tuple[str, UploadIntentRecord]:
-            record = record_loader(connection)
-            intent = self.catalog.get_upload_intent(
-                intent_id,
-                connection=connection,
-                for_update=True,
-            )
-            self._verify_handoff(
-                record,
-                intent=intent,
-                expected_intent_id=intent_id,
-                now=now,
-            )
-            assert record is not None and intent is not None
-            if principal is not None:
-                self._require_browser_principal(record, principal)
-            if intent.state != UploadState.pending:
-                raise ApplicationError(
-                    "upload_handoff_replayed",
-                    ErrorCategory.conflict,
-                    "This handoff already started an upload. Reopen the "
-                    "existing browser session or inspect its status through "
-                    "get_media_upload.",
-                )
+            if record is None or record.session_id != session_id:
+                raise self._invalid_handoff()
+            self._validate_upload_session(record, now=now)
             if (
                 current_session is not None
-                and record.session_digest is not None
+                and record.browser_session_digest is not None
                 and compare_digest(
                     _token_digest(current_session),
-                    record.session_digest,
+                    record.browser_session_digest,
                 )
             ):
-                return current_session, intent
-            session = secrets.token_urlsafe(32)
-            self.catalog.set_upload_handoff_session(
-                record.selector,
-                session_digest=_token_digest(session),
+                return current_session, record
+            session_token = secrets.token_urlsafe(32)
+            self.catalog.update_upload_session(
+                record.session_id,
+                browser_session_digest=_token_digest(session_token),
                 connection=connection,
             )
-            return session, intent
+            return session_token, record.model_copy(
+                update={
+                    "browser_session_digest": _token_digest(session_token)
+                }
+            )
 
-        session, record = self.catalog.with_upload_transaction(exchange)
-        intent = _public_intent(record)
-        assert self.settings.upload_public_endpoint is not None
-        return UploadBrowserSession(
-            status=self.status(intent),
-            session_token=session,
-            session_expires_at=intent.expires_at,
-            creation_url=self.settings.upload_public_endpoint,
-            resume_url=None,
-        )
+        token, record = self.catalog.with_upload_transaction(exchange)
+        return self._browser_session(record, token)
 
     def browser_session(
         self,
-        intent_id: str,
+        session_id: str,
         *,
         session_token: str | None,
     ) -> UploadBrowserSession:
-        record, intent = self._require_browser_session(
-            intent_id,
+        record = self._require_browser_session(
+            session_id,
             session_token=session_token,
         )
-        del record
-        public = _public_intent(intent)
+        return self._browser_session(record, session_token or "")
+
+    def _browser_session(
+        self,
+        record: UploadSessionRecord,
+        session_token: str,
+    ) -> UploadBrowserSession:
         assert self.settings.upload_public_endpoint is not None
-        resume_url = (
-            self.settings.upload_public_endpoint + (intent.upload_id or "")
-            if self._tusd_creation_exists(intent)
-            else None
-        )
+        children = self.catalog.list_upload_session_files(record.session_id)
+        resume_urls = {}
+        for link, intent in children:
+            if (
+                intent.state == UploadState.accepted
+                and intent.upload_id is not None
+                and self._tusd_creation_exists(intent)
+            ):
+                resume_urls[link.client_file_key] = (
+                    self.settings.upload_public_endpoint + intent.upload_id
+                )
         return UploadBrowserSession(
-            status=self.status(public),
-            session_token=session_token or "",
-            session_expires_at=intent.expires_at,
+            status=self._session_status(record, children=children),
+            session_token=session_token,
+            session_expires_at=record.expires_at,
             creation_url=self.settings.upload_public_endpoint,
-            resume_url=resume_url,
+            resume_urls=resume_urls,
         )
 
-    def issue_creation_grant(
+    def authorize_session_file(
         self,
-        intent_id: str,
+        session_id: str,
+        command: CreateUploadFileCommand,
         *,
         session_token: str | None,
-    ) -> UploadCreationGrant:
+    ) -> UploadFileAuthorization:
         now = utc_now()
-
-        def issue(connection: Connection) -> UploadCreationGrant:
-            record = self.catalog.get_upload_handoff_by_intent(
-                intent_id,
-                connection=connection,
-                for_update=True,
+        if command.byte_size > self.settings.upload_max_bytes:
+            raise ApplicationError(
+                "upload_file_too_large",
+                ErrorCategory.resource_limit,
+                "The selected file exceeds the configured per-file limit.",
             )
-            intent = self.catalog.get_upload_intent(
-                intent_id,
+
+        def authorize(connection: Connection) -> UploadFileAuthorization:
+            record = self.catalog.get_upload_session(
+                session_id,
                 connection=connection,
                 for_update=True,
             )
             self._validate_browser_session(
                 record,
-                intent,
                 session_token=session_token,
                 now=now,
             )
-            assert record is not None and intent is not None
-            if intent.state != UploadState.pending and self._tusd_creation_exists(
-                intent
-            ):
-                raise ApplicationError(
-                    "upload_handoff_replayed",
-                    ErrorCategory.conflict,
-                    "The tus upload was already created. Resume its existing "
-                    "URL from the page status response.",
+            assert record is not None
+            existing = self.catalog.get_upload_session_file(
+                session_id,
+                command.client_file_key,
+                connection=connection,
+                for_update=True,
+            )
+            if existing is not None:
+                intent = self.catalog.get_upload_intent(
+                    existing.intent_id,
+                    connection=connection,
+                    for_update=True,
                 )
-            expires_at = min(
+                assert intent is not None
+                self._require_same_file(intent, command)
+                return self._authorize_existing_file(
+                    record,
+                    existing,
+                    intent,
+                    now=now,
+                    connection=connection,
+                )
+            children = self.catalog.list_upload_session_files(
+                session_id,
+                connection=connection,
+            )
+            if len(children) >= record.maximum_files:
+                raise ApplicationError(
+                    "upload_session_file_limit",
+                    ErrorCategory.resource_limit,
+                    "This upload session reached its configured file-count limit.",
+                )
+            aggregate_bytes = sum(
+                intent.byte_size for _, intent in children
+            )
+            if aggregate_bytes + command.byte_size > record.maximum_aggregate_bytes:
+                raise ApplicationError(
+                    "upload_session_byte_limit",
+                    ErrorCategory.resource_limit,
+                    "The selected file would exceed the upload session aggregate limit.",
+                )
+            if record.state != UploadSessionState.open:
+                raise ApplicationError(
+                    "upload_session_closed",
+                    ErrorCategory.conflict,
+                    "This upload session is closed to new files.",
+                )
+            intent = UploadIntentRecord(
+                intent_id=uuid4().hex,
+                request_key=self._session_file_request_key(
+                    session_id,
+                    command.client_file_key,
+                ),
+                original_filename=command.original_filename,
+                byte_size=command.byte_size,
+                declared_mime_type=command.declared_mime_type,
+                state=UploadState.pending,
+                created_at=now,
+                expires_at=min(
+                    record.expires_at,
+                    now
+                    + timedelta(
+                        seconds=self.settings.upload_intent_ttl_seconds
+                    ),
+                ),
+            )
+            grant = secrets.token_urlsafe(48)
+            grant_expires_at = min(
                 intent.expires_at,
                 now + timedelta(seconds=_CREATION_GRANT_TTL_SECONDS),
             )
-            token = secrets.token_urlsafe(48)
-            self.catalog.set_upload_creation_grant(
-                record.selector,
-                digest=_token_digest(token),
-                expires_at=expires_at,
+            link = UploadSessionFileRecord(
+                session_id=session_id,
+                client_file_key=command.client_file_key,
+                intent_id=intent.intent_id,
+                created_at=now,
+                creation_grant_digest=_token_digest(grant),
+                creation_grant_expires_at=grant_expires_at,
+            )
+            try:
+                self.catalog.create_upload_session_file(
+                    link,
+                    intent,
+                    quota_limit=self.settings.upload_quota_bytes,
+                    connection=connection,
+                )
+            except UploadQuotaExceededError as exc:
+                raise ApplicationError(
+                    "upload_quota_exceeded",
+                    ErrorCategory.resource_limit,
+                    "The repository upload quota would be exceeded.",
+                ) from exc
+            new_count = len(children) + 1
+            new_bytes = aggregate_bytes + command.byte_size
+            if (
+                new_count >= record.maximum_files
+                or new_bytes >= record.maximum_aggregate_bytes
+            ):
+                self.catalog.update_upload_session(
+                    session_id,
+                    state=UploadSessionState.closed,
+                    connection=connection,
+                )
+            return UploadFileAuthorization(
+                status=self.file_status(link, intent),
+                grant=grant,
+                grant_expires_at=grant_expires_at,
+                resume_url=None,
+            )
+
+        return self.catalog.with_upload_transaction(authorize)
+
+    def _authorize_existing_file(
+        self,
+        session: UploadSessionRecord,
+        link: UploadSessionFileRecord,
+        intent: UploadIntentRecord,
+        *,
+        now: datetime,
+        connection: Connection,
+    ) -> UploadFileAuthorization:
+        resume_url = None
+        needs_grant = intent.state == UploadState.pending
+        if intent.state == UploadState.accepted and intent.upload_id is not None:
+            if self._tusd_creation_exists(intent):
+                assert self.settings.upload_public_endpoint is not None
+                resume_url = self.settings.upload_public_endpoint + intent.upload_id
+            else:
+                needs_grant = True
+        grant = None
+        grant_expires_at = None
+        if needs_grant:
+            grant = secrets.token_urlsafe(48)
+            grant_expires_at = min(
+                session.expires_at,
+                now + timedelta(seconds=_CREATION_GRANT_TTL_SECONDS),
+            )
+            self.catalog.set_upload_session_file_grant(
+                session.session_id,
+                link.client_file_key,
+                digest=_token_digest(grant),
+                expires_at=grant_expires_at,
                 connection=connection,
             )
-            return UploadCreationGrant(token=token, expires_at=expires_at)
+        return UploadFileAuthorization(
+            status=self.file_status(link, intent),
+            grant=grant,
+            grant_expires_at=grant_expires_at,
+            resume_url=resume_url,
+        )
 
-        return self.catalog.with_upload_transaction(issue)
+    def close_upload_session(
+        self,
+        session_id: str,
+        *,
+        principal: Principal,
+    ) -> MediaUploadSessionStatus:
+        del principal
+        now = utc_now()
+
+        def close(connection: Connection) -> UploadSessionRecord:
+            record = self.catalog.get_upload_session(
+                session_id,
+                connection=connection,
+                for_update=True,
+            )
+            if record is None or record.repository_binding != self._repository_binding():
+                raise ApplicationError(
+                    "resource_not_found",
+                    ErrorCategory.not_found,
+                    "The requested upload session was not found.",
+                )
+            state = (
+                UploadSessionState.expired
+                if record.expires_at <= now
+                else UploadSessionState.closed
+            )
+            self.catalog.update_upload_session(
+                session_id,
+                state=state,
+                connection=connection,
+            )
+            return record.model_copy(update={"state": state})
+
+        return self._session_status(self.catalog.with_upload_transaction(close))
+
+    def close_browser_session(
+        self,
+        session_id: str,
+        *,
+        session_token: str | None,
+    ) -> MediaUploadSessionStatus:
+        now = utc_now()
+
+        def close(connection: Connection) -> UploadSessionRecord:
+            record = self.catalog.get_upload_session(
+                session_id,
+                connection=connection,
+                for_update=True,
+            )
+            self._validate_browser_session(
+                record,
+                session_token=session_token,
+                now=now,
+            )
+            assert record is not None
+            self.catalog.update_upload_session(
+                session_id,
+                state=UploadSessionState.closed,
+                connection=connection,
+            )
+            return record.model_copy(update={"state": UploadSessionState.closed})
+
+        return self._session_status(self.catalog.with_upload_transaction(close))
+
+    def cancel_browser_file(
+        self,
+        session_id: str,
+        intent_id: str,
+        *,
+        session_token: str | None,
+    ) -> MediaUploadSessionStatus:
+        now = utc_now()
+
+        def inspect(connection: Connection) -> UploadIntentRecord:
+            session = self.catalog.get_upload_session(
+                session_id,
+                connection=connection,
+                for_update=True,
+            )
+            self._validate_browser_session(
+                session,
+                session_token=session_token,
+                now=now,
+            )
+            link = self.catalog.get_upload_session_file_by_intent(
+                intent_id,
+                connection=connection,
+                for_update=True,
+            )
+            intent = self.catalog.get_upload_intent(
+                intent_id,
+                connection=connection,
+                for_update=True,
+            )
+            if (
+                link is None
+                or intent is None
+                or link.session_id != session_id
+            ):
+                raise ApplicationError(
+                    "upload_not_found",
+                    ErrorCategory.not_found,
+                    "The requested session file was not found.",
+                )
+            if intent.state in {UploadState.processing, UploadState.ready}:
+                raise ApplicationError(
+                    "upload_cancellation_forbidden",
+                    ErrorCategory.conflict,
+                    "Processing or ready files cannot be cancelled.",
+                )
+            return intent
+
+        intent = self.catalog.with_upload_transaction(inspect)
+        if intent.upload_id is None:
+            self._expire_intent(intent.intent_id)
+        else:
+            self._cleanup_upload(intent.upload_id)
+        return self.browser_session(
+            session_id,
+            session_token=session_token,
+        )
 
     def get_intent(
         self,
@@ -490,7 +808,7 @@ class RemoteUploadService:
             )
         return accepted
 
-    def accept_handoff_creation(
+    def accept_session_creation(
         self,
         intent_id: str,
         *,
@@ -500,7 +818,7 @@ class RemoteUploadService:
         now = utc_now()
 
         def accept(connection: Connection) -> UploadIntentRecord | None:
-            handoff = self.catalog.get_upload_handoff_by_creation_grant(
+            link = self.catalog.get_upload_session_file_by_creation_grant(
                 _token_digest(grant),
                 connection=connection,
                 for_update=True,
@@ -510,32 +828,42 @@ class RemoteUploadService:
                 connection=connection,
                 for_update=True,
             )
+            session = (
+                self.catalog.get_upload_session(
+                    link.session_id,
+                    connection=connection,
+                    for_update=True,
+                )
+                if link is not None
+                else None
+            )
             self._verify_creation_grant(
-                handoff,
+                link,
+                session,
                 intent,
                 grant=grant,
                 expected_intent_id=intent_id,
                 byte_size=byte_size,
                 now=now,
             )
-            assert intent is not None
+            assert link is not None and intent is not None
             if intent.state != UploadState.pending and self._tusd_creation_exists(
                 intent
             ):
                 raise ApplicationError(
-                    "upload_handoff_replayed",
+                    "upload_creation_grant_replayed",
                     ErrorCategory.conflict,
-                    "The tus upload was already created. Resume its existing URL.",
+                    "This file's tus upload already exists; resume its URL.",
                 )
-            assert handoff is not None
             accepted = self._accept_creation_in_transaction(
                 intent_id,
                 byte_size=byte_size,
                 now=now,
                 connection=connection,
             )
-            self.catalog.consume_upload_creation_grant(
-                handoff.selector,
+            self.catalog.consume_upload_session_file_grant(
+                link.session_id,
+                link.client_file_key,
                 consumed_at=now,
                 connection=connection,
             )
@@ -572,7 +900,7 @@ class RemoteUploadService:
                 ErrorCategory.unavailable,
                 "The upload service could not verify the resumable upload.",
             ) from exc
-        except URLError as exc:
+        except (URLError, TimeoutError) as exc:
             raise ApplicationError(
                 "remote_upload_unavailable",
                 ErrorCategory.unavailable,
@@ -1054,9 +1382,9 @@ class RemoteUploadService:
         secret = self.settings.upload_handoff_secret
         if secret is None:
             raise ApplicationError(
-                "remote_upload_handoff_unavailable",
+                "remote_upload_session_unavailable",
                 ErrorCategory.unavailable,
-                "Browser upload handoffs are not configured.",
+                "Browser upload sessions are not configured.",
             )
         return secret.get_secret_value()
 
@@ -1066,18 +1394,17 @@ class RemoteUploadService:
             f"vidxp-upload-repository-v1\0{root}".encode("utf-8")
         ).hexdigest()
 
-    def _handoff_capability(self, record: UploadHandoffRecord) -> str:
+    def _session_capability(self, record: UploadSessionRecord) -> str:
         import jwt
 
         return jwt.encode(
             {
                 "iss": "vidxp",
-                "aud": "vidxp-upload-handoff",
-                "sub": record.intent_id,
+                "aud": "vidxp-upload-session",
+                "sub": record.session_id,
                 "jti": record.selector,
-                "purpose": "upload-handoff",
+                "purpose": record.purpose,
                 "repository": record.repository_binding,
-                "size": record.byte_size,
                 "iat": int(record.created_at.timestamp()),
                 "exp": int(record.expires_at.timestamp()),
             },
@@ -1085,13 +1412,13 @@ class RemoteUploadService:
             algorithm="HS256",
         )
 
-    def _handoff_from_capability(
+    def _session_from_capability(
         self,
         capability: str,
         *,
         connection: Connection,
         for_update: bool,
-    ) -> UploadHandoffRecord | None:
+    ) -> UploadSessionRecord | None:
         import jwt
 
         try:
@@ -1099,11 +1426,18 @@ class RemoteUploadService:
                 capability,
                 self._secret(),
                 algorithms=["HS256"],
-                audience="vidxp-upload-handoff",
+                audience="vidxp-upload-session",
                 issuer="vidxp",
                 options={
                     "verify_exp": False,
-                    "require": ["sub", "jti", "purpose", "repository", "size", "iat", "exp"],
+                    "require": [
+                        "sub",
+                        "jti",
+                        "purpose",
+                        "repository",
+                        "iat",
+                        "exp",
+                    ],
                 },
             )
         except jwt.PyJWTError as exc:
@@ -1115,129 +1449,95 @@ class RemoteUploadService:
             or any(character not in "0123456789abcdef" for character in selector)
         ):
             raise self._invalid_handoff()
-        record = self.catalog.get_upload_handoff(
+        record = self.catalog.get_upload_session_by_selector(
             selector,
             connection=connection,
             for_update=for_update,
         )
         if (
             record is None
-            or claims.get("sub") != record.intent_id
-            or claims.get("purpose") != "upload-handoff"
+            or claims.get("sub") != record.session_id
+            or claims.get("purpose") != record.purpose
             or claims.get("repository") != record.repository_binding
-            or claims.get("size") != record.byte_size
             or claims.get("iat") != int(record.created_at.timestamp())
             or claims.get("exp") != int(record.expires_at.timestamp())
+            or not compare_digest(
+                record.capability_digest,
+                _token_digest(capability),
+            )
         ):
             raise self._invalid_handoff()
         return record
 
-    def _verify_handoff(
+    def _validate_upload_session(
         self,
-        record: UploadHandoffRecord | None,
+        record: UploadSessionRecord,
         *,
-        intent: UploadIntentRecord | None,
-        expected_intent_id: str,
         now: datetime,
     ) -> None:
         if (
-            record is None
-            or intent is None
-            or record.intent_id != expected_intent_id
-            or intent.intent_id != expected_intent_id
-            or record.repository_binding != self._repository_binding()
-            or record.byte_size != intent.byte_size
+            record.repository_binding != self._repository_binding()
+            or record.purpose != "media-upload"
         ):
             raise self._invalid_handoff()
-        if record.expires_at <= now or intent.expires_at <= now:
+        if record.expires_at <= now or record.state == UploadSessionState.expired:
             raise ApplicationError(
-                "upload_handoff_expired",
+                "upload_session_expired",
                 ErrorCategory.authentication,
-                "The upload handoff expired. Create a new media upload.",
+                "The upload session expired. Create a new media upload session.",
             )
 
-    def _require_handoff_binding(
-        self,
-        record: UploadHandoffRecord,
-        intent: UploadIntent,
-        *,
-        principal: Principal,
-    ) -> None:
+    def _require_session_binding(self, record: UploadSessionRecord) -> None:
         if (
-            record.intent_id != intent.intent_id
-            or record.principal_subject != principal.subject
-            or record.principal_client_id != principal.client_id
-            or record.repository_binding != self._repository_binding()
-            or record.byte_size != intent.byte_size
+            record.repository_binding != self._repository_binding()
+            or record.purpose != "media-upload"
         ):
-            raise RuntimeError("The stored upload handoff binding is invalid.")
-
-    @staticmethod
-    def _require_browser_principal(
-        record: UploadHandoffRecord | None,
-        principal: Principal,
-    ) -> None:
-        if record is None or record.principal_subject != principal.subject:
-            raise ApplicationError(
-                "upload_handoff_identity_mismatch",
-                ErrorCategory.authorization,
-                "The authenticated browser user does not own this upload handoff.",
-            )
+            raise RuntimeError("The stored upload session binding is invalid.")
 
     def _require_browser_session(
         self,
-        intent_id: str,
+        session_id: str,
         *,
         session_token: str | None,
-    ) -> tuple[UploadHandoffRecord, UploadIntentRecord]:
-        record = self.catalog.get_upload_handoff_by_intent(intent_id)
-        intent = self.catalog.get_upload_intent(intent_id)
+    ) -> UploadSessionRecord:
+        record = self.catalog.get_upload_session(session_id)
         self._validate_browser_session(
             record,
-            intent,
             session_token=session_token,
             now=utc_now(),
         )
-        assert record is not None and intent is not None
-        return record, intent
+        assert record is not None
+        return record
 
     def _validate_browser_session(
         self,
-        record: UploadHandoffRecord | None,
-        intent: UploadIntentRecord | None,
+        record: UploadSessionRecord | None,
         *,
         session_token: str | None,
         now: datetime,
     ) -> None:
         if (
             record is None
-            or intent is None
             or session_token is None
-            or record.session_digest is None
-            or record.intent_id != intent.intent_id
+            or record.browser_session_digest is None
             or record.repository_binding != self._repository_binding()
-            or record.byte_size != intent.byte_size
             or not compare_digest(
-                record.session_digest,
+                record.browser_session_digest,
                 _token_digest(session_token),
             )
         ):
             raise ApplicationError(
-                "upload_handoff_session_invalid",
+                "upload_browser_session_invalid",
                 ErrorCategory.authentication,
                 "The browser upload session is missing or invalid. Reopen "
-                "the original handoff URL.",
+                "the complete capability link.",
             )
-        if intent.expires_at <= now or intent.state == UploadState.expired:
-            raise ApplicationError(
-                "upload_handoff_expired",
-                ErrorCategory.authentication,
-                "The browser upload session expired. Create a new media upload.",
-            )
+        self._validate_upload_session(record, now=now)
 
     def _verify_creation_grant(
         self,
-        record: UploadHandoffRecord | None,
+        link: UploadSessionFileRecord | None,
+        session: UploadSessionRecord | None,
         intent: UploadIntentRecord | None,
         *,
         grant: str,
@@ -1246,43 +1546,47 @@ class RemoteUploadService:
         now: datetime,
     ) -> None:
         if (
-            record is None
+            link is None
+            or session is None
             or intent is None
-            or record.session_digest is None
-            or record.intent_id != expected_intent_id
+            or link.intent_id != expected_intent_id
             or intent.intent_id != expected_intent_id
-            or record.repository_binding != self._repository_binding()
-            or record.byte_size != byte_size
+            or link.session_id != session.session_id
+            or session.repository_binding != self._repository_binding()
             or intent.byte_size != byte_size
-            or record.creation_grant_digest is None
-            or record.creation_grant_expires_at is None
+            or link.creation_grant_digest is None
+            or link.creation_grant_expires_at is None
             or not compare_digest(
-                record.creation_grant_digest,
+                link.creation_grant_digest,
                 _token_digest(grant),
             )
         ):
             raise self._invalid_creation_grant()
-        if record.creation_grant_expires_at <= now or intent.expires_at <= now:
+        if (
+            link.creation_grant_expires_at <= now
+            or intent.expires_at <= now
+            or session.expires_at <= now
+        ):
             raise ApplicationError(
                 "upload_creation_grant_expired",
                 ErrorCategory.authentication,
-                "The upload creation grant expired. Request a new grant from "
+                "The upload creation grant expired. Retry this file from "
                 "the browser page.",
             )
-        if record.creation_grant_consumed_at is not None:
+        if link.creation_grant_consumed_at is not None:
             raise ApplicationError(
-                "upload_handoff_replayed",
+                "upload_creation_grant_replayed",
                 ErrorCategory.conflict,
-                "The upload creation grant was already used. Resume the existing "
-                "upload from its browser page.",
+                "The upload creation grant was already used. Resume the "
+                "existing file from its browser page.",
             )
 
     @staticmethod
     def _invalid_handoff() -> ApplicationError:
         return ApplicationError(
-            "upload_handoff_invalid",
+            "upload_session_capability_invalid",
             ErrorCategory.authentication,
-            "The upload handoff is invalid for this intent or repository.",
+            "The upload session capability is invalid for this repository.",
         )
 
     @staticmethod
@@ -1290,8 +1594,7 @@ class RemoteUploadService:
         return ApplicationError(
             "upload_creation_grant_invalid",
             ErrorCategory.authentication,
-            "The upload creation grant is invalid for this intent, size, or "
-            "repository.",
+            "The upload creation grant is invalid for this file, size, or repository.",
         )
 
     def _require_configured(self) -> None:
@@ -1302,16 +1605,41 @@ class RemoteUploadService:
                 "Remote resumable uploads are not configured.",
             )
 
-    def _require_handoff_configured(self) -> None:
+    def _require_session_configured(self) -> None:
         self._require_configured()
         if (
             self.settings.upload_handoff_public_url is None
             or self.settings.upload_handoff_secret is None
         ):
             raise ApplicationError(
-                "remote_upload_handoff_unavailable",
+                "remote_upload_session_unavailable",
                 ErrorCategory.unavailable,
-                "Browser upload handoffs are not configured.",
+                "Browser upload sessions are not configured.",
+            )
+
+    @staticmethod
+    def _session_file_request_key(
+        session_id: str,
+        client_file_key: str,
+    ) -> str:
+        return hashlib.sha256(
+            f"vidxp-upload-session-file-v1\0{session_id}\0{client_file_key}".encode()
+        ).hexdigest()
+
+    @staticmethod
+    def _require_same_file(
+        record: UploadIntentRecord,
+        command: CreateUploadFileCommand,
+    ) -> None:
+        if (
+            record.original_filename != command.original_filename
+            or record.byte_size != command.byte_size
+            or record.declared_mime_type != command.declared_mime_type
+        ):
+            raise ApplicationError(
+                "upload_client_key_conflict",
+                ErrorCategory.conflict,
+                "This client file key is already bound to different metadata.",
             )
 
     @staticmethod

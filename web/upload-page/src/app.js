@@ -9,34 +9,28 @@ import './app.css'
 
 const elements = {
   summary: document.querySelector('#summary'),
-  authenticationCard: document.querySelector('#authentication-card'),
-  authenticationForm: document.querySelector('#authentication-form'),
-  authenticationToken: document.querySelector('#authentication-token'),
-  authenticationState: document.querySelector('#authentication-state'),
-  expectedFilename: document.querySelector('#expected-filename'),
-  expectedSize: document.querySelector('#expected-size'),
-  maximumSize: document.querySelector('#maximum-size'),
+  sessionState: document.querySelector('#session-state'),
+  fileCount: document.querySelector('#file-count'),
+  maximumFileSize: document.querySelector('#maximum-file-size'),
+  maximumSessionSize: document.querySelector('#maximum-session-size'),
+  reservedSummary: document.querySelector('#reserved-summary'),
+  uploadedSummary: document.querySelector('#uploaded-summary'),
   expiresAt: document.querySelector('#expires-at'),
+  closeSession: document.querySelector('#close-session'),
   uploadState: document.querySelector('#upload-state'),
-  intentState: document.querySelector('#intent-state'),
   nextAction: document.querySelector('#next-action'),
-  intentId: document.querySelector('#intent-id'),
-  jobId: document.querySelector('#job-id'),
-  mediaId: document.querySelector('#media-id'),
+  sessionFiles: document.querySelector('#session-files'),
 }
 
-const TERMINAL_STATES = new Set(['ready', 'failed', 'expired'])
-const TRANSFER_STATES = new Set(['pending', 'accepted', 'uploading'])
 const POLL_INTERVAL_MS = 2000
+const CANCELLABLE_STATES = new Set(['pending', 'accepted', 'failed'])
 
 let uppy
-let expected
+let sessionStatus
 let creationUrl
-let resumeUrl
-let creationGrant
 let pollTimer
 let pollInFlight = false
-let currentIntentState = 'pending'
+const creationGrants = new Map()
 
 function setText(element, value) {
   element.textContent = value == null || value === '' ? '—' : String(value)
@@ -48,22 +42,16 @@ function setUploadMessage(message, kind = '') {
   if (kind) elements.uploadState.classList.add(kind)
 }
 
-function setAuthenticationMessage(message, kind = '') {
-  setText(elements.authenticationState, message)
-  elements.authenticationState.classList.remove('error', 'success')
-  if (kind) elements.authenticationState.classList.add(kind)
-}
-
 function formatBytes(value) {
-  if (!Number.isFinite(value)) return '—'
-  if (value === 0) return '0 bytes'
-
+  const size = Number(value)
+  if (!Number.isFinite(size)) return '—'
+  if (size === 0) return '0 bytes'
   const units = ['bytes', 'KiB', 'MiB', 'GiB', 'TiB']
   const exponent = Math.min(
-    Math.floor(Math.log(value) / Math.log(1024)),
+    Math.floor(Math.log(size) / Math.log(1024)),
     units.length - 1,
   )
-  const amount = value / 1024 ** exponent
+  const amount = size / 1024 ** exponent
   const digits = exponent === 0 || amount >= 10 ? 0 : 1
   return `${amount.toFixed(digits)} ${units[exponent]}`
 }
@@ -81,11 +69,9 @@ function formatDate(value) {
 function readCapabilityFragment() {
   const fragment = window.location.hash.slice(1)
   if (!fragment) return null
-
   const parameters = new URLSearchParams(fragment)
   const named = parameters.get('capability')
   if (named) return named
-
   if (!fragment.includes('=')) {
     try {
       return decodeURIComponent(fragment)
@@ -131,170 +117,18 @@ async function requestJson(url, options = {}) {
       ...options.headers,
     },
   })
-
   let payload
   try {
     payload = await response.json()
   } catch {
     payload = null
   }
-
   if (!response.ok) {
     throw new Error(
       safeServerMessage(payload, `VidXP rejected the request (${response.status}).`),
     )
   }
   return payload ?? {}
-}
-
-function authenticateBrowser() {
-  elements.authenticationCard.hidden = false
-  setText(elements.summary, 'Confirm your identity to open this upload handoff.')
-  setAuthenticationMessage('Waiting for an OIDC access token.')
-  elements.authenticationToken.focus()
-
-  return new Promise((resolve) => {
-    let submitting = false
-    const submit = async (event) => {
-      event.preventDefault()
-      if (submitting) return
-      const token = elements.authenticationToken.value.trim()
-      elements.authenticationToken.value = ''
-      if (!token) {
-        setAuthenticationMessage('Enter a valid OIDC access token.', 'error')
-        return
-      }
-      submitting = true
-      setAuthenticationMessage('Confirming your VidXP identity…')
-      try {
-        const payload = await requestJson(apiUrl('./authenticate'), {
-          method: 'POST',
-          body: '{}',
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        elements.authenticationForm.removeEventListener('submit', submit)
-        elements.authenticationCard.hidden = true
-        resolve(payload)
-      } catch (error) {
-        const message = error instanceof Error
-          ? error.message
-          : 'VidXP could not confirm your identity.'
-        setAuthenticationMessage(message, 'error')
-      } finally {
-        submitting = false
-      }
-    }
-    elements.authenticationForm.addEventListener('submit', submit)
-  })
-}
-
-async function authenticatedBootstrap() {
-  try {
-    return await requestJson(apiUrl('./status'))
-  } catch {
-    return authenticateBrowser()
-  }
-}
-
-function statusRecord(envelope) {
-  const status = envelope?.status ?? envelope ?? {}
-  return status.intent ?? status
-}
-
-function firstDefined(record, names) {
-  for (const name of names) {
-    if (record?.[name] != null) return record[name]
-  }
-  return null
-}
-
-function expectedRecord(envelope) {
-  const record = statusRecord(envelope)
-  const byteSize = Number(
-    firstDefined(record, ['byte_size', 'declared_byte_size', 'size']),
-  )
-  const maximumBytes = Number(
-    firstDefined(record, [
-      'configured_maximum_bytes',
-      'maximum_bytes',
-      'max_bytes',
-    ]),
-  )
-  return {
-    intentId: firstDefined(record, ['intent_id', 'id']),
-    filename: firstDefined(record, [
-      'original_filename',
-      'filename',
-      'declared_filename',
-    ]),
-    byteSize,
-    maximumBytes,
-    expiresAt: firstDefined(record, ['expires_at', 'expiry', 'expires']),
-  }
-}
-
-function renderExpectedFile() {
-  setText(elements.expectedFilename, expected.filename)
-  setText(elements.expectedSize, formatBytes(expected.byteSize))
-  setText(elements.maximumSize, formatBytes(expected.maximumBytes))
-  setText(elements.expiresAt, formatDate(expected.expiresAt))
-  setText(
-    elements.summary,
-    `Select ${expected.filename} (${formatBytes(expected.byteSize)}) to upload directly to VidXP.`,
-  )
-}
-
-function statusGuidance(record) {
-  return firstDefined(record, [
-    'next_action',
-    'guidance',
-    'message',
-    'status_message',
-  ])
-}
-
-function applyStatus(envelope) {
-  const record = statusRecord(envelope)
-  const state = String(record.state ?? record.status ?? 'pending').toLowerCase()
-  currentIntentState = state
-
-  setText(elements.intentState, state)
-  setText(elements.intentId, firstDefined(record, ['intent_id', 'id']))
-  setText(elements.jobId, record.job_id)
-  setText(elements.mediaId, record.media_id)
-  setText(
-    elements.nextAction,
-    statusGuidance(record) ?? 'VidXP is waiting for the upload to continue.',
-  )
-
-  if (record.media_id) {
-    setUploadMessage('The video is ready in VidXP.', 'success')
-  } else if (state === 'failed' || state === 'expired') {
-    setUploadMessage(
-      state === 'expired'
-        ? 'This upload handoff has expired.'
-        : 'VidXP could not finish importing this upload.',
-      'error',
-    )
-  }
-  uppy?.getPlugin('Dashboard')?.setOptions({
-    disabled: !TRANSFER_STATES.has(state),
-  })
-  return state
-}
-
-function activeFile() {
-  return uppy?.getFiles()[0] ?? null
-}
-
-function validateExpectedFile(file) {
-  if (file.name !== expected.filename) {
-    return `Choose the expected file named ${expected.filename}.`
-  }
-  if (file.size !== expected.byteSize) {
-    return `The selected file is ${formatBytes(file.size)}; VidXP expects ${formatBytes(expected.byteSize)}.`
-  }
-  return null
 }
 
 function normalizedUrl(value) {
@@ -310,28 +144,168 @@ function isCreationRequest(request) {
   )
 }
 
-function responseGrant(payload) {
-  return payload?.grant ?? payload?.creation_grant ?? payload?.capability ?? null
+function randomClientFileKey() {
+  if (typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID().replaceAll('-', '')
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('')
 }
 
-async function getCreationGrant() {
-  if (creationGrant) return creationGrant
+function childByKey(key) {
+  return sessionStatus?.items?.find((item) => item.client_file_key === key) ?? null
+}
 
-  const payload = await requestJson(apiUrl('./creation-grant'), {
-    method: 'POST',
-    body: '{}',
-  })
-  if (payload.status) applyStatus(payload)
-  const grant = responseGrant(payload)
-  if (typeof grant !== 'string' || !grant) {
-    throw new Error('VidXP did not issue an upload creation grant.')
+function renderFiles() {
+  elements.sessionFiles.replaceChildren()
+  const items = sessionStatus?.items ?? []
+  if (items.length === 0) {
+    const empty = document.createElement('li')
+    empty.className = 'empty-state'
+    empty.textContent = 'No files have been selected for this session yet.'
+    elements.sessionFiles.append(empty)
+    return
   }
-  creationGrant = grant
-  return grant
+  for (const item of items) {
+    const row = document.createElement('li')
+    row.className = 'session-file'
+
+    const identity = document.createElement('div')
+    const name = document.createElement('strong')
+    name.textContent = item.original_filename
+    const details = document.createElement('div')
+    details.className = 'file-details'
+    const size = document.createElement('span')
+    size.textContent = formatBytes(item.byte_size)
+    const state = document.createElement('span')
+    state.className = 'file-state'
+    state.textContent = item.state
+    details.append(size, state)
+    if (item.job_id) {
+      const job = document.createElement('span')
+      job.textContent = `Job ${item.job_id}`
+      details.append(job)
+    }
+    if (item.media_id) {
+      const media = document.createElement('span')
+      media.textContent = `Media ${item.media_id}`
+      details.append(media)
+    }
+    identity.append(name, details)
+    row.append(identity)
+
+    if (CANCELLABLE_STATES.has(item.state)) {
+      const cancel = document.createElement('button')
+      cancel.type = 'button'
+      cancel.className = 'secondary'
+      cancel.textContent = 'Cancel file'
+      cancel.setAttribute('aria-label', `Cancel ${item.original_filename}`)
+      cancel.addEventListener('click', async () => {
+        try {
+          await cancelFile(item.intent_id, cancel)
+        } catch (error) {
+          setUploadMessage(safeUploadError(error), 'error')
+        }
+      })
+      row.append(cancel)
+    }
+
+    const action = document.createElement('p')
+    action.className = 'file-action'
+    action.textContent = item.next_action
+    row.append(action)
+    elements.sessionFiles.append(row)
+  }
+}
+
+function syncUppyFiles(resumeUrls = {}) {
+  if (!uppy) return
+  for (const file of uppy.getFiles()) {
+    const key = file.meta?.client_file_key
+    if (!key) continue
+    const child = childByKey(key)
+    if (child && file.meta.intent_id !== child.intent_id) {
+      uppy.setFileMeta(file.id, { intent_id: child.intent_id })
+    }
+    const resumeUrl = resumeUrls[key]
+    if (resumeUrl && file.tus?.uploadUrl !== resumeUrl) {
+      uppy.setFileState(file.id, {
+        tus: { ...file.tus, uploadUrl: normalizedUrl(resumeUrl) },
+      })
+    }
+  }
+}
+
+function applySession(payload) {
+  sessionStatus = payload?.status ?? payload
+  if (payload?.creation_url) creationUrl = normalizedUrl(payload.creation_url)
+  setText(elements.sessionState, `${sessionStatus.session_state} · ${sessionStatus.aggregate_state}`)
+  setText(
+    elements.fileCount,
+    `${sessionStatus.file_count} of ${sessionStatus.maximum_files}`,
+  )
+  setText(elements.maximumFileSize, formatBytes(sessionStatus.maximum_file_bytes))
+  setText(elements.maximumSessionSize, formatBytes(sessionStatus.maximum_aggregate_bytes))
+  setText(
+    elements.reservedSummary,
+    `${sessionStatus.reserved_file_count} files · ${formatBytes(sessionStatus.reserved_bytes)}`,
+  )
+  setText(
+    elements.uploadedSummary,
+    `${sessionStatus.uploaded_file_count} files · ${formatBytes(sessionStatus.uploaded_bytes)}`,
+  )
+  setText(elements.expiresAt, formatDate(sessionStatus.expires_at))
+  setText(elements.summary, sessionStatus.status)
+  setText(elements.nextAction, sessionStatus.next_action)
+  elements.closeSession.disabled = sessionStatus.session_state !== 'open'
+  renderFiles()
+  syncUppyFiles(payload?.resume_urls ?? {})
+  const dashboard = uppy?.getPlugin('Dashboard')
+  dashboard?.setOptions({
+    disabled: sessionStatus.session_state === 'expired',
+    disableLocalFiles: sessionStatus.session_state !== 'open',
+  })
+}
+
+async function authorizeFile(file) {
+  const current = uppy.getFile(file.id)
+  const key = current?.meta?.client_file_key
+  if (!current || !key) throw new Error('VidXP could not identify the selected file.')
+  if (current.tus?.uploadUrl) return
+  const payload = await requestJson(apiUrl('./files'), {
+    method: 'POST',
+    body: JSON.stringify({
+      client_file_key: key,
+      original_filename: current.name,
+      byte_size: current.size,
+      declared_mime_type: current.type || null,
+    }),
+  })
+  if (!payload.status?.intent_id) {
+    throw new Error('VidXP did not bind the selected file.')
+  }
+  uppy.setFileMeta(current.id, {
+    client_file_key: key,
+    intent_id: payload.status.intent_id,
+  })
+  if (payload.grant) creationGrants.set(key, payload.grant)
+  if (payload.resume_url) {
+    uppy.setFileState(current.id, {
+      tus: { ...current.tus, uploadUrl: normalizedUrl(payload.resume_url) },
+    })
+  }
+  scheduleStatusPoll(0)
+}
+
+async function authorizeFiles(fileIDs) {
+  for (const fileID of fileIDs) {
+    const file = uppy.getFile(fileID)
+    if (file) await authorizeFile(file)
+  }
 }
 
 function recoveryLifetime() {
-  const expiry = new Date(expected.expiresAt).getTime()
+  const expiry = new Date(sessionStatus.expires_at).getTime()
   if (!Number.isFinite(expiry)) return 60 * 60 * 1000
   return Math.max(1000, expiry - Date.now())
 }
@@ -339,94 +313,104 @@ function recoveryLifetime() {
 function safeUploadError(error) {
   const code = error?.originalResponse?.getHeader?.('X-VidXP-Error')
   if (typeof code === 'string' && /^[a-z0-9_-]{1,80}$/i.test(code)) {
-    return `VidXP rejected the upload (${code}).`
+    return `VidXP rejected a file (${code}).`
   }
-  return 'The transfer was interrupted. Check the connection and retry.'
-}
-
-function applyResumeUrl(value) {
-  if (!value || !uppy) return
-  resumeUrl = normalizedUrl(value)
-  uppy.getPlugin('Tus')?.setOptions({ uploadUrl: resumeUrl })
-
-  const file = activeFile()
-  if (file && file.tus?.uploadUrl !== resumeUrl) {
-    uppy.setFileState(file.id, {
-      tus: { ...file.tus, uploadUrl: resumeUrl },
-    })
-  }
+  return error instanceof Error
+    ? error.message
+    : 'The transfer was interrupted. Check the connection and retry.'
 }
 
 function configureUppy() {
-  const scopedId = `vidxp-upload-${String(expected.intentId).replace(/[^a-z0-9_-]/gi, '_')}`
+  const scopedId = `vidxp-upload-session-${sessionStatus.session_id}`
   uppy = new Uppy({
     id: scopedId,
     autoProceed: false,
-    meta: { intent_id: String(expected.intentId) },
     restrictions: {
-      maxNumberOfFiles: 1,
-      minFileSize: expected.byteSize,
-      maxFileSize: expected.byteSize,
+      maxFileSize: sessionStatus.maximum_file_bytes,
+      maxTotalFileSize: sessionStatus.maximum_aggregate_bytes,
+      maxNumberOfFiles: sessionStatus.maximum_files,
     },
-    onBeforeFileAdded(file) {
-      const problem = validateExpectedFile(file)
-      if (problem) setUploadMessage(problem, 'error')
-      return problem == null
+    onBeforeFileAdded(file, files) {
+      const recoveredGhost = Object.values(files).find(
+        (candidate) =>
+          candidate.isGhost &&
+          candidate.name === file.name &&
+          candidate.size === file.size &&
+          candidate.type === file.type,
+      )
+      if (recoveredGhost) {
+        return {
+          ...recoveredGhost,
+          data: file.data,
+          isGhost: false,
+          source: file.source,
+        }
+      }
+      if (file.meta?.client_file_key) return file
+      const key = randomClientFileKey()
+      return {
+        ...file,
+        id: `${file.id}-${key}`,
+        meta: { ...file.meta, client_file_key: key },
+      }
     },
   })
 
-  uppy.on('file-added', () => {
-    setUploadMessage('The expected file is ready to upload.')
+  uppy.addPreProcessor(authorizeFiles)
+  uppy.on('file-added', () => setUploadMessage('Files are ready to upload.'))
+  uppy.on('file-removed', (file) => {
+    const intentID = file.meta?.intent_id
+    if (intentID) cancelFile(intentID).catch(() => {})
+    setUploadMessage('File removed. You may choose another while the session is open.')
   })
-  uppy.on('file-removed', () => {
-    setUploadMessage('Choose the expected file to begin.')
-  })
-  uppy.on('restriction-failed', () => {
-    setUploadMessage('The selected file does not match this upload handoff.', 'error')
+  uppy.on('restriction-failed', (_file, error) => {
+    setUploadMessage(error?.message ?? 'A session limit rejected the file.', 'error')
   })
   uppy.on('upload-pause', (_file, isPaused) => {
-    setUploadMessage(isPaused ? 'Upload paused.' : 'Upload resumed.')
+    setUploadMessage(isPaused ? 'A file upload is paused.' : 'A file upload resumed.')
   })
-  uppy.on('upload-error', (_file, error) => {
-    creationGrant = null
+  uppy.on('upload-error', (file, error) => {
+    creationGrants.delete(file.meta?.client_file_key)
     setUploadMessage(safeUploadError(error), 'error')
+    scheduleStatusPoll(0)
   })
-  uppy.on('upload-success', () => {
+  uppy.on('upload-success', (file) => {
+    creationGrants.delete(file.meta?.client_file_key)
     setUploadMessage('Transfer complete. VidXP is validating and importing the video.', 'success')
     scheduleStatusPoll(0)
   })
   uppy.on('restored', () => {
-    setUploadMessage('The previous upload session was restored.')
+    setUploadMessage('The previous browser upload state was restored.')
+    syncUppyFiles()
     scheduleStatusPoll(0)
   })
 
   uppy.use(Dashboard, {
     target: '#uppy-dashboard',
     inline: true,
-    height: 360,
+    height: 420,
     theme: 'dark',
     showProgressDetails: true,
     proudlyDisplayPoweredByUppy: false,
-    disabled: !TRANSFER_STATES.has(currentIntentState),
-    note: `Only ${expected.filename} (${formatBytes(expected.byteSize)}) is accepted.`,
+    disableLocalFiles: sessionStatus.session_state !== 'open',
+    disabled: sessionStatus.session_state === 'expired',
+    note: `Up to ${sessionStatus.maximum_files} videos; ${formatBytes(sessionStatus.maximum_file_bytes)} per file.`,
   })
-
   uppy.use(Tus, {
     endpoint: creationUrl,
-    ...(resumeUrl ? { uploadUrl: normalizedUrl(resumeUrl) } : {}),
     allowedMetaFields: ['intent_id'],
+    limit: 1,
     parallelUploads: 1,
     overridePatchMethod: false,
     uploadDataDuringCreation: false,
     withCredentials: false,
     removeFingerprintOnSuccess: true,
-    async onBeforeRequest(request) {
+    async onBeforeRequest(request, file) {
       if (!isCreationRequest(request)) return
-      const grant = await getCreationGrant()
+      const key = file.meta?.client_file_key
+      const grant = creationGrants.get(key)
+      if (!grant) throw new Error('VidXP did not issue a creation grant for this file.')
       request.setHeader('Authorization', `VidXP-Handoff ${grant}`)
-    },
-    onAfterResponse(request) {
-      if (isCreationRequest(request)) creationGrant = null
     },
   })
   uppy.use(GoldenRetriever, {
@@ -434,7 +418,36 @@ function configureUppy() {
     expires: recoveryLifetime(),
     serviceWorker: false,
   })
+}
 
+async function cancelFile(intentID, button = null) {
+  if (button) button.disabled = true
+  try {
+    const payload = await requestJson(apiUrl(`./files/${intentID}/cancel`), {
+      method: 'POST',
+      body: '{}',
+    })
+    applySession(payload)
+    setUploadMessage('The selected file was cancelled without affecting its siblings.')
+  } catch (error) {
+    if (button) button.disabled = false
+    throw error
+  }
+}
+
+async function closeSession() {
+  elements.closeSession.disabled = true
+  try {
+    const payload = await requestJson(apiUrl('./close'), {
+      method: 'POST',
+      body: '{}',
+    })
+    applySession(payload)
+    setUploadMessage('The session is closed to new files. Active files may still finish.')
+  } catch (error) {
+    elements.closeSession.disabled = false
+    setUploadMessage(safeUploadError(error), 'error')
+  }
 }
 
 async function pollStatus() {
@@ -442,15 +455,11 @@ async function pollStatus() {
   pollInFlight = true
   try {
     const payload = await requestJson(apiUrl('./status'))
-    applyResumeUrl(payload.resume_url)
-    const state = applyStatus(payload)
-    if (!TERMINAL_STATES.has(state)) scheduleStatusPoll(POLL_INTERVAL_MS)
+    applySession(payload)
+    scheduleStatusPoll()
   } catch {
-    setText(
-      elements.nextAction,
-      'The status check failed. This page will try again automatically.',
-    )
-    scheduleStatusPoll(POLL_INTERVAL_MS)
+    setText(elements.nextAction, 'The status check failed. This page will retry automatically.')
+    scheduleStatusPoll()
   } finally {
     pollInFlight = false
   }
@@ -468,37 +477,23 @@ async function bootstrap() {
         method: 'POST',
         body: JSON.stringify({ capability }),
       })
-    : await authenticatedBootstrap()
+    : await requestJson(apiUrl('./status'))
   if (capability) clearFragment()
-  expected = expectedRecord(payload)
-  if (
-    !expected.intentId ||
-    !expected.filename ||
-    !Number.isFinite(expected.byteSize) ||
-    expected.byteSize < 0
-  ) {
-    throw new Error('VidXP returned an incomplete upload handoff.')
+  if (!payload.status?.session_id || !payload.creation_url) {
+    throw new Error('VidXP returned an incomplete upload session.')
   }
-  if (!Number.isFinite(expected.maximumBytes)) {
-    expected.maximumBytes = expected.byteSize
-  }
-  if (!payload.creation_url) {
-    throw new Error('VidXP did not provide the tus creation endpoint.')
-  }
-
   creationUrl = normalizedUrl(payload.creation_url)
-  resumeUrl = payload.resume_url ? normalizedUrl(payload.resume_url) : null
-  creationGrant = responseGrant(payload)
-
-  renderExpectedFile()
-  applyStatus(payload)
+  applySession(payload)
   configureUppy()
+  syncUppyFiles(payload.resume_urls ?? {})
+  elements.closeSession.addEventListener('click', closeSession)
+  setUploadMessage('Choose one or more videos. Bytes upload directly to tusd.')
   scheduleStatusPoll(0)
 }
 
 bootstrap().catch((error) => {
-  const message = error instanceof Error ? error.message : 'The upload page could not start.'
+  const message = error instanceof Error ? error.message : 'The upload session could not start.'
   setText(elements.summary, message)
   setUploadMessage(message, 'error')
-  setText(elements.nextAction, 'Request a new upload handoff from VidXP.')
+  setText(elements.nextAction, 'Reopen the complete capability link or request a new upload session.')
 })

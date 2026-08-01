@@ -123,7 +123,7 @@ class SettingsTests(unittest.TestCase):
             "upload_cleanup_token": "c" * 32,
             "upload_cors_origin_regex": r"^(https://vidxp\.example)$",
         }
-        with self.assertRaisesRegex(ValidationError, "HTTPS URL"):
+        with self.assertRaisesRegex(ValidationError, "HTTPS outside loopback"):
             VidXPSettings(
                 **base,
                 upload_handoff_public_url=("http://vidxp.example/upload-handoff"),
@@ -156,7 +156,12 @@ class SettingsTests(unittest.TestCase):
             "https://vidxp.example/upload-handoff",
         )
         self.assertEqual(settings.mcp_max_request_body_bytes, 4 * 1024 * 1024)
-        self.assertEqual(settings.mcp_session_idle_timeout_seconds, 30 * 60)
+        self.assertEqual(settings.upload_session_max_files, 10)
+        self.assertEqual(
+            settings.upload_session_max_bytes,
+            100 * 1024 * 1024 * 1024,
+        )
+        self.assertEqual(settings.upload_session_ttl_seconds, 24 * 60 * 60)
 
     def test_upload_cors_regex_uses_re2_safe_exact_origins(self):
         base = {
@@ -178,6 +183,19 @@ class SettingsTests(unittest.TestCase):
             accepted.upload_cors_origin_regex,
             r"^(https://api\.example|https://vidxp\.example)$",
         )
+        loopback = VidXPSettings(
+            **{
+                **base,
+                "upload_handoff_public_url": (
+                    "http://127.0.0.1:32191/upload-handoff"
+                ),
+            },
+            upload_cors_origin_regex=r"^(http://127\.0\.0\.1:32191)$",
+        )
+        self.assertEqual(
+            loopback.upload_handoff_public_url,
+            "http://127.0.0.1:32191/upload-handoff",
+        )
 
         invalid_patterns = (
             r"^https://api\.example|https://vidxp\.example$",
@@ -185,6 +203,7 @@ class SettingsTests(unittest.TestCase):
             r"^(https://(api|vidxp)\.example)$",
             r"^(https://vidxp.example)$",
             r"^(https://vidxp\.example:65536)$",
+            r"^(http://api\.example)$",
         )
         for pattern in invalid_patterns:
             with self.subTest(pattern=pattern), self.assertRaisesRegex(
@@ -196,13 +215,7 @@ class SettingsTests(unittest.TestCase):
                     upload_cors_origin_regex=pattern,
                 )
 
-    def test_mcp_session_idle_timeout_is_bounded(self):
-        for timeout in (0, 59, 24 * 60 * 60 + 1):
-            with self.subTest(timeout=timeout), self.assertRaises(
-                ValidationError
-            ):
-                VidXPSettings(mcp_session_idle_timeout_seconds=timeout)
-
+    def test_upload_session_limits_are_bounded_and_coherent(self):
         handoff = {
             "upload_public_endpoint": "https://uploads.example/uploads/",
             "upload_internal_endpoint": "http://tusd:8080/uploads/",
@@ -213,13 +226,25 @@ class SettingsTests(unittest.TestCase):
             "upload_handoff_secret": "h" * 32,
             "upload_cors_origin_regex": r"^(https://vidxp\.example)$",
         }
-        with self.assertRaisesRegex(
-            ValidationError,
-            "longer than the upload handoff TTL",
-        ):
+        for maximum_files in (0, 101):
+            with self.subTest(maximum_files=maximum_files), self.assertRaises(
+                ValidationError
+            ):
+                VidXPSettings(
+                    **handoff,
+                    upload_session_max_files=maximum_files,
+                )
+        for ttl in (299, 7 * 24 * 60 * 60 + 1):
+            with self.subTest(ttl=ttl), self.assertRaises(ValidationError):
+                VidXPSettings(
+                    **handoff,
+                    upload_session_ttl_seconds=ttl,
+                )
+        with self.assertRaisesRegex(ValidationError, "aggregate limit"):
             VidXPSettings(
                 **handoff,
-                mcp_session_idle_timeout_seconds=15 * 60,
+                upload_max_bytes=1024,
+                upload_session_max_bytes=512,
             )
 
 

@@ -2,19 +2,14 @@ from __future__ import annotations
 
 import logging
 import json
-from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from functools import partial
-from typing import Annotated, AsyncIterator, Callable, Literal, TypeVar
+from typing import Annotated, Callable, TypeVar
 from urllib.parse import quote
-from uuid import uuid4
 
 import anyio
 from mcp.server import MCPServer
-from mcp.server.mcpserver import Context
-from mcp.server.session import ServerSession
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
@@ -22,9 +17,14 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.server.transport_security import TransportSecurityMiddleware
 from mcp.shared.exceptions import MCPError
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import Icon, ResourceLink, ToolAnnotations
+from mcp.types import (
+    CallToolResult,
+    Icon,
+    ResourceLink,
+    TextContent,
+    ToolAnnotations,
+)
 from pydantic import Field
-from pydantic import AwareDatetime
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -35,7 +35,6 @@ from vidxp.application_models import (
     CapabilityList,
     CreateSnippetCommand,
     CreateIndexCommand,
-    CreateUploadIntentCommand,
     ErrorCategory,
     Identifier,
     IndexStatus,
@@ -47,14 +46,14 @@ from vidxp.application_models import (
     MediaAsset,
     MediaId,
     MediaPage,
-    MediaUploadStatus,
+    MediaUploadSessionStatus,
     Principal,
     PrepareModelsCommand,
     QueryVideoCommand,
     RuntimeReadiness,
     SearchCommand,
     WorkspaceOverview,
-    UploadIntentId,
+    UploadSessionId,
 )
 from vidxp.authentication import (
     OIDCBearerAuthenticator,
@@ -74,7 +73,6 @@ from vidxp.idempotency import (
     scoped_request_key,
 )
 from vidxp.core.identifiers import ArtifactId
-from vidxp.core.uploads import UploadState
 from vidxp.settings import HttpAuthMode
 from vidxp.upload_service import RemoteUploadService
 
@@ -114,72 +112,6 @@ _CANCEL = ToolAnnotations(
     idempotent_hint=True,
     open_world_hint=False,
 )
-_UPLOAD_ELICITATION_COMPLETE_STATES = frozenset(
-    {
-        UploadState.processing,
-        UploadState.ready,
-        UploadState.failed,
-        UploadState.expired,
-    }
-)
-_UPLOAD_ELICITATION_POLL_SECONDS = 1.0
-
-
-@dataclass(frozen=True)
-class _MCPLifespan:
-    task_group: anyio.abc.TaskGroup
-
-
-@asynccontextmanager
-async def _mcp_lifespan(_server: MCPServer) -> AsyncIterator[_MCPLifespan]:
-    async with anyio.create_task_group() as task_group:
-        try:
-            yield _MCPLifespan(task_group=task_group)
-        finally:
-            task_group.cancel_scope.cancel()
-
-
-async def _complete_upload_elicitation(
-    service: RemoteUploadService,
-    principal: Principal,
-    intent_id: UploadIntentId,
-    handoff_expires_at: AwareDatetime,
-    elicitation_id: str,
-    session: ServerSession,
-) -> None:
-    """Notify the originating MCP session once the browser upload is done."""
-    while datetime.now(timezone.utc) < handoff_expires_at:
-        try:
-            status = await anyio.to_thread.run_sync(
-                partial(
-                    service.get_status,
-                    intent_id,
-                    principal=principal,
-                )
-            )
-        except Exception:
-            _LOGGER.debug(
-                "Could not poll upload %s for elicitation completion.",
-                intent_id,
-                exc_info=True,
-            )
-        else:
-            if status.state in _UPLOAD_ELICITATION_COMPLETE_STATES:
-                break
-        remaining = (
-            handoff_expires_at - datetime.now(timezone.utc)
-        ).total_seconds()
-        await anyio.sleep(
-            min(_UPLOAD_ELICITATION_POLL_SECONDS, max(0, remaining))
-        )
-    try:
-        await session.send_elicit_complete(elicitation_id)
-    except Exception:
-        _LOGGER.debug(
-            "Could not deliver completion for upload elicitation %s.",
-            elicitation_id,
-            exc_info=True,
-        )
 
 
 class PrincipalBridge:
@@ -239,63 +171,15 @@ class RemoteMCP:
     transport_security: TransportSecuritySettings
 
 
-class MediaUploadHandoff(MediaUploadStatus):
-    upload_page_url: str = Field(
+class MediaUploadSessionLink(MediaUploadSessionStatus):
+    upload_session_url: str = Field(
         min_length=1,
         max_length=4096,
         description=(
-            "HTTPS page for the user to open. Native URL elicitation uses "
-            "an uncredentialed URL and requires independent browser OIDC "
-            "authentication. Other modes return an explicitly manual "
-            "bearer-capability fallback."
+            "Short-lived HTTPS capability link for the user to open. The "
+            "fragment is a bearer secret and is never sent through native "
+            "URL elicitation."
         ),
-    )
-    browser_authentication: Literal["oidc", "capability"]
-    handoff_expires_at: AwareDatetime
-    elicitation_action: Literal[
-        "disabled",
-        "unsupported",
-        "accept",
-        "decline",
-        "cancel",
-        "unavailable",
-    ] = "unsupported"
-
-
-def _upload_handoff_after_elicitation(
-    handoff: MediaUploadHandoff,
-    action: str,
-) -> MediaUploadHandoff:
-    next_action = {
-        "disabled": (
-            "Native URL elicitation is disabled because this authentication "
-            "mode cannot independently identify the browser user. Open "
-            "upload_page_url manually and treat its capability fragment as "
-            "a secret, then call get_media_upload again."
-        ),
-        "accept": (
-            "Complete the upload in the page approved by the MCP client, then "
-            "call get_media_upload again."
-        ),
-        "decline": (
-            "The user declined to open the page. The upload_page_url remains "
-            "available if they choose to open it later."
-        ),
-        "cancel": (
-            "The URL prompt was dismissed. The upload_page_url remains "
-            "available for a later attempt."
-        ),
-        "unavailable": (
-            "The client could not present the URL prompt. Open upload_page_url "
-            "manually, then call get_media_upload again."
-        ),
-        "unsupported": handoff.next_action,
-    }[action]
-    return handoff.model_copy(
-        update={
-            "elicitation_action": action,
-            "next_action": next_action,
-        }
     )
 
 
@@ -517,7 +401,6 @@ def create_mcp_server(
         version=__version__,
         token_verifier=token_verifier,
         auth=auth,
-        lifespan=_mcp_lifespan,
     )
 
     async def artifact_bytes(
@@ -687,115 +570,72 @@ def create_mcp_server(
 
     @server.tool(
         description=(
-            "Create an idempotent, metadata-only tus upload handoff. Return a "
-            "normal HTTPS page for the user; video bytes never pass through "
-            "MCP."
+            "Create an idempotent multi-file upload session and return its "
+            "short-lived capability link. The user selects files in the "
+            "browser; filenames, sizes, MIME types, and video bytes are not "
+            "tool inputs."
         ),
         annotations=_SUBMIT,
         structured_output=True,
     )
     async def create_media_upload(
-        command: CreateUploadIntentCommand,
         idempotency_key: IdempotencyKey,
-        mcp_context: Context,
-    ) -> MediaUploadHandoff:
-        def create(
-            actor: Principal,
-        ) -> tuple[MediaUploadHandoff, Principal]:
-            service = _uploads(context)
-            handoff = service.create_handoff(
-                command,
+    ) -> Annotated[CallToolResult, MediaUploadSessionLink]:
+        link = await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.write,
+            operation=lambda actor: _uploads(context).create_upload_session(
                 principal=actor,
                 request_key=scoped_request_key(
                     principal=actor,
                     transport="mcp",
-                    operation="media-upload",
+                    operation="media-upload-session",
                     idempotency_key=idempotency_key,
                 ),
-            )
-            assert context.settings.upload_handoff_public_url is not None
-            public_page_url = (
-                f"{context.settings.upload_handoff_public_url}/"
-                f"{handoff.status.intent_id}"
-            )
-            browser_authentication = (
-                "oidc"
-                if context.settings.http_auth_mode == HttpAuthMode.oidc
-                else "capability"
-            )
-            page_url = (
-                public_page_url
-                if browser_authentication == "oidc"
-                else (
-                    f"{public_page_url}#capability={quote(handoff.capability, safe='')}"
-                )
-            )
-            return (
-                MediaUploadHandoff(
-                    **handoff.status.model_dump(),
-                    upload_page_url=page_url,
-                    browser_authentication=browser_authentication,
-                    handoff_expires_at=handoff.expires_at,
-                ),
-                actor,
-            )
-
-        result, actor = await _invoke_async(
-            context,
-            default_principal=default_principal,
-            permission=RepositoryPermission.write,
-            operation=create,
+            ),
         )
-        if result.browser_authentication != "oidc":
-            return _upload_handoff_after_elicitation(result, "disabled")
-        capabilities = mcp_context.client_capabilities
-        elicitation = capabilities.elicitation if capabilities is not None else None
-        if elicitation is None or elicitation.url is None:
-            return _upload_handoff_after_elicitation(result, "unsupported")
-        elicitation_id = f"vidxp-upload-{result.intent_id}-{uuid4().hex}"
-        try:
-            response = await mcp_context.elicit_url(
-                message=(
-                    "Open VidXP's secure page to upload the declared video "
-                    "directly to the resumable upload service."
-                ),
-                url=result.upload_page_url,
-                elicitation_id=elicitation_id,
-            )
-        except MCPError:
-            _LOGGER.warning("The MCP client rejected URL elicitation delivery.")
-            return _upload_handoff_after_elicitation(result, "unavailable")
-        if response.action == "accept":
-            lifespan = mcp_context.request_context.lifespan_context
-            lifespan.task_group.start_soon(
-                _complete_upload_elicitation,
-                _uploads(context),
-                actor,
-                result.intent_id,
-                result.handoff_expires_at,
-                elicitation_id,
-                mcp_context.session,
-            )
-        return _upload_handoff_after_elicitation(result, response.action)
+        assert context.settings.upload_handoff_public_url is not None
+        page_url = (
+            f"{context.settings.upload_handoff_public_url}/"
+            f"{link.status.session_id}#capability="
+            f"{quote(link.capability, safe='')}"
+        )
+        result = MediaUploadSessionLink(
+            **link.status.model_dump(),
+            upload_session_url=page_url,
+        )
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text=(
+                        "Open this short-lived VidXP upload session to select "
+                        f"and upload videos:\n{page_url}"
+                    ),
+                )
+            ],
+            structured_content=result.model_dump(mode="json"),
+        )
 
     @server.tool(
         description=(
-            "Get the current server-owned media upload state and the next "
-            "valid action. Processing or failed imports include a job_id for "
-            "get_job; ready uploads include a media_id for start_indexing."
+            "Get durable aggregate and per-file state for an upload session. "
+            "Ready children include media_id; processing or failed children "
+            "include job_id and actionable next steps."
         ),
         annotations=_READ_ONLY,
         structured_output=True,
     )
     async def get_media_upload(
-        intent_id: UploadIntentId,
-    ) -> MediaUploadStatus:
+        upload_session_id: UploadSessionId,
+    ) -> MediaUploadSessionStatus:
         return await _invoke_async(
             context,
             default_principal=default_principal,
             permission=RepositoryPermission.read,
             operation=lambda actor: _uploads(context).get_status(
-                intent_id,
+                upload_session_id,
                 principal=actor,
             ),
         )
@@ -1104,16 +944,13 @@ def create_remote_mcp(context: ControlPlaneContext) -> RemoteMCP:
     )
     app = server.streamable_http_app(
         streamable_http_path="/mcp",
-        stateless_http=False,
+        stateless_http=True,
         json_response=False,
         max_request_body_size=(
             context.settings.mcp_max_request_body_bytes
         ),
         transport_security=transport_security,
         host=context.settings.http_bind_host,
-    )
-    server.session_manager.session_idle_timeout = (
-        context.settings.mcp_session_idle_timeout_seconds
     )
     return RemoteMCP(
         server=server,

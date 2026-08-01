@@ -314,58 +314,58 @@ Local media does not need to travel through an HTTP upload endpoint.
 
 ### 9.3 Remote upload
 
-Remote upload is a four-stage protocol:
+The reusable data plane is a four-stage protocol:
 
-1. An authenticated client creates an upload intent.
-2. tusd's blocking `pre-create` HTTP hook authenticates the request, validates the
-   declared size/type and intent, and assigns an opaque upload ID.
+1. VidXP creates a fully bound upload intent and reserves quota in one database
+   transaction.
+2. tusd's blocking `pre-create` HTTP hook consumes a one-time grant, verifies the
+   exact intent and declared size, and assigns an opaque upload ID.
 3. tusd returns an HTTPS upload URL. That URL is an unscoped bearer credential for
    subsequent HEAD/PATCH requests because tusd cannot bind resumptions to the user
    who created the upload.
 4. The non-blocking `post-finish` hook idempotently upserts completion by upload ID
    and enqueues the durable ffprobe/import workflow.
 
-Remote MCP adds a user-completable handoff in front of the same protocol. The
-`create_media_upload` write tool idempotently creates the authoritative upload
-intent and stores the initiating MCP subject and client ID on its handoff record.
-With OIDC authentication, native URL elicitation sends only the non-secret intent
-page URL. The page requires a separately obtained VidXP API OIDC token, sends it
-directly to the same VidXP origin, and opens the handoff only when the verified
-browser subject matches the stored MCP subject. The originating MCP session and
-elicitation ID retain the client binding.
+The authenticated HTTP API may create a single intent directly. Remote MCP instead
+uses a session-first browser handoff. `create_media_upload` accepts only an
+idempotency key, creates no child intent and reserves no quota. It returns a
+short-lived session capability link in ordinary structured and text tool output on
+both stdio and Streamable HTTP. VidXP deliberately does not invoke native URL
+elicitation or retain transport session state for this workflow.
 
-Static-bearer and unauthenticated modes cannot independently prove a browser user,
-so VidXP disables native URL elicitation in those modes. Their explicitly manual
-compatibility fallback carries a short-lived HS256 JWT capability in the fragment;
-it must be handled as a bearer secret and is never sent as an MCP elicitation URL.
-Both paths establish a digest-backed `HttpOnly`, `Secure`, `SameSite=Strict`
-cookie, then request a separate one-time creation grant for the exact tus `POST`.
-That grant is an opaque 384-bit verifier: only its digest, expiry, and consumption
-time are stored. The initiating MCP bearer is never exposed to the browser. The
-existing bearer-authenticated HTTP/tus route remains available.
+The capability appears only in the URL fragment and possession of the complete
+link is the browser authorization. Bootstrap verifies the signed capability and
+its stored digest, removes the fragment from browser history, and establishes a
+digest-backed `HttpOnly`, `Secure`, `SameSite=Strict` cookie. There is no browser
+login, OIDC token field, OAuth exchange, or identity-pairing step. The initiating
+MCP subject and client ID are retained for audit and repository binding, not as a
+second browser-authentication requirement.
+
+One session accepts multiple files. Uppy reports each selected file's authoritative
+filename, byte size, and MIME type with a stable browser-generated client file key.
+VidXP then validates the metadata, per-file/session/repository limits and quota,
+creates the child intent, reserves its bytes, and binds the client key atomically.
+An exact repeated key is idempotent; conflicting reuse is rejected, while separate
+keys may use the same filename. Each child receives its own one-time, five-minute
+tus creation grant. Only grant digests, expiry, and consumption time are stored.
+Cancelling or failing one child does not cancel its siblings, and closing the
+session prevents new selections without interrupting already-authorized transfers.
 
 The packaged page uses Uppy Dashboard, Tus, and Golden Retriever. Dashboard owns
 selection, restrictions, progress, pause/resume, retry, accessibility, and ghost
-recovery; custom UI remains only for VidXP's server-side import state and next
-action. The measured self-hosted production assets grow from 40.1 KiB to 102.9
-KiB gzip by adopting Dashboard, a deliberate cost for removing duplicated upload
-controls and accessibility behavior. The page validates the expected filename
-and byte size, limits tus metadata to the intent identifier, and does not choose
-a tus chunk size, so a few-MiB file follows the same resumable path rather than a
-separate MCP or small-upload path. Scripts and stylesheets are self-hosted under
-a strict CSP. Style attributes are allowed because Dashboard computes dimensions,
-progress, colors, and transitions at runtime; inline scripts remain blocked. The
-handoff API is same-origin and tus CORS accepts only a startup-validated, grouped
-list of exact HTTPS origins using syntax shared by Python validation and Go's RE2
-engine.
+recovery; custom UI shows only aggregate and durable per-file VidXP state. It
+limits tus metadata to the intent identifier and does not choose a tus chunk size,
+so small and large files follow the same resumable path. Scripts and stylesheets
+are self-hosted under a strict CSP. Style attributes are allowed because Dashboard
+computes dimensions, progress, colors, and transitions at runtime; inline scripts
+remain blocked. The handoff API is same-origin and tus CORS accepts only a
+startup-validated, grouped list of exact HTTPS origins (or HTTP only on loopback)
+using syntax shared by Python validation and Go's RE2 engine.
 
-When OIDC is configured and the MCP client advertises `elicitation.url`,
-`create_media_upload` uses URL mode and records accept, decline, or cancel in its
-structured result. The elicited and structured URL has no query, fragment,
-credential, or pre-authenticated access. After acceptance, VidXP associates the
-elicitation ID and originating MCP session with the upload intent. Receipt of the
-complete upload (transition to processing or a later state), or handoff expiry,
-triggers a best-effort `notifications/elicitation/complete` on that session.
+`get_media_upload` takes the stable session ID and returns a durable aggregate:
+session and aggregate state, configured limits, counts and bytes, and every child
+intent's state, identifiers, and next action. No secret capability, creation grant,
+or tus resume URL is exposed through MCP status.
 
 Application responses carrying upload URLs use `private, no-store` and
 `no-referrer`; hook payloads and MCP results do not persist them. The opaque path is
@@ -944,9 +944,8 @@ Use the official MCP Python SDK v2 high-level server.
 Primary remote transport:
 
 - Streamable HTTP
-- stateful transport sessions so capability-negotiated URL elicitation has a
-  request back-channel
-- a 30-minute idle timeout for the in-memory transport session map
+- stateless request handling; upload links are ordinary tool results and require
+  no server-to-client elicitation back-channel
 - `json_response=False` so disconnect cancellation uses the streaming/SSE path
 - application state persisted outside MCP sessions
 - explicit lifecycle through the application composition root
@@ -1004,11 +1003,10 @@ sibling adapters.
 The MCP ASGI app is created with:
 
 - Streamable HTTP path `/mcp`
-- stateful HTTP sessions enabled for server-to-client URL elicitation
+- stateless HTTP request handling
 - JSON-only responses disabled
 - configured MCP body limit
 - explicit transport-security settings
-- the configured stateful-session idle timeout (30 minutes by default)
 
 It is mounted at the outer application's root after concrete FastAPI routes. This
 keeps both `/mcp` and the RFC 9728 host-root
@@ -1019,11 +1017,10 @@ orders shared application startup, MCP startup, MCP shutdown, and application
 shutdown explicitly. A mounted Starlette child lifespan is not relied on, and MCP
 does not start a second copy of shared database/storage/model resources.
 
-Stateful HTTP sessions and their notification channels are process-local. The
-supported topology therefore runs exactly one API/MCP instance. If an unsupported
-multi-instance deployment is attempted, the proxy must at minimum keep every
-`Mcp-Session-Id` on one instance for its full lifetime; sticky routing does not
-add failover or shared session state.
+Durable application and upload-session state lives in the database rather than an
+MCP transport session. The upload workflow therefore does not require sticky
+routing or a single API/MCP replica, though the wider deployment may impose its
+own singleton constraints for components not covered by this adapter contract.
 
 The public/proxy Host and Origin policy is configured explicitly. Binding to
 `0.0.0.0` must not disable DNS-rebinding protections. Deployment validation confirms
