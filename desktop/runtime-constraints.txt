@@ -277,7 +277,7 @@ psycopg==3.3.4
     # via dbos
 psycopg-binary==3.3.4 ; implementation_name != 'pypy'
     # via psycopg
-pyarrow==24.0.0
+pyarrow==25.0.0
     # via streamlit
 pybase64==1.4.3
     # via chromadb
