@@ -239,6 +239,12 @@ Contributions are welcome. Read the
 ## Credits
 
 Built by Grayhat Developers PVT Ltd. and maintained by the community.
+Originally researched by students:
+- Abdullah Mansoor (@abdullahmansoor321)
+- Muhammad Haroon (@haroon10725)
+- Sarah Jawaid (@sarr266)
+- Talha Ahmed (@talhaahmed1234)
+Working with [Dr Shahab Tahzeeb](https://scholar.google.com/citations?user=cryeRB0AAAAJ&hl=en) ([NED University of Engineering and Technology](https://www.neduet.edu.pk/)) and [Saad Bazaz](https://scholar.google.com/citations?user=mrJo09oAAAAJ&hl=en) ([Grayhat](https://grayhat.studio).
 
 Email: info@grayhat.studio
 
