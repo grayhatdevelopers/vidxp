@@ -838,11 +838,17 @@ remains available when it is disabled.
 - creation/expiry
 
 Media and artifacts are served from the managed local content volume through
-protected Starlette `FileResponse`, including byte-range support.
+Starlette `FileResponse`, including GET, HEAD, byte ranges, resumable delivery,
+strong ETags, safe attachment filenames, and correct 206/416 responses.
 
-Every delivery request is handled only after repository authorization. Artifact
-delivery resolves an `ArtifactStore` key beneath its configured root, rejects
-symlink/path escapes, and only then constructs `FileResponse`.
+Ordinary REST delivery is handled after repository authorization. Public artifact
+downloads instead require a short-lived bearer capability bound to artifact ID,
+repository, media type/extension, digest, expiry, and versioned purpose. The
+fragment capability is exchanged on the existing API listener for a secure
+short-lived cookie; neither the fragment nor a server path enters a request URL.
+Both routes resolve the authoritative `ArtifactStore` key beneath its configured
+root, reject symlink/path escapes, verify size/digest, and only then construct the
+same `FileResponse`.
 
 Local source playback applies the identical configured-root and symlink/path-escape
 checks to the `MediaStore` key before constructing `FileResponse`.
@@ -857,8 +863,15 @@ written to a temporary key, validated, and atomically published.
 Actor overlays and other rendered media use the same artifact workflow. Public
 rendering commands never accept output paths. The separate CLI artifact-download
 command may copy an already-authorized managed artifact to an explicit user
-destination; API downloads remain protected responses and MCP returns a lazy
-resource link instead of embedding video bytes in the tool result.
+destination. MCP always returns a lazy native resource link instead of embedding
+video bytes in JSON or text. Ordinary local stdio additionally returns the
+verified absolute artifact path and encoded `file://` URI because the agent and
+VidXP share a filesystem; `VIDXP_MCP_STDIO_FILESYSTEM_ACCESSIBLE=false` disables
+that hint for Docker, WSL, SSH-proxy, or other isolated stdio deployments. Remote
+Streamable HTTP never returns a server path and instead returns the expiring HTTPS
+capability URL. Filesystem-isolated stdio can use that same HTTPS mode when a
+public artifact-download origin is configured, otherwise the MCP resource remains
+the portable fallback.
 
 ## 18. FastAPI adapter
 
@@ -1306,7 +1319,9 @@ Capability discovery tests:
 - deterministic behavior on supported Python 3.11 through 3.14
 
 Managed artifact delivery tests cover authorization, path/symlink containment,
-missing or corrupt content, GET/HEAD/range headers, and MIME/disposition metadata.
+missing or corrupt content, stdio and Streamable HTTP resources, fragment/cookie
+capabilities, expiry and binding failures, GET/HEAD/repeated ranges, 206/416,
+ETag, and MIME/disposition metadata for MP4 and Matroska artifacts.
 
 ### 24.7 Platforms and installation profiles
 

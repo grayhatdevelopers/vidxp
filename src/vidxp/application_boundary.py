@@ -12,6 +12,8 @@ from vidxp.application_models import (
     ResourceNotFoundError,
 )
 from vidxp.artifact_service import (
+    ArtifactNotFoundError,
+    ArtifactNotReadyError,
     ArtifactRequestError,
     ArtifactUnavailableError,
     InvalidArtifactError,
@@ -163,8 +165,26 @@ def application_boundary(handler: Callable) -> Callable:
             ) from exc
         except MediaUnavailableError as exc:
             raise ResourceNotFoundError("media") from exc
+        except ArtifactNotFoundError as exc:
+            raise ApplicationError(
+                "artifact_not_found",
+                ErrorCategory.not_found,
+                "The requested artifact was not found.",
+            ) from exc
+        except ArtifactNotReadyError as exc:
+            raise ApplicationError(
+                "artifact_not_ready",
+                ErrorCategory.conflict,
+                "The requested artifact is not ready for delivery.",
+                retryable=True,
+            ) from exc
         except ArtifactUnavailableError as exc:
-            raise ResourceNotFoundError("artifact") from exc
+            raise ApplicationError(
+                "artifact_not_ready",
+                ErrorCategory.conflict,
+                "The requested artifact is not ready for delivery.",
+                retryable=True,
+            ) from exc
         except ArtifactIntegrityError as exc:
             raise ApplicationError(
                 "artifact_integrity_failed",

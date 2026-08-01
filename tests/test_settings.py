@@ -19,6 +19,48 @@ from vidxp.settings import (
 
 
 class SettingsTests(unittest.TestCase):
+    def test_artifact_download_settings_require_safe_complete_configuration(self):
+        with self.assertRaises(ValidationError):
+            VidXPSettings(artifact_download_ttl_seconds=59)
+        with self.assertRaises(ValidationError):
+            VidXPSettings(artifact_download_ttl_seconds=86_401)
+
+        with self.assertRaisesRegex(ValueError, "must use HTTPS"):
+            VidXPSettings(
+                artifact_download_public_url=(
+                    "http://downloads.example/artifact-download"
+                ),
+                artifact_download_secret="d" * 32,
+            )
+        with self.assertRaisesRegex(ValueError, "ending in /artifact-download"):
+            VidXPSettings(
+                artifact_download_public_url="https://downloads.example/files",
+                artifact_download_secret="d" * 32,
+            )
+        with self.assertRaisesRegex(ValueError, "dedicated secret"):
+            VidXPSettings(
+                artifact_download_public_url=(
+                    "https://downloads.example/artifact-download"
+                ),
+                artifact_download_secret="short",
+            )
+
+        settings = VidXPSettings(
+            artifact_download_public_url=(
+                "https://downloads.example/artifact-download/"
+            ),
+            artifact_download_secret="d" * 32,
+            artifact_download_ttl_seconds=900,
+            mcp_stdio_filesystem_accessible=False,
+        )
+
+        self.assertEqual(
+            settings.artifact_download_public_url,
+            "https://downloads.example/artifact-download",
+        )
+        self.assertEqual(settings.artifact_download_ttl_seconds, 900)
+        self.assertFalse(settings.mcp_stdio_filesystem_accessible)
+
     def test_default_storage_is_under_the_per_user_data_directory(self):
         with TemporaryDirectory() as directory:
             unrelated_working_directory = Path(directory)

@@ -75,6 +75,42 @@ def _tusd_cors_origins(pattern: str) -> tuple[str, ...]:
     return tuple(origins)
 
 
+def _validate_browser_public_url(
+    value: str | None,
+    *,
+    field_name: str,
+    required_path: str,
+) -> str | None:
+    if value is None:
+        return None
+    if value != value.strip() or "\\" in value:
+        raise ValueError(f"{field_name} contains unsafe characters.")
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path.rstrip("/") != required_path
+    ):
+        raise ValueError(
+            f"{field_name} must be an HTTP(S) URL ending in {required_path}."
+        )
+    if parsed.scheme != "https" and parsed.hostname.lower() not in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise ValueError(f"{field_name} must use HTTPS outside loopback.")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError(f"{field_name} contains an invalid port.") from exc
+    return value.rstrip("/")
+
+
 class ApplicationMode(StrEnum):
     local = "local"
     remote = "remote"
@@ -182,6 +218,18 @@ class VidXPSettings(BaseSettings):
         "testserver",
     )
     mcp_allowed_origins: tuple[str, ...] = ()
+    mcp_stdio_filesystem_accessible: bool = True
+    artifact_download_public_url: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2048,
+    )
+    artifact_download_secret: SecretStr | None = None
+    artifact_download_ttl_seconds: int = Field(
+        default=15 * 60,
+        ge=60,
+        le=24 * 60 * 60,
+    )
     upload_public_endpoint: str | None = Field(
         default=None,
         min_length=1,
@@ -290,6 +338,8 @@ class VidXPSettings(BaseSettings):
         return None if value == "" else value
 
     @field_validator(
+        "artifact_download_public_url",
+        "artifact_download_secret",
         "upload_handoff_public_url",
         "upload_handoff_secret",
         "upload_cors_origin_regex",
@@ -576,41 +626,23 @@ class VidXPSettings(BaseSettings):
         cls,
         value: str | None,
     ) -> str | None:
-        if value is None:
-            return None
-        if value != value.strip() or "\\" in value:
-            raise ValueError(
-                "upload_handoff_public_url contains unsafe characters."
-            )
-        parsed = urlsplit(value)
-        if (
-            parsed.scheme not in {"http", "https"}
-            or parsed.hostname is None
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-            or parsed.path.rstrip("/") != "/upload-handoff"
-        ):
-            raise ValueError(
-                "upload_handoff_public_url must be an HTTP(S) URL ending in "
-                "/upload-handoff."
-            )
-        if parsed.scheme != "https" and parsed.hostname.lower() not in {
-            "localhost",
-            "127.0.0.1",
-            "::1",
-        }:
-            raise ValueError(
-                "upload_handoff_public_url must use HTTPS outside loopback."
-            )
-        try:
-            parsed.port
-        except ValueError as exc:
-            raise ValueError(
-                "upload_handoff_public_url contains an invalid port."
-            ) from exc
-        return value.rstrip("/")
+        return _validate_browser_public_url(
+            value,
+            field_name="upload_handoff_public_url",
+            required_path="/upload-handoff",
+        )
+
+    @field_validator("artifact_download_public_url")
+    @classmethod
+    def _validate_artifact_download_public_url(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        return _validate_browser_public_url(
+            value,
+            field_name="artifact_download_public_url",
+            required_path="/artifact-download",
+        )
 
     @field_validator("trusted_local_import_roots")
     @classmethod
@@ -714,6 +746,23 @@ class VidXPSettings(BaseSettings):
                 "handoff URL (or loopback HTTP), a matching tusd CORS "
                 "origin regex, and a "
                 "dedicated secret of at least 32 characters."
+            )
+        download_configured = any(
+            value is not None
+            for value in (
+                self.artifact_download_public_url,
+                self.artifact_download_secret,
+            )
+        )
+        if download_configured and (
+            self.artifact_download_public_url is None
+            or self.artifact_download_secret is None
+            or len(self.artifact_download_secret.get_secret_value()) < 32
+        ):
+            raise ValueError(
+                "Public artifact downloads require an HTTPS download URL "
+                "(or loopback HTTP) and a dedicated secret of at least 32 "
+                "characters."
             )
         if self.upload_session_max_bytes < self.upload_max_bytes:
             raise ValueError(

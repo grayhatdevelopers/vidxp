@@ -11,10 +11,10 @@ from vidxp.api_errors import install_exception_handlers
 from vidxp.api_middleware import (
     ApiCORSMiddleware,
     BearerAuthenticationMiddleware,
+    BrowserCapabilitySecurityHeadersMiddleware,
     RequestBodyLimitMiddleware,
     RequestBodyTooLarge,
     TypedTrustedHostMiddleware,
-    UploadHandoffSecurityHeadersMiddleware,
     request_too_large_response,
 )
 from vidxp.api_models import HealthResponse, ReadinessResponse
@@ -24,6 +24,7 @@ from vidxp.composition import HttpApplicationContext, create_http_application
 from vidxp.mcp import MCPTransportSecurityBoundary, create_remote_mcp
 from vidxp.settings import VidXPSettings
 from vidxp.upload_page import router as upload_page_router
+from vidxp.artifact_download import router as artifact_download_router
 
 
 _BEARER_SECURITY = HTTPBearer(
@@ -130,6 +131,7 @@ def create_app(
         dependencies=api_dependencies,
     )
     app.include_router(upload_page_router)
+    app.include_router(artifact_download_router)
     app.mount("/", remote_mcp.app)
     app.add_exception_handler(
         RequestBodyTooLarge,
@@ -147,7 +149,7 @@ def create_app(
         delegated_paths=delegated_auth_paths,
     )
     app.add_middleware(
-        UploadHandoffSecurityHeadersMiddleware,
+        BrowserCapabilitySecurityHeadersMiddleware,
         upload_endpoint=active_settings.upload_public_endpoint,
     )
     if active_settings.http_allowed_origins:

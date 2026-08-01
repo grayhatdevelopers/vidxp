@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import contextlib
+import hashlib
 import io
 import json
 import socket
@@ -143,6 +144,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         ),
         mcp_allowed_hosts: tuple[str, ...] = ("127.0.0.1:*",),
         mcp_allowed_origins: tuple[str, ...] = (),
+        artifact_download_public_url: str | None = None,
+        artifact_download_secret: str | None = None,
+        mcp_stdio_filesystem_accessible: bool = True,
     ) -> HttpApplicationContext:
         settings = VidXPSettings(
             repository_root=root,
@@ -152,6 +156,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             http_trusted_hosts=http_trusted_hosts,
             mcp_allowed_hosts=mcp_allowed_hosts,
             mcp_allowed_origins=mcp_allowed_origins,
+            artifact_download_public_url=artifact_download_public_url,
+            artifact_download_secret=artifact_download_secret,
+            mcp_stdio_filesystem_accessible=mcp_stdio_filesystem_accessible,
         )
         application = Mock(spec=ControlPlaneApplication)
         application.list_capabilities.return_value = ()
@@ -261,6 +268,29 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             '"declared_mime_type"',
         ):
             self.assertNotIn(forbidden, serialized_upload_schema)
+        artifact_output = tools["get_artifact_download"].output_schema
+        self.assertEqual(
+            set(artifact_output["properties"]),
+            {
+                "artifact_id",
+                "filename",
+                "mime_type",
+                "byte_size",
+                "sha256",
+                "etag",
+                "state",
+                "resource_uri",
+                "delivery_mode",
+                "local_path",
+                "file_uri",
+                "download_url",
+                "download_expires_at",
+                "delivery_error",
+            },
+        )
+        serialized_artifact_output = json.dumps(artifact_output).lower()
+        for forbidden in ('"base64"', '"blob"', '"bytes"', '"content"'):
+            self.assertNotIn(forbidden, serialized_artifact_output)
         for name in ("search_moments", "query_video"):
             schema = tools[name].input_schema
             command_ref = schema["properties"]["command"]["$ref"]
@@ -415,6 +445,43 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             result.structured_content["upload_session_url"],
         )
 
+    async def test_real_stdio_artifact_delivery_returns_local_file_and_resource(self):
+        with TemporaryDirectory() as directory:
+            artifact_path = Path(directory) / "rendered clip.mp4"
+            content = b"real-stdio-clip-content"
+            artifact_path.write_bytes(content)
+            fixture = Path(__file__).parent / "fixtures" / "mcp_upload_server.py"
+            parameters = StdioServerParameters(
+                command=sys.executable,
+                args=[str(fixture)],
+                cwd=Path(__file__).parents[1],
+                env={
+                    "VIDXP_TEST_ARTIFACT_PATH": str(artifact_path),
+                    "VIDXP_TEST_FORBID_HELPERS": "1",
+                },
+            )
+            async with Client(stdio_client(parameters)) as client:
+                result = await client.call_tool(
+                    "get_artifact_download",
+                    {"artifact_id": ARTIFACT_ID},
+                )
+                link = result.content[0]
+                downloaded = await client.read_resource(str(link.uri))
+                local_bytes = Path(
+                    result.structured_content["local_path"]
+                ).read_bytes()
+
+        self.assertFalse(result.is_error)
+        self.assertIsInstance(link, ResourceLink)
+        self.assertEqual(result.structured_content["delivery_mode"], "local_file")
+        self.assertEqual(
+            local_bytes,
+            content,
+        )
+        self.assertIn("rendered%20clip.mp4", result.structured_content["file_uri"])
+        self.assertIsNone(result.structured_content["download_url"])
+        self.assertEqual(downloaded.contents[0].blob, base64.b64encode(content).decode())
+
     def test_remote_mcp_is_stateless(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
@@ -505,6 +572,94 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             "#capability=http-capability",
             result.structured_content["upload_session_url"],
         )
+
+    async def test_real_streamable_http_artifact_delivery_hides_local_path(self):
+        token = "s" * 32
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+        listener.close()
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            clip = root / "remote-clip.mkv"
+            content = b"real-http-matroska-content"
+            clip.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            context = self.context(
+                root,
+                static_token=token,
+                artifact_download_public_url=(
+                    "https://public.example/artifact-download"
+                ),
+                artifact_download_secret="d" * 32,
+            )
+            context.application.get_artifact.return_value = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                kind=ArtifactKind.snippet,
+                profile="source_mkv",
+                mime_type="video/x-matroska",
+                byte_size=len(content),
+                sha256=digest,
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            context.application.open_artifact_content.return_value = (
+                LocalFileResource(
+                    path=clip,
+                    filename=f"snippet-{ARTIFACT_ID}.mkv",
+                    mime_type="video/x-matroska",
+                    byte_size=len(content),
+                    etag=digest,
+                )
+            )
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    create_app(context=context),
+                    host="127.0.0.1",
+                    port=port,
+                    log_level="critical",
+                )
+            )
+            serving = asyncio.create_task(server.serve())
+            try:
+                for _attempt in range(200):
+                    if server.started:
+                        break
+                    if serving.done():
+                        await serving
+                    await asyncio.sleep(0.01)
+                else:
+                    self.fail("The MCP HTTP fixture did not start.")
+                async with httpx2.AsyncClient(
+                    headers={"Authorization": f"Bearer {token}"}
+                ) as http_client:
+                    transport = streamable_http_client(
+                        f"http://127.0.0.1:{port}/mcp",
+                        http_client=http_client,
+                    )
+                    async with Client(transport) as client:
+                        result = await client.call_tool(
+                            "get_artifact_download",
+                            {"artifact_id": ARTIFACT_ID},
+                        )
+                        link = result.content[0]
+                        downloaded = await client.read_resource(str(link.uri))
+            finally:
+                server.should_exit = True
+                await serving
+
+        self.assertFalse(result.is_error)
+        self.assertIsInstance(link, ResourceLink)
+        self.assertEqual(result.structured_content["delivery_mode"], "https_download")
+        self.assertIsNone(result.structured_content["local_path"])
+        self.assertIsNone(result.structured_content["file_uri"])
+        public = urlsplit(result.structured_content["download_url"])
+        self.assertEqual(public.scheme, "https")
+        self.assertEqual(public.netloc, "public.example")
+        self.assertEqual(public.query, "")
+        self.assertTrue(public.fragment.startswith("capability="))
+        self.assertEqual(downloaded.contents[0].blob, base64.b64encode(content).decode())
 
     async def test_media_upload_tools_enforce_permissions_and_availability(self):
         with TemporaryDirectory() as directory:
@@ -932,7 +1087,134 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(link, ResourceLink)
         self.assertEqual(link.mime_type, "video/mp4")
         self.assertEqual(link.size, 12)
+        self.assertEqual(link.name, f"snippet-{ARTIFACT_ID}.mp4")
+        self.assertEqual(linked.structured_content["artifact_id"], ARTIFACT_ID)
+        self.assertEqual(linked.structured_content["filename"], link.name)
+        self.assertEqual(linked.structured_content["mime_type"], "video/mp4")
+        self.assertEqual(linked.structured_content["byte_size"], 12)
+        self.assertEqual(linked.structured_content["sha256"], "1" * 64)
+        self.assertEqual(linked.structured_content["etag"], f'"{"1" * 64}"')
+        self.assertEqual(linked.structured_content["state"], "ready")
+        self.assertEqual(linked.structured_content["delivery_mode"], "local_file")
+        self.assertEqual(Path(linked.structured_content["local_path"]), clip)
+        self.assertIsNone(linked.structured_content["download_url"])
         self.assertEqual(downloaded.contents[0].blob, "Y2xpcC1jb250ZW50")
+
+    async def test_isolated_stdio_preserves_resource_without_misleading_path(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            context = self.context(
+                root,
+                mcp_stdio_filesystem_accessible=False,
+            )
+            context.application.get_artifact.return_value = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                kind=ArtifactKind.snippet,
+                profile="compatible_mp4",
+                mime_type="video/mp4",
+                byte_size=12,
+                sha256="1" * 64,
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="isolated-agent",
+                    scopes=frozenset({"*"}),
+                ),
+            )
+            async with Client(server) as client:
+                result = await client.call_tool(
+                    "get_artifact_download",
+                    {"artifact_id": ARTIFACT_ID},
+                )
+
+        self.assertFalse(result.is_error)
+        self.assertIsInstance(result.content[0], ResourceLink)
+        self.assertEqual(result.structured_content["delivery_mode"], "mcp_resource")
+        self.assertIsNone(result.structured_content["local_path"])
+        self.assertIsNone(result.structured_content["file_uri"])
+        self.assertEqual(
+            result.structured_content["delivery_error"]["code"],
+            "local_path_unavailable",
+        )
+        context.application.open_artifact_content.assert_not_called()
+
+    async def test_isolated_stdio_uses_configured_public_download(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(
+                Path(directory),
+                mcp_stdio_filesystem_accessible=False,
+                artifact_download_public_url=(
+                    "https://public.example/artifact-download"
+                ),
+                artifact_download_secret="d" * 32,
+            )
+            context.application.get_artifact.return_value = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                kind=ArtifactKind.snippet,
+                profile="compatible_mp4",
+                mime_type="video/mp4",
+                byte_size=12,
+                sha256="1" * 64,
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="isolated-agent",
+                    scopes=frozenset({"*"}),
+                ),
+            )
+            async with Client(server) as client:
+                result = await client.call_tool(
+                    "get_artifact_download",
+                    {"artifact_id": ARTIFACT_ID},
+                )
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.structured_content["delivery_mode"], "https_download")
+        self.assertIsNone(result.structured_content["local_path"])
+        self.assertTrue(
+            result.structured_content["download_url"].startswith(
+                f"https://public.example/artifact-download/{ARTIFACT_ID}#"
+            )
+        )
+
+    async def test_remote_artifact_delivery_requires_public_origin(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.application.get_artifact.return_value = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                kind=ArtifactKind.snippet,
+                profile="compatible_mp4",
+                mime_type="video/mp4",
+                byte_size=12,
+                sha256="1" * 64,
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="remote-agent",
+                    scopes=frozenset({"*"}),
+                ),
+                artifact_delivery="streamable_http",
+            )
+            async with Client(server) as client:
+                result = await client.call_tool(
+                    "get_artifact_download",
+                    {"artifact_id": ARTIFACT_ID},
+                )
+
+        self.assertTrue(result.is_error)
+        self.assertIn("public_download_origin_unavailable", result.content[0].text)
 
     async def test_application_errors_are_machine_readable_and_safe(self):
         with TemporaryDirectory() as directory:

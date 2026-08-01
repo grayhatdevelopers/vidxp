@@ -2,6 +2,7 @@ include README.md
 include LICENSE
 include docs/images/logo.png
 recursive-include src/vidxp/assets/upload_page *
+recursive-include src/vidxp/assets/artifact_download *
 include web/upload-page/package.json
 include web/upload-page/package-lock.json
 include web/upload-page/scripts/build.mjs

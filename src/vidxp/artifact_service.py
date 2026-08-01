@@ -35,6 +35,14 @@ class ArtifactUnavailableError(FileNotFoundError):
     """Raised when an artifact is missing, expired, or fails integrity checks."""
 
 
+class ArtifactNotFoundError(ArtifactUnavailableError):
+    """Raised when no registered artifact exists for an identifier."""
+
+
+class ArtifactNotReadyError(ArtifactUnavailableError):
+    """Raised when a registered artifact cannot currently be delivered."""
+
+
 class ArtifactRequestError(ValueError):
     """Raised when an artifact request is invalid for its source media."""
 
@@ -91,7 +99,7 @@ class ArtifactQueryService:
     def require_record(self, artifact_id: str) -> ArtifactRecord:
         record = self.catalog.get_artifact(artifact_id)
         if record is None:
-            raise ArtifactUnavailableError("The artifact is unavailable.")
+            raise ArtifactNotFoundError("The artifact was not found.")
         self._require_ready(record)
         return record
 
@@ -104,7 +112,7 @@ class ArtifactQueryService:
                 and record.expires_at <= utc_now()
             )
         ):
-            raise ArtifactUnavailableError("The artifact is unavailable.")
+            raise ArtifactNotReadyError("The artifact is not ready.")
 
     def content(self, artifact_id: str) -> LocalFileResource:
         record = self.require_record(artifact_id)
@@ -126,7 +134,7 @@ class ArtifactQueryService:
                 byte_size=record.byte_size,
             )
         except (FileNotFoundError, PermissionError) as exc:
-            raise ArtifactUnavailableError(
+            raise ArtifactNotReadyError(
                 "The artifact content is unavailable."
             ) from exc
         except RuntimeError as exc:

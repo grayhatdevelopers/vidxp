@@ -126,6 +126,33 @@ class PackagingTests(unittest.TestCase):
             (assets / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8"),
         )
 
+    def test_artifact_download_landing_assets_are_safe_and_packaged(self):
+        project = tomllib.loads(
+            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        self.assertIn(
+            "assets/artifact_download/*",
+            project["tool"]["setuptools"]["package-data"]["vidxp"],
+        )
+        self.assertIn(
+            "recursive-include src/vidxp/assets/artifact_download *",
+            (ROOT / "MANIFEST.in").read_text(encoding="utf-8"),
+        )
+        assets = ROOT / "src" / "vidxp" / "assets" / "artifact_download"
+        self.assertEqual(
+            {path.name for path in assets.iterdir() if path.is_file()},
+            {"index.html", "artifact-download.js"},
+        )
+        html = (assets / "index.html").read_text(encoding="utf-8")
+        script = (assets / "artifact-download.js").read_text(encoding="utf-8")
+        self.assertIn("./assets/artifact-download.js", html)
+        self.assertNotRegex(html, r"https?://")
+        self.assertNotIn("<script>", html)
+        self.assertIn("window.history.replaceState", script)
+        self.assertIn("credentials: 'same-origin'", script)
+        self.assertIn("window.location.replace(payload.content_url)", script)
+        self.assertNotIn("local_path", script)
+
     def test_canonical_icon_is_packaged_and_desktop_derivatives_are_wired(self):
         icon = ROOT / "docs" / "images" / "logo.png"
         self.assertTrue(icon.is_file())

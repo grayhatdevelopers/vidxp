@@ -5,7 +5,7 @@ import json
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
-from typing import Annotated, Callable, TypeVar
+from typing import Annotated, Callable, Literal, TypeVar
 from urllib.parse import quote
 
 import anyio
@@ -31,11 +31,14 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from vidxp import __version__
 from vidxp.application_models import (
     ApplicationError,
+    ArtifactDeliveryMode,
+    ArtifactDownload,
     CapabilityInfo,
     CapabilityList,
     CreateSnippetCommand,
     CreateIndexCommand,
     ErrorCategory,
+    ErrorDetail,
     Identifier,
     IndexStatus,
     Job,
@@ -54,6 +57,12 @@ from vidxp.application_models import (
     SearchCommand,
     WorkspaceOverview,
     UploadSessionId,
+)
+from vidxp.artifact_delivery import (
+    ArtifactDownloadCapabilities,
+    artifact_binding,
+    require_resource_binding,
+    verified_local_path,
 )
 from vidxp.authentication import (
     OIDCBearerAuthenticator,
@@ -251,6 +260,13 @@ def _application_error(exc: ApplicationError) -> ToolError:
     )
 
 
+def _translate_application_result(operation: Callable[[], _T]) -> _T:
+    try:
+        return operation()
+    except ApplicationError as exc:
+        raise _application_error(exc) from exc
+
+
 def _invoke(
     context: ControlPlaneContext,
     *,
@@ -337,6 +353,7 @@ def create_mcp_server(
     *,
     default_principal: Principal | None = None,
     oidc_authentication: bool = False,
+    artifact_delivery: Literal["local_stdio", "streamable_http"] = "local_stdio",
 ) -> MCPServer:
     settings = context.settings
     token_verifier = None
@@ -813,16 +830,17 @@ def create_mcp_server(
 
     @server.tool(
         description=(
-            "Return a readable MCP resource link for a completed clip or video "
-            "artifact. The artifact_id is in the completed create_clip job "
-            "result; clients read the link only when they need the video bytes."
+            "Return a readable MCP resource link plus transport-appropriate "
+            "delivery metadata for a completed clip or video artifact. Local "
+            "stdio may expose its verified path; Streamable HTTP returns a "
+            "short-lived browser download without exposing server paths."
         ),
         annotations=_READ_ONLY,
         structured_output=True,
     )
     async def get_artifact_download(
         artifact_id: ArtifactId,
-    ) -> ResourceLink:
+    ) -> Annotated[CallToolResult, ArtifactDownload]:
         artifact = await _invoke_async(
             context,
             default_principal=default_principal,
@@ -831,25 +849,92 @@ def create_mcp_server(
                 context.application.get_artifact(artifact_id)
             ),
         )
-        suffix = (
-            "mp4"
-            if artifact.mime_type == "video/mp4"
-            else "mkv"
+        binding = _translate_application_result(lambda: artifact_binding(artifact))
+        resource_uri = (
+            f"vidxp://artifacts/{artifact.artifact_id}/"
+            f"content.{binding.extension}"
         )
-        filename = f"{artifact.kind.value}-{artifact.artifact_id}.{suffix}"
-        return ResourceLink(
-            name=filename,
+        link = ResourceLink(
+            name=binding.filename,
             title=f"VidXP {artifact.kind.value.replace('_', ' ')}",
-            uri=(
-                f"vidxp://artifacts/{artifact.artifact_id}/"
-                f"content.{suffix}"
-            ),
+            uri=resource_uri,
             description=(
                 f"Generated from media {artifact.media_id}; "
                 f"{artifact.byte_size:,} bytes."
             ),
             mimeType=artifact.mime_type,
             size=artifact.byte_size,
+        )
+        local_path = None
+        file_uri = None
+        download_url = None
+        download_expires_at = None
+        delivery_error = None
+        if artifact_delivery == "streamable_http":
+            issued = _translate_application_result(
+                lambda: ArtifactDownloadCapabilities(context.settings).issue(
+                    artifact
+                )
+            )
+            delivery_mode = ArtifactDeliveryMode.https_download
+            download_url = issued.url
+            download_expires_at = issued.expires_at
+        elif context.settings.mcp_stdio_filesystem_accessible:
+            resource = await _invoke_async(
+                context,
+                default_principal=default_principal,
+                permission=RepositoryPermission.read,
+                operation=lambda _actor: (
+                    context.application.open_artifact_content(artifact_id)
+                ),
+            )
+            _translate_application_result(
+                lambda: require_resource_binding(binding, resource)
+            )
+            resolved = _translate_application_result(
+                lambda: verified_local_path(resource.path)
+            )
+            delivery_mode = ArtifactDeliveryMode.local_file
+            local_path = resolved
+            file_uri = resolved.as_uri()
+        elif context.settings.artifact_download_public_url is not None:
+            issued = _translate_application_result(
+                lambda: ArtifactDownloadCapabilities(context.settings).issue(
+                    artifact
+                )
+            )
+            delivery_mode = ArtifactDeliveryMode.https_download
+            download_url = issued.url
+            download_expires_at = issued.expires_at
+        else:
+            delivery_mode = ArtifactDeliveryMode.mcp_resource
+            delivery_error = ErrorDetail(
+                code="local_path_unavailable",
+                category=ErrorCategory.unavailable,
+                message=(
+                    "The stdio client is configured as filesystem-isolated; "
+                    "read the MCP resource or configure a public download origin."
+                ),
+            )
+        result = ArtifactDownload(
+            artifact_id=artifact.artifact_id,
+            filename=binding.filename,
+            mime_type=artifact.mime_type,
+            byte_size=artifact.byte_size,
+            sha256=artifact.sha256,
+            etag=f'"{artifact.sha256}"',
+            state=artifact.state,
+            resource_uri=resource_uri,
+            delivery_mode=delivery_mode,
+            local_path=local_path,
+            file_uri=file_uri,
+            download_url=download_url,
+            download_expires_at=download_expires_at,
+            delivery_error=delivery_error,
+        )
+        return CallToolResult(
+            content=[link],
+            structured_content=result.model_dump(mode="json"),
         )
 
     @server.tool(
@@ -936,6 +1021,7 @@ def create_remote_mcp(context: ControlPlaneContext) -> RemoteMCP:
     server = create_mcp_server(
         context,
         oidc_authentication=owns_authentication,
+        artifact_delivery="streamable_http",
     )
     transport_security = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,

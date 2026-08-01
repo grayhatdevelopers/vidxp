@@ -131,6 +131,8 @@ See the [Coolify guide](docs/deployment/coolify.md) for the complete setup.
 - Group recurring faces in a video and render a highlighted actor overlay.
 - Search one selected video or every video in the active library.
 - Open matching timestamps and export downloadable clips and overlays.
+- Retrieve completed clips through native MCP resources, local stdio paths, or
+  short-lived resumable HTTPS downloads without embedding video bytes in tool JSON.
 - Keep personal, client, or project libraries separate.
 - Follow long indexing jobs, cancel them, and keep the last working index if a
   later run fails.

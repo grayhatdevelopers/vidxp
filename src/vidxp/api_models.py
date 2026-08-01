@@ -37,6 +37,15 @@ class UploadHandoffBootstrapRequest(ApplicationModel):
     capability: str = Field(min_length=32, max_length=512)
 
 
+class ArtifactDownloadBootstrapRequest(ApplicationModel):
+    capability: str = Field(min_length=32, max_length=2048)
+
+
+class ArtifactDownloadBootstrapResponse(ApplicationModel):
+    content_url: str = Field(min_length=1, max_length=2048)
+    expires_at: AwareDatetime
+
+
 class UploadPageSessionResponse(ApplicationModel):
     status: MediaUploadSessionStatus
     creation_url: str = Field(min_length=1, max_length=2048)

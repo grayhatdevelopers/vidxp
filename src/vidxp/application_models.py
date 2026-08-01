@@ -583,6 +583,29 @@ class Artifact(ApplicationModel):
     expires_at: AwareDatetime | None = None
 
 
+class ArtifactDeliveryMode(StrEnum):
+    local_file = "local_file"
+    https_download = "https_download"
+    mcp_resource = "mcp_resource"
+
+
+class ArtifactDownload(ApplicationModel):
+    artifact_id: ArtifactId
+    filename: str = Field(min_length=1, max_length=255)
+    mime_type: MimeType
+    byte_size: int = Field(gt=0)
+    sha256: Sha256
+    etag: str = Field(pattern=r'^"[0-9a-f]{64}"$')
+    state: ArtifactState
+    resource_uri: str = Field(min_length=1, max_length=2048)
+    delivery_mode: ArtifactDeliveryMode
+    local_path: Path | None = None
+    file_uri: str | None = Field(default=None, max_length=4096)
+    download_url: str | None = Field(default=None, max_length=4096)
+    download_expires_at: AwareDatetime | None = None
+    delivery_error: ErrorDetail | None = None
+
+
 class ActorOverlayProfile(StrEnum):
     default = "default"
 

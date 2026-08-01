@@ -35,6 +35,7 @@ from vidxp.core.uploads import (
     UploadSessionState,
     UploadState,
 )
+from vidxp.capability_security import repository_binding
 from vidxp.infrastructure.sql_catalog import (
     SQLCatalog,
     UploadQuotaExceededError,
@@ -1389,10 +1390,7 @@ class RemoteUploadService:
         return secret.get_secret_value()
 
     def _repository_binding(self) -> str:
-        root = str(self.settings.repository_root.resolve()).replace("\\", "/")
-        return hashlib.sha256(
-            f"vidxp-upload-repository-v1\0{root}".encode("utf-8")
-        ).hexdigest()
+        return repository_binding(self.settings.repository_root)
 
     def _session_capability(self, record: UploadSessionRecord) -> str:
         import jwt

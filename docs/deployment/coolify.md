@@ -22,6 +22,7 @@ VIDXP_CONTROL_IMAGE=ghcr.io/grayhatdevelopers/vidxp:<release>-control
 VIDXP_WORKER_IMAGE=ghcr.io/grayhatdevelopers/vidxp:<release>-worker
 POSTGRES_PASSWORD=<random-secret>
 VIDXP_HTTP_STATIC_BEARER_TOKEN=<random-secret-at-least-32-characters>
+VIDXP_ARTIFACT_DOWNLOAD_SECRET=<artifact-download-secret-at-least-32-characters>
 VIDXP_UPLOAD_CLEANUP_TOKEN=<different-random-secret-at-least-32-characters>
 VIDXP_PUBLIC_API_HOST=api.example.com
 VIDXP_UPLOAD_PUBLIC_ENDPOINT=https://uploads.example.com/uploads/
@@ -29,6 +30,22 @@ VIDXP_UPLOAD_HANDOFF_PUBLIC_URL=https://api.example.com/upload-handoff
 VIDXP_UPLOAD_HANDOFF_SECRET=<third-random-secret-at-least-32-characters>
 VIDXP_UPLOAD_CORS_ORIGIN_REGEX=^(https://api\.example\.com|https://app\.example\.com)$
 ```
+
+Compose derives `VIDXP_ARTIFACT_DOWNLOAD_PUBLIC_URL` as
+`https://${VIDXP_PUBLIC_API_HOST}/artifact-download`. The API issues 15-minute
+links by default (`VIDXP_ARTIFACT_DOWNLOAD_TTL_SECONDS=900`); deployments may
+set a value from 60 seconds through 24 hours. Keep the artifact-download secret
+distinct from API, upload, and cleanup credentials.
+
+After `create_clip` completes, `get_artifact_download` always returns the native
+MCP resource. Streamable HTTP callers also receive a short-lived HTTPS link on
+the API origin. Its bearer capability is carried in the URL fragment, exchanged
+for a `Secure`, `HttpOnly`, `SameSite=Strict` cookie, and removed from browser
+history before the content request. The public route requires neither an API
+token nor browser login; possession of the complete unexpired link is authority
+to download that one repository-bound MP4 or MKV. GET, HEAD, ranges, ETag, and
+resume requests remain valid until expiry. Redact fragments in client-side
+telemetry and do not rewrite the public URL to an internal service hostname.
 
 `VIDXP_UPLOAD_HANDOFF_PUBLIC_URL` must be the externally reachable HTTPS API
 URL ending exactly in `/upload-handoff`. Keep its secret distinct from the MCP

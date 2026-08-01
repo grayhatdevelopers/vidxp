@@ -69,6 +69,7 @@ include = ["vidxp*"]
 
 [tool.setuptools.package-data]
 vidxp = [
+  "assets/artifact_download/*",
   "assets/upload_page/*",
   "benchmarks/requirements.txt",
   "capabilities/*/requirements.txt",
