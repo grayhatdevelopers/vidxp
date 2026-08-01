@@ -4,7 +4,6 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    str::FromStr,
     sync::Arc,
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -25,6 +24,7 @@ const CURRENT_STORE_SCHEMA_VERSION: u32 = 1;
 pub const CURRENT_PROFILE_SCHEMA_VERSION: u32 = 1;
 const SUPPORTED_PROBE_SCHEMA_VERSION: u32 = 1;
 const SUPPORTED_PROBE_PROTOCOL_VERSION: u32 = 1;
+const SUPPORTED_LAUNCH_PROTOCOL_VERSION: u32 = 1;
 const PRODUCT_ID: &str = "dev.grayhat.vidxp";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const VALIDATION_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -70,7 +70,8 @@ pub enum TargetErrorCode {
     LauncherIdentityMismatch,
     UnsupportedProbeSchema,
     UnsupportedProbeProtocol,
-    IncompatibleVersion,
+    UnsupportedLaunchProtocol,
+    UnsupportedLaunchContract,
     InvalidDataRoot,
     StoreUnavailable,
     StoreCorrupt,
@@ -124,6 +125,7 @@ pub struct FrontendCapability {
     pub optional: bool,
     pub code: String,
     pub message: String,
+    pub remediation: String,
 }
 
 impl Default for FrontendCapability {
@@ -134,6 +136,7 @@ impl Default for FrontendCapability {
             optional: true,
             code: "frontend_unavailable".into(),
             message: "The optional browser interface is not installed.".into(),
+            remediation: "Use this installation's own package-management workflow to install the VidXP frontend extra, then revalidate.".into(),
         }
     }
 }
@@ -151,6 +154,7 @@ pub struct TargetProfile {
     pub observed_vidxp_version: String,
     pub probe_schema_version: u32,
     pub probe_protocol_version: u32,
+    pub launch_protocol_version: u32,
     pub runtime: Option<RuntimeIdentity>,
     pub frontend: FrontendCapability,
     pub last_successful_validation_at: Option<u64>,
@@ -185,6 +189,7 @@ pub struct ValidatedTarget {
     pub product_version: String,
     pub probe_schema_version: u32,
     pub probe_protocol_version: u32,
+    pub launch_protocol_version: u32,
     pub runtime: RuntimeIdentity,
     pub data_root: PathBuf,
     pub repository_root: PathBuf,
@@ -228,13 +233,10 @@ struct ProbeRuntime {
 }
 
 #[derive(Debug, Deserialize)]
-struct ProbeCompatibility {
-    compatible: bool,
-    code: String,
-    message: String,
-    desktop_version: String,
-    desktop_version_normalized: String,
-    product_version_normalized: String,
+struct ProbeLaunchContract {
+    protocol_version: u32,
+    surface: String,
+    command: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -249,12 +251,12 @@ struct ProbeDocument {
     product_version: String,
     schema_version: u32,
     protocol_version: u32,
+    launch_contract: ProbeLaunchContract,
     request_id: String,
     launcher: PathBuf,
     runtime: ProbeRuntime,
     data_root: PathBuf,
     repository_root: PathBuf,
-    compatibility: ProbeCompatibility,
     #[serde(default)]
     capabilities: ProbeCapabilities,
 }
@@ -419,7 +421,6 @@ fn collect_probe_output(
 
 fn validate_probe_document(
     canonical: &Path,
-    desktop_version: &str,
     request_id: &str,
     document: ProbeDocument,
     now: u64,
@@ -454,6 +455,21 @@ fn validate_probe_document(
             ),
         ));
     }
+    if document.launch_contract.protocol_version != SUPPORTED_LAUNCH_PROTOCOL_VERSION {
+        return Err(TargetError::new(
+            TargetErrorCode::UnsupportedLaunchProtocol,
+            format!(
+                "This executable uses desktop launch protocol {}; VidXP desktop supports protocol {}.",
+                document.launch_contract.protocol_version, SUPPORTED_LAUNCH_PROTOCOL_VERSION
+            ),
+        ));
+    }
+    if document.launch_contract.surface != "browser" || document.launch_contract.command != "ui" {
+        return Err(TargetError::new(
+            TargetErrorCode::UnsupportedLaunchContract,
+            "This executable does not provide the supported VidXP browser launch contract.",
+        ));
+    }
     let launcher = canonical_executable(&document.launcher).map_err(|_| {
         TargetError::new(
             TargetErrorCode::LauncherIdentityMismatch,
@@ -464,57 +480,6 @@ fn validate_probe_document(
         return Err(TargetError::new(
             TargetErrorCode::LauncherIdentityMismatch,
             "The probe response belongs to a different launcher than the selected executable.",
-        ));
-    }
-    let requested_version = pep440_rs::Version::from_str(desktop_version).map_err(|_| {
-        TargetError::new(
-            TargetErrorCode::IncompatibleVersion,
-            "The desktop runtime manifest contains an invalid product version.",
-        )
-    })?;
-    let product_version =
-        pep440_rs::Version::from_str(&document.product_version).map_err(|_| {
-            TargetError::new(
-                TargetErrorCode::MalformedProbe,
-                "The selected installation reported an invalid product version.",
-            )
-        })?;
-    let echoed_desktop_version = pep440_rs::Version::from_str(
-        &document.compatibility.desktop_version_normalized,
-    )
-    .map_err(|_| {
-        TargetError::new(
-            TargetErrorCode::MalformedProbe,
-            "The selected installation returned an invalid normalized desktop version.",
-        )
-    })?;
-    let echoed_product_version = pep440_rs::Version::from_str(
-        &document.compatibility.product_version_normalized,
-    )
-    .map_err(|_| {
-        TargetError::new(
-            TargetErrorCode::MalformedProbe,
-            "The selected installation returned an invalid normalized product version.",
-        )
-    })?;
-    if !document.compatibility.compatible
-        || document.compatibility.code != "compatible"
-        || document.compatibility.desktop_version != desktop_version
-        || product_version != requested_version
-        || echoed_desktop_version != requested_version
-        || echoed_product_version != product_version
-    {
-        let detail = if document.compatibility.message.trim().is_empty() {
-            format!(
-                "The selected installation is VidXP {}; this desktop requires VidXP {}.",
-                document.product_version, desktop_version
-            )
-        } else {
-            document.compatibility.message
-        };
-        return Err(TargetError::new(
-            TargetErrorCode::IncompatibleVersion,
-            detail,
         ));
     }
     for (label, path) in [
@@ -536,6 +501,7 @@ fn validate_probe_document(
         product_version: document.product_version,
         probe_schema_version: document.schema_version,
         probe_protocol_version: document.protocol_version,
+        launch_protocol_version: document.launch_contract.protocol_version,
         runtime: RuntimeIdentity {
             python_executable: document.runtime.python_executable,
             python_version: document.runtime.python_version,
@@ -570,13 +536,7 @@ fn validate_executable_with(
             "The selected executable did not return a valid VidXP compatibility response.",
         )
     })?;
-    validate_probe_document(
-        &canonical,
-        desktop_version,
-        &request_id,
-        document,
-        unix_timestamp()?,
-    )
+    validate_probe_document(&canonical, &request_id, document, unix_timestamp()?)
 }
 
 pub fn validate_executable(
@@ -660,6 +620,7 @@ fn local_profile(validated: ValidatedTarget, display_name: Option<String>) -> Ta
         observed_vidxp_version: validated.product_version,
         probe_schema_version: validated.probe_schema_version,
         probe_protocol_version: validated.probe_protocol_version,
+        launch_protocol_version: validated.launch_protocol_version,
         runtime: Some(validated.runtime),
         frontend: validated.frontend,
         last_successful_validation_at: Some(validated.validated_at),
@@ -684,6 +645,7 @@ fn managed_profile(managed: ManagedRuntimeProjection) -> TargetProfile {
         observed_vidxp_version: managed.package_version,
         probe_schema_version: 0,
         probe_protocol_version: 0,
+        launch_protocol_version: 0,
         runtime: None,
         frontend: FrontendCapability {
             available: managed.surfaces.iter().any(|surface| surface == "browser"),
@@ -691,6 +653,7 @@ fn managed_profile(managed: ManagedRuntimeProjection) -> TargetProfile {
             optional: true,
             code: "validation_required".into(),
             message: "The managed runtime must be revalidated before use.".into(),
+            remediation: "Complete managed runtime validation before launch.".into(),
         },
         last_successful_validation_at: None,
         validation_error: Some(TargetError::new(
@@ -992,6 +955,7 @@ fn apply_validation(profile: &mut TargetProfile, validated: ValidatedTarget) {
     profile.observed_vidxp_version = validated.product_version;
     profile.probe_schema_version = validated.probe_schema_version;
     profile.probe_protocol_version = validated.probe_protocol_version;
+    profile.launch_protocol_version = validated.launch_protocol_version;
     profile.runtime = Some(validated.runtime);
     profile.frontend = validated.frontend;
     profile.last_successful_validation_at = Some(validated.validated_at);
@@ -1151,6 +1115,7 @@ mod tests {
             observed_vidxp_version: "0.4.0-b".into(),
             probe_schema_version: 1,
             probe_protocol_version: 1,
+            launch_protocol_version: 1,
             runtime: None,
             frontend: FrontendCapability::default(),
             last_successful_validation_at: Some(100),
@@ -1284,8 +1249,8 @@ mod tests {
         assert!(target.is_ready(100 + VALIDATION_MAX_AGE.as_secs()));
         assert!(!target.is_ready(101 + VALIDATION_MAX_AGE.as_secs()));
         target.validation_error = Some(TargetError::new(
-            TargetErrorCode::IncompatibleVersion,
-            "incompatible",
+            TargetErrorCode::UnsupportedLaunchProtocol,
+            "unsupported launch protocol",
         ));
         assert!(!target.is_ready(100));
     }
@@ -1297,6 +1262,11 @@ mod tests {
             product_version: "0.4.0-b".into(),
             schema_version: 1,
             protocol_version: 1,
+            launch_contract: ProbeLaunchContract {
+                protocol_version: 1,
+                surface: "browser".into(),
+                command: "ui".into(),
+            },
             request_id: request_id.into(),
             launcher: canonical.into(),
             runtime: ProbeRuntime {
@@ -1308,14 +1278,6 @@ mod tests {
             },
             data_root: root.join("data"),
             repository_root: root.join("data").join("repositories").join("default"),
-            compatibility: ProbeCompatibility {
-                compatible: true,
-                code: "compatible".into(),
-                message: "compatible".into(),
-                desktop_version: "0.4.0-b".into(),
-                desktop_version_normalized: "0.4.0b0".into(),
-                product_version_normalized: "0.4.0b0".into(),
-            },
             capabilities: ProbeCapabilities::default(),
         }
     }
@@ -1324,14 +1286,9 @@ mod tests {
     fn valid_probe_accepts_missing_optional_frontend() {
         let executable = std::env::current_exe().expect("current executable");
         let canonical = fs::canonicalize(executable).expect("canonical executable");
-        let validated = validate_probe_document(
-            &canonical,
-            "0.4.0-b",
-            "nonce",
-            document(&canonical, "nonce"),
-            100,
-        )
-        .expect("valid probe");
+        let validated =
+            validate_probe_document(&canonical, "nonce", document(&canonical, "nonce"), 100)
+                .expect("valid probe");
 
         assert!(!validated.frontend.available);
         assert!(!validated.frontend.launchable);
@@ -1383,14 +1340,14 @@ mod tests {
     }
 
     #[test]
-    fn probe_rejects_non_vidxp_nonce_launcher_and_version_mismatches() {
+    fn probe_rejects_identity_and_probe_contract_mismatches() {
         let executable = std::env::current_exe().expect("current executable");
         let canonical = fs::canonicalize(executable).expect("canonical executable");
 
         let mut non_vidxp = document(&canonical, "nonce");
         non_vidxp.product = "other".into();
         assert_eq!(
-            validate_probe_document(&canonical, "0.4.0-b", "nonce", non_vidxp, 100)
+            validate_probe_document(&canonical, "nonce", non_vidxp, 100)
                 .expect_err("product")
                 .code,
             TargetErrorCode::NotVidxp
@@ -1398,7 +1355,7 @@ mod tests {
 
         let wrong_nonce = document(&canonical, "wrong");
         assert_eq!(
-            validate_probe_document(&canonical, "0.4.0-b", "nonce", wrong_nonce, 100)
+            validate_probe_document(&canonical, "nonce", wrong_nonce, 100)
                 .expect_err("nonce")
                 .code,
             TargetErrorCode::ProbeChallengeMismatch
@@ -1407,7 +1364,7 @@ mod tests {
         let mut wrong_launcher = document(&canonical, "nonce");
         wrong_launcher.launcher = fs::canonicalize(file!()).expect("source file");
         assert_eq!(
-            validate_probe_document(&canonical, "0.4.0-b", "nonce", wrong_launcher, 100)
+            validate_probe_document(&canonical, "nonce", wrong_launcher, 100)
                 .expect_err("launcher")
                 .code,
             TargetErrorCode::LauncherIdentityMismatch
@@ -1416,7 +1373,7 @@ mod tests {
         let mut wrong_schema = document(&canonical, "nonce");
         wrong_schema.schema_version = 2;
         assert_eq!(
-            validate_probe_document(&canonical, "0.4.0-b", "nonce", wrong_schema, 100)
+            validate_probe_document(&canonical, "nonce", wrong_schema, 100)
                 .expect_err("schema")
                 .code,
             TargetErrorCode::UnsupportedProbeSchema
@@ -1425,20 +1382,39 @@ mod tests {
         let mut wrong_protocol = document(&canonical, "nonce");
         wrong_protocol.protocol_version = 2;
         assert_eq!(
-            validate_probe_document(&canonical, "0.4.0-b", "nonce", wrong_protocol, 100)
+            validate_probe_document(&canonical, "nonce", wrong_protocol, 100)
                 .expect_err("protocol")
                 .code,
             TargetErrorCode::UnsupportedProbeProtocol
         );
+    }
 
+    #[test]
+    fn compatible_probe_accepts_a_different_reported_package_version() {
+        let executable = std::env::current_exe().expect("current executable");
+        let canonical = fs::canonicalize(executable).expect("canonical executable");
+        let mut compatible = document(&canonical, "nonce");
+        compatible.product_version = "0.3.0".into();
+
+        let validated = validate_probe_document(&canonical, "nonce", compatible, 100)
+            .expect("compatible contract");
+
+        assert_eq!(validated.product_version, "0.3.0");
+        assert_eq!(validated.launch_protocol_version, 1);
+    }
+
+    #[test]
+    fn probe_rejects_an_incompatible_launch_protocol() {
+        let executable = std::env::current_exe().expect("current executable");
+        let canonical = fs::canonicalize(executable).expect("canonical executable");
         let mut incompatible = document(&canonical, "nonce");
-        incompatible.product_version = "0.3.0".into();
-        incompatible.compatibility.compatible = false;
+        incompatible.launch_contract.protocol_version = 2;
+
         assert_eq!(
-            validate_probe_document(&canonical, "0.4.0-b", "nonce", incompatible, 100)
-                .expect_err("version")
+            validate_probe_document(&canonical, "nonce", incompatible, 100)
+                .expect_err("launch protocol")
                 .code,
-            TargetErrorCode::IncompatibleVersion
+            TargetErrorCode::UnsupportedLaunchProtocol
         );
     }
 

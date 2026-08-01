@@ -43,7 +43,9 @@ const localProfile = {
   canonical_executable: 'C:\\Tools\\VidXP\\vidxp.exe',
   vidxp_version: '0.4.0',
   probe_version: 1,
+  launch_protocol_version: 1,
   last_validated_at: '2026-08-01T10:00:00Z',
+  can_launch_frontend: true,
 };
 
 function renderApp() {
@@ -134,6 +136,56 @@ describe('target-first setup', () => {
     await screen.findByRole('heading', { name: 'Studio VidXP' });
     expect(mocks.validateLocalTarget).toHaveBeenCalledWith('C:\\Tools\\VidXP\\vidxp.exe');
     expect(mocks.activateLocalTarget).toHaveBeenCalledTimes(1);
+    expect(mocks.installMediaRuntime).not.toHaveBeenCalled();
+    expect(mocks.installRuntime).not.toHaveBeenCalled();
+  });
+
+  it('saves an external target without a frontend as action-required, not operationally complete', async () => {
+    const user = userEvent.setup();
+    const remediation = "Use this installation's own package-management workflow to install VidXP with the 'frontend' extra, then revalidate.";
+    const externalWithoutFrontend = {
+      ...localProfile,
+      can_launch_frontend: false,
+      frontend: {
+        available: false,
+        launchable: false,
+        optional: true,
+        code: 'frontend_unavailable',
+        message: 'The command-line installation is usable, but the browser interface is missing.',
+        remediation,
+      },
+    };
+    mocks.validateLocalTarget.mockResolvedValue({
+      compatible: true,
+      canonical_executable: 'C:\\Tools\\VidXP\\vidxp.exe',
+      vidxp_version: '0.3.0',
+      protocol_version: 1,
+      launch_protocol_version: 1,
+      python_version: '3.14.6',
+      can_launch_frontend: false,
+      frontend: externalWithoutFrontend.frontend,
+    });
+    mocks.activateLocalTarget.mockResolvedValue(externalWithoutFrontend);
+    renderApp();
+    await enterLocalFlow(user);
+
+    await user.click(await screen.findByRole('radio', { name: /VidXP 0.4/i }));
+    await user.click(screen.getByRole('button', { name: 'Validate installation' }));
+
+    expect(await screen.findByText('Compatible installation · desktop action required')).toBeVisible();
+    expect(screen.getByText(/command-line installation is usable/i)).toBeVisible();
+    expect(screen.getByText(remediation)).toBeVisible();
+    expect(screen.queryByText('Ready to launch')).not.toBeInTheDocument();
+
+    mocks.targetSetupState.mockResolvedValue({
+      profiles: [externalWithoutFrontend],
+      selected_profile_id: externalWithoutFrontend.id,
+      selected_profile: externalWithoutFrontend,
+    });
+    await user.click(screen.getByRole('button', { name: 'Save external target' }));
+
+    expect(await screen.findByText('Action required · no usable desktop surface')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Open VidXP' })).toBeDisabled();
     expect(mocks.installMediaRuntime).not.toHaveBeenCalled();
     expect(mocks.installRuntime).not.toHaveBeenCalled();
   });

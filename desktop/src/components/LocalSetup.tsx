@@ -135,6 +135,7 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
   }
 
   const compatible = validation && isCompatible(validation);
+  const desktopSurfaceUnavailable = compatible && validation.can_launch_frontend === false;
 
   return (
     <section aria-labelledby="local-setup-title">
@@ -256,17 +257,27 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
       )}
 
       {compatible && (
-        <Alert icon={<IconCheck aria-hidden="true" />} color="teal" title="Compatible VidXP installation">
+        <Alert
+          icon={desktopSurfaceUnavailable ? <IconAlertCircle aria-hidden="true" /> : <IconCheck aria-hidden="true" />}
+          color={desktopSurfaceUnavailable ? 'yellow' : 'teal'}
+          title={desktopSurfaceUnavailable ? 'Compatible installation · desktop action required' : 'Compatible VidXP installation'}
+        >
           <div className="validationGrid">
             <span>VidXP</span><strong>{validation.vidxp_version || 'Verified'}</strong>
             <span>Protocol</span><strong>{validation.protocol_version ?? validation.probe_version ?? 'Compatible'}</strong>
             <span>Python</span><strong>{validation.python_version || validation.python_executable || 'Reported by target'}</strong>
-            <span>Client</span><strong>{validation.can_launch_frontend === false ? 'Unavailable' : 'Ready to launch'}</strong>
+            <span>Desktop action</span><strong>{desktopSurfaceUnavailable ? 'Unavailable' : 'Browser interface available'}</strong>
           </div>
-          {validation.warnings?.map((warning) => <Text size="sm" mt="xs" key={warning}>{warning}</Text>)}
+          {desktopSurfaceUnavailable && (
+            <>
+              <Text size="sm" mt="md"><strong>Usable:</strong> The installation remains available through its own command-line and package-managed workflows.</Text>
+              <Text size="sm" mt="xs"><strong>Missing:</strong> {validation.frontend?.message || validation.warnings?.[0] || 'The supported browser interface cannot currently be launched.'}</Text>
+              <Text size="sm" mt="xs"><strong>How to enable it:</strong> {validation.frontend?.remediation || "Use this installation's own package-management workflow to enable the VidXP browser interface, then revalidate."}</Text>
+            </>
+          )}
           <Group justify="flex-end" mt="md">
-            <Button color="teal" loading={busy === 'activate'} onClick={() => void activate()}>
-              Use this installation
+            <Button color={desktopSurfaceUnavailable ? 'yellow' : 'teal'} loading={busy === 'activate'} onClick={() => void activate()}>
+              {desktopSurfaceUnavailable ? 'Save external target' : 'Use this installation'}
             </Button>
           </Group>
         </Alert>

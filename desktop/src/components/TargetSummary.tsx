@@ -15,6 +15,7 @@ export function TargetSummary({ profile, validationError, notice, onChooseAnothe
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
   const executable = profile.canonical_executable || profile.executable;
+  const desktopSurfaceUnavailable = profile.can_launch_frontend === false;
 
   async function open() {
     setOpening(true);
@@ -43,9 +44,11 @@ export function TargetSummary({ profile, validationError, notice, onChooseAnothe
       </div>
 
       {notice && <Alert color="blue" mb="md">{notice}</Alert>}
-      {profile.can_launch_frontend === false && (
-        <Alert color="yellow" mb="md" title="Browser interface not installed">
-          This target is compatible, but it does not currently provide the supported browser interface.
+      {desktopSurfaceUnavailable && (
+        <Alert color="yellow" mb="md" title="Action required · no usable desktop surface">
+          <Text size="sm"><strong>Usable:</strong> {profile.lifecycle_ownership === 'external' ? 'This externally managed installation remains available through its own command-line and package-managed workflows.' : 'The managed runtime remains configured for its installed non-browser capabilities.'}</Text>
+          <Text size="sm" mt="xs"><strong>Missing:</strong> {profile.frontend?.message || 'The supported browser interface cannot currently be launched.'}</Text>
+          <Text size="sm" mt="xs"><strong>How to enable it:</strong> {profile.frontend?.remediation || (profile.lifecycle_ownership === 'external' ? "Use this installation's own package-management workflow to enable the VidXP browser interface, then return here and revalidate." : 'Return to managed setup and select the browser surface.')}</Text>
         </Alert>
       )}
       {(validationError || openError) && (
@@ -62,10 +65,11 @@ export function TargetSummary({ profile, validationError, notice, onChooseAnothe
           {profile.vidxp_version && <><Text>VidXP version</Text><strong>{profile.vidxp_version}</strong></>}
           {profile.data_root && <><Text>Data root</Text><Code className="pathCode">{profile.data_root}</Code></>}
           {profile.last_validated_at && <><Text>Last checked</Text><strong>{new Date(profile.last_validated_at).toLocaleString()}</strong></>}
+          <Text>Desktop action</Text><strong>{desktopSurfaceUnavailable ? 'Unavailable · setup required in the external environment' : 'Browser interface available'}</strong>
         </div>
         <Group justify="space-between" mt="xl">
           <Button variant="default" leftSection={<IconRefresh aria-hidden="true" size={17} />} onClick={onChooseAnother}>Choose another target</Button>
-          <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={opening} disabled={Boolean(validationError) || profile.can_launch_frontend === false} onClick={() => void open()}>Open VidXP</Button>
+          <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={opening} disabled={Boolean(validationError) || desktopSurfaceUnavailable} onClick={() => void open()}>Open VidXP</Button>
         </Group>
       </div>
     </section>

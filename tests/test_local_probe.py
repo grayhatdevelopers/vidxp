@@ -10,8 +10,11 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from vidxp import cli
-from vidxp.application_models import ApplicationError
-from vidxp.local_probe import PRODUCT_ID, build_desktop_probe
+from vidxp.local_probe import (
+    DESKTOP_LAUNCH_PROTOCOL_VERSION,
+    PRODUCT_ID,
+    build_desktop_probe,
+)
 
 
 class LocalProbeTests(unittest.TestCase):
@@ -37,7 +40,7 @@ class LocalProbeTests(unittest.TestCase):
         ):
             return build_desktop_probe(**values)
 
-    def test_probe_reports_stable_identity_and_normalized_compatibility(self):
+    def test_probe_reports_stable_identity_and_contract_compatibility(self):
         payload = self.build()
 
         self.assertEqual(payload["product"], PRODUCT_ID)
@@ -57,20 +60,29 @@ class LocalProbeTests(unittest.TestCase):
             },
         )
         self.assertTrue(payload["compatibility"]["compatible"])
-        self.assertEqual(payload["compatibility"]["code"], "compatible")
         self.assertEqual(
-            payload["compatibility"]["desktop_version_normalized"],
-            "0.4.0b0",
+            payload["compatibility"]["code"],
+            "contract_compatible",
+        )
+        self.assertEqual(
+            payload["launch_contract"],
+            {
+                "protocol_version": DESKTOP_LAUNCH_PROTOCOL_VERSION,
+                "surface": "browser",
+                "command": "ui",
+            },
         )
         self.assertTrue(payload["capabilities"]["frontend"]["launchable"])
 
-    def test_incompatible_product_version_has_stable_public_code(self):
+    def test_differing_package_versions_remain_contract_compatible(self):
         payload = self.build(desktop_version="0.5.0")
 
-        self.assertFalse(payload["compatibility"]["compatible"])
+        self.assertEqual(payload["product_version"], "0.4.0b0")
+        self.assertEqual(payload["compatibility"]["desktop_version"], "0.5.0")
+        self.assertTrue(payload["compatibility"]["compatible"])
         self.assertEqual(
             payload["compatibility"]["code"],
-            "desktop_version_incompatible",
+            "contract_compatible",
         )
 
     def test_missing_optional_frontend_does_not_make_product_incompatible(self):
@@ -93,6 +105,9 @@ class LocalProbeTests(unittest.TestCase):
         self.assertFalse(frontend["available"])
         self.assertFalse(frontend["launchable"])
         self.assertEqual(frontend["code"], "frontend_unavailable")
+        self.assertIn("command-line installation is usable", frontend["message"])
+        self.assertIn("package manager", frontend["remediation"])
+        self.assertIn("'frontend' extra", frontend["remediation"])
 
     def test_command_bypasses_composition_and_does_not_create_roots(self):
         with TemporaryDirectory() as directory:
@@ -146,11 +161,14 @@ class LocalProbeTests(unittest.TestCase):
             self.assertNotIn(name, serialized)
             self.assertNotIn(value, serialized)
 
-    def test_invalid_desktop_version_has_stable_public_error(self):
-        with self.assertRaises(ApplicationError) as raised:
-            self.build(desktop_version="not a version")
+    def test_desktop_version_is_informational_not_a_compatibility_gate(self):
+        payload = self.build(desktop_version="desktop-development-build")
 
-        self.assertEqual(raised.exception.code, "desktop_version_invalid")
+        self.assertTrue(payload["compatibility"]["compatible"])
+        self.assertEqual(
+            payload["compatibility"]["desktop_version"],
+            "desktop-development-build",
+        )
 
 
 if __name__ == "__main__":

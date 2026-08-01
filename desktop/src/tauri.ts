@@ -10,6 +10,15 @@ export interface TargetError {
   action?: string;
 }
 
+export interface FrontendCapability {
+  available: boolean;
+  launchable: boolean;
+  optional: boolean;
+  code: string;
+  message: string;
+  remediation: string;
+}
+
 export interface TargetProfile {
   id: string;
   display_name: string;
@@ -22,9 +31,11 @@ export interface TargetProfile {
   vidxp_version?: string | null;
   probe_version?: string | number | null;
   compatibility_version?: string | number | null;
+  launch_protocol_version?: string | number | null;
   last_validated_at?: string | null;
   validation_error?: TargetError | null;
   can_launch_frontend?: boolean | null;
+  frontend?: FrontendCapability | null;
 }
 
 export interface TargetSetupState {
@@ -52,10 +63,12 @@ export interface LocalTargetValidation {
   vidxp_version?: string | null;
   protocol_version?: string | number | null;
   probe_version?: string | number | null;
+  launch_protocol_version?: string | number | null;
   python_executable?: string | null;
   python_version?: string | null;
   data_root?: string | null;
   can_launch_frontend?: boolean | null;
+  frontend?: FrontendCapability | null;
   error?: TargetError | null;
   warnings?: string[];
 }
@@ -65,20 +78,13 @@ interface RustRuntimeIdentity {
   python_version: string;
 }
 
-interface RustFrontendCapability {
-  available: boolean;
-  launchable: boolean;
-  optional: boolean;
-  code: string;
-  message: string;
-}
-
 interface RustTargetProfile extends Omit<TargetProfile, 'vidxp_version' | 'probe_version' | 'last_validated_at'> {
   observed_vidxp_version: string;
   probe_schema_version: number;
   probe_protocol_version: number;
+  launch_protocol_version: number;
   runtime?: RustRuntimeIdentity | null;
-  frontend?: RustFrontendCapability | null;
+  frontend?: FrontendCapability | null;
   last_successful_validation_at?: number | null;
 }
 
@@ -93,9 +99,10 @@ interface RustValidatedTarget {
   product_version: string;
   probe_schema_version: number;
   probe_protocol_version: number;
+  launch_protocol_version: number;
   runtime: RustRuntimeIdentity;
   data_root: string;
-  frontend: RustFrontendCapability;
+  frontend: FrontendCapability;
   validated_at: number;
 }
 
@@ -148,6 +155,7 @@ function normalizeProfile(profile: RustTargetProfile): TargetProfile {
     vidxp_version: profile.observed_vidxp_version,
     probe_version: profile.probe_protocol_version,
     compatibility_version: profile.probe_schema_version,
+    launch_protocol_version: profile.launch_protocol_version,
     last_validated_at: profile.last_successful_validation_at
       ? new Date(profile.last_successful_validation_at * 1000).toISOString()
       : null,
@@ -191,10 +199,12 @@ export function validateLocalTarget(executable: string): Promise<LocalTargetVali
     vidxp_version: result.product_version,
     protocol_version: result.probe_protocol_version,
     probe_version: result.probe_schema_version,
+    launch_protocol_version: result.launch_protocol_version,
     python_executable: result.runtime.python_executable,
     python_version: result.runtime.python_version,
     data_root: result.data_root,
     can_launch_frontend: result.frontend.launchable,
+    frontend: result.frontend,
     warnings:
       result.frontend.optional && !result.frontend.available ? [result.frontend.message] : undefined,
   }));

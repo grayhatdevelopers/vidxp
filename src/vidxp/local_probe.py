@@ -6,36 +6,22 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from packaging.version import InvalidVersion, Version
-
 from vidxp import __version__
 from vidxp.app_paths import (
     default_data_directory,
     default_repository_directory,
 )
-from vidxp.application_models import ApplicationError, ErrorCategory
 from vidxp.media_runtime import media_runtime_is_initialized
 
 
 DESKTOP_PROBE_SCHEMA_VERSION = 1
 DESKTOP_PROBE_PROTOCOL_VERSION = 1
+DESKTOP_LAUNCH_PROTOCOL_VERSION = 1
 PRODUCT_ID = "dev.grayhat.vidxp"
 
 
 def _resolved_path(value: str | Path) -> str:
     return str(Path(value).expanduser().resolve(strict=False))
-
-
-def _normalized_version(value: str, *, code: str, label: str) -> Version:
-    try:
-        return Version(value)
-    except InvalidVersion as exc:
-        raise ApplicationError(
-            code,
-            ErrorCategory.validation,
-            f"The {label} version is not a valid Python package version.",
-            details={"version": value},
-        ) from exc
 
 
 def _module_available(name: str) -> bool:
@@ -52,24 +38,36 @@ def _frontend_capability() -> dict[str, Any]:
     if not installed:
         code = "frontend_unavailable"
         message = (
-            "The optional browser interface is not installed. Install the "
-            "VidXP frontend extra to enable desktop launch."
+            "The VidXP command-line installation is usable, but its optional "
+            "browser interface is not installed."
+        )
+        remediation = (
+            "Use the environment or package manager that owns this executable "
+            "to install VidXP with the 'frontend' extra, initialize its media "
+            "runtime if needed, then return to VidXP Desktop and revalidate."
         )
     elif not media_ready:
         code = "media_runtime_uninitialized"
         message = (
-            "The browser interface is installed, but FFmpeg and ffprobe are "
-            "not initialized for local media work."
+            "The VidXP command-line installation and browser interface are "
+            "installed, but FFmpeg and ffprobe are not initialized for local "
+            "media work."
+        )
+        remediation = (
+            "Use this installation's own VidXP initialization workflow to set "
+            "up its media runtime, then return to VidXP Desktop and revalidate."
         )
     else:
         code = "frontend_available"
         message = "The browser interface can be launched."
+        remediation = ""
     return {
         "available": installed,
         "launchable": launchable,
         "optional": True,
         "code": code,
         "message": message,
+        "remediation": remediation,
     }
 
 
@@ -82,27 +80,6 @@ def build_desktop_probe(
     repository_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Describe this local VidXP installation without mutating it."""
-
-    product_version = _normalized_version(
-        __version__,
-        code="product_version_invalid",
-        label="installed VidXP",
-    )
-    requested_desktop_version = _normalized_version(
-        desktop_version,
-        code="desktop_version_invalid",
-        label="VidXP desktop",
-    )
-    compatible = product_version == requested_desktop_version
-    compatibility_code = "compatible" if compatible else "desktop_version_incompatible"
-    compatibility_message = (
-        "This VidXP installation is compatible with the desktop."
-        if compatible
-        else (
-            "This VidXP installation has a different product version from "
-            "the desktop. Select a compatible installation."
-        )
-    )
 
     resolved_data_root = (
         Path(data_root if data_root is not None else default_data_directory())
@@ -125,6 +102,11 @@ def build_desktop_probe(
         "product_version": __version__,
         "schema_version": DESKTOP_PROBE_SCHEMA_VERSION,
         "protocol_version": DESKTOP_PROBE_PROTOCOL_VERSION,
+        "launch_contract": {
+            "protocol_version": DESKTOP_LAUNCH_PROTOCOL_VERSION,
+            "surface": "browser",
+            "command": "ui",
+        },
         "request_id": request_id,
         "launcher": _resolved_path(resolved_launcher),
         "runtime": {
@@ -137,12 +119,13 @@ def build_desktop_probe(
         "data_root": str(resolved_data_root),
         "repository_root": str(resolved_repository_root),
         "compatibility": {
-            "compatible": compatible,
-            "code": compatibility_code,
-            "message": compatibility_message,
+            "compatible": True,
+            "code": "contract_compatible",
+            "message": (
+                "This installation implements the supported desktop probe and "
+                "browser launch contracts."
+            ),
             "desktop_version": desktop_version,
-            "desktop_version_normalized": str(requested_desktop_version),
-            "product_version_normalized": str(product_version),
         },
         "capabilities": {"frontend": _frontend_capability()},
     }
