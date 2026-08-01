@@ -7,6 +7,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from uuid import uuid4
 
+import jwt
 import pytest
 from sqlalchemy.exc import IntegrityError
 
@@ -64,6 +65,7 @@ def _service(
         upload_cleanup_token="x" * 32,
         upload_handoff_public_url="https://upload.example/upload-handoff",
         upload_handoff_secret="h" * 32,
+        upload_cors_origin_regex=r"^https://upload\.example$",
         upload_max_bytes=quota,
         upload_quota_bytes=quota,
     )
@@ -73,6 +75,9 @@ def _service(
             catalog=catalog,
             media=_Media(),
             jobs=jobs,
+            tusd_upload_exists=lambda upload_id: (
+                settings.quarantine_root / f"{upload_id}.info"
+            ).exists(),
         ),
         catalog,
         jobs,
@@ -140,6 +145,13 @@ def test_upload_handoff_is_idempotent_and_bound_to_intent(
     assert stored is not None
     assert stored.session_digest is None
     assert first.capability not in stored.model_dump_json()
+    claims = jwt.decode(
+        first.capability,
+        options={"verify_signature": False},
+    )
+    assert claims["sub"] == first.status.intent_id
+    assert claims["aud"] == "vidxp-upload-handoff"
+    assert claims["purpose"] == "upload-handoff"
     catalog.close()
 
 
@@ -152,7 +164,14 @@ def test_handoff_rejects_tamper_wrong_intent_and_expiry(
         principal=Principal(subject="owner"),
         request_key="a" * 64,
     )
-    tampered = handoff.capability[:-1] + ("A" if handoff.capability[-1] != "A" else "B")
+    header, payload, signature = handoff.capability.split(".")
+    tampered = ".".join(
+        (
+            header,
+            payload,
+            ("A" if signature[0] != "A" else "B") + signature[1:],
+        )
+    )
 
     with pytest.raises(ApplicationError) as invalid:
         service.exchange_handoff(
@@ -200,6 +219,8 @@ def test_browser_session_grant_accepts_five_mib_and_rejects_replay(
         handoff.status.intent_id,
         session_token=session.session_token,
     )
+    assert len(grant.token) >= 64
+    assert "." not in grant.token
 
     with pytest.raises(ApplicationError) as wrong_size:
         service.accept_handoff_creation(
@@ -215,6 +236,11 @@ def test_browser_session_grant_accepts_five_mib_and_rejects_replay(
         byte_size=size,
     )
     assert accepted.state == UploadState.accepted
+    consumed = catalog.get_upload_handoff_by_intent(handoff.status.intent_id)
+    assert consumed is not None
+    assert consumed.creation_grant_digest is not None
+    assert consumed.creation_grant_consumed_at is not None
+    assert grant.token not in consumed.model_dump_json()
     page = service.browser_session(
         handoff.status.intent_id,
         session_token=session.session_token,
@@ -494,7 +520,9 @@ def test_active_resumable_upload_is_not_expired(tmp_path: Path) -> None:
     catalog.create_upload_intent(record, quota_limit=100)
     service.settings.quarantine_root.mkdir(parents=True, exist_ok=True)
     (service.settings.quarantine_root / f"{upload_id}.info").write_text(
-        '{"MetaData":{"intent_id":"' + record.intent_id + '"},"Size":60,"Offset":10}',
+        '{"MetaData":{"intent_id":"'
+        + record.intent_id
+        + '"},"Size":60,"Offset":10}',
         encoding="utf-8",
     )
 

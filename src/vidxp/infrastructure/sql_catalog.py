@@ -5,16 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import (
-    Engine,
-    create_engine,
-    delete,
-    event,
-    func,
-    insert,
-    select,
-    update,
-)
+from sqlalchemy import Engine, create_engine, delete, event, func, insert, select, update
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool
@@ -89,6 +80,11 @@ def _upload_handoff_record(row: Any) -> UploadHandoffRecord:
         creation_grant_expires_at=(
             datetime.fromisoformat(row.creation_grant_expires_at)
             if row.creation_grant_expires_at is not None
+            else None
+        ),
+        creation_grant_consumed_at=(
+            datetime.fromisoformat(row.creation_grant_consumed_at)
+            if row.creation_grant_consumed_at is not None
             else None
         ),
     )
@@ -166,14 +162,22 @@ class SQLCatalog:
             payload = connection.execute(
                 select(media.c.payload).where(media.c.media_id == media_id)
             ).scalar_one_or_none()
-        return None if payload is None else _record(MediaRecord, payload)
+        return (
+            None
+            if payload is None
+            else _record(MediaRecord, payload)
+        )
 
     def get_media_by_checksum(self, sha256: str) -> MediaRecord | None:
         with self.engine.connect() as connection:
             payload = connection.execute(
                 select(media.c.payload).where(media.c.sha256 == sha256)
             ).scalar_one_or_none()
-        return None if payload is None else _record(MediaRecord, payload)
+        return (
+            None
+            if payload is None
+            else _record(MediaRecord, payload)
+        )
 
     def put_media(self, record: MediaRecord) -> MediaRecord:
         values = {
@@ -217,7 +221,11 @@ class SQLCatalog:
         payload = connection.execute(
             select(media.c.payload).where(media.c.media_id == media_id)
         ).scalar_one_or_none()
-        return None if payload is None else _record(MediaRecord, payload)
+        return (
+            None
+            if payload is None
+            else _record(MediaRecord, payload)
+        )
 
     @staticmethod
     def _media_by_checksum(
@@ -227,7 +235,11 @@ class SQLCatalog:
         payload = connection.execute(
             select(media.c.payload).where(media.c.sha256 == sha256)
         ).scalar_one_or_none()
-        return None if payload is None else _record(MediaRecord, payload)
+        return (
+            None
+            if payload is None
+            else _record(MediaRecord, payload)
+        )
 
     def list_media(
         self,
@@ -244,12 +256,17 @@ class SQLCatalog:
                 .limit(limit)
                 .offset(offset)
             ).scalars()
-            return tuple(_record(MediaRecord, payload) for payload in payloads)
+            return tuple(
+                _record(MediaRecord, payload)
+                for payload in payloads
+            )
 
     def count_media(self) -> int:
         with self.engine.connect() as connection:
             return int(
-                connection.execute(select(func.count()).select_from(media)).scalar_one()
+                connection.execute(
+                    select(func.count()).select_from(media)
+                ).scalar_one()
             )
 
     def reserve_media_import(
@@ -282,7 +299,9 @@ class SQLCatalog:
                             media_import_requests.c.request_fingerprint,
                             media_import_requests.c.media_id,
                         )
-                        .where(media_import_requests.c.request_key == request_key)
+                        .where(
+                            media_import_requests.c.request_key == request_key
+                        )
                         .with_for_update()
                     ).one()
             if row.request_fingerprint != request_fingerprint:
@@ -293,7 +312,9 @@ class SQLCatalog:
                 return None
             stored = self._media_by_id(connection, row.media_id)
             if stored is None:
-                raise RuntimeError("A completed media import references missing media.")
+                raise RuntimeError(
+                    "A completed media import references missing media."
+                )
             return stored
 
     def complete_media_import(
@@ -316,7 +337,9 @@ class SQLCatalog:
                     "The media import reservation does not match the content."
                 )
             if row.media_id is not None and row.media_id != record.media_id:
-                raise FileExistsError("The media import key is already completed.")
+                raise FileExistsError(
+                    "The media import key is already completed."
+                )
             connection.execute(
                 update(media_import_requests)
                 .where(media_import_requests.c.request_key == request_key)
@@ -330,7 +353,11 @@ class SQLCatalog:
                     artifacts.c.artifact_id == artifact_id
                 )
             ).scalar_one_or_none()
-        return None if payload is None else _record(ArtifactRecord, payload)
+        return (
+            None
+            if payload is None
+            else _record(ArtifactRecord, payload)
+        )
 
     def get_artifact_by_request(
         self,
@@ -342,7 +369,8 @@ class SQLCatalog:
                 .select_from(
                     artifact_requests.join(
                         artifacts,
-                        artifact_requests.c.artifact_id == artifacts.c.artifact_id,
+                        artifact_requests.c.artifact_id
+                        == artifacts.c.artifact_id,
                     )
                 )
                 .where(artifact_requests.c.request_key == request_key)
@@ -350,8 +378,12 @@ class SQLCatalog:
         if payload is None:
             return None
         record = _record(ArtifactRecord, payload)
-        if record.state != ArtifactState.ready or (
-            record.expires_at is not None and record.expires_at <= utc_now()
+        if (
+            record.state != ArtifactState.ready
+            or (
+                record.expires_at is not None
+                and record.expires_at <= utc_now()
+            )
         ):
             return None
         return record
@@ -363,9 +395,12 @@ class SQLCatalog:
                 record.request_key,
             )
             if request_match is not None:
-                if request_match.state == ArtifactState.ready and (
-                    request_match.expires_at is None
-                    or request_match.expires_at > utc_now()
+                if (
+                    request_match.state == ArtifactState.ready
+                    and (
+                        request_match.expires_at is None
+                        or request_match.expires_at > utc_now()
+                    )
                 ):
                     return request_match
                 connection.execute(
@@ -405,9 +440,15 @@ class SQLCatalog:
         artifact_id: str,
     ) -> ArtifactRecord | None:
         payload = connection.execute(
-            select(artifacts.c.payload).where(artifacts.c.artifact_id == artifact_id)
+            select(artifacts.c.payload).where(
+                artifacts.c.artifact_id == artifact_id
+            )
         ).scalar_one_or_none()
-        return None if payload is None else _record(ArtifactRecord, payload)
+        return (
+            None
+            if payload is None
+            else _record(ArtifactRecord, payload)
+        )
 
     @staticmethod
     def _artifact_by_request(
@@ -424,7 +465,11 @@ class SQLCatalog:
             )
             .where(artifact_requests.c.request_key == request_key)
         ).scalar_one_or_none()
-        return None if payload is None else _record(ArtifactRecord, payload)
+        return (
+            None
+            if payload is None
+            else _record(ArtifactRecord, payload)
+        )
 
     def invalidate_artifact_request(
         self,
@@ -488,6 +533,11 @@ class SQLCatalog:
                         if record.creation_grant_expires_at is not None
                         else None
                     ),
+                    creation_grant_consumed_at=(
+                        record.creation_grant_consumed_at.isoformat()
+                        if record.creation_grant_consumed_at is not None
+                        else None
+                    ),
                 )
             )
         return record
@@ -530,6 +580,21 @@ class SQLCatalog:
                 row = active.execute(statement).one_or_none()
         return None if row is None else _upload_handoff_record(row)
 
+    def get_upload_handoff_by_creation_grant(
+        self,
+        digest: str,
+        *,
+        connection: Connection,
+        for_update: bool = False,
+    ) -> UploadHandoffRecord | None:
+        statement = select(upload_handoffs).where(
+            upload_handoffs.c.creation_grant_digest == digest
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        row = connection.execute(statement).one_or_none()
+        return None if row is None else _upload_handoff_record(row)
+
     def set_upload_handoff_session(
         self,
         selector: str,
@@ -559,6 +624,7 @@ class SQLCatalog:
             .values(
                 creation_grant_digest=digest,
                 creation_grant_expires_at=expires_at.isoformat(),
+                creation_grant_consumed_at=None,
             )
         )
         if result.rowcount != 1:
@@ -568,14 +634,14 @@ class SQLCatalog:
         self,
         selector: str,
         *,
+        consumed_at: datetime,
         connection: Connection,
     ) -> None:
         result = connection.execute(
             update(upload_handoffs)
             .where(upload_handoffs.c.selector == selector)
             .values(
-                creation_grant_digest=None,
-                creation_grant_expires_at=None,
+                creation_grant_consumed_at=consumed_at.isoformat(),
             )
         )
         if result.rowcount != 1:
@@ -727,7 +793,9 @@ class SQLCatalog:
                 .where(
                     upload_quota.c.singleton_id == _UPLOAD_QUOTA_ID,
                 )
-                .values(reserved_bytes=max(0, int(quota) - current.byte_size))
+                .values(
+                    reserved_bytes=max(0, int(quota) - current.byte_size)
+                )
             )
         return True
 

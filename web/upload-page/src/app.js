@@ -1,7 +1,10 @@
 import Uppy from '@uppy/core'
+import Dashboard from '@uppy/dashboard'
 import GoldenRetriever from '@uppy/golden-retriever'
 import Tus from '@uppy/tus'
 
+import '@uppy/core/css/style.min.css'
+import '@uppy/dashboard/css/style.min.css'
 import './app.css'
 
 const elements = {
@@ -10,13 +13,7 @@ const elements = {
   expectedSize: document.querySelector('#expected-size'),
   maximumSize: document.querySelector('#maximum-size'),
   expiresAt: document.querySelector('#expires-at'),
-  fileInput: document.querySelector('#file-input'),
-  selectedFile: document.querySelector('#selected-file'),
-  progress: document.querySelector('#upload-progress'),
   uploadState: document.querySelector('#upload-state'),
-  uploadButton: document.querySelector('#upload-button'),
-  pauseButton: document.querySelector('#pause-button'),
-  retryButton: document.querySelector('#retry-button'),
   intentState: document.querySelector('#intent-state'),
   nextAction: document.querySelector('#next-action'),
   intentId: document.querySelector('#intent-id'),
@@ -221,59 +218,14 @@ function applyStatus(envelope) {
       'error',
     )
   }
-  updateControls()
+  uppy?.getPlugin('Dashboard')?.setOptions({
+    disabled: !TRANSFER_STATES.has(state),
+  })
   return state
 }
 
 function activeFile() {
   return uppy?.getFiles()[0] ?? null
-}
-
-function renderFile(file = activeFile()) {
-  if (!file) {
-    setText(elements.selectedFile, 'No file selected.')
-    elements.progress.value = 0
-    elements.progress.textContent = '0%'
-    updateControls()
-    return
-  }
-
-  const suffix = file.isGhost
-    ? ' — re-select this file to recover the interrupted upload.'
-    : ''
-  setText(
-    elements.selectedFile,
-    `${file.name} · ${formatBytes(file.size)}${suffix}`,
-  )
-
-  const percentage = Number(file.progress?.percentage ?? 0)
-  elements.progress.value = Number.isFinite(percentage) ? percentage : 0
-  elements.progress.textContent = `${Math.round(elements.progress.value)}%`
-
-  if (file.isGhost) {
-    setUploadMessage(
-      'The resumable upload was found. Re-select the same local file to continue.',
-    )
-  }
-  updateControls()
-}
-
-function updateControls() {
-  const file = activeFile()
-  const terminal = TERMINAL_STATES.has(currentIntentState)
-  const transferAllowed = TRANSFER_STATES.has(currentIntentState)
-  const usableFile = file && !file.isGhost
-  const complete = Boolean(file?.progress?.uploadComplete)
-  const uploading = Boolean(file?.progress?.uploadStarted) && !complete
-
-  elements.fileInput.disabled = !uppy || !transferAllowed || terminal || complete
-  elements.uploadButton.disabled =
-    !usableFile || !transferAllowed || terminal || complete || uploading
-  elements.pauseButton.disabled =
-    !usableFile || !transferAllowed || terminal || complete || !uploading
-  elements.retryButton.disabled =
-    !usableFile || !transferAllowed || terminal || !file?.error
-  setText(elements.pauseButton, file?.isPaused ? 'Resume' : 'Pause')
 }
 
 function validateExpectedFile(file) {
@@ -364,29 +316,40 @@ function configureUppy() {
     },
   })
 
-  uppy.on('file-added', renderFile)
-  uppy.on('file-removed', () => renderFile())
+  uppy.on('file-added', () => {
+    setUploadMessage('The expected file is ready to upload.')
+  })
+  uppy.on('file-removed', () => {
+    setUploadMessage('Choose the expected file to begin.')
+  })
   uppy.on('restriction-failed', () => {
     setUploadMessage('The selected file does not match this upload handoff.', 'error')
   })
-  uppy.on('upload-progress', (file) => renderFile(file))
-  uppy.on('upload-pause', (file, isPaused) => {
+  uppy.on('upload-pause', (_file, isPaused) => {
     setUploadMessage(isPaused ? 'Upload paused.' : 'Upload resumed.')
-    renderFile(file)
   })
-  uppy.on('upload-error', (file, error) => {
+  uppy.on('upload-error', (_file, error) => {
     creationGrant = null
     setUploadMessage(safeUploadError(error), 'error')
-    if (file) renderFile(file)
   })
-  uppy.on('upload-success', (file) => {
+  uppy.on('upload-success', () => {
     setUploadMessage('Transfer complete. VidXP is validating and importing the video.', 'success')
-    renderFile(file)
     scheduleStatusPoll(0)
   })
   uppy.on('restored', () => {
-    renderFile()
+    setUploadMessage('The previous upload session was restored.')
     scheduleStatusPoll(0)
+  })
+
+  uppy.use(Dashboard, {
+    target: '#uppy-dashboard',
+    inline: true,
+    height: 360,
+    theme: 'dark',
+    showProgressDetails: true,
+    proudlyDisplayPoweredByUppy: false,
+    disabled: !TRANSFER_STATES.has(currentIntentState),
+    note: `Only ${expected.filename} (${formatBytes(expected.byteSize)}) is accepted.`,
   })
 
   uppy.use(Tus, {
@@ -413,7 +376,6 @@ function configureUppy() {
     serviceWorker: false,
   })
 
-  renderFile()
 }
 
 async function pollStatus() {
@@ -442,13 +404,13 @@ function scheduleStatusPoll(delay = POLL_INTERVAL_MS) {
 
 async function bootstrap() {
   const capability = readCapabilityFragment()
-  clearFragment()
   const payload = capability
     ? await requestJson(apiUrl('./bootstrap'), {
         method: 'POST',
         body: JSON.stringify({ capability }),
       })
     : await requestJson(apiUrl('./status'))
+  if (capability) clearFragment()
   expected = expectedRecord(payload)
   if (
     !expected.intentId ||
@@ -475,68 +437,9 @@ async function bootstrap() {
   scheduleStatusPoll(0)
 }
 
-elements.fileInput.addEventListener('change', () => {
-  const file = elements.fileInput.files?.[0]
-  elements.fileInput.value = ''
-  if (!file || !uppy) return
-
-  const problem = validateExpectedFile(file)
-  if (problem) {
-    setUploadMessage(problem, 'error')
-    return
-  }
-
-  try {
-    uppy.addFile({
-      source: 'VidXP upload page',
-      name: file.name,
-      type: file.type || 'application/octet-stream',
-      data: file,
-      meta: { intent_id: String(expected.intentId) },
-    })
-    setUploadMessage('The expected file is ready to upload.')
-  } catch {
-    setUploadMessage('The file could not be selected. Re-open it and try again.', 'error')
-  }
-})
-
-elements.uploadButton.addEventListener('click', async () => {
-  setUploadMessage('Starting the resumable upload…')
-  updateControls()
-  try {
-    const result = await uppy.upload()
-    if (result?.failed?.length) {
-      setUploadMessage('The transfer did not finish. Retry when ready.', 'error')
-    }
-  } catch {
-    setUploadMessage('The transfer did not finish. Retry when ready.', 'error')
-  }
-  updateControls()
-})
-
-elements.pauseButton.addEventListener('click', () => {
-  const file = activeFile()
-  if (file) uppy.pauseResume(file.id)
-  updateControls()
-})
-
-elements.retryButton.addEventListener('click', async () => {
-  const file = activeFile()
-  if (!file) return
-  creationGrant = null
-  setUploadMessage('Retrying the resumable upload…')
-  try {
-    await uppy.retryUpload(file.id)
-  } catch {
-    setUploadMessage('The retry did not finish. Check the connection and try again.', 'error')
-  }
-  updateControls()
-})
-
 bootstrap().catch((error) => {
   const message = error instanceof Error ? error.message : 'The upload page could not start.'
   setText(elements.summary, message)
   setUploadMessage(message, 'error')
   setText(elements.nextAction, 'Request a new upload handoff from VidXP.')
-  updateControls()
 })

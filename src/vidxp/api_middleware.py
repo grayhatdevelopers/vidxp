@@ -117,7 +117,10 @@ class ApiCORSMiddleware:
         receive: Receive,
         send: Send,
     ) -> None:
-        if scope["type"] == "http" and str(scope.get("path", "")).startswith("/api/"):
+        if (
+            scope["type"] == "http"
+            and str(scope.get("path", "")).startswith("/api/")
+        ):
             headers = Headers(scope=scope)
             origin = headers.get("origin")
             requested_method = headers.get("access-control-request-method")
@@ -130,7 +133,10 @@ class ApiCORSMiddleware:
                     ).split(",")
                     if value.strip()
                 }
-                if "*" not in self.allow_origins and origin not in self.allow_origins:
+                if (
+                    "*" not in self.allow_origins
+                    and origin not in self.allow_origins
+                ):
                     await public_error_response(
                         ErrorDetail(
                             code="cors_origin_forbidden",
@@ -180,7 +186,11 @@ class TypedTrustedHostMiddleware:
             return
         host = _host_name(Headers(scope=scope).get("host", ""))
         if any(
-            host == pattern or (pattern.startswith("*.") and host.endswith(pattern[1:]))
+            host == pattern
+            or (
+                pattern.startswith("*.")
+                and host.endswith(pattern[1:])
+            )
             for pattern in self.allowed_hosts
         ):
             await self.app(scope, receive, send)
@@ -202,7 +212,10 @@ def _host_name(header: str) -> str:
         if closing < 0:
             return ""
         remainder = value[closing + 1 :]
-        if remainder and (not remainder.startswith(":") or not remainder[1:].isdigit()):
+        if remainder and (
+            not remainder.startswith(":")
+            or not remainder[1:].isdigit()
+        ):
             return ""
         return value[1:closing]
     if value.count(":") == 1:

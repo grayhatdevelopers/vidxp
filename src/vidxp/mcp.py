@@ -5,11 +5,13 @@ import json
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
-from typing import Annotated, Callable, TypeVar
+from typing import Annotated, Callable, Literal, TypeVar
 from urllib.parse import quote
+from uuid import uuid4
 
 import anyio
 from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
@@ -177,6 +179,44 @@ class MediaUploadHandoff(MediaUploadStatus):
         ),
     )
     handoff_expires_at: AwareDatetime
+    elicitation_action: Literal[
+        "unsupported",
+        "accept",
+        "decline",
+        "cancel",
+        "unavailable",
+    ] = "unsupported"
+
+
+def _upload_handoff_after_elicitation(
+    handoff: MediaUploadHandoff,
+    action: str,
+) -> MediaUploadHandoff:
+    next_action = {
+        "accept": (
+            "Complete the upload in the page approved by the MCP client, then "
+            "call get_media_upload again."
+        ),
+        "decline": (
+            "The user declined to open the page. The upload_page_url remains "
+            "available if they choose to open it later."
+        ),
+        "cancel": (
+            "The URL prompt was dismissed. The upload_page_url remains "
+            "available for a later attempt."
+        ),
+        "unavailable": (
+            "The client could not present the URL prompt. Open upload_page_url "
+            "manually, then call get_media_upload again."
+        ),
+        "unsupported": handoff.next_action,
+    }[action]
+    return handoff.model_copy(
+        update={
+            "elicitation_action": action,
+            "next_action": next_action,
+        }
+    )
 
 
 def _uploads(context: ControlPlaneContext) -> RemoteUploadService:
@@ -314,7 +354,10 @@ class MCPTransportSecurityBoundary:
         receive: Receive,
         send: Send,
     ) -> None:
-        if scope["type"] == "http" and str(scope.get("path", "")) in {"/mcp", "/mcp/"}:
+        if (
+            scope["type"] == "http"
+            and str(scope.get("path", "")) in {"/mcp", "/mcp/"}
+        ):
             response = await self.security.validate_request(
                 Request(scope, receive=receive),
                 is_post=str(scope.get("method", "")).upper() == "POST",
@@ -337,9 +380,12 @@ def create_mcp_server(
     if oidc_authentication:
         assert settings.http_oidc_issuer is not None
         assert settings.mcp_public_url is not None
-        if isinstance(context, HttpApplicationContext) and isinstance(
-            context.authenticator,
-            OIDCBearerAuthenticator,
+        if (
+            isinstance(context, HttpApplicationContext)
+            and isinstance(
+                context.authenticator,
+                OIDCBearerAuthenticator,
+            )
         ):
             authenticator = context.authenticator.for_audience(
                 settings.mcp_public_url,
@@ -402,8 +448,8 @@ def create_mcp_server(
             context,
             default_principal=default_principal,
             permission=RepositoryPermission.read,
-            operation=lambda _actor: context.application.open_artifact_content(
-                artifact_id
+            operation=lambda _actor: (
+                context.application.open_artifact_content(artifact_id)
             ),
         )
         if resource.mime_type != expected_mime_type:
@@ -422,7 +468,9 @@ def create_mcp_server(
         "vidxp://artifacts/{artifact_id}/content.mp4",
         name="vidxp_artifact_mp4",
         title="VidXP MP4 artifact",
-        description=("Binary content for a generated VidXP clip or video artifact."),
+        description=(
+            "Binary content for a generated VidXP clip or video artifact."
+        ),
         mime_type="video/mp4",
     )
     async def read_mp4_artifact(artifact_id: ArtifactId) -> bytes:
@@ -435,7 +483,9 @@ def create_mcp_server(
         "vidxp://artifacts/{artifact_id}/content.mkv",
         name="vidxp_artifact_matroska",
         title="VidXP Matroska artifact",
-        description=("Binary content for a source-profile VidXP clip artifact."),
+        description=(
+            "Binary content for a source-profile VidXP clip artifact."
+        ),
         mime_type="video/x-matroska",
     )
     async def read_matroska_artifact(artifact_id: ArtifactId) -> bytes:
@@ -566,6 +616,7 @@ def create_mcp_server(
     async def create_media_upload(
         command: CreateUploadIntentCommand,
         idempotency_key: IdempotencyKey,
+        mcp_context: Context,
     ) -> MediaUploadHandoff:
         def create(actor: Principal) -> MediaUploadHandoff:
             service = _uploads(context)
@@ -591,12 +642,31 @@ def create_mcp_server(
                 handoff_expires_at=handoff.expires_at,
             )
 
-        return await _invoke_async(
+        result = await _invoke_async(
             context,
             default_principal=default_principal,
             permission=RepositoryPermission.write,
             operation=create,
         )
+        capabilities = mcp_context.client_capabilities
+        elicitation = capabilities.elicitation if capabilities is not None else None
+        if elicitation is None or elicitation.url is None:
+            return _upload_handoff_after_elicitation(result, "unsupported")
+        try:
+            response = await mcp_context.elicit_url(
+                message=(
+                    "Open VidXP's secure page to upload the declared video "
+                    "directly to the resumable upload service."
+                ),
+                url=result.upload_page_url,
+                elicitation_id=(
+                    f"vidxp-upload-{result.intent_id}-{uuid4().hex}"
+                ),
+            )
+        except MCPError:
+            _LOGGER.warning("The MCP client rejected URL elicitation delivery.")
+            return _upload_handoff_after_elicitation(result, "unavailable")
+        return _upload_handoff_after_elicitation(result, response.action)
 
     @server.tool(
         description=(
@@ -807,14 +877,23 @@ def create_mcp_server(
             context,
             default_principal=default_principal,
             permission=RepositoryPermission.read,
-            operation=lambda _actor: context.application.get_artifact(artifact_id),
+            operation=lambda _actor: (
+                context.application.get_artifact(artifact_id)
+            ),
         )
-        suffix = "mp4" if artifact.mime_type == "video/mp4" else "mkv"
+        suffix = (
+            "mp4"
+            if artifact.mime_type == "video/mp4"
+            else "mkv"
+        )
         filename = f"{artifact.kind.value}-{artifact.artifact_id}.{suffix}"
         return ResourceLink(
             name=filename,
             title=f"VidXP {artifact.kind.value.replace('_', ' ')}",
-            uri=(f"vidxp://artifacts/{artifact.artifact_id}/content.{suffix}"),
+            uri=(
+                f"vidxp://artifacts/{artifact.artifact_id}/"
+                f"content.{suffix}"
+            ),
             description=(
                 f"Generated from media {artifact.media_id}; "
                 f"{artifact.byte_size:,} bytes."
@@ -901,7 +980,9 @@ def create_mcp_server(
 
 
 def create_remote_mcp(context: ControlPlaneContext) -> RemoteMCP:
-    owns_authentication = context.settings.http_auth_mode == HttpAuthMode.oidc
+    owns_authentication = (
+        context.settings.http_auth_mode == HttpAuthMode.oidc
+    )
     server = create_mcp_server(
         context,
         oidc_authentication=owns_authentication,
@@ -913,9 +994,11 @@ def create_remote_mcp(context: ControlPlaneContext) -> RemoteMCP:
     )
     app = server.streamable_http_app(
         streamable_http_path="/mcp",
-        stateless_http=True,
+        stateless_http=False,
         json_response=False,
-        max_request_body_size=(context.settings.mcp_max_request_body_bytes),
+        max_request_body_size=(
+            context.settings.mcp_max_request_body_bytes
+        ),
         transport_security=transport_security,
         host=context.settings.http_bind_host,
     )

@@ -13,7 +13,11 @@ import httpx
 import pytest
 import uvicorn
 
-from vidxp.application_models import CreateUploadIntentCommand, Principal
+from vidxp.application_models import (
+    ApplicationError,
+    CreateUploadIntentCommand,
+    Principal,
+)
 from vidxp.authentication import StaticBearerAuthenticator
 from vidxp.authorization import AuthorizationPolicy
 from vidxp.composition import UploadHookContext
@@ -63,7 +67,7 @@ def _wait_for_http(url: str, *, process: subprocess.Popen[str] | None = None) ->
     raise AssertionError(f"Timed out waiting for {url}")
 
 
-def test_live_tusd_handoff_resumes_five_mib(tmp_path: Path) -> None:
+def test_live_tusd_split_topology_resumes_five_mib(tmp_path: Path) -> None:
     executable_value = os.environ.get("VIDXP_TUSD_EXECUTABLE")
     if not executable_value:
         pytest.skip("set VIDXP_TUSD_EXECUTABLE to run the live tusd integration")
@@ -74,27 +78,40 @@ def test_live_tusd_handoff_resumes_five_mib(tmp_path: Path) -> None:
     hook_port = _free_port()
     tusd_port = _free_port()
     size = 5 * 1024 * 1024
-    settings = VidXPSettings(
+    hook_settings = VidXPSettings(
         repository_root=tmp_path,
         upload_public_endpoint=f"http://127.0.0.1:{tusd_port}/uploads/",
         upload_internal_endpoint=f"http://127.0.0.1:{tusd_port}/uploads/",
         upload_cleanup_token="c" * 32,
         upload_handoff_public_url="https://upload.example/upload-handoff",
         upload_handoff_secret="h" * 32,
+        upload_cors_origin_regex=r"^https://upload\.example$",
         upload_max_bytes=2 * size,
         upload_quota_bytes=2 * size,
         upload_recovery_interval_seconds=3600,
     )
-    catalog = SQLCatalog(
-        f"sqlite:///{(tmp_path / 'server.sqlite3').resolve().as_posix()}",
+    api_settings = hook_settings.model_copy(
+        update={
+            "upload_quarantine_root": tmp_path / "api-has-no-quarantine-volume"
+        }
+    )
+    database_url = f"sqlite:///{(tmp_path / 'server.sqlite3').resolve().as_posix()}"
+    hook_catalog = SQLCatalog(
+        database_url,
         initialize=True,
     )
+    api_catalog = SQLCatalog(database_url)
     jobs = _Jobs()
-    uploads = RemoteUploadService(
-        settings=settings,
-        catalog=catalog,
+    hook_uploads = RemoteUploadService(
+        settings=hook_settings,
+        catalog=hook_catalog,
         media=object(),
         jobs=jobs,
+    )
+    api_uploads = RemoteUploadService(
+        settings=api_settings,
+        catalog=api_catalog,
+        media=None,
     )
     authenticator = StaticBearerAuthenticator("t" * 32)
     authorization = AuthorizationPolicy()
@@ -102,9 +119,9 @@ def test_live_tusd_handoff_resumes_five_mib(tmp_path: Path) -> None:
         jobs=jobs,  # type: ignore[arg-type]
         authenticator=authenticator,
         authorization=authorization,
-        settings=settings,
-        catalog=catalog,
-        uploads=uploads,
+        settings=hook_settings,
+        catalog=hook_catalog,
+        uploads=hook_uploads,
     )
     hook_server = uvicorn.Server(
         uvicorn.Config(
@@ -118,13 +135,13 @@ def test_live_tusd_handoff_resumes_five_mib(tmp_path: Path) -> None:
     hook_thread.start()
     _wait_for_http(f"http://127.0.0.1:{hook_port}/health")
 
-    settings.quarantine_root.mkdir(parents=True, exist_ok=True)
+    hook_settings.quarantine_root.mkdir(parents=True, exist_ok=True)
     tusd = subprocess.Popen(
         [
             str(executable),
             "-host=127.0.0.1",
             f"-port={tusd_port}",
-            f"-upload-dir={settings.quarantine_root}",
+            f"-upload-dir={hook_settings.quarantine_root}",
             "-base-path=/uploads/",
             f"-max-size={2 * size}",
             "-disable-download",
@@ -143,7 +160,7 @@ def test_live_tusd_handoff_resumes_five_mib(tmp_path: Path) -> None:
             f"http://127.0.0.1:{tusd_port}/metrics",
             process=tusd,
         )
-        handoff = uploads.create_handoff(
+        handoff = api_uploads.create_handoff(
             CreateUploadIntentCommand(
                 original_filename="five-mib.mp4",
                 byte_size=size,
@@ -152,11 +169,11 @@ def test_live_tusd_handoff_resumes_five_mib(tmp_path: Path) -> None:
             principal=Principal(subject="agent", scopes=frozenset({"*"})),
             request_key="a" * 64,
         )
-        session = uploads.exchange_handoff(
+        session = api_uploads.exchange_handoff(
             handoff.status.intent_id,
             capability=handoff.capability,
         )
-        grant = uploads.issue_creation_grant(
+        grant = api_uploads.issue_creation_grant(
             handoff.status.intent_id,
             session_token=session.session_token,
         )
@@ -194,6 +211,19 @@ def test_live_tusd_handoff_resumes_five_mib(tmp_path: Path) -> None:
             assert paused.status_code == 200
             assert paused.headers["Upload-Offset"] == str(first_chunk)
 
+            assert not api_settings.quarantine_root.exists()
+            browser_session = api_uploads.browser_session(
+                handoff.status.intent_id,
+                session_token=session.session_token,
+            )
+            assert browser_session.resume_url == upload_url
+            with pytest.raises(ApplicationError) as replayed:
+                api_uploads.issue_creation_grant(
+                    handoff.status.intent_id,
+                    session_token=session.session_token,
+                )
+            assert replayed.value.detail.code == "upload_handoff_replayed"
+
             resumed = client.patch(
                 upload_url,
                 headers={
@@ -213,21 +243,23 @@ def test_live_tusd_handoff_resumes_five_mib(tmp_path: Path) -> None:
             assert completed.headers["Upload-Offset"] == str(size)
 
         deadline = time.monotonic() + 5
-        record = catalog.get_upload_intent(handoff.status.intent_id)
+        record = api_catalog.get_upload_intent(handoff.status.intent_id)
         while record is not None and record.state != UploadState.processing:
             if time.monotonic() >= deadline:
                 break
             time.sleep(0.05)
-            record = catalog.get_upload_intent(handoff.status.intent_id)
+            record = api_catalog.get_upload_intent(handoff.status.intent_id)
 
         assert record is not None
         assert record.state == UploadState.processing
         assert record.job_id == record.upload_id
         assert record.upload_id is not None
-        assert (settings.quarantine_root / record.upload_id).stat().st_size == size
-        info = (settings.quarantine_root / f"{record.upload_id}.info").read_text(
-            encoding="utf-8"
-        )
+        assert (
+            hook_settings.quarantine_root / record.upload_id
+        ).stat().st_size == size
+        info = (
+            hook_settings.quarantine_root / f"{record.upload_id}.info"
+        ).read_text(encoding="utf-8")
         assert grant.token not in info
         assert session.session_token not in info
         assert "Authorization" not in info
@@ -240,4 +272,5 @@ def test_live_tusd_handoff_resumes_five_mib(tmp_path: Path) -> None:
             tusd.communicate(timeout=5)
         hook_server.should_exit = True
         hook_thread.join(timeout=5)
-        catalog.close()
+        api_catalog.close()
+        hook_catalog.close()

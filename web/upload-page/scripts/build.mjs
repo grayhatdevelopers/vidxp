@@ -23,6 +23,14 @@ const bundle = await build({
   target: ['es2020'],
 })
 
+const bundledJavaScriptPath = join(outputRoot, 'upload-page.js')
+const bundledJavaScript = await readFile(bundledJavaScriptPath, 'utf8')
+await writeFile(
+  bundledJavaScriptPath,
+  bundledJavaScript.replace(/[\t ]+$/gm, ''),
+  'utf8',
+)
+
 await copyFile(
   join(packageRoot, 'src', 'index.html'),
   join(outputRoot, 'index.html'),

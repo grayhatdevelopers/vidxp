@@ -40,6 +40,7 @@ def _hooks(tmp_path: Path):
         upload_cleanup_token="c" * 32,
         upload_handoff_public_url="https://upload.example/upload-handoff",
         upload_handoff_secret="h" * 32,
+        upload_cors_origin_regex=r"^https://upload\.example$",
     )
     uploads = RemoteUploadService(
         settings=settings,
@@ -187,7 +188,9 @@ def test_pre_create_rejects_unsupported_tus_modes(tmp_path: Path) -> None:
                     "upload": _pre_create(
                         intent.intent_id,
                         token,
-                    ).event.upload.model_copy(update={"size_is_deferred": True})
+                    ).event.upload.model_copy(
+                        update={"size_is_deferred": True}
+                    )
                 }
             )
         }

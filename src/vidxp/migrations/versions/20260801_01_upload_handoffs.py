@@ -35,6 +35,7 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.Column("creation_grant_expires_at", sa.Text(), nullable=True),
+        sa.Column("creation_grant_consumed_at", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(
             ["intent_id"],
             ["upload_intents.intent_id"],
@@ -42,6 +43,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("selector"),
         sa.UniqueConstraint("intent_id"),
+        sa.UniqueConstraint("creation_grant_digest"),
     )
 
 

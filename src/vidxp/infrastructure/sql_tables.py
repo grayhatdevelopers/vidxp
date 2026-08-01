@@ -101,8 +101,9 @@ upload_handoffs = Table(
     Column("created_at", Text, nullable=False),
     Column("expires_at", Text, nullable=False),
     Column("session_digest", String(64), nullable=True),
-    Column("creation_grant_digest", String(64), nullable=True),
+    Column("creation_grant_digest", String(64), nullable=True, unique=True),
     Column("creation_grant_expires_at", Text, nullable=True),
+    Column("creation_grant_consumed_at", Text, nullable=True),
 )
 
 upload_quota = Table(

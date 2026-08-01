@@ -32,24 +32,10 @@
 
       <section class="card" aria-labelledby="upload-heading">
         <h2 id="upload-heading">Choose and upload</h2>
-        <label class="field-label" for="file-input">Video file</label>
-        <input id="file-input" type="file" accept="video/*" disabled>
-        <p id="selected-file" class="selected-file">No file selected.</p>
-
-        <progress id="upload-progress" max="100" value="0">0%</progress>
+        <div id="uppy-dashboard"></div>
         <p id="upload-state" class="state" role="status" aria-live="polite">
           Waiting for a valid handoff.
         </p>
-
-        <div class="actions">
-          <button id="upload-button" type="button" disabled>Start upload</button>
-          <button id="pause-button" type="button" class="secondary" disabled>
-            Pause
-          </button>
-          <button id="retry-button" type="button" class="secondary" disabled>
-            Retry
-          </button>
-        </div>
       </section>
 
       <section class="card" aria-labelledby="status-heading">

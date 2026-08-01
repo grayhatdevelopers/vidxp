@@ -30,6 +30,7 @@ def _fixture(root: Path):
         upload_cleanup_token="c" * 32,
         upload_handoff_public_url="https://testserver/upload-handoff",
         upload_handoff_secret="h" * 32,
+        upload_cors_origin_regex=r"^https://testserver$",
     )
     catalog = SQLCatalog(
         f"sqlite:///{(root / 'server.sqlite3').resolve().as_posix()}",
@@ -139,7 +140,7 @@ def test_upload_page_bootstrap_session_assets_and_security(tmp_path: Path) -> No
         )
         assert grant.status_code == 200
         assert grant.json()["scheme"] == "VidXP-Handoff"
-        assert grant.json()["grant"].startswith("v1.")
+        assert len(grant.json()["grant"]) >= 64
 
         protected = client.get(f"/upload-handoff/{handoff.status.intent_id}evil")
         assert protected.status_code == 401
@@ -158,7 +159,14 @@ def test_upload_page_rejects_tamper_and_cross_origin_with_headers(
 ) -> None:
     context, catalog, handoff = _fixture(tmp_path)
     path = f"/upload-handoff/{handoff.status.intent_id}/bootstrap"
-    tampered = handoff.capability[:-1] + ("A" if handoff.capability[-1] != "A" else "B")
+    header, payload, signature = handoff.capability.split(".")
+    tampered = ".".join(
+        (
+            header,
+            payload,
+            ("A" if signature[0] != "A" else "B") + signature[1:],
+        )
+    )
 
     with TestClient(
         create_app(context=context),

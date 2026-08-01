@@ -27,7 +27,7 @@ VIDXP_PUBLIC_API_HOST=api.example.com
 VIDXP_UPLOAD_PUBLIC_ENDPOINT=https://uploads.example.com/uploads/
 VIDXP_UPLOAD_HANDOFF_PUBLIC_URL=https://api.example.com/upload-handoff
 VIDXP_UPLOAD_HANDOFF_SECRET=<third-random-secret-at-least-32-characters>
-VIDXP_UPLOAD_CORS_ORIGIN_REGEX=^https://app\.example\.com$
+VIDXP_UPLOAD_CORS_ORIGIN_REGEX=^https://(api|app)\.example\.com$
 ```
 
 `VIDXP_UPLOAD_HANDOFF_PUBLIC_URL` must be the externally reachable HTTPS API
@@ -57,7 +57,8 @@ an upstream proxy.
 Video bytes do not travel through MCP. A remote MCP client calls
 `create_media_upload` with the expected filename, size, and MIME type and gives
 the returned HTTPS page to the user. The page validates that exact file and
-uploads it directly to tusd with pause, resume, retry, and browser recovery.
+uploads it directly to tusd through Uppy Dashboard with pause, resume, retry,
+accessible controls, and browser recovery.
 The client polls `get_media_upload`; once it returns a `media_id`, pass that ID
 to `start_indexing`.
 

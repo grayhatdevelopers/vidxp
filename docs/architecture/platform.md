@@ -327,21 +327,34 @@ Remote upload is a four-stage protocol:
 
 Remote MCP adds a user-completable handoff in front of the same protocol. The
 `create_media_upload` write tool idempotently creates the authoritative upload
-intent and returns an HTTPS page whose fragment contains a short-lived HMAC
-capability bound to that intent, repository, declared size, purpose, version,
-and expiry. The page exchanges the fragment for a digest-backed `HttpOnly`,
-`Secure`, `SameSite=Strict` cookie, then requests a separate one-time creation
-grant for the exact tus `POST`. Neither the raw handoff capability nor session
-secret is stored, and the user's MCP bearer is never exposed to the browser.
-The existing bearer-authenticated HTTP/tus route remains available.
+intent and returns an HTTPS page whose fragment contains a short-lived HS256 JWT
+capability bound to that intent, repository, declared size, purpose, issuer,
+audience, and expiry. PyJWT supplies the maintained token format and verification
+instead of a private framing protocol. The page exchanges the fragment for a
+digest-backed `HttpOnly`, `Secure`, `SameSite=Strict` cookie, then requests a
+separate one-time creation grant for the exact tus `POST`. That grant is an opaque
+384-bit verifier: only its digest, expiry, and consumption time are stored,
+because its mandatory database round trip already provides expiry and replay
+state and does not need a second signed-token format. Neither raw credential is
+stored, and the user's MCP bearer is never exposed to the browser. The existing
+bearer-authenticated HTTP/tus route remains available.
 
-The packaged page uses Uppy Core, Tus, and Golden Retriever with native controls.
-It validates the expected filename and byte size, limits tus metadata to the
-intent identifier, supports progress/pause/resume/retry, and recovers interrupted
-uploads from browser storage. It does not choose a tus chunk size, so a few-MiB
-file follows the same resumable path rather than a separate MCP or small-upload
-path. Scripts and styles are self-hosted under a strict CSP; the handoff API is
-same-origin and tus CORS remains restricted to configured origins.
+The packaged page uses Uppy Dashboard, Tus, and Golden Retriever. Dashboard owns
+selection, restrictions, progress, pause/resume, retry, accessibility, and ghost
+recovery; custom UI remains only for VidXP's server-side import state and next
+action. The measured self-hosted production assets grow from 40.1 KiB to 102.9
+KiB gzip by adopting Dashboard, a deliberate cost for removing duplicated upload
+controls and accessibility behavior. The page validates the expected filename
+and byte size, limits tus metadata to the intent identifier, and does not choose
+a tus chunk size, so a few-MiB file follows the same resumable path rather than a
+separate MCP or small-upload path. Scripts and styles are self-hosted under a
+strict CSP; the handoff API is same-origin and tus CORS remains restricted to a
+startup-validated origin policy.
+
+When the MCP client advertises `elicitation.url`, `create_media_upload` also uses
+URL-mode elicitation and records accept, decline, or cancel in its structured
+result. The structured `upload_page_url` is always retained for clients without
+URL mode or for a later manual attempt.
 
 Application responses carrying upload URLs use `private, no-store` and
 `no-referrer`; hook payloads and MCP results do not persist them. The opaque path is
@@ -357,10 +370,12 @@ metadata. Only the tus upload route is public. A completed upload is not a
 `MediaAsset` until durable probe/import succeeds.
 
 The supported server topology uses tusd filestore on a named quarantine volume
-shared read-only with the hook service and worker. Managed media and artifacts use
-the stack's named content volume. The whole deployment is single-node and one
-deployed stack is one repository boundary. Clients upload directly to tusd;
-FastAPI does not proxy large video bodies.
+shared read-only with the hook service and worker. The API intentionally does not
+mount that volume: it discovers created resumable resources with an internal tusd
+`HEAD` and combines that result with the authoritative intent state in Postgres.
+Managed media and artifacts use the stack's named content volume. The whole
+deployment is single-node and one deployed stack is one repository boundary.
+Clients upload directly to tusd; FastAPI does not proxy large video bodies.
 
 S3-compatible storage is deferred and not implemented. If revisited, it would
 apply only to upload quarantine, source media, and generated artifacts—never to
@@ -918,7 +933,8 @@ Use the official MCP Python SDK v2 high-level server.
 Primary remote transport:
 
 - Streamable HTTP
-- explicit `stateless_http=True`
+- stateful transport sessions so capability-negotiated URL elicitation has a
+  request back-channel
 - `json_response=False` so disconnect cancellation uses the streaming/SSE path
 - application state persisted outside MCP sessions
 - explicit lifecycle through the application composition root
@@ -976,7 +992,7 @@ sibling adapters.
 The MCP ASGI app is created with:
 
 - Streamable HTTP path `/mcp`
-- stateless HTTP enabled
+- stateful HTTP sessions enabled for server-to-client URL elicitation
 - JSON-only responses disabled
 - configured MCP body limit
 - explicit transport-security settings

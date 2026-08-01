@@ -30,7 +30,8 @@ _BEARER_SECURITY = HTTPBearer(
     auto_error=False,
     scheme_name="BearerAuth",
     description=(
-        "Bearer access token. Authentication is enforced once by the server middleware."
+        "Bearer access token. Authentication is enforced once by the "
+        "server middleware."
     ),
 )
 

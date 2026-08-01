@@ -121,6 +121,7 @@ class SettingsTests(unittest.TestCase):
             "upload_public_endpoint": "https://uploads.example/uploads/",
             "upload_internal_endpoint": "http://tusd:8080/uploads/",
             "upload_cleanup_token": "c" * 32,
+            "upload_cors_origin_regex": r"^https://vidxp\.example$",
         }
         with self.assertRaisesRegex(ValidationError, "HTTPS URL"):
             VidXPSettings(
@@ -132,6 +133,17 @@ class SettingsTests(unittest.TestCase):
             VidXPSettings(
                 **base,
                 upload_handoff_public_url=("https://vidxp.example/upload-handoff"),
+            )
+        with self.assertRaisesRegex(ValidationError, "allow the handoff origin"):
+            VidXPSettings(
+                **{
+                    **base,
+                    "upload_cors_origin_regex": r"^https://app\.example$",
+                },
+                upload_handoff_public_url=(
+                    "https://vidxp.example/upload-handoff"
+                ),
+                upload_handoff_secret="h" * 32,
             )
 
         settings = VidXPSettings(

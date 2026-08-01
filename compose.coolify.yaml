@@ -14,6 +14,7 @@ x-vidxp-environment: &vidxp-environment
   VIDXP_UPLOAD_CLEANUP_TOKEN: ${VIDXP_UPLOAD_CLEANUP_TOKEN:?Set a cleanup token of at least 32 characters}
   VIDXP_UPLOAD_HANDOFF_PUBLIC_URL: ${VIDXP_UPLOAD_HANDOFF_PUBLIC_URL:?Set the HTTPS VidXP URL ending in /upload-handoff}
   VIDXP_UPLOAD_HANDOFF_SECRET: ${VIDXP_UPLOAD_HANDOFF_SECRET:?Set a dedicated handoff secret of at least 32 characters}
+  VIDXP_UPLOAD_CORS_ORIGIN_REGEX: ${VIDXP_UPLOAD_CORS_ORIGIN_REGEX:?Set an anchored policy that permits the handoff origin}
   VIDXP_UPLOAD_QUARANTINE_ROOT: /var/lib/vidxp/uploads
   VIDXP_UPLOAD_MAX_BYTES: ${VIDXP_UPLOAD_MAX_BYTES:-53687091200}
   VIDXP_UPLOAD_QUOTA_BYTES: ${VIDXP_UPLOAD_QUOTA_BYTES:-107374182400}

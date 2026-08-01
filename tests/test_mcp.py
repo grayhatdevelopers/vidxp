@@ -20,7 +20,7 @@ from mcp.client import Client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
-from mcp.types import ResourceLink
+from mcp.types import ElicitResult, ResourceLink
 
 from vidxp.application_models import (
     ApplicationError,
@@ -150,16 +150,23 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
     def upload_context(
         self,
         root: Path,
+        *,
+        static_token: str | None = None,
     ) -> tuple[HttpApplicationContext, Mock]:
         context = self.context(root)
         settings = VidXPSettings(
             repository_root=root,
             runtime_backend="cpu",
+            http_auth_mode="static" if static_token is not None else "none",
+            http_static_bearer_token=static_token,
+            http_trusted_hosts=("127.0.0.1", "testserver"),
+            mcp_allowed_hosts=("127.0.0.1:*",),
             upload_public_endpoint="https://uploads.example/uploads/",
             upload_internal_endpoint="http://tusd:8080/uploads/",
             upload_cleanup_token="c" * 32,
             upload_handoff_public_url=("https://vidxp.example/upload-handoff"),
             upload_handoff_secret="h" * 32,
+            upload_cors_origin_regex=r"^https://vidxp\.example$",
         )
         uploads = Mock(spec=RemoteUploadService)
         return (
@@ -220,9 +227,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             schema = tools[name].input_schema
             command_ref = schema["properties"]["command"]["$ref"]
             command_name = command_ref.rsplit("/", 1)[-1]
-            media_description = schema["$defs"][command_name]["properties"]["media_id"][
-                "description"
-            ]
+            media_description = schema["$defs"][command_name]["properties"][
+                "media_id"
+            ]["description"]
             self.assertIn("omit it", media_description)
             self.assertIn("active index snapshot", media_description)
         self.assertEqual(result.structured_content, {"items": []})
@@ -278,19 +285,163 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     {"intent_id": MEDIA_ID},
                 )
 
+            async def decline_url(_context, _params):
+                return ElicitResult(action="decline")
+
+            async with Client(
+                server,
+                elicitation_callback=decline_url,
+                mode="legacy",
+            ) as client:
+                declined = await client.call_tool(
+                    "create_media_upload",
+                    arguments,
+                )
+
         self.assertEqual(first.structured_content, second.structured_content)
         self.assertEqual(first.structured_content["transport"], "tus")
+        self.assertEqual(
+            first.structured_content["elicitation_action"],
+            "unsupported",
+        )
         page_url = urlsplit(first.structured_content["upload_page_url"])
         self.assertEqual(page_url.scheme, "https")
         self.assertEqual(page_url.query, "")
         self.assertTrue(page_url.fragment.startswith("capability="))
         self.assertEqual(current.structured_content["state"], "pending")
+        self.assertEqual(
+            declined.structured_content["elicitation_action"],
+            "decline",
+        )
+        self.assertIn(
+            "remains available",
+            declined.structured_content["next_action"],
+        )
         request_keys = [
             call.kwargs["request_key"] for call in uploads.create_handoff.call_args_list
         ]
-        self.assertEqual(len(request_keys), 2)
-        self.assertEqual(request_keys[0], request_keys[1])
+        self.assertEqual(len(request_keys), 3)
+        self.assertEqual(len(set(request_keys)), 1)
         self.assertRegex(request_keys[0], r"^[0-9a-f]{64}$")
+
+    async def test_stdio_upload_negotiates_url_elicitation(self):
+        seen = []
+
+        async def accept_url(_context, params):
+            seen.append(params)
+            return ElicitResult(action="accept")
+
+        fixture = (
+            Path(__file__).parent / "fixtures" / "mcp_upload_server.py"
+        )
+        parameters = StdioServerParameters(
+            command=sys.executable,
+            args=[str(fixture)],
+            cwd=Path(__file__).parents[1],
+        )
+        arguments = {
+            "command": {
+                "original_filename": "sample.mp4",
+                "byte_size": 5 * 1024 * 1024,
+                "declared_mime_type": "video/mp4",
+            },
+            "idempotency_key": "stdio-upload-0001",
+        }
+        async with Client(
+            stdio_client(parameters),
+            elicitation_callback=accept_url,
+            mode="legacy",
+        ) as client:
+            result = await client.call_tool("create_media_upload", arguments)
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.structured_content["elicitation_action"], "accept")
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0].mode, "url")
+        self.assertEqual(seen[0].url, result.structured_content["upload_page_url"])
+
+    async def test_streamable_http_upload_handles_cancelled_url_elicitation(self):
+        token = "s" * 32
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+        listener.close()
+        seen = []
+
+        async def cancel_url(_context, params):
+            seen.append(params)
+            return ElicitResult(action="cancel")
+
+        with TemporaryDirectory() as directory:
+            context, uploads = self.upload_context(
+                Path(directory),
+                static_token=token,
+            )
+            now = datetime.now(timezone.utc)
+            status = MediaUploadStatus(
+                intent_id=MEDIA_ID,
+                state=UploadState.pending,
+                original_filename="sample.mp4",
+                byte_size=1024,
+                maximum_bytes=2048,
+                expires_at=now + timedelta(hours=1),
+                status="Waiting for the expected video.",
+                next_action="Open the upload page.",
+            )
+            uploads.create_handoff.return_value = UploadHandoff(
+                status=status,
+                capability="http-capability",
+                expires_at=now + timedelta(minutes=15),
+            )
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    create_app(context=context),
+                    host="127.0.0.1",
+                    port=port,
+                    log_level="critical",
+                )
+            )
+            serving = asyncio.create_task(server.serve())
+            try:
+                for _attempt in range(200):
+                    if server.started:
+                        break
+                    if serving.done():
+                        await serving
+                    await asyncio.sleep(0.01)
+                else:
+                    self.fail("The MCP HTTP fixture did not start.")
+                async with httpx2.AsyncClient(
+                    headers={"Authorization": f"Bearer {token}"}
+                ) as http_client:
+                    transport = streamable_http_client(
+                        f"http://127.0.0.1:{port}/mcp",
+                        http_client=http_client,
+                    )
+                    async with Client(
+                        transport,
+                        elicitation_callback=cancel_url,
+                        mode="legacy",
+                    ) as client:
+                        result = await client.call_tool(
+                            "create_media_upload",
+                            {
+                                "command": {
+                                    "original_filename": "sample.mp4",
+                                    "byte_size": 1024,
+                                },
+                                "idempotency_key": "http-upload-0001",
+                            },
+                        )
+            finally:
+                server.should_exit = True
+                await serving
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.structured_content["elicitation_action"], "cancel")
+        self.assertIn("remains available", result.structured_content["next_action"])
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0].mode, "url")
 
     async def test_media_upload_tools_enforce_permissions_and_availability(self):
         with TemporaryDirectory() as directory:
@@ -667,8 +818,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             clip = root / "clip.mp4"
             clip.write_bytes(b"clip-content")
             context = self.context(root)
-            context.jobs.submit_snippet.return_value = queued_job().model_copy(
-                update={"kind": JobKind.snippet}
+            context.jobs.submit_snippet.return_value = (
+                queued_job().model_copy(update={"kind": JobKind.snippet})
             )
             context.application.get_artifact.return_value = Artifact(
                 artifact_id=ARTIFACT_ID,
@@ -681,12 +832,14 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 state=ArtifactState.ready,
                 created_at=datetime.now(timezone.utc),
             )
-            context.application.open_artifact_content.return_value = LocalFileResource(
-                path=clip,
-                filename=f"snippet-{ARTIFACT_ID}.mp4",
-                mime_type="video/mp4",
-                byte_size=12,
-                etag="1" * 64,
+            context.application.open_artifact_content.return_value = (
+                LocalFileResource(
+                    path=clip,
+                    filename=f"snippet-{ARTIFACT_ID}.mp4",
+                    mime_type="video/mp4",
+                    byte_size=12,
+                    etag="1" * 64,
+                )
             )
             server = create_mcp_server(
                 context,
