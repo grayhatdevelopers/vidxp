@@ -244,12 +244,16 @@ class MediaUploadHandoff(MediaUploadStatus):
         min_length=1,
         max_length=4096,
         description=(
-            "HTTPS page for the user to open; the fragment carries the "
-            "short-lived handoff capability."
+            "HTTPS page for the user to open. Native URL elicitation uses "
+            "an uncredentialed URL and requires independent browser OIDC "
+            "authentication. Other modes return an explicitly manual "
+            "bearer-capability fallback."
         ),
     )
+    browser_authentication: Literal["oidc", "capability"]
     handoff_expires_at: AwareDatetime
     elicitation_action: Literal[
+        "disabled",
         "unsupported",
         "accept",
         "decline",
@@ -263,6 +267,12 @@ def _upload_handoff_after_elicitation(
     action: str,
 ) -> MediaUploadHandoff:
     next_action = {
+        "disabled": (
+            "Native URL elicitation is disabled because this authentication "
+            "mode cannot independently identify the browser user. Open "
+            "upload_page_url manually and treat its capability fragment as "
+            "a secret, then call get_media_upload again."
+        ),
         "accept": (
             "Complete the upload in the page approved by the MCP client, then "
             "call get_media_upload again."
@@ -704,15 +714,27 @@ def create_mcp_server(
                 ),
             )
             assert context.settings.upload_handoff_public_url is not None
-            page_url = (
+            public_page_url = (
                 f"{context.settings.upload_handoff_public_url}/"
-                f"{handoff.status.intent_id}#capability="
-                f"{quote(handoff.capability, safe='')}"
+                f"{handoff.status.intent_id}"
+            )
+            browser_authentication = (
+                "oidc"
+                if context.settings.http_auth_mode == HttpAuthMode.oidc
+                else "capability"
+            )
+            page_url = (
+                public_page_url
+                if browser_authentication == "oidc"
+                else (
+                    f"{public_page_url}#capability={quote(handoff.capability, safe='')}"
+                )
             )
             return (
                 MediaUploadHandoff(
                     **handoff.status.model_dump(),
                     upload_page_url=page_url,
+                    browser_authentication=browser_authentication,
                     handoff_expires_at=handoff.expires_at,
                 ),
                 actor,
@@ -724,6 +746,8 @@ def create_mcp_server(
             permission=RepositoryPermission.write,
             operation=create,
         )
+        if result.browser_authentication != "oidc":
+            return _upload_handoff_after_elicitation(result, "disabled")
         capabilities = mcp_context.client_capabilities
         elicitation = capabilities.elicitation if capabilities is not None else None
         if elicitation is None or elicitation.url is None:

@@ -6,7 +6,12 @@ from unittest.mock import Mock
 from fastapi.testclient import TestClient
 
 from vidxp.api import create_app
-from vidxp.application_models import CreateUploadIntentCommand, Principal
+from vidxp.application_models import (
+    ApplicationError,
+    CreateUploadIntentCommand,
+    ErrorCategory,
+    Principal,
+)
 from vidxp.authentication import create_authenticator
 from vidxp.authorization import AuthorizationPolicy
 from vidxp.composition import HttpApplicationContext
@@ -17,12 +22,41 @@ from vidxp.settings import VidXPSettings
 from vidxp.upload_service import RemoteUploadService
 
 
-def _fixture(root: Path):
+class _TestOIDCAuthenticator:
+    def authenticate(self, token: str | None) -> Principal:
+        if token == "owner-token":
+            return Principal(
+                subject="agent",
+                client_id="browser-client",
+                scopes=frozenset({"*"}),
+            )
+        if token == "other-token":
+            return Principal(
+                subject="other",
+                client_id="browser-client",
+                scopes=frozenset({"*"}),
+            )
+        raise ApplicationError(
+            "authentication_required",
+            ErrorCategory.authentication,
+            "Valid bearer authentication is required.",
+        )
+
+    def readiness(self):
+        return Mock(ready=True)
+
+
+def _fixture(root: Path, *, oidc: bool = False):
     settings = VidXPSettings(
         repository_root=root,
         runtime_backend="cpu",
-        http_auth_mode="static",
-        http_static_bearer_token="a" * 32,
+        http_auth_mode="oidc" if oidc else "static",
+        http_static_bearer_token=None if oidc else "a" * 32,
+        http_oidc_issuer="https://identity.example" if oidc else None,
+        http_oidc_audience="vidxp-api" if oidc else None,
+        http_oidc_jwks_url=("https://identity.example/jwks" if oidc else None),
+        http_required_scopes=("vidxp.write",) if oidc else (),
+        mcp_public_url="https://testserver/mcp" if oidc else None,
         http_trusted_hosts=("testserver",),
         mcp_allowed_hosts=("testserver",),
         upload_public_endpoint="https://uploads.example/uploads/",
@@ -54,7 +88,9 @@ def _fixture(root: Path):
         catalog=catalog,
         uploads=uploads,
         readiness=readiness,
-        authenticator=create_authenticator(settings),
+        authenticator=(
+            _TestOIDCAuthenticator() if oidc else create_authenticator(settings)
+        ),
     )
     handoff = uploads.create_handoff(
         CreateUploadIntentCommand(
@@ -62,7 +98,11 @@ def _fixture(root: Path):
             byte_size=5 * 1024 * 1024,
             declared_mime_type="video/mp4",
         ),
-        principal=Principal(subject="agent", scopes=frozenset({"*"})),
+        principal=Principal(
+            subject="agent",
+            client_id="mcp-client" if oidc else None,
+            scopes=frozenset({"*"}),
+        ),
         request_key="a" * 64,
     )
     return context, catalog, handoff
@@ -200,5 +240,61 @@ def test_upload_page_rejects_tamper_and_cross_origin_with_headers(
         assert invalid.status_code == 401
         assert invalid.json()["error"]["code"] == "upload_handoff_invalid"
         assert tampered not in invalid.text
+
+    catalog.close()
+
+
+def test_oidc_page_requires_matching_browser_identity(tmp_path: Path) -> None:
+    context, catalog, handoff = _fixture(tmp_path, oidc=True)
+    path = f"/upload-handoff/{handoff.status.intent_id}"
+
+    with TestClient(
+        create_app(context=context),
+        base_url="https://testserver",
+    ) as client:
+        page = client.get(path)
+        assert page.status_code == 200
+        assert "#capability=" not in page.text
+        assert "Confirm your VidXP identity" in page.text
+
+        unauthenticated = client.post(
+            f"{path}/authenticate",
+            headers={
+                "Origin": "https://testserver",
+                "Sec-Fetch-Site": "same-origin",
+            },
+            json={},
+        )
+        assert unauthenticated.status_code == 401
+
+        wrong_user = client.post(
+            f"{path}/authenticate",
+            headers={
+                "Authorization": "Bearer other-token",
+                "Origin": "https://testserver",
+                "Sec-Fetch-Site": "same-origin",
+            },
+            json={},
+        )
+        assert wrong_user.status_code == 403
+        assert wrong_user.json()["error"]["code"] == (
+            "upload_handoff_identity_mismatch"
+        )
+
+        authenticated = client.post(
+            f"{path}/authenticate",
+            headers={
+                "Authorization": "Bearer owner-token",
+                "Origin": "https://testserver",
+                "Sec-Fetch-Site": "same-origin",
+            },
+            json={},
+        )
+        assert authenticated.status_code == 200
+        assert authenticated.json()["status"]["intent_id"] == (handoff.status.intent_id)
+        assert "__Secure-vidxp-upload=" in authenticated.headers["set-cookie"]
+
+        status = client.get(f"{path}/status")
+        assert status.status_code == 200
 
     catalog.close()

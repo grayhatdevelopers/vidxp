@@ -97,6 +97,38 @@ h2 {
   grid-template-columns: 1fr;
 }
 
+#authentication-form label {
+  display: block;
+  margin-bottom: 0.45rem;
+  color: #b6c4df;
+  font-weight: 650;
+}
+
+.authentication-controls {
+  display: flex;
+  gap: 0.65rem;
+}
+
+.authentication-controls input {
+  min-width: 0;
+  flex: 1;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #49618d;
+  border-radius: 0.55rem;
+  background: #08101f;
+  color: #e8eefc;
+}
+
+.authentication-controls button {
+  padding: 0.7rem 1rem;
+  border: 0;
+  border-radius: 0.55rem;
+  background: #78a2ff;
+  color: #08101f;
+  font-weight: 750;
+  cursor: pointer;
+}
+
 #uppy-dashboard {
   margin-top: 1rem;
 }
@@ -127,6 +159,11 @@ noscript {
 
   .facts {
     grid-template-columns: 1fr;
+  }
+
+  .authentication-controls {
+    align-items: stretch;
+    flex-direction: column;
   }
 
 }

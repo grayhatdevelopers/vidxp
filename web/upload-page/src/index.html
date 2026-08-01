@@ -16,6 +16,31 @@
         <p id="summary" class="lede">Opening the secure upload handoff…</p>
       </header>
 
+      <section id="authentication-card" class="card" aria-labelledby="authentication-heading" hidden>
+        <h2 id="authentication-heading">Confirm your VidXP identity</h2>
+        <p class="hint">
+          Sign in with a VidXP API OIDC access token. The token is sent only
+          to this VidXP origin, is not stored by the page, and must identify
+          the same user who started the MCP upload.
+        </p>
+        <form id="authentication-form">
+          <label for="authentication-token">OIDC access token</label>
+          <div class="authentication-controls">
+            <input
+              id="authentication-token"
+              name="token"
+              type="password"
+              autocomplete="off"
+              autocapitalize="none"
+              spellcheck="false"
+              required
+            >
+            <button type="submit">Continue</button>
+          </div>
+        </form>
+        <p id="authentication-state" class="state" role="status" aria-live="polite"></p>
+      </section>
+
       <section class="card" aria-labelledby="expected-heading">
         <h2 id="expected-heading">Expected file</h2>
         <dl class="facts">

@@ -20,6 +20,8 @@ def upgrade() -> None:
         "upload_handoffs",
         sa.Column("selector", sa.String(length=32), nullable=False),
         sa.Column("intent_id", sa.String(length=32), nullable=False),
+        sa.Column("principal_subject", sa.String(length=255), nullable=False),
+        sa.Column("principal_client_id", sa.String(length=255), nullable=True),
         sa.Column(
             "repository_binding",
             sa.String(length=64),

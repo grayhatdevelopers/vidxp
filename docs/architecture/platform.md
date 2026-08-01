@@ -327,17 +327,22 @@ Remote upload is a four-stage protocol:
 
 Remote MCP adds a user-completable handoff in front of the same protocol. The
 `create_media_upload` write tool idempotently creates the authoritative upload
-intent and returns an HTTPS page whose fragment contains a short-lived HS256 JWT
-capability bound to that intent, repository, declared size, purpose, issuer,
-audience, and expiry. PyJWT supplies the maintained token format and verification
-instead of a private framing protocol. The page exchanges the fragment for a
-digest-backed `HttpOnly`, `Secure`, `SameSite=Strict` cookie, then requests a
-separate one-time creation grant for the exact tus `POST`. That grant is an opaque
-384-bit verifier: only its digest, expiry, and consumption time are stored,
-because its mandatory database round trip already provides expiry and replay
-state and does not need a second signed-token format. Neither raw credential is
-stored, and the user's MCP bearer is never exposed to the browser. The existing
-bearer-authenticated HTTP/tus route remains available.
+intent and stores the initiating MCP subject and client ID on its handoff record.
+With OIDC authentication, native URL elicitation sends only the non-secret intent
+page URL. The page requires a separately obtained VidXP API OIDC token, sends it
+directly to the same VidXP origin, and opens the handoff only when the verified
+browser subject matches the stored MCP subject. The originating MCP session and
+elicitation ID retain the client binding.
+
+Static-bearer and unauthenticated modes cannot independently prove a browser user,
+so VidXP disables native URL elicitation in those modes. Their explicitly manual
+compatibility fallback carries a short-lived HS256 JWT capability in the fragment;
+it must be handled as a bearer secret and is never sent as an MCP elicitation URL.
+Both paths establish a digest-backed `HttpOnly`, `Secure`, `SameSite=Strict`
+cookie, then request a separate one-time creation grant for the exact tus `POST`.
+That grant is an opaque 384-bit verifier: only its digest, expiry, and consumption
+time are stored. The initiating MCP bearer is never exposed to the browser. The
+existing bearer-authenticated HTTP/tus route remains available.
 
 The packaged page uses Uppy Dashboard, Tus, and Golden Retriever. Dashboard owns
 selection, restrictions, progress, pause/resume, retry, accessibility, and ghost
@@ -354,10 +359,10 @@ handoff API is same-origin and tus CORS accepts only a startup-validated, groupe
 list of exact HTTPS origins using syntax shared by Python validation and Go's RE2
 engine.
 
-When the MCP client advertises `elicitation.url`, `create_media_upload` also uses
-URL-mode elicitation and records accept, decline, or cancel in its structured
-result. The structured `upload_page_url` is always retained for clients without
-URL mode or for a later manual attempt. After acceptance, VidXP associates the
+When OIDC is configured and the MCP client advertises `elicitation.url`,
+`create_media_upload` uses URL mode and records accept, decline, or cancel in its
+structured result. The elicited and structured URL has no query, fragment,
+credential, or pre-authenticated access. After acceptance, VidXP associates the
 elicitation ID and originating MCP session with the upload intent. Receipt of the
 complete upload (transition to processing or a later state), or handoff expiry,
 triggers a best-effort `notifications/elicitation/complete` on that session.

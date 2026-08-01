@@ -18,6 +18,12 @@ MEDIA_ID = "123456781234423481234567890abcde"
 def main() -> None:
     settings = VidXPSettings(
         runtime_backend="cpu",
+        http_auth_mode="oidc",
+        http_oidc_issuer="https://identity.example",
+        http_oidc_audience="vidxp-api",
+        http_oidc_jwks_url="https://identity.example/jwks",
+        http_required_scopes=("vidxp.write",),
+        mcp_public_url="https://vidxp.example/mcp",
         upload_public_endpoint="https://uploads.example/uploads/",
         upload_internal_endpoint="http://tusd:8080/uploads/",
         upload_cleanup_token="c" * 32,
@@ -61,6 +67,7 @@ def main() -> None:
         context,
         default_principal=Principal(
             subject="stdio-test",
+            client_id="stdio-client",
             scopes=frozenset({"*"}),
         ),
     )

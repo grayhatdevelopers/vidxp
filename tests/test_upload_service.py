@@ -20,7 +20,7 @@ from vidxp.application_models import (
 from vidxp.core.media import utc_now
 from vidxp.core.uploads import UploadIntentRecord, UploadState
 from vidxp.infrastructure.sql_catalog import SQLCatalog
-from vidxp.settings import VidXPSettings
+from vidxp.settings import HttpAuthMode, VidXPSettings
 from vidxp.upload_service import RemoteUploadService
 
 
@@ -52,6 +52,7 @@ def _service(
     root: Path,
     *,
     quota: int = 100,
+    auth_mode: HttpAuthMode = HttpAuthMode.none,
 ) -> tuple[RemoteUploadService, SQLCatalog, _Jobs]:
     catalog = SQLCatalog(
         f"sqlite:///{(root / 'server.sqlite3').resolve().as_posix()}",
@@ -60,6 +61,17 @@ def _service(
     jobs = _Jobs()
     settings = VidXPSettings(
         repository_root=root,
+        http_auth_mode=auth_mode,
+        http_oidc_issuer=(
+            "https://identity.example" if auth_mode == HttpAuthMode.oidc else None
+        ),
+        http_oidc_audience=("vidxp-api" if auth_mode == HttpAuthMode.oidc else None),
+        http_oidc_jwks_url=(
+            "https://identity.example/jwks" if auth_mode == HttpAuthMode.oidc else None
+        ),
+        http_required_scopes=(
+            ("vidxp.write",) if auth_mode == HttpAuthMode.oidc else ()
+        ),
         upload_public_endpoint="http://localhost:8080/uploads/",
         upload_internal_endpoint="http://localhost:8080/uploads/",
         upload_cleanup_token="x" * 32,
@@ -143,6 +155,8 @@ def test_upload_handoff_is_idempotent_and_bound_to_intent(
     assert first.status.maximum_bytes == 100
     stored = catalog.get_upload_handoff_by_intent(first.status.intent_id)
     assert stored is not None
+    assert stored.principal_subject == "owner"
+    assert stored.principal_client_id is None
     assert stored.session_digest is None
     assert first.capability not in stored.model_dump_json()
     claims = jwt.decode(
@@ -152,6 +166,62 @@ def test_upload_handoff_is_idempotent_and_bound_to_intent(
     assert claims["sub"] == first.status.intent_id
     assert claims["aud"] == "vidxp-upload-handoff"
     assert claims["purpose"] == "upload-handoff"
+    catalog.close()
+
+
+def test_authenticated_handoff_requires_matching_oidc_user(
+    tmp_path: Path,
+) -> None:
+    service, catalog, _ = _service(
+        tmp_path,
+        auth_mode=HttpAuthMode.oidc,
+    )
+    owner = Principal(subject="owner", client_id="mcp-client")
+    handoff = service.create_handoff(
+        _command(),
+        principal=owner,
+        request_key="a" * 64,
+    )
+    stored = catalog.get_upload_handoff_by_intent(handoff.status.intent_id)
+    assert stored is not None
+    assert stored.principal_subject == owner.subject
+    assert stored.principal_client_id == owner.client_id
+
+    with pytest.raises(ApplicationError) as mismatch:
+        service.exchange_authenticated_handoff(
+            handoff.status.intent_id,
+            principal=Principal(
+                subject="other",
+                client_id="browser-client",
+            ),
+        )
+    assert mismatch.value.detail.code == "upload_handoff_identity_mismatch"
+
+    session = service.exchange_authenticated_handoff(
+        handoff.status.intent_id,
+        principal=Principal(
+            subject="owner",
+            client_id="browser-client",
+        ),
+    )
+    assert session.status.intent_id == handoff.status.intent_id
+    assert session.session_token
+    catalog.close()
+
+
+def test_authenticated_handoff_is_disabled_without_oidc(tmp_path: Path) -> None:
+    service, catalog, _ = _service(tmp_path)
+    handoff = service.create_handoff(
+        _command(),
+        principal=Principal(subject="owner"),
+        request_key="a" * 64,
+    )
+    with pytest.raises(ApplicationError) as unavailable:
+        service.exchange_authenticated_handoff(
+            handoff.status.intent_id,
+            principal=Principal(subject="owner"),
+        )
+    assert unavailable.value.detail.code == "upload_handoff_identity_unavailable"
     catalog.close()
 
 

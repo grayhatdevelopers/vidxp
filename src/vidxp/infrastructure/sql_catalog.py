@@ -71,6 +71,8 @@ def _upload_handoff_record(row: Any) -> UploadHandoffRecord:
     return UploadHandoffRecord(
         selector=row.selector,
         intent_id=row.intent_id,
+        principal_subject=row.principal_subject,
+        principal_client_id=row.principal_client_id,
         repository_binding=row.repository_binding,
         byte_size=row.byte_size,
         created_at=datetime.fromisoformat(row.created_at),
@@ -522,6 +524,8 @@ class SQLCatalog:
                 insert(upload_handoffs).values(
                     selector=record.selector,
                     intent_id=record.intent_id,
+                    principal_subject=record.principal_subject,
+                    principal_client_id=record.principal_client_id,
                     repository_binding=record.repository_binding,
                     byte_size=record.byte_size,
                     created_at=record.created_at.isoformat(),

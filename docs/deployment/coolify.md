@@ -32,9 +32,11 @@ VIDXP_UPLOAD_CORS_ORIGIN_REGEX=^(https://api\.example\.com|https://app\.example\
 
 `VIDXP_UPLOAD_HANDOFF_PUBLIC_URL` must be the externally reachable HTTPS API
 URL ending exactly in `/upload-handoff`. Keep its secret distinct from the MCP
-bearer and upload-cleanup credentials. The generated handoff URL contains a
-short-lived capability in its fragment; the fragment is not sent in HTTP
-requests, and the page removes it from browser history after bootstrap.
+bearer and upload-cleanup credentials. In this static-bearer example, native MCP
+URL elicitation is disabled because the server cannot independently identify the
+browser user. `create_media_upload` instead returns an explicitly manual fallback
+whose fragment contains a short-lived capability. Treat that URL as a bearer
+secret; the page removes the fragment from browser history after bootstrap.
 The CORS value intentionally accepts only this grouped list of exact HTTPS
 origins with escaped dots. VidXP validates that restricted syntax instead of
 using Python's broader regex dialect, and tusd evaluates the same value with
@@ -54,8 +56,12 @@ to preserve `Authorization`, `Accept`, `Content-Type`, `MCP-Protocol-Version`,
 for `/mcp`. Static bearer mode intentionally publishes no OAuth metadata; configure
 the bearer header in the remote MCP client.
 
-Remote MCP transport sessions are stateful so the server can complete accepted
-URL elicitations. Idle sessions are removed after 1,800 seconds by default;
+Remote MCP transport sessions are stateful so an OIDC deployment can complete
+accepted URL elicitations. Native elicitation is enabled only with OIDC: its URL
+contains no secret, and the page requires a VidXP API OIDC token whose verified
+subject matches the subject stored when the MCP upload was created. Static bearer
+and unauthenticated modes use only the documented manual capability fallback.
+Idle sessions are removed after 1,800 seconds by default;
 `VIDXP_MCP_SESSION_IDLE_TIMEOUT_SECONDS` may set 60 through 86,400 seconds and
 must be longer than `VIDXP_UPLOAD_HANDOFF_TTL_SECONDS`. The session map and
 its server-to-client channel are process-local. Keep exactly one API/MCP replica
@@ -75,9 +81,11 @@ accessible controls, and browser recovery.
 The client polls `get_media_upload`; once it returns a `media_id`, pass that ID
 to `start_indexing`.
 
-The page exchanges its fragment capability for an `HttpOnly`, `Secure`,
-`SameSite=Strict` session cookie. Each tus creation uses a separate one-time,
-five-minute creation grant; the MCP bearer never enters the page or tusd. Keep
+The manual page exchanges its fragment capability for an `HttpOnly`, `Secure`,
+`SameSite=Strict` session cookie. The native OIDC page establishes the same cookie
+only after independently authenticating and matching the browser user. Each tus
+creation uses a separate one-time, five-minute creation grant; the initiating MCP
+bearer never enters the page or tusd. Keep
 access logging disabled or redacted for `/uploads/`, because the tus resume URL
 is itself a bearer capability. The page's Content Security Policy permits only
 self-hosted scripts and stylesheets, the style attributes Uppy Dashboard needs

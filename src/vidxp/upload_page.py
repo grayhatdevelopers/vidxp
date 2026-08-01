@@ -11,10 +11,11 @@ from vidxp.api_models import (
     UploadHandoffBootstrapRequest,
     UploadPageSessionResponse,
 )
-from vidxp.api_routes.dependencies import context
+from vidxp.api_routes.dependencies import context, write_principal
 from vidxp.application_models import (
     ApplicationError,
     ErrorCategory,
+    Principal,
     UploadIntentId,
 )
 from vidxp.composition import HttpApplicationContext
@@ -88,6 +89,24 @@ def _session_response(
     )
 
 
+def _set_session_cookie(
+    response: Response,
+    intent_id: UploadIntentId,
+    session: UploadBrowserSession,
+    service: HttpApplicationContext,
+) -> None:
+    response.set_cookie(
+        _SESSION_COOKIE,
+        session.session_token,
+        max_age=service.settings.upload_intent_ttl_seconds,
+        expires=session.session_expires_at,
+        path=f"/upload-handoff/{intent_id}",
+        secure=True,
+        httponly=True,
+        samesite="strict",
+    )
+
+
 @router.get("/assets/{asset_name}", include_in_schema=False)
 def upload_page_asset(asset_name: str) -> Response:
     return Response(content=_asset(asset_name), media_type=_ASSETS[asset_name])
@@ -124,17 +143,33 @@ def bootstrap_upload_page(
         capability=command.capability,
         current_session=current_session,
     )
-    max_age = service.settings.upload_intent_ttl_seconds
-    response.set_cookie(
-        _SESSION_COOKIE,
-        session.session_token,
-        max_age=max_age,
-        expires=session.session_expires_at,
-        path=f"/upload-handoff/{intent_id}",
-        secure=True,
-        httponly=True,
-        samesite="strict",
+    _set_session_cookie(response, intent_id, session, service)
+    return _session_response(session)
+
+
+@router.post(
+    "/{intent_id}/authenticate",
+    response_model=UploadPageSessionResponse,
+    include_in_schema=False,
+)
+def authenticate_upload_page(
+    intent_id: UploadIntentId,
+    request: Request,
+    response: Response,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+    actor: Annotated[Principal, Depends(write_principal)],
+    current_session: Annotated[
+        str | None,
+        Cookie(alias=_SESSION_COOKIE),
+    ] = None,
+) -> UploadPageSessionResponse:
+    _require_same_origin(request, service)
+    session = _uploads(service).exchange_authenticated_handoff(
+        intent_id,
+        principal=actor,
+        current_session=current_session,
     )
+    _set_session_cookie(response, intent_id, session, service)
     return _session_response(session)
 
 

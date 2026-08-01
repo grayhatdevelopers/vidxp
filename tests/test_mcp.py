@@ -10,7 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
 
 import httpx2
@@ -152,13 +152,22 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         root: Path,
         *,
         static_token: str | None = None,
+        oidc_mcp_url: str | None = None,
     ) -> tuple[HttpApplicationContext, Mock]:
         context = self.context(root)
+        oidc = oidc_mcp_url is not None
         settings = VidXPSettings(
             repository_root=root,
             runtime_backend="cpu",
-            http_auth_mode="static" if static_token is not None else "none",
+            http_auth_mode=(
+                "oidc" if oidc else "static" if static_token is not None else "none"
+            ),
             http_static_bearer_token=static_token,
+            http_oidc_issuer="https://identity.example" if oidc else None,
+            http_oidc_audience="vidxp-api" if oidc else None,
+            http_oidc_jwks_url=("https://identity.example/jwks" if oidc else None),
+            http_required_scopes=("vidxp.write",) if oidc else (),
+            mcp_public_url=oidc_mcp_url,
             http_trusted_hosts=("127.0.0.1", "testserver"),
             mcp_allowed_hosts=("127.0.0.1:*",),
             upload_public_endpoint="https://uploads.example/uploads/",
@@ -285,28 +294,18 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     {"intent_id": MEDIA_ID},
                 )
 
-            async def decline_url(_context, _params):
-                return ElicitResult(action="decline")
+            elicited = []
+
+            async def record_url(_context, params):
+                elicited.append(params)
+                return ElicitResult(action="accept")
 
             async with Client(
                 server,
-                elicitation_callback=decline_url,
+                elicitation_callback=record_url,
                 mode="legacy",
             ) as client:
-                declined = await client.call_tool(
-                    "create_media_upload",
-                    arguments,
-                )
-
-            async def cancel_url(_context, _params):
-                return ElicitResult(action="cancel")
-
-            async with Client(
-                server,
-                elicitation_callback=cancel_url,
-                mode="legacy",
-            ) as client:
-                cancelled = await client.call_tool(
+                disabled = await client.call_tool(
                     "create_media_upload",
                     arguments,
                 )
@@ -315,31 +314,91 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.structured_content["transport"], "tus")
         self.assertEqual(
             first.structured_content["elicitation_action"],
-            "unsupported",
+            "disabled",
+        )
+        self.assertEqual(
+            first.structured_content["browser_authentication"],
+            "capability",
         )
         page_url = urlsplit(first.structured_content["upload_page_url"])
         self.assertEqual(page_url.scheme, "https")
         self.assertEqual(page_url.query, "")
         self.assertTrue(page_url.fragment.startswith("capability="))
         self.assertEqual(current.structured_content["state"], "pending")
-        self.assertEqual(
-            declined.structured_content["elicitation_action"],
-            "decline",
-        )
+        self.assertEqual(disabled.structured_content, first.structured_content)
+        self.assertEqual(elicited, [])
         self.assertIn(
-            "remains available",
-            declined.structured_content["next_action"],
-        )
-        self.assertEqual(
-            cancelled.structured_content["elicitation_action"],
-            "cancel",
+            "Native URL elicitation is disabled",
+            first.structured_content["next_action"],
         )
         request_keys = [
             call.kwargs["request_key"] for call in uploads.create_handoff.call_args_list
         ]
-        self.assertEqual(len(request_keys), 4)
+        self.assertEqual(len(request_keys), 3)
         self.assertEqual(len(set(request_keys)), 1)
         self.assertRegex(request_keys[0], r"^[0-9a-f]{64}$")
+
+    async def test_oidc_upload_elicitation_uses_identity_bound_public_url(self):
+        seen = []
+
+        async def decline_url(_context, params):
+            seen.append(params)
+            return ElicitResult(action="decline")
+
+        with TemporaryDirectory() as directory:
+            context, uploads = self.upload_context(
+                Path(directory),
+                oidc_mcp_url="https://vidxp.example/mcp",
+            )
+            now = datetime.now(timezone.utc)
+            status = MediaUploadStatus(
+                intent_id=MEDIA_ID,
+                state=UploadState.pending,
+                original_filename="sample.mp4",
+                byte_size=1024,
+                maximum_bytes=2048,
+                expires_at=now + timedelta(hours=1),
+                status="Waiting for the expected video.",
+                next_action="Open the upload page.",
+            )
+            uploads.create_handoff.return_value = UploadHandoff(
+                status=status,
+                capability="must-not-leak",
+                expires_at=now + timedelta(minutes=15),
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    client_id="mcp-client",
+                    scopes=frozenset({"*"}),
+                ),
+            )
+            async with Client(
+                server,
+                elicitation_callback=decline_url,
+                mode="legacy",
+            ) as client:
+                result = await client.call_tool(
+                    "create_media_upload",
+                    {
+                        "command": {
+                            "original_filename": "sample.mp4",
+                            "byte_size": 1024,
+                        },
+                        "idempotency_key": "oidc-upload-0001",
+                    },
+                )
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.structured_content["elicitation_action"], "decline")
+        self.assertEqual(result.structured_content["browser_authentication"], "oidc")
+        self.assertEqual(len(seen), 1)
+        elicited = urlsplit(seen[0].url)
+        self.assertEqual(elicited.fragment, "")
+        self.assertEqual(elicited.query, "")
+        self.assertEqual(seen[0].url, result.structured_content["upload_page_url"])
+        self.assertNotIn("must-not-leak", json.dumps(result.structured_content))
 
     async def test_stdio_upload_negotiates_url_elicitation(self):
         seen = []
@@ -385,6 +444,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(seen), 1)
         self.assertEqual(seen[0].mode, "url")
         self.assertEqual(seen[0].url, result.structured_content["upload_page_url"])
+        self.assertEqual(urlsplit(seen[0].url).fragment, "")
+        self.assertNotIn("fixture-capability", json.dumps(result.structured_content))
         self.assertEqual(len(completed), 1)
         self.assertEqual(
             completed[0].params.elicitation_id,
@@ -427,7 +488,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             context, uploads = self.upload_context(
                 Path(directory),
-                static_token=token,
+                oidc_mcp_url=f"http://127.0.0.1:{port}/mcp",
             )
             now = datetime.now(timezone.utc)
             status = MediaUploadStatus(
@@ -452,6 +513,22 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     "next_action": "Poll the import job.",
                 }
             )
+            verified = AuthenticatedBearer(
+                principal=Principal(
+                    subject="oidc-user",
+                    client_id="mcp-client",
+                    scopes=frozenset({"vidxp.write"}),
+                ),
+                expires_at=None,
+                resource=f"http://127.0.0.1:{port}/mcp",
+                claims={"sub": "oidc-user", "client_id": "mcp-client"},
+            )
+            authentication = patch.object(
+                OIDCBearerAuthenticator,
+                "authenticate_bearer",
+                return_value=verified,
+            )
+            authentication.start()
             server = uvicorn.Server(
                 uvicorn.Config(
                     create_app(context=context),
@@ -500,11 +577,14 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 server.should_exit = True
                 await serving
+                authentication.stop()
 
         self.assertFalse(result.is_error)
         self.assertEqual(result.structured_content["elicitation_action"], "accept")
         self.assertEqual(len(seen), 1)
         self.assertEqual(seen[0].mode, "url")
+        self.assertEqual(urlsplit(seen[0].url).fragment, "")
+        self.assertNotIn("http-capability", json.dumps(result.structured_content))
         self.assertEqual(len(completed), 1)
         self.assertEqual(
             completed[0].params.elicitation_id,

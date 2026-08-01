@@ -36,7 +36,7 @@ from vidxp.infrastructure.sql_catalog import (
     UploadQuotaExceededError,
 )
 from vidxp.media_service import MediaService
-from vidxp.settings import VidXPSettings
+from vidxp.settings import HttpAuthMode, VidXPSettings
 
 LOGGER = logging.getLogger(__name__)
 _CREATION_GRANT_TTL_SECONDS = 5 * 60
@@ -169,6 +169,8 @@ class RemoteUploadService:
             record = UploadHandoffRecord(
                 selector=secrets.token_hex(16),
                 intent_id=intent.intent_id,
+                principal_subject=principal.subject,
+                principal_client_id=principal.client_id,
                 repository_binding=self._repository_binding(),
                 byte_size=intent.byte_size,
                 created_at=now,
@@ -184,7 +186,7 @@ class RemoteUploadService:
                 if replay is None:
                     raise
                 record = replay
-        self._require_handoff_binding(record, intent)
+        self._require_handoff_binding(record, intent, principal=principal)
         return UploadHandoff(
             status=self.status(intent),
             capability=self._handoff_capability(record),
@@ -251,14 +253,55 @@ class RemoteUploadService:
         capability: str,
         current_session: str | None = None,
     ) -> UploadBrowserSession:
-        now = utc_now()
-
-        def exchange(connection: Connection) -> tuple[str, UploadIntentRecord]:
-            record = self._handoff_from_capability(
+        return self._exchange_browser_session(
+            intent_id,
+            record_loader=lambda connection: self._handoff_from_capability(
                 capability,
                 connection=connection,
                 for_update=True,
+            ),
+            current_session=current_session,
+        )
+
+    def exchange_authenticated_handoff(
+        self,
+        intent_id: str,
+        *,
+        principal: Principal,
+        current_session: str | None = None,
+    ) -> UploadBrowserSession:
+        """Create the browser session after independently verified OIDC auth."""
+        if self.settings.http_auth_mode != HttpAuthMode.oidc:
+            raise ApplicationError(
+                "upload_handoff_identity_unavailable",
+                ErrorCategory.unavailable,
+                "Identity-bound browser handoffs require OIDC authentication.",
             )
+        return self._exchange_browser_session(
+            intent_id,
+            record_loader=lambda connection: (
+                self.catalog.get_upload_handoff_by_intent(
+                    intent_id,
+                    connection=connection,
+                    for_update=True,
+                )
+            ),
+            principal=principal,
+            current_session=current_session,
+        )
+
+    def _exchange_browser_session(
+        self,
+        intent_id: str,
+        *,
+        record_loader: Callable[[Connection], UploadHandoffRecord | None],
+        current_session: str | None,
+        principal: Principal | None = None,
+    ) -> UploadBrowserSession:
+        now = utc_now()
+
+        def exchange(connection: Connection) -> tuple[str, UploadIntentRecord]:
+            record = record_loader(connection)
             intent = self.catalog.get_upload_intent(
                 intent_id,
                 connection=connection,
@@ -270,7 +313,9 @@ class RemoteUploadService:
                 expected_intent_id=intent_id,
                 now=now,
             )
-            assert intent is not None
+            assert record is not None and intent is not None
+            if principal is not None:
+                self._require_browser_principal(record, principal)
             if intent.state != UploadState.pending:
                 raise ApplicationError(
                     "upload_handoff_replayed",
@@ -1115,13 +1160,29 @@ class RemoteUploadService:
         self,
         record: UploadHandoffRecord,
         intent: UploadIntent,
+        *,
+        principal: Principal,
     ) -> None:
         if (
             record.intent_id != intent.intent_id
+            or record.principal_subject != principal.subject
+            or record.principal_client_id != principal.client_id
             or record.repository_binding != self._repository_binding()
             or record.byte_size != intent.byte_size
         ):
             raise RuntimeError("The stored upload handoff binding is invalid.")
+
+    @staticmethod
+    def _require_browser_principal(
+        record: UploadHandoffRecord | None,
+        principal: Principal,
+    ) -> None:
+        if record is None or record.principal_subject != principal.subject:
+            raise ApplicationError(
+                "upload_handoff_identity_mismatch",
+                ErrorCategory.authorization,
+                "The authenticated browser user does not own this upload handoff.",
+            )
 
     def _require_browser_session(
         self,

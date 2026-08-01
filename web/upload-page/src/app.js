@@ -9,6 +9,10 @@ import './app.css'
 
 const elements = {
   summary: document.querySelector('#summary'),
+  authenticationCard: document.querySelector('#authentication-card'),
+  authenticationForm: document.querySelector('#authentication-form'),
+  authenticationToken: document.querySelector('#authentication-token'),
+  authenticationState: document.querySelector('#authentication-state'),
   expectedFilename: document.querySelector('#expected-filename'),
   expectedSize: document.querySelector('#expected-size'),
   maximumSize: document.querySelector('#maximum-size'),
@@ -42,6 +46,12 @@ function setUploadMessage(message, kind = '') {
   setText(elements.uploadState, message)
   elements.uploadState.classList.remove('error', 'success')
   if (kind) elements.uploadState.classList.add(kind)
+}
+
+function setAuthenticationMessage(message, kind = '') {
+  setText(elements.authenticationState, message)
+  elements.authenticationState.classList.remove('error', 'success')
+  if (kind) elements.authenticationState.classList.add(kind)
 }
 
 function formatBytes(value) {
@@ -135,6 +145,55 @@ async function requestJson(url, options = {}) {
     )
   }
   return payload ?? {}
+}
+
+function authenticateBrowser() {
+  elements.authenticationCard.hidden = false
+  setText(elements.summary, 'Confirm your identity to open this upload handoff.')
+  setAuthenticationMessage('Waiting for an OIDC access token.')
+  elements.authenticationToken.focus()
+
+  return new Promise((resolve) => {
+    let submitting = false
+    const submit = async (event) => {
+      event.preventDefault()
+      if (submitting) return
+      const token = elements.authenticationToken.value.trim()
+      elements.authenticationToken.value = ''
+      if (!token) {
+        setAuthenticationMessage('Enter a valid OIDC access token.', 'error')
+        return
+      }
+      submitting = true
+      setAuthenticationMessage('Confirming your VidXP identity…')
+      try {
+        const payload = await requestJson(apiUrl('./authenticate'), {
+          method: 'POST',
+          body: '{}',
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        elements.authenticationForm.removeEventListener('submit', submit)
+        elements.authenticationCard.hidden = true
+        resolve(payload)
+      } catch (error) {
+        const message = error instanceof Error
+          ? error.message
+          : 'VidXP could not confirm your identity.'
+        setAuthenticationMessage(message, 'error')
+      } finally {
+        submitting = false
+      }
+    }
+    elements.authenticationForm.addEventListener('submit', submit)
+  })
+}
+
+async function authenticatedBootstrap() {
+  try {
+    return await requestJson(apiUrl('./status'))
+  } catch {
+    return authenticateBrowser()
+  }
 }
 
 function statusRecord(envelope) {
@@ -409,7 +468,7 @@ async function bootstrap() {
         method: 'POST',
         body: JSON.stringify({ capability }),
       })
-    : await requestJson(apiUrl('./status'))
+    : await authenticatedBootstrap()
   if (capability) clearFragment()
   expected = expectedRecord(payload)
   if (

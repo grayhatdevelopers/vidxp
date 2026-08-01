@@ -90,6 +90,12 @@ class UploadHandoffRecord(BaseModel):
 
     selector: str = Field(pattern=r"^[0-9a-f]{32}$")
     intent_id: Uuid4Hex
+    principal_subject: str = Field(min_length=1, max_length=255)
+    principal_client_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+    )
     repository_binding: str = Field(pattern=r"^[0-9a-f]{64}$")
     byte_size: int = Field(gt=0)
     created_at: AwareDatetime

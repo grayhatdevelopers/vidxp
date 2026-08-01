@@ -96,6 +96,8 @@ upload_handoffs = Table(
         nullable=False,
         unique=True,
     ),
+    Column("principal_subject", String(255), nullable=False),
+    Column("principal_client_id", String(255), nullable=True),
     Column("repository_binding", String(64), nullable=False),
     Column("byte_size", BigInteger, nullable=False),
     Column("created_at", Text, nullable=False),
