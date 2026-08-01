@@ -1,0 +1,85 @@
+:root {
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  color: #f0f2f7;
+  background: #080b12;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { min-height: 100%; }
+body { margin: 0; min-width: 320px; overflow-x: hidden; background: #080b12; }
+button, [role='radio'], [role='checkbox'], input { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 3px solid #71d7ff !important; outline-offset: 3px; }
+
+.appBackdrop {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+  background:
+    linear-gradient(145deg, rgba(18, 22, 35, .74), rgba(8, 11, 18, .96)),
+    radial-gradient(circle at 50% -15%, #2a295d, transparent 48rem);
+}
+.aurora { position: fixed; border-radius: 999px; filter: blur(90px); pointer-events: none; opacity: .22; }
+.auroraOne { width: 26rem; height: 26rem; top: -12rem; right: -8rem; background: #7950f2; }
+.auroraTwo { width: 22rem; height: 22rem; bottom: -10rem; left: -8rem; background: #22b8cf; opacity: .13; }
+.appShell { position: relative; width: min(100% - 2rem, 72rem); margin: 0 auto; padding: 1.5rem 0 2rem; }
+.brandHeader, .appFooter { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.brandHeader { min-height: 3rem; padding: 0 .25rem 1.25rem; border-bottom: 1px solid rgba(255,255,255,.08); }
+.brandMark { box-shadow: 0 10px 34px rgba(121,80,242,.3); }
+.privateLabel, .eyebrow { color: #aab2ff; font-size: .7rem; font-weight: 800; letter-spacing: .14em; }
+.contentFrame { width: min(100%, 56rem); min-height: 34rem; margin: 0 auto; padding: clamp(2.2rem, 7vw, 5.5rem) 0; }
+.sectionHeading { max-width: 44rem; margin-bottom: 2.25rem; }
+.compactHeading { margin-top: 1.2rem; }
+.displayTitle { max-width: 14ch; font-size: clamp(2.5rem, 8vw, 4.8rem); line-height: .98; letter-spacing: -.055em; }
+.pageTitle { margin-top: .4rem; font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1.03; letter-spacing: -.04em; }
+.lede { max-width: 42rem; margin-top: 1rem; color: #afb6c5; font-size: 1.02rem; line-height: 1.65; }
+.centeredCopy { margin-inline: auto; }
+.targetGrid, .optionGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.targetCard, .candidateCard, .optionCard { border: 1px solid rgba(255,255,255,.1); background: rgba(20,24,36,.78); cursor: pointer; transition: border-color .16s ease, background-color .16s ease, transform .16s ease; }
+.targetCard { min-height: 18rem; padding: 1.5rem; border-radius: 1rem; }
+.targetCard:hover, .candidateCard:hover, .optionCard:hover { border-color: rgba(170,178,255,.54); background: rgba(29,34,52,.9); }
+.targetCard[data-checked], .candidateCard[data-checked], .optionCard[data-checked] { border-color: #8b7cff; background: rgba(63,55,115,.42); box-shadow: 0 0 0 1px rgba(139,124,255,.3), 0 18px 50px rgba(0,0,0,.18); }
+.targetCard:active { transform: translateY(1px); }
+.targetIcon { background: rgba(121,80,242,.16); }
+.cardTitle { font-size: 1.25rem; letter-spacing: -.02em; }
+.cardDescription { margin-top: .55rem; color: #c4c9d4; line-height: 1.55; }
+.cardDetail, .mutedText { color: #8f97a8; }
+.cardDetail { padding-top: 1rem; border-top: 1px solid rgba(255,255,255,.08); font-size: .82rem; }
+.setupPanel, .summaryPanel, .confirmationPanel { border: 1px solid rgba(255,255,255,.1); background: rgba(17,21,32,.82); box-shadow: 0 24px 70px rgba(0,0,0,.19); }
+.setupPanel, .summaryPanel { margin-top: 1rem; padding: clamp(1rem, 3vw, 1.5rem); border-radius: 1rem; }
+.panelTitle { font-size: 1rem; letter-spacing: -.01em; }
+.candidateCard, .optionCard { padding: 1rem; border-radius: .75rem; }
+.candidateCopy, .folderCopy { min-width: 0; flex: 1; }
+.pathCode, .resolvedPath { display: block; max-width: 100%; margin-top: .35rem; overflow-wrap: anywhere; white-space: normal; color: #cbd1dd; background: rgba(0,0,0,.22); }
+.resolvedPath { padding: .7rem; border: 1px solid rgba(255,255,255,.08); }
+.pathText { overflow-wrap: anywhere; }
+.fieldLabel { margin-bottom: .4rem; font-size: .8rem; font-weight: 600; }
+.emptyState, .loadingState, .statusRegion { display: flex; align-items: center; gap: .65rem; color: #aeb5c4; }
+.emptyState { min-height: 5rem; justify-content: center; padding: 1rem; border: 1px dashed rgba(255,255,255,.13); border-radius: .75rem; text-align: center; }
+.loadingState { min-height: 25rem; justify-content: center; }
+.statusRegion { min-height: 2.6rem; padding: .65rem 0; font-size: .85rem; }
+.validationGrid, .summaryGrid { display: grid; grid-template-columns: minmax(7rem, auto) minmax(0, 1fr); gap: .65rem 1.5rem; align-items: baseline; }
+.validationGrid span, .summaryGrid > p { color: #9da5b5; }
+.summaryGrid strong, .summaryGrid code { min-width: 0; overflow-wrap: anywhere; }
+.managedFooter { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: 1rem; }
+.confirmationPanel { max-width: 42rem; margin: 1.5rem auto 0; padding: clamp(1.5rem, 6vw, 3.5rem); border-radius: 1.25rem; text-align: center; }
+.ownershipNote { display: grid; grid-template-columns: auto 1fr; gap: .35rem 1rem; margin-top: 1.5rem; padding: 1rem; border-radius: .75rem; background: rgba(121,80,242,.12); text-align: left; }
+.ownershipNote span { color: #aeb5c4; }
+.appFooter { padding: 1.2rem .25rem 0; border-top: 1px solid rgba(255,255,255,.07); color: #777f90; font-size: .72rem; }
+
+@media (max-width: 42rem) {
+  .appShell { width: min(100% - 1.25rem, 72rem); padding-top: .75rem; }
+  .contentFrame { padding: 2.5rem 0; }
+  .targetGrid, .optionGrid { grid-template-columns: 1fr; }
+  .targetCard { min-height: 14rem; }
+  .managedFooter, .appFooter { align-items: stretch; flex-direction: column; }
+  .brandHeader { padding-inline: .15rem; }
+  .summaryGrid, .validationGrid { grid-template-columns: 1fr; gap: .2rem; }
+  .summaryGrid > strong, .summaryGrid > code, .validationGrid > strong { margin-bottom: .65rem; }
+  .ownershipNote { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+  .aurora { display: none; }
+}

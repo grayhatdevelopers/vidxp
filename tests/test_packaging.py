@@ -64,10 +64,11 @@ class PackagingTests(unittest.TestCase):
             ROOT / "desktop" / "scripts" / "sync-branding.mjs"
         ).read_text(encoding="utf-8")
         self.assertIn("../docs/images/logo.png", sync_script)
-        self.assertIn("web/icon.png", sync_script)
+        self.assertIn('resolve(desktopRoot, "public")', sync_script)
+        self.assertIn('resolve(publicDirectory, "icon.png")', sync_script)
         self.assertIn(
-            'href="icon.png"',
-            (ROOT / "desktop" / "web" / "index.html").read_text(
+            'href="/icon.png"',
+            (ROOT / "desktop" / "index.html").read_text(
                 encoding="utf-8"
             ),
         )

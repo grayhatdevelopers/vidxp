@@ -38,10 +38,11 @@ pnpm-debug.log*
 # compiled output
 /target
 /desktop/node_modules/
+/desktop/dist/
 /desktop/src-tauri/target/
 /desktop/src-tauri/gen/
 /desktop/src-tauri/binaries/uv-*
-/desktop/web/icon.png
+/desktop/public/icon.png
 /desktop/src-tauri/icons/android/
 /desktop/src-tauri/icons/ios/
 /desktop/src-tauri/icons/64x64.png

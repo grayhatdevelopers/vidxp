@@ -21,6 +21,7 @@ from vidxp.cli_commands.repositories import app as repositories_app
 from vidxp.cli_commands.runtime import doctor, initialize, prepare, ui
 from vidxp.cli_commands.search import search
 from vidxp.cli_commands.query import query
+from vidxp.cli_commands.probe import desktop_probe
 from vidxp.cli_support import CLIState, OutputFormat
 from vidxp.composition import create_local_application
 
@@ -35,6 +36,7 @@ app.add_typer(media_app, name="media")
 app.add_typer(artifacts_app, name="artifacts")
 app.command("search")(search)
 app.command("query")(query)
+app.command("desktop-probe")(desktop_probe)
 app.command("mcp-config")(mcp_config)
 app.add_typer(repositories_app, name="repositories")
 app.add_typer(actor_app, name="actors")
@@ -121,7 +123,7 @@ def app_options(
         typer.Option("--quiet", "-q", help="Suppress progress output."),
     ] = False,
 ) -> None:
-    if ctx.invoked_subcommand in {"init", "mcp-config"}:
+    if ctx.invoked_subcommand in {"desktop-probe", "init", "mcp-config"}:
         return
     local = create_local_application(
         registry_path=config_file,

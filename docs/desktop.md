@@ -1,18 +1,24 @@
 # Desktop application
 
-The desktop application is a Tauri v2 launcher, first-run configuration
-surface, and process supervisor. The operating-system package installs the
-application; the application then provisions its local processing runtime. It
-does not contain a second VidXP implementation:
+The desktop application is a Tauri v2 launcher, target-selection surface, and
+process supervisor. On first launch it asks which local VidXP target to use
+before offering any installation. It does not contain a second VidXP
+implementation:
 
+- an existing compatible `vidxp` executable can be adopted without downloading
+  Python, VidXP, FFmpeg, models, or another environment;
+- executable discovery never selects a candidate without user confirmation;
+- adopted installations remain externally owned and cannot be installed,
+  repaired, removed, or broadly stopped by the desktop;
 - the selected capability extras are installed from the exact configured
-  package release;
+  package release only after the managed target is explicitly chosen;
 - the Streamlit browser interface is an optional installation surface;
-- repositories and models use the same platform VidXP data directory as the
-  CLI, while managed Python and package environments use private desktop
-  application-data directories;
+- managed repositories and models use the same platform VidXP data directory
+  as the CLI; adopted targets retain their reported roots, while managed Python
+  and package environments use private desktop application-data directories;
 - the existing DBOS worker remains the durable execution boundary; and
-- closing the desktop process stops both Streamlit and the repository worker.
+- closing the desktop process stops the exact interface process it launched,
+  while broad worker shutdown remains limited to desktop-owned runtimes.
 
 The desktop separates shared product data from its private implementation
 state. The shared root is the same operating-system VidXP data directory used
@@ -33,6 +39,7 @@ dev.grayhat.vidxp/
   runtimes/
   python/
   active-runtime.json
+  target-profiles.json       # non-secret Tauri Store data
 ```
 
 On Windows the per-user NSIS package installs program files under
@@ -82,6 +89,23 @@ macOS, and AppImage on Linux, disables signing, and requires the checked-in
 Cargo lock to remain unchanged.
 
 ## First-run configuration
+
+The target-first screen offers two paths:
+
+- **Existing local installation** discovers `vidxp` executables on `PATH` or
+  accepts an executable selected with the native file picker. The desktop shows
+  its canonical path and runs `vidxp desktop-probe --json` before activation.
+  The probe is side-effect free and reports product identity, normalized VidXP
+  compatibility, probe protocol/schema versions, Python identity, local data
+  roots, and browser-interface availability. Reopening the desktop restores the
+  selected profile and probes it again before use.
+- **Desktop-managed runtime** reveals the existing capability, model, and media
+  setup only after explicit confirmation. The staged installation and activation
+  boundary is unchanged.
+
+Target profiles use a versioned desktop-private schema. Profile content and the
+selected profile identity are stored separately. No credentials or remote tokens
+are stored; remote targets are intentionally outside this release.
 
 Users select dialogue, scene, and actor capabilities independently. Interfaces
 are selected separately: the browser interface adds the `frontend` extra only

@@ -30,6 +30,8 @@ use tauri_plugin_shell::{
 };
 use wait_timeout::ChildExt;
 
+mod target_profiles;
+
 const RUNTIME_MANIFEST_BYTES: &[u8] = include_bytes!("../../runtime-manifest.json");
 const RUNTIME_CONSTRAINTS_BYTES: &[u8] = include_bytes!("../../runtime-constraints.txt");
 const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
@@ -148,6 +150,7 @@ struct DesktopPaths {
 struct ManagedUi {
     process: Child,
     url: String,
+    profile_id: String,
 }
 
 struct DesktopState {
@@ -155,6 +158,7 @@ struct DesktopState {
     operation_process: Mutex<Option<CommandChild>>,
     operation_worker_runtime: Mutex<Option<PathBuf>>,
     operation_active: AtomicBool,
+    managed_setup_authorized: AtomicBool,
     shutdown_started: AtomicBool,
 }
 
@@ -165,6 +169,7 @@ impl Default for DesktopState {
             operation_process: Mutex::new(None),
             operation_worker_runtime: Mutex::new(None),
             operation_active: AtomicBool::new(false),
+            managed_setup_authorized: AtomicBool::new(false),
             shutdown_started: AtomicBool::new(false),
         }
     }
@@ -459,15 +464,15 @@ fn executable_candidates(name: &str) -> Vec<PathBuf> {
     let mut directories = env::var_os("PATH")
         .map(|value| env::split_paths(&value).collect::<Vec<_>>())
         .unwrap_or_default();
-    if cfg!(windows) {
-        if let Some(local) = env::var_os("LOCALAPPDATA") {
-            directories.push(
-                PathBuf::from(local)
-                    .join("Microsoft")
-                    .join("WinGet")
-                    .join("Links"),
-            );
-        }
+    if cfg!(windows)
+        && let Some(local) = env::var_os("LOCALAPPDATA")
+    {
+        directories.push(
+            PathBuf::from(local)
+                .join("Microsoft")
+                .join("WinGet")
+                .join("Links"),
+        );
     }
     if cfg!(target_os = "macos") {
         directories.extend([
@@ -769,6 +774,54 @@ fn write_active_runtime(paths: &DesktopPaths, active: &ActiveRuntime) -> Result<
         .map_err(|error| format!("Could not activate the validated runtime: {error}"))
 }
 
+fn managed_runtime_projection(
+    paths: &DesktopPaths,
+) -> Option<target_profiles::ManagedRuntimeProjection> {
+    let contents = fs::read(&paths.active_runtime).ok()?;
+    let active: ActiveRuntime = serde_json::from_slice(&contents).ok()?;
+    if !active
+        .profile
+        .chars()
+        .all(|character| character.is_ascii_hexdigit() || character == '-')
+    {
+        log::warn!("Ignoring an active managed runtime with an invalid profile identity");
+        return None;
+    }
+    let runtime = runtime_directory(paths, &active);
+    let requested_executable = executable(&runtime, "vidxp");
+    let executable = fs::canonicalize(&requested_executable).unwrap_or(requested_executable);
+    Some(target_profiles::ManagedRuntimeProjection {
+        runtime_profile: active.profile,
+        executable,
+        data_root: paths.data.clone(),
+        repository_root: paths.repository.clone(),
+        model_directory: active.model_directory,
+        package_version: active.package_version,
+        capabilities: active.capabilities,
+        surfaces: active.surfaces,
+    })
+}
+
+fn initialize_target_profiles(app: &AppHandle) -> Result<target_profiles::TargetState, String> {
+    let manifest = manifest()?;
+    let paths = desktop_paths(app)?;
+    target_profiles::initialize(
+        app,
+        managed_runtime_projection(&paths),
+        &manifest.desktop_version,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn managed_mutation_allowed(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
+    if state.managed_setup_authorized.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    let profile = target_profiles::selected_profile(app).map_err(|error| error.to_string())?;
+    target_profiles::authorize_lifecycle(&profile, target_profiles::LifecycleAction::Install)
+        .map_err(|error| error.to_string())
+}
+
 async fn supervised_output(
     state: &DesktopState,
     command: ShellCommand,
@@ -891,6 +944,122 @@ fn runtime_manifest() -> Result<RuntimeManifest, String> {
 }
 
 #[tauri::command]
+fn target_state(
+    app: AppHandle,
+) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    target_profiles::current_state(&app)
+}
+
+#[tauri::command]
+fn refresh_target_state(
+    app: AppHandle,
+) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    let manifest = manifest().map_err(|error| target_profiles::TargetError {
+        code: target_profiles::TargetErrorCode::ValidationRequired,
+        message: error,
+    })?;
+    let paths = desktop_paths(&app).map_err(|error| target_profiles::TargetError {
+        code: target_profiles::TargetErrorCode::ValidationRequired,
+        message: error,
+    })?;
+    target_profiles::initialize(
+        &app,
+        managed_runtime_projection(&paths),
+        &manifest.desktop_version,
+    )
+}
+
+#[tauri::command]
+fn discover_local_targets() -> Vec<target_profiles::DiscoveredTarget> {
+    target_profiles::discover_local_targets()
+}
+
+#[tauri::command]
+fn choose_local_executable(app: AppHandle) -> Result<Option<String>, String> {
+    app.dialog()
+        .file()
+        .set_title("Choose an existing VidXP executable")
+        .blocking_pick_file()
+        .map(|path| {
+            path.into_path()
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|error| format!("The selected executable path is invalid: {error}"))
+        })
+        .transpose()
+}
+
+#[tauri::command]
+fn validate_local_target(
+    executable: String,
+) -> Result<target_profiles::ValidatedTarget, target_profiles::TargetError> {
+    let manifest = manifest().map_err(|error| target_profiles::TargetError {
+        code: target_profiles::TargetErrorCode::ValidationRequired,
+        message: error,
+    })?;
+    target_profiles::validate_executable(Path::new(&executable), &manifest.desktop_version)
+}
+
+#[tauri::command]
+fn adopt_local_target(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    executable: String,
+    display_name: Option<String>,
+) -> Result<target_profiles::TargetProfile, target_profiles::TargetError> {
+    let manifest = manifest().map_err(|error| target_profiles::TargetError {
+        code: target_profiles::TargetErrorCode::ValidationRequired,
+        message: error,
+    })?;
+    let profile = target_profiles::adopt_local(
+        &app,
+        Path::new(&executable),
+        display_name,
+        &manifest.desktop_version,
+    )?;
+    state
+        .managed_setup_authorized
+        .store(false, Ordering::Release);
+    Ok(profile)
+}
+
+#[tauri::command]
+fn select_target_profile(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    profile_id: String,
+) -> Result<target_profiles::TargetProfile, target_profiles::TargetError> {
+    let manifest = manifest().map_err(|error| target_profiles::TargetError {
+        code: target_profiles::TargetErrorCode::ValidationRequired,
+        message: error,
+    })?;
+    let profile = target_profiles::select_profile(&app, &profile_id, &manifest.desktop_version)?;
+    state
+        .managed_setup_authorized
+        .store(false, Ordering::Release);
+    Ok(profile)
+}
+
+#[tauri::command]
+fn delete_target_profile(
+    app: AppHandle,
+    profile_id: String,
+) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    target_profiles::delete_profile(&app, &profile_id)
+}
+
+#[tauri::command]
+fn begin_managed_setup(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    target_profiles::clear_selection(&app)?;
+    state
+        .managed_setup_authorized
+        .store(true, Ordering::Release);
+    target_profiles::current_state(&app)
+}
+
+#[tauri::command]
 fn media_runtime_status() -> MediaRuntimeStatus {
     inspect_media_runtime()
 }
@@ -916,6 +1085,7 @@ async fn install_media_runtime(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
 ) -> Result<MediaRuntimeStatus, String> {
+    managed_mutation_allowed(&app, &state)?;
     let current = inspect_media_runtime();
     if current.ready {
         return Ok(current);
@@ -1045,6 +1215,7 @@ async fn install_runtime(
     state: tauri::State<'_, DesktopState>,
     request: InstallRequest,
 ) -> Result<InstallResult, String> {
+    managed_mutation_allowed(&app, &state)?;
     if state
         .operation_active
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -1226,6 +1397,16 @@ async fn install_runtime(
         model_directory: paths.models.clone(),
     };
     write_active_runtime(&paths, &active)?;
+    target_profiles::project_managed(
+        &app,
+        managed_runtime_projection(&paths)
+            .ok_or("The installed managed runtime could not be projected into a target profile.")?,
+        &manifest.desktop_version,
+    )
+    .map_err(|error| error.to_string())?;
+    state
+        .managed_setup_authorized
+        .store(false, Ordering::Release);
 
     Ok(InstallResult {
         package_version: manifest.package_version,
@@ -1237,28 +1418,37 @@ async fn install_runtime(
 }
 
 fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
-    let mut paths = desktop_paths(&app)?;
-    let active = active_runtime(&paths)?;
-    if !active.surfaces.iter().any(|surface| surface == "browser") {
+    let manifest = manifest()?;
+    let profile = target_profiles::validated_selected_profile(app, &manifest.desktop_version)
+        .map_err(|error| error.to_string())?;
+    target_profiles::authorize_lifecycle(&profile, target_profiles::LifecycleAction::Launch)
+        .map_err(|error| error.to_string())?;
+    if !profile.frontend.launchable {
         return Err(
-            "The browser interface is not installed. Reconfigure VidXP and select Browser interface."
-                .into(),
+            "The selected VidXP installation cannot launch the supported browser interface.".into(),
         );
     }
-    paths.models = active.model_directory.clone();
-    let runtime = runtime_directory(&paths, &active);
+    let mut paths = desktop_paths(app)?;
+    paths.repository = profile.repository_root.clone();
+    if let Some(model_directory) = &profile.model_directory {
+        paths.models = model_directory.clone();
+    }
     let mut active_process = state
         .ui_process
         .lock()
         .map_err(|_| "The desktop process supervisor is unavailable.".to_string())?;
     if let Some(ui) = active_process.as_mut() {
-        if ui
+        let running = ui
             .process
             .try_wait()
             .map_err(|error| format!("Could not inspect the interface process: {error}"))?
-            .is_none()
-        {
+            .is_none();
+        if running && ui.profile_id == profile.id {
             return Ok(ui.url.clone());
+        }
+        if running {
+            let _ = ui.process.kill();
+            let _ = ui.process.wait_timeout(Duration::from_secs(5));
         }
         *active_process = None;
     }
@@ -1271,10 +1461,26 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
         .port();
     drop(listener);
 
-    let mut command = configured_command(&executable(&runtime, "vidxp"), &paths);
+    let mut command = match profile.kind {
+        target_profiles::TargetKind::Managed => {
+            let active = active_runtime(&paths)?;
+            if profile.managed_runtime_profile.as_deref() != Some(active.profile.as_str()) {
+                return Err(
+                    "The selected managed target no longer matches the active desktop runtime."
+                        .into(),
+                );
+            }
+            configured_command(&profile.executable, &paths)
+        }
+        target_profiles::TargetKind::ExistingLocal => {
+            let mut command = Command::new(&profile.executable);
+            hide_child_console(&mut command);
+            command
+        }
+    };
     command
         .arg("--index-dir")
-        .arg(&paths.repository)
+        .arg(&profile.repository_root)
         .args(["ui", "--host", "127.0.0.1", "--port", &port.to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1299,6 +1505,7 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
             *active_process = Some(ManagedUi {
                 process,
                 url: url.clone(),
+                profile_id: profile.id.clone(),
             });
             return Ok(url);
         }
@@ -1327,15 +1534,25 @@ fn show_main_window(app: &AppHandle) {
 }
 
 fn configured_runtime(app: &AppHandle) -> bool {
-    desktop_paths(app)
-        .and_then(|paths| active_runtime(&paths))
-        .is_ok()
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(u64::MAX);
+    target_profiles::current_state(app)
+        .ok()
+        .and_then(|state| state.selected_profile().cloned())
+        .is_some_and(|profile| profile.is_ready(now))
 }
 
 fn browser_surface_configured(app: &AppHandle) -> bool {
-    desktop_paths(app)
-        .and_then(|paths| active_runtime(&paths))
-        .is_ok_and(|active| active.surfaces.iter().any(|surface| surface == "browser"))
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(u64::MAX);
+    target_profiles::current_state(app)
+        .ok()
+        .and_then(|state| state.selected_profile().cloned())
+        .is_some_and(|profile| profile.is_ready(now) && profile.frontend.launchable)
 }
 
 fn open_ui_in_browser(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
@@ -1437,20 +1654,20 @@ fn stop_worker(runtime: &Path, paths: &DesktopPaths) {
 fn shutdown(app: &AppHandle) {
     log::info!("Stopping active VidXP processes");
     let state = app.state::<DesktopState>();
-    if let Ok(mut active_operation) = state.operation_process.lock() {
-        if let Some(process) = active_operation.take() {
-            let _ = process.kill();
-        }
+    if let Ok(mut active_operation) = state.operation_process.lock()
+        && let Some(process) = active_operation.take()
+    {
+        let _ = process.kill();
     }
-    if let Ok(mut active_process) = state.ui_process.lock() {
-        if let Some(mut ui) = active_process.take() {
-            let _ = ui.process.kill();
-            match ui.process.wait_timeout(Duration::from_secs(5)) {
-                Ok(Some(_)) => {}
-                _ => {
-                    let _ = ui.process.kill();
-                    let _ = ui.process.wait_timeout(Duration::from_secs(1));
-                }
+    if let Ok(mut active_process) = state.ui_process.lock()
+        && let Some(mut ui) = active_process.take()
+    {
+        let _ = ui.process.kill();
+        match ui.process.wait_timeout(Duration::from_secs(5)) {
+            Ok(Some(_)) => {}
+            _ => {
+                let _ = ui.process.kill();
+                let _ = ui.process.wait_timeout(Duration::from_secs(1));
             }
         }
     }
@@ -1458,15 +1675,32 @@ fn shutdown(app: &AppHandle) {
         log::warn!("Could not resolve desktop paths during shutdown");
         return;
     };
-    if let Ok(mut operation_worker) = state.operation_worker_runtime.lock() {
-        if let Some(runtime) = operation_worker.take() {
-            stop_worker(&runtime, &paths);
-        }
+    if let Ok(mut operation_worker) = state.operation_worker_runtime.lock()
+        && let Some(runtime) = operation_worker.take()
+    {
+        stop_worker(&runtime, &paths);
     }
-    let Ok(active) = active_runtime(&paths) else {
-        log::info!("No active VidXP runtime needs worker shutdown");
+    let Ok(profile) = target_profiles::selected_profile(app) else {
+        log::info!("No selected VidXP target needs worker shutdown");
         return;
     };
+    if target_profiles::authorize_lifecycle(
+        &profile,
+        target_profiles::LifecycleAction::BroadProcessStop,
+    )
+    .is_err()
+    {
+        log::info!("Skipping broad worker shutdown for an externally owned VidXP target");
+        return;
+    }
+    let Ok(active) = active_runtime(&paths) else {
+        log::info!("No active desktop-managed VidXP runtime needs worker shutdown");
+        return;
+    };
+    if profile.managed_runtime_profile.as_deref() != Some(active.profile.as_str()) {
+        log::warn!("Skipping worker shutdown because the selected managed target is not active");
+        return;
+    }
     paths.models = active.model_directory.clone();
     let runtime = runtime_directory(&paths, &active);
     stop_worker(&runtime, &paths);
@@ -1482,17 +1716,39 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .manage(DesktopState::default())
         .setup(|app| {
             migrate_legacy_shared_data(app.handle()).map_err(io::Error::other)?;
+            if let Err(error) = initialize_target_profiles(app.handle()) {
+                log::error!("Target profile initialization failed: {error}");
+            }
             create_tray(app)?;
-            if !configured_runtime(app.handle()) {
+            if browser_surface_configured(app.handle()) {
+                let app_handle = app.handle().clone();
+                thread::spawn(move || {
+                    let state = app_handle.state::<DesktopState>();
+                    if let Err(error) = open_ui_in_browser(&app_handle, &state) {
+                        log::error!("Restored VidXP target could not open: {error}");
+                        show_main_window(&app_handle);
+                    }
+                });
+            } else {
                 show_main_window(app.handle());
             }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             runtime_manifest,
+            target_state,
+            refresh_target_state,
+            discover_local_targets,
+            choose_local_executable,
+            validate_local_target,
+            adopt_local_target,
+            select_target_profile,
+            delete_target_profile,
+            begin_managed_setup,
             media_runtime_status,
             choose_model_directory,
             install_media_runtime,

@@ -136,7 +136,7 @@ gate before opening a pull request.
 | MCP | Tool contract + `vidxp-mcp --check` |
 | Media/artifacts | Real ffprobe/FFmpeg smoke + path/ID confinement |
 | Models/providers | Dependency check, prepared/unprepared states, short real-media smoke |
-| Desktop | Rust tests, JavaScript syntax, setup/close lifecycle |
+| Desktop | Frontend typecheck/lint/tests/build, Rust tests, setup/close lifecycle |
 | Docker/Compose | Dockerfile targets, `docker compose config`, health checks |
 | Documentation | Commands, relative links, headings, and rendered tables |
 
@@ -145,7 +145,7 @@ Common commands:
 ```bash
 uv run --no-sync ruff check .
 uv run --no-sync pytest -q
-node --check desktop/web/app.js
+npm --prefix desktop run check
 docker compose config --quiet
 ```
 
@@ -153,6 +153,7 @@ Desktop validation requires the pinned uv sidecar before Rust tests:
 
 ```bash
 npm --prefix desktop install
+npm --prefix desktop run check
 npm --prefix desktop run sidecar:windows
 cargo test --manifest-path desktop/src-tauri/Cargo.toml
 ```
