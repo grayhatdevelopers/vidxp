@@ -62,6 +62,8 @@ def _service(
         upload_public_endpoint="http://localhost:8080/uploads/",
         upload_internal_endpoint="http://localhost:8080/uploads/",
         upload_cleanup_token="x" * 32,
+        upload_handoff_public_url="https://upload.example/upload-handoff",
+        upload_handoff_secret="h" * 32,
         upload_max_bytes=quota,
         upload_quota_bytes=quota,
     )
@@ -111,6 +113,187 @@ def test_upload_intent_is_idempotent_and_repository_shared(
         )
         == created
     )
+    catalog.close()
+
+
+def test_upload_handoff_is_idempotent_and_bound_to_intent(
+    tmp_path: Path,
+) -> None:
+    service, catalog, _ = _service(tmp_path)
+    owner = Principal(subject="owner")
+
+    first = service.create_handoff(
+        _command(),
+        principal=owner,
+        request_key="a" * 64,
+    )
+    replay = service.create_handoff(
+        _command(),
+        principal=owner,
+        request_key="a" * 64,
+    )
+
+    assert replay == first
+    assert first.status.state == UploadState.pending
+    assert first.status.maximum_bytes == 100
+    stored = catalog.get_upload_handoff_by_intent(first.status.intent_id)
+    assert stored is not None
+    assert stored.session_digest is None
+    assert first.capability not in stored.model_dump_json()
+    catalog.close()
+
+
+def test_handoff_rejects_tamper_wrong_intent_and_expiry(
+    tmp_path: Path,
+) -> None:
+    service, catalog, _ = _service(tmp_path)
+    handoff = service.create_handoff(
+        _command(),
+        principal=Principal(subject="owner"),
+        request_key="a" * 64,
+    )
+    tampered = handoff.capability[:-1] + ("A" if handoff.capability[-1] != "A" else "B")
+
+    with pytest.raises(ApplicationError) as invalid:
+        service.exchange_handoff(
+            handoff.status.intent_id,
+            capability=tampered,
+        )
+    assert invalid.value.detail.code == "upload_handoff_invalid"
+
+    with pytest.raises(ApplicationError) as wrong_intent:
+        service.exchange_handoff(
+            uuid4().hex,
+            capability=handoff.capability,
+        )
+    assert wrong_intent.value.detail.code == "upload_handoff_invalid"
+
+    with patch(
+        "vidxp.upload_service.utc_now",
+        return_value=handoff.expires_at + timedelta(seconds=1),
+    ):
+        with pytest.raises(ApplicationError) as expired:
+            service.exchange_handoff(
+                handoff.status.intent_id,
+                capability=handoff.capability,
+            )
+    assert expired.value.detail.code == "upload_handoff_expired"
+    catalog.close()
+
+
+def test_browser_session_grant_accepts_five_mib_and_rejects_replay(
+    tmp_path: Path,
+) -> None:
+    size = 5 * 1024 * 1024
+    service, catalog, _ = _service(tmp_path, quota=2 * size)
+    command = _command(size)
+    handoff = service.create_handoff(
+        command,
+        principal=Principal(subject="owner"),
+        request_key="a" * 64,
+    )
+    session = service.exchange_handoff(
+        handoff.status.intent_id,
+        capability=handoff.capability,
+    )
+    grant = service.issue_creation_grant(
+        handoff.status.intent_id,
+        session_token=session.session_token,
+    )
+
+    with pytest.raises(ApplicationError) as wrong_size:
+        service.accept_handoff_creation(
+            handoff.status.intent_id,
+            grant=grant.token,
+            byte_size=size + 1,
+        )
+    assert wrong_size.value.detail.code == "upload_creation_grant_invalid"
+
+    accepted = service.accept_handoff_creation(
+        handoff.status.intent_id,
+        grant=grant.token,
+        byte_size=size,
+    )
+    assert accepted.state == UploadState.accepted
+    page = service.browser_session(
+        handoff.status.intent_id,
+        session_token=session.session_token,
+    )
+    assert page.resume_url is None
+
+    with pytest.raises(ApplicationError) as replayed:
+        service.accept_handoff_creation(
+            handoff.status.intent_id,
+            grant=grant.token,
+            byte_size=size,
+        )
+    assert replayed.value.detail.code == "upload_handoff_replayed"
+
+    retry_grant = service.issue_creation_grant(
+        handoff.status.intent_id,
+        session_token=session.session_token,
+    )
+    retried = service.accept_handoff_creation(
+        handoff.status.intent_id,
+        grant=retry_grant.token,
+        byte_size=size,
+    )
+    assert retried.upload_id == accepted.upload_id
+
+    info_path = service.settings.quarantine_root / f"{accepted.upload_id}.info"
+    info_path.parent.mkdir(parents=True, exist_ok=True)
+    info_path.write_text("{}", encoding="utf-8")
+    resumed_page = service.browser_session(
+        handoff.status.intent_id,
+        session_token=session.session_token,
+    )
+    assert resumed_page.resume_url is not None
+    assert resumed_page.resume_url.endswith(accepted.upload_id or "")
+
+    with pytest.raises(ApplicationError) as already_created:
+        service.issue_creation_grant(
+            handoff.status.intent_id,
+            session_token=session.session_token,
+        )
+    assert already_created.value.detail.code == "upload_handoff_replayed"
+    catalog.close()
+
+
+def test_upload_status_projects_processing_failed_and_ready_actions(
+    tmp_path: Path,
+) -> None:
+    service, catalog, _ = _service(tmp_path)
+    created = service.create_intent(
+        _command(),
+        principal=Principal(subject="owner"),
+        request_key="a" * 64,
+    )
+
+    processing = service.status(
+        created.model_copy(
+            update={"state": UploadState.processing, "job_id": uuid4().hex}
+        )
+    )
+    assert processing.job_id is not None
+    assert "get_job" in processing.next_action
+
+    failed = service.status(
+        created.model_copy(update={"state": UploadState.failed, "job_id": uuid4().hex})
+    )
+    assert failed.job_id is not None
+    assert "get_job" in failed.next_action
+
+    ready = service.status(
+        created.model_copy(
+            update={
+                "state": UploadState.ready,
+                "job_id": uuid4().hex,
+                "media_id": uuid4().hex,
+            }
+        )
+    )
+    assert ready.media_id is not None
+    assert "start_indexing" in ready.next_action
     catalog.close()
 
 
@@ -311,9 +494,7 @@ def test_active_resumable_upload_is_not_expired(tmp_path: Path) -> None:
     catalog.create_upload_intent(record, quota_limit=100)
     service.settings.quarantine_root.mkdir(parents=True, exist_ok=True)
     (service.settings.quarantine_root / f"{upload_id}.info").write_text(
-        '{"MetaData":{"intent_id":"'
-        + record.intent_id
-        + '"},"Size":60,"Offset":10}',
+        '{"MetaData":{"intent_id":"' + record.intent_id + '"},"Size":60,"Offset":10}',
         encoding="utf-8",
     )
 

@@ -172,8 +172,7 @@ class DependencyUnavailableError(ApplicationError):
         super().__init__(
             "dependency_unavailable",
             ErrorCategory.unavailable,
-            f"Dependencies for the {label} capability are unavailable. "
-            f"{install_hint}",
+            f"Dependencies for the {label} capability are unavailable. {install_hint}",
             details={
                 "capabilities": list(capabilities),
                 "install_hint": install_hint,
@@ -192,9 +191,7 @@ class ModelUnavailableError(ApplicationError):
             f"`vidxp prepare --modalities {modality}` before retrying.",
             details={
                 "capability": capability,
-                "remediation": (
-                    f"vidxp prepare --modalities {modality}"
-                ),
+                "remediation": (f"vidxp prepare --modalities {modality}"),
             },
         )
 
@@ -213,8 +210,7 @@ class ModelDownloadError(ApplicationError):
         modality = capability.split(".", 1)[0]
         remediation = f"vidxp prepare --modalities {modality}"
         retry_message = (
-            "Partial files were kept and the next preparation attempt will "
-            "resume them."
+            "Partial files were kept and the next preparation attempt will resume them."
             if resumable
             else "The next preparation attempt will restart this file."
         )
@@ -311,9 +307,7 @@ class CapabilitySummary(ApplicationModel):
     supports_indexing: bool
     prepares_models: bool
     roles: tuple[CapabilityRole, ...] = ()
-    identity_mode: CapabilityIdentityMode = (
-        CapabilityIdentityMode.not_applicable
-    )
+    identity_mode: CapabilityIdentityMode = CapabilityIdentityMode.not_applicable
     provenance: CapabilityProvenance | None = None
 
 
@@ -414,6 +408,23 @@ class UploadIntent(ApplicationModel):
     media_id: MediaId | None = None
 
 
+class MediaUploadStatus(ApplicationModel):
+    """Actionable public projection of the shared upload intent state."""
+
+    intent_id: UploadIntentId
+    state: UploadState
+    original_filename: str = Field(min_length=1, max_length=255)
+    byte_size: int = Field(gt=0)
+    declared_mime_type: MimeType | None = None
+    maximum_bytes: int = Field(gt=0)
+    expires_at: AwareDatetime
+    transport: Literal["tus"] = "tus"
+    job_id: JobId | None = None
+    media_id: MediaId | None = None
+    status: str = Field(min_length=1, max_length=512)
+    next_action: str = Field(min_length=1, max_length=1024)
+
+
 class CreateIndexCommand(ApplicationModel):
     media_id: MediaId = Field(
         description=(
@@ -481,13 +492,8 @@ class CreateIndexCommand(ApplicationModel):
 
     @model_validator(mode="after")
     def _scene_sampling_requires_scene(self) -> "CreateIndexCommand":
-        if (
-            self.scene_sample_fps is not None
-            and "scene" not in self.modalities
-        ):
-            raise ValueError(
-                "scene_sample_fps requires the scene modality."
-            )
+        if self.scene_sample_fps is not None and "scene" not in self.modalities:
+            raise ValueError("scene_sample_fps requires the scene modality.")
         return self
 
 
@@ -504,9 +510,7 @@ class RemoveIndexCommand(ApplicationModel):
 
 
 class Artifact(ApplicationModel):
-    schema_version: Literal[ARTIFACT_SCHEMA_VERSION] = (
-        ARTIFACT_SCHEMA_VERSION
-    )
+    schema_version: Literal[ARTIFACT_SCHEMA_VERSION] = ARTIFACT_SCHEMA_VERSION
     artifact_id: ArtifactId
     media_id: MediaId
     generation_id: IndexGenerationId | None = None
@@ -537,9 +541,7 @@ class SnippetProfile(StrEnum):
 
 class CreateSnippetCommand(ApplicationModel):
     media_id: MediaId = Field(
-        description=(
-            "Source video ID, normally copied from a search or query result."
-        )
+        description=("Source video ID, normally copied from a search or query result.")
     )
     start_seconds: float = Field(
         ge=0,
@@ -596,9 +598,7 @@ class IndexStatusSummary(ApplicationModel):
     def _validate_media_id_window(self) -> "IndexStatusSummary":
         if self.media_count < len(self.media_ids):
             raise ValueError("media_count must cover every returned media ID")
-        if self.media_ids_truncated != (
-            self.media_count > len(self.media_ids)
-        ):
+        if self.media_ids_truncated != (self.media_count > len(self.media_ids)):
             raise ValueError(
                 "media_ids_truncated must reflect the returned media-ID window"
             )
@@ -623,9 +623,7 @@ class WorkspaceMediaCapability(ApplicationModel):
         default=(),
         description="Capability roles currently usable for this media item.",
     )
-    identity_mode: CapabilityIdentityMode = (
-        CapabilityIdentityMode.not_applicable
-    )
+    identity_mode: CapabilityIdentityMode = CapabilityIdentityMode.not_applicable
 
 
 class WorkspaceMedia(ApplicationModel):
@@ -723,9 +721,7 @@ class SearchHit(ApplicationModel):
 
         inspect(value)
         if forbidden:
-            raise ValueError(
-                "Search metadata contains internal location fields."
-            )
+            raise ValueError("Search metadata contains internal location fields.")
         return value
 
     @model_validator(mode="after")
@@ -749,17 +745,11 @@ class SearchResult(ApplicationModel):
         return self.model_dump(mode="json")
 
     def to_prediction(self) -> dict[str, list[dict[str, Any]]]:
-        return {
-            self.query_id: [
-                hit.model_dump(mode="json") for hit in self.hits
-            ]
-        }
+        return {self.query_id: [hit.model_dump(mode="json") for hit in self.hits]}
 
 
 class FusionProvenance(ApplicationModel):
-    profile: Literal[FusionProfile.reciprocal_rank] = (
-        FusionProfile.reciprocal_rank
-    )
+    profile: Literal[FusionProfile.reciprocal_rank] = FusionProfile.reciprocal_rank
     rank_constant: int = Field(default=60, gt=0)
     overlap_rule: Literal["connected_intervals"] = "connected_intervals"
     requested_modalities: tuple[Identifier, ...] = ()
@@ -972,9 +962,7 @@ class QueryAnswer(ApplicationModel):
     def _validate_answer_grounding(self) -> "QueryAnswer":
         evidence_ids = {item.evidence_id for item in self.evidence}
         cited_ids = {
-            evidence_id
-            for claim in self.claims
-            for evidence_id in claim.evidence_ids
+            evidence_id for claim in self.claims for evidence_id in claim.evidence_ids
         }
         if not cited_ids.issubset(evidence_ids):
             raise ValueError("Every claim citation must resolve to evidence.")
@@ -1113,9 +1101,7 @@ JobResult = Annotated[
 
 
 class JobProgress(ApplicationModel):
-    schema_version: Literal[JOB_PROGRESS_SCHEMA_VERSION] = (
-        JOB_PROGRESS_SCHEMA_VERSION
-    )
+    schema_version: Literal[JOB_PROGRESS_SCHEMA_VERSION] = JOB_PROGRESS_SCHEMA_VERSION
     stage: str = Field(min_length=1, max_length=128)
     message: str = Field(min_length=1, max_length=512)
     current: int | None = Field(default=None, ge=0)
@@ -1150,9 +1136,7 @@ class Job(ApplicationModel):
     def _validate_terminal_payload(self) -> "Job":
         if self.state == JobState.succeeded:
             if self.result is None or self.error is not None:
-                raise ValueError(
-                    "succeeded jobs require a result and no error"
-                )
+                raise ValueError("succeeded jobs require a result and no error")
             if self.result.kind != self.kind:
                 raise ValueError("job result kind must match job kind")
         elif self.result is not None:

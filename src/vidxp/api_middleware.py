@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import re
+from urllib.parse import urlsplit
+
 from fastapi.security.utils import get_authorization_scheme_param
 from starlette.concurrency import run_in_threadpool
-from starlette.datastructures import Headers
+from starlette.datastructures import Headers, MutableHeaders
 from starlette.exceptions import HTTPException
 from starlette.middleware.cors import CORSMiddleware, SAFELISTED_HEADERS
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -18,6 +21,41 @@ from vidxp.authentication import Authenticator
 
 PUBLIC_HTTP_PATHS = frozenset({"/favicon.ico", "/health", "/ready"})
 UPLOAD_PATH = "/api/v1/media"
+_UPLOAD_HANDOFF_PAGE = re.compile(r"^/upload-handoff/[0-9a-f]{32}$")
+_UPLOAD_HANDOFF_STATUS = re.compile(r"^/upload-handoff/[0-9a-f]{32}/status$")
+_UPLOAD_HANDOFF_BOOTSTRAP = re.compile(r"^/upload-handoff/[0-9a-f]{32}/bootstrap$")
+_UPLOAD_HANDOFF_GRANT = re.compile(r"^/upload-handoff/[0-9a-f]{32}/creation-grant$")
+_UPLOAD_HANDOFF_ASSETS = frozenset(
+    {
+        "/upload-handoff/assets/upload-page.js",
+        "/upload-handoff/assets/upload-page.css",
+        "/upload-handoff/assets/THIRD_PARTY_NOTICES.txt",
+    }
+)
+
+
+def _public_upload_handoff_request(scope: Scope) -> bool:
+    path = str(scope.get("path", ""))
+    method = str(scope.get("method", "")).upper()
+    return (
+        method == "GET"
+        and (
+            path in _UPLOAD_HANDOFF_ASSETS
+            or _UPLOAD_HANDOFF_PAGE.fullmatch(path) is not None
+            or _UPLOAD_HANDOFF_STATUS.fullmatch(path) is not None
+        )
+    ) or (
+        method == "POST"
+        and (
+            _UPLOAD_HANDOFF_BOOTSTRAP.fullmatch(path) is not None
+            or _UPLOAD_HANDOFF_GRANT.fullmatch(path) is not None
+        )
+    )
+
+
+def _upload_handoff_path(scope: Scope) -> bool:
+    path = str(scope.get("path", ""))
+    return path == "/upload-handoff" or path.startswith("/upload-handoff/")
 
 
 class RequestBodyTooLarge(HTTPException, OSError):
@@ -79,10 +117,7 @@ class ApiCORSMiddleware:
         receive: Receive,
         send: Send,
     ) -> None:
-        if (
-            scope["type"] == "http"
-            and str(scope.get("path", "")).startswith("/api/")
-        ):
+        if scope["type"] == "http" and str(scope.get("path", "")).startswith("/api/"):
             headers = Headers(scope=scope)
             origin = headers.get("origin")
             requested_method = headers.get("access-control-request-method")
@@ -95,10 +130,7 @@ class ApiCORSMiddleware:
                     ).split(",")
                     if value.strip()
                 }
-                if (
-                    "*" not in self.allow_origins
-                    and origin not in self.allow_origins
-                ):
+                if "*" not in self.allow_origins and origin not in self.allow_origins:
                     await public_error_response(
                         ErrorDetail(
                             code="cors_origin_forbidden",
@@ -148,11 +180,7 @@ class TypedTrustedHostMiddleware:
             return
         host = _host_name(Headers(scope=scope).get("host", ""))
         if any(
-            host == pattern
-            or (
-                pattern.startswith("*.")
-                and host.endswith(pattern[1:])
-            )
+            host == pattern or (pattern.startswith("*.") and host.endswith(pattern[1:]))
             for pattern in self.allowed_hosts
         ):
             await self.app(scope, receive, send)
@@ -174,10 +202,7 @@ def _host_name(header: str) -> str:
         if closing < 0:
             return ""
         remainder = value[closing + 1 :]
-        if remainder and (
-            not remainder.startswith(":")
-            or not remainder[1:].isdigit()
-        ):
+        if remainder and (not remainder.startswith(":") or not remainder[1:].isdigit()):
             return ""
         return value[1:closing]
     if value.count(":") == 1:
@@ -208,6 +233,7 @@ class BearerAuthenticationMiddleware:
         if (
             scope["type"] != "http"
             or str(scope.get("path", "")) in PUBLIC_HTTP_PATHS
+            or _public_upload_handoff_request(scope)
             or str(scope.get("path", "")) in self.delegated_paths
         ):
             await self.app(scope, receive, send)
@@ -229,6 +255,54 @@ class BearerAuthenticationMiddleware:
             return
         scope["vidxp.principal"] = principal
         await self.app(scope, receive, send)
+
+
+class UploadHandoffSecurityHeadersMiddleware:
+    """Apply a no-store browser boundary to the exact handoff subtree."""
+
+    def __init__(self, app: ASGIApp, *, upload_endpoint: str | None) -> None:
+        self.app = app
+        origin = None
+        if upload_endpoint is not None:
+            parsed = urlsplit(upload_endpoint)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+        connect_sources = "'self'" if origin is None else f"'self' {origin}"
+        self.headers = {
+            "Cache-Control": "private, no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Resource-Policy": "same-origin",
+            "Permissions-Policy": (
+                "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+            ),
+            "Content-Security-Policy": (
+                "default-src 'none'; script-src 'self'; style-src 'self'; "
+                f"connect-src {connect_sources}; img-src 'self' data:; "
+                "font-src 'self'; object-src 'none'; base-uri 'none'; "
+                "form-action 'none'; frame-ancestors 'none'; worker-src 'none'"
+            ),
+        }
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        if scope["type"] != "http" or not _upload_handoff_path(scope):
+            await self.app(scope, receive, send)
+            return
+
+        async def add_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for name, value in self.headers.items():
+                    headers[name] = value
+            await send(message)
+
+        await self.app(scope, receive, add_headers)
 
 
 class RequestBodyLimitMiddleware:

@@ -55,25 +55,73 @@ class UploadIntentRecord(BaseModel):
             raise ValueError("upload expiry must follow creation")
         if self.state == UploadState.pending and self.upload_id is not None:
             raise ValueError("pending uploads cannot have an upload identifier")
-        if self.state in {
-            UploadState.accepted,
-            UploadState.processing,
-            UploadState.failed,
-        } and self.upload_id is None:
+        if (
+            self.state
+            in {
+                UploadState.accepted,
+                UploadState.processing,
+                UploadState.failed,
+            }
+            and self.upload_id is None
+        ):
             raise ValueError(f"{self.state} uploads require an upload identifier")
-        if self.state in {
-            UploadState.processing,
-            UploadState.failed,
-            UploadState.ready,
-        } and self.job_id is None:
+        if (
+            self.state
+            in {
+                UploadState.processing,
+                UploadState.failed,
+                UploadState.ready,
+            }
+            and self.job_id is None
+        ):
             raise ValueError(f"{self.state} uploads require a job identifier")
-        if self.state in {
-            UploadState.pending,
-            UploadState.accepted,
-        } and self.job_id is not None:
+        if (
+            self.state
+            in {
+                UploadState.pending,
+                UploadState.accepted,
+            }
+            and self.job_id is not None
+        ):
             raise ValueError(f"{self.state} uploads cannot have a job identifier")
         if self.state == UploadState.ready and self.media_id is None:
             raise ValueError("ready uploads require a media identifier")
         if self.media_id is not None and self.state != UploadState.ready:
             raise ValueError("only ready uploads may reference media")
+        return self
+
+
+class UploadHandoffRecord(BaseModel):
+    """Transport authorization state for one existing upload intent."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        allow_inf_nan=False,
+    )
+
+    selector: str = Field(pattern=r"^[0-9a-f]{32}$")
+    intent_id: Uuid4Hex
+    repository_binding: str = Field(pattern=r"^[0-9a-f]{64}$")
+    byte_size: int = Field(gt=0)
+    created_at: AwareDatetime
+    expires_at: AwareDatetime
+    session_digest: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    creation_grant_digest: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    creation_grant_expires_at: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def _validate_handoff(self) -> "UploadHandoffRecord":
+        if self.expires_at <= self.created_at:
+            raise ValueError("handoff expiry must follow creation")
+        if (self.creation_grant_digest is None) != (
+            self.creation_grant_expires_at is None
+        ):
+            raise ValueError("creation grant digest and expiry must be stored together")
         return self

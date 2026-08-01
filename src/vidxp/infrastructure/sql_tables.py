@@ -85,6 +85,26 @@ upload_intents = Table(
     ),
 )
 
+upload_handoffs = Table(
+    "upload_handoffs",
+    metadata,
+    Column("selector", String(32), primary_key=True),
+    Column(
+        "intent_id",
+        String(32),
+        ForeignKey("upload_intents.intent_id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    ),
+    Column("repository_binding", String(64), nullable=False),
+    Column("byte_size", BigInteger, nullable=False),
+    Column("created_at", Text, nullable=False),
+    Column("expires_at", Text, nullable=False),
+    Column("session_digest", String(64), nullable=True),
+    Column("creation_grant_digest", String(64), nullable=True),
+    Column("creation_grant_expires_at", Text, nullable=True),
+)
+
 upload_quota = Table(
     "upload_quota",
     metadata,

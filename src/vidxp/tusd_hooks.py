@@ -45,14 +45,14 @@ def _status(error: ApplicationError) -> int:
     }.get(error.detail.category, 500)
 
 
-def _bearer(request) -> str | None:
+def _authorization(request) -> tuple[str, str] | None:
     values = request.header("authorization")
     if len(values) != 1:
         return None
     scheme, separator, token = values[0].partition(" ")
-    if separator != " " or scheme.lower() != "bearer" or not token:
+    if separator != " " or not scheme or not token:
         return None
-    return token
+    return scheme.lower(), token
 
 
 class TusdHookService:
@@ -105,15 +105,28 @@ class TusdHookService:
                 ErrorCategory.validation,
                 "Deferred-length and concatenated uploads are not supported.",
             )
-        principal = self.authorization.require(
-            self.authenticator.authenticate(_bearer(hook.event.request)),
-            RepositoryPermission.write,
-        )
-        record = self.uploads.accept_creation(
-            upload.metadata["intent_id"],
-            principal=principal,
-            byte_size=upload.size,
-        )
+        authorization = _authorization(hook.event.request)
+        if authorization is not None and authorization[0] == "vidxp-handoff":
+            record = self.uploads.accept_handoff_creation(
+                upload.metadata["intent_id"],
+                grant=authorization[1],
+                byte_size=upload.size,
+            )
+        else:
+            bearer = (
+                authorization[1]
+                if authorization is not None and authorization[0] == "bearer"
+                else None
+            )
+            principal = self.authorization.require(
+                self.authenticator.authenticate(bearer),
+                RepositoryPermission.write,
+            )
+            record = self.uploads.accept_creation(
+                upload.metadata["intent_id"],
+                principal=principal,
+                byte_size=upload.size,
+            )
         assert record.upload_id is not None
         return TusdHookResponse(
             change_file_info=TusdChangeFileInfo(upload_id=record.upload_id)

@@ -12,6 +12,8 @@ x-vidxp-environment: &vidxp-environment
   VIDXP_UPLOAD_PUBLIC_ENDPOINT: ${VIDXP_UPLOAD_PUBLIC_ENDPOINT:?Set the public tusd endpoint ending in /uploads/}
   VIDXP_UPLOAD_INTERNAL_ENDPOINT: http://tusd:8080/uploads/
   VIDXP_UPLOAD_CLEANUP_TOKEN: ${VIDXP_UPLOAD_CLEANUP_TOKEN:?Set a cleanup token of at least 32 characters}
+  VIDXP_UPLOAD_HANDOFF_PUBLIC_URL: ${VIDXP_UPLOAD_HANDOFF_PUBLIC_URL:?Set the HTTPS VidXP URL ending in /upload-handoff}
+  VIDXP_UPLOAD_HANDOFF_SECRET: ${VIDXP_UPLOAD_HANDOFF_SECRET:?Set a dedicated handoff secret of at least 32 characters}
   VIDXP_UPLOAD_QUARANTINE_ROOT: /var/lib/vidxp/uploads
   VIDXP_UPLOAD_MAX_BYTES: ${VIDXP_UPLOAD_MAX_BYTES:-53687091200}
   VIDXP_UPLOAD_QUOTA_BYTES: ${VIDXP_UPLOAD_QUOTA_BYTES:-107374182400}
@@ -180,6 +182,7 @@ services:
       - -hooks-http-backoff=1s
       - -cors-allow-origin=${VIDXP_UPLOAD_CORS_ORIGIN_REGEX:?Set an anchored browser-origin regex}
       - -cors-allow-headers=Authorization
+      - -cors-expose-headers=X-VidXP-Error
       - -cors-max-age=600
       - -network-timeout=60s
       - -shutdown-timeout=30s

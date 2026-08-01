@@ -325,6 +325,24 @@ Remote upload is a four-stage protocol:
 4. The non-blocking `post-finish` hook idempotently upserts completion by upload ID
    and enqueues the durable ffprobe/import workflow.
 
+Remote MCP adds a user-completable handoff in front of the same protocol. The
+`create_media_upload` write tool idempotently creates the authoritative upload
+intent and returns an HTTPS page whose fragment contains a short-lived HMAC
+capability bound to that intent, repository, declared size, purpose, version,
+and expiry. The page exchanges the fragment for a digest-backed `HttpOnly`,
+`Secure`, `SameSite=Strict` cookie, then requests a separate one-time creation
+grant for the exact tus `POST`. Neither the raw handoff capability nor session
+secret is stored, and the user's MCP bearer is never exposed to the browser.
+The existing bearer-authenticated HTTP/tus route remains available.
+
+The packaged page uses Uppy Core, Tus, and Golden Retriever with native controls.
+It validates the expected filename and byte size, limits tus metadata to the
+intent identifier, supports progress/pause/resume/retry, and recovers interrupted
+uploads from browser storage. It does not choose a tus chunk size, so a few-MiB
+file follows the same resumable path rather than a separate MCP or small-upload
+path. Scripts and styles are self-hosted under a strict CSP; the handoff API is
+same-origin and tus CORS remains restricted to configured origins.
+
 Application responses carrying upload URLs use `private, no-store` and
 `no-referrer`; hook payloads and MCP results do not persist them. The opaque path is
 still a bearer credential and may appear in an upstream proxy's access log unless
@@ -372,7 +390,8 @@ ffprobe validation.
 Remote MCP workflow:
 
 ```text
-HTTP upload/import service -> media_id -> MCP start_indexing(media_id)
+MCP create_media_upload -> user HTTPS page -> direct tus upload
+MCP get_media_upload -> media_id -> MCP start_indexing(media_id)
 ```
 
 MCP does not carry video bytes, base64 video, or arbitrary server paths. Stdio may
@@ -917,6 +936,8 @@ Initial curated tools:
 - `get_capability`
 - `list_media`
 - `get_media`
+- `create_media_upload`
+- `get_media_upload`
 - `get_index_status`
 - `start_indexing`
 - `search_moments`

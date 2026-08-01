@@ -13,6 +13,68 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PackagingTests(unittest.TestCase):
+    def test_upload_page_assets_are_pinned_self_hosted_and_packaged(self):
+        package = json.loads(
+            (ROOT / "web" / "upload-page" / "package.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            package["dependencies"],
+            {
+                "@uppy/core": "5.2.0",
+                "@uppy/golden-retriever": "5.2.1",
+                "@uppy/tus": "5.1.1",
+            },
+        )
+        self.assertEqual(package["devDependencies"], {"esbuild": "0.28.1"})
+
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertIn(
+            "assets/upload_page/*",
+            project["tool"]["setuptools"]["package-data"]["vidxp"],
+        )
+        manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+        self.assertIn("prune web/upload-page/node_modules", manifest)
+        self.assertNotIn("recursive-include web/upload-page", manifest)
+        assets = ROOT / "src" / "vidxp" / "assets" / "upload_page"
+        expected = {
+            "index.html",
+            "upload-page.js",
+            "upload-page.css",
+            "THIRD_PARTY_NOTICES.txt",
+        }
+        self.assertEqual(
+            {path.name for path in assets.iterdir() if path.is_file()},
+            expected,
+        )
+        html = (assets / "index.html").read_text(encoding="utf-8")
+        self.assertIn("./assets/upload-page.js", html)
+        self.assertIn("./assets/upload-page.css", html)
+        self.assertNotRegex(html, r"https?://")
+
+        source = (ROOT / "web" / "upload-page" / "src" / "app.js").read_text(
+            encoding="utf-8"
+        )
+        for contract in (
+            "allowedMetaFields: ['intent_id']",
+            "parallelUploads: 1",
+            "overridePatchMethod: false",
+            "uploadDataDuringCreation: false",
+            "withCredentials: false",
+            "removeFingerprintOnSuccess: true",
+            "VidXP-Handoff",
+            "pauseResume",
+            "retryUpload",
+            "history.replaceState",
+        ):
+            self.assertIn(contract, source)
+        self.assertNotIn("8 * 1024 * 1024", source)
+        self.assertNotIn("innerHTML", source)
+        self.assertNotIn("outerHTML", source)
+        self.assertIn(
+            "tus-js-client@4.3.1",
+            (assets / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8"),
+        )
+
     def test_canonical_icon_is_packaged_and_desktop_derivatives_are_wired(self):
         icon = ROOT / "docs" / "images" / "logo.png"
         self.assertTrue(icon.is_file())
@@ -22,9 +84,7 @@ class PackagingTests(unittest.TestCase):
             "include docs/images/logo.png",
             (ROOT / "MANIFEST.in").read_text(encoding="utf-8"),
         )
-        project = tomllib.loads(
-            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        )
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         self.assertEqual(
             project["project"]["urls"]["Homepage"],
             "https://github.com/grayhatdevelopers/vidxp",
@@ -60,16 +120,14 @@ class PackagingTests(unittest.TestCase):
                 "--output src-tauri/icons"
             ),
         )
-        sync_script = (
-            ROOT / "desktop" / "scripts" / "sync-branding.mjs"
-        ).read_text(encoding="utf-8")
+        sync_script = (ROOT / "desktop" / "scripts" / "sync-branding.mjs").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("../docs/images/logo.png", sync_script)
         self.assertIn("web/icon.png", sync_script)
         self.assertIn(
             'href="icon.png"',
-            (ROOT / "desktop" / "web" / "index.html").read_text(
-                encoding="utf-8"
-            ),
+            (ROOT / "desktop" / "web" / "index.html").read_text(encoding="utf-8"),
         )
 
     def test_cpu_lock_uses_explicit_pytorch_index_without_cuda_packages(self):
@@ -78,14 +136,14 @@ class PackagingTests(unittest.TestCase):
 
         self.assertIn("https://download.pytorch.org/whl/cpu", lock)
         self.assertNotIn('name = "nvidia-', lock)
-        self.assertIn('explicit = true', project)
+        self.assertIn("explicit = true", project)
         self.assertIn("sys_platform == 'linux'", project)
         self.assertIn("sys_platform == 'win32'", project)
 
     def test_publishable_metadata_contains_no_direct_url_requirements(self):
-        project = tomllib.loads(
-            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        )["project"]
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+            "project"
+        ]
         requirements = list(project["dependencies"])
         requirements.extend(
             line.strip()
@@ -141,9 +199,9 @@ class PackagingTests(unittest.TestCase):
         )
         self.assertIn(
             "chromadb-client",
-            (
-                ROOT / "src" / "vidxp" / "requirements" / "server-storage.txt"
-            ).read_text(encoding="utf-8"),
+            (ROOT / "src" / "vidxp" / "requirements" / "server-storage.txt").read_text(
+                encoding="utf-8"
+            ),
         )
         self.assertNotIn("benchmarks/requirements.txt", all_block)
         self.assertNotIn("requirements/frontend.txt", all_block)
@@ -178,9 +236,9 @@ class PackagingTests(unittest.TestCase):
             '"src/vidxp/requirements/mcp.txt"',
             pyproject,
         )
-        server = (
-            ROOT / "src" / "vidxp" / "requirements" / "server.txt"
-        ).read_text(encoding="utf-8")
+        server = (ROOT / "src" / "vidxp" / "requirements" / "server.txt").read_text(
+            encoding="utf-8"
+        )
         for distribution in (
             "chromadb",
             "faster-whisper",
@@ -222,9 +280,7 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn("httpx2", test_requirements)
 
     def test_optional_ollama_profile_never_pulls_a_model_implicitly(self):
-        compose = (ROOT / "compose.coolify.yaml").read_text(
-            encoding="utf-8"
-        )
+        compose = (ROOT / "compose.coolify.yaml").read_text(encoding="utf-8")
 
         self.assertIn(
             "ollama/ollama:0.32.5@sha256:"
@@ -243,33 +299,24 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn("ollama pull", compose.lower())
 
     def test_desktop_manifest_matches_published_package_contract(self):
-        project = tomllib.loads(
-            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        )
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         self.assertEqual(
             project["project"]["scripts"]["vidxp"],
             "vidxp.entrypoint:main",
         )
         manifest = json.loads(
-            (ROOT / "desktop" / "runtime-manifest.json").read_text(
-                encoding="utf-8"
-            )
+            (ROOT / "desktop" / "runtime-manifest.json").read_text(encoding="utf-8")
         )
         package = json.loads(
             (ROOT / "desktop" / "package.json").read_text(encoding="utf-8")
         )
         tauri = json.loads(
-            (
-                ROOT
-                / "desktop"
-                / "src-tauri"
-                / "tauri.conf.json"
-            ).read_text(encoding="utf-8")
+            (ROOT / "desktop" / "src-tauri" / "tauri.conf.json").read_text(
+                encoding="utf-8"
+            )
         )
         cargo = tomllib.loads(
-            (
-                ROOT / "desktop" / "src-tauri" / "Cargo.toml"
-            ).read_text(encoding="utf-8")
+            (ROOT / "desktop" / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8")
         )
 
         self.assertEqual(manifest["package_name"], project["project"]["name"])
@@ -284,9 +331,9 @@ class PackagingTests(unittest.TestCase):
             tauri["bundle"]["windows"]["nsis"]["installerHooks"],
             "nsis-hooks.nsh",
         )
-        nsis_hooks = (
-            ROOT / "desktop" / "src-tauri" / "nsis-hooks.nsh"
-        ).read_text(encoding="utf-8")
+        nsis_hooks = (ROOT / "desktop" / "src-tauri" / "nsis-hooks.nsh").read_text(
+            encoding="utf-8"
+        )
         self.assertIn(
             r"$LOCALAPPDATA\Programs\${PRODUCTNAME}",
             nsis_hooks,
@@ -334,9 +381,7 @@ class PackagingTests(unittest.TestCase):
             "release-please-config.json",
             "release-please-config.stable.json",
         ):
-            config = json.loads(
-                (ROOT / filename).read_text(encoding="utf-8")
-            )
+            config = json.loads((ROOT / filename).read_text(encoding="utf-8"))
             self.assertNotIn("group-pull-request-title-pattern", config)
             linked_versions = [
                 plugin
@@ -364,9 +409,7 @@ class PackagingTests(unittest.TestCase):
             self.assertIn("src-tauri/Cargo.lock", generic_files, filename)
 
         stable = json.loads(
-            (ROOT / "release-please-config.stable.json").read_text(
-                encoding="utf-8"
-            )
+            (ROOT / "release-please-config.stable.json").read_text(encoding="utf-8")
         )
         beta_manifest_updates = {
             (entry["path"], entry.get("jsonpath"))
@@ -383,35 +426,29 @@ class PackagingTests(unittest.TestCase):
         )
 
         manifest = json.loads(
-            (ROOT / "desktop" / "runtime-manifest.json").read_text(
-                encoding="utf-8"
-            )
+            (ROOT / "desktop" / "runtime-manifest.json").read_text(encoding="utf-8")
         )
         package = json.loads(
             (ROOT / "desktop" / "package.json").read_text(encoding="utf-8")
         )
         cargo = tomllib.loads(
-            (
-                ROOT / "desktop" / "src-tauri" / "Cargo.toml"
-            ).read_text(encoding="utf-8")
+            (ROOT / "desktop" / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8")
         )
         version_file = (
-            ROOT / "desktop" / "VERSION"
-        ).read_text(encoding="utf-8").strip()
+            (ROOT / "desktop" / "VERSION").read_text(encoding="utf-8").strip()
+        )
         self.assertEqual(version_file, manifest["desktop_version"])
         self.assertEqual(version_file, package["version"])
         self.assertEqual(version_file, cargo["package"]["version"])
         self.assertIn(
             f'version = "{version_file}" # x-release-please-version',
-            (
-                ROOT / "desktop" / "src-tauri" / "Cargo.toml"
-            ).read_text(encoding="utf-8"),
+            (ROOT / "desktop" / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8"),
         )
         self.assertNotIn(
             f"vidxp=={version_file}",
-            (
-                ROOT / "desktop" / "src-tauri" / "src" / "lib.rs"
-            ).read_text(encoding="utf-8"),
+            (ROOT / "desktop" / "src-tauri" / "src" / "lib.rs").read_text(
+                encoding="utf-8"
+            ),
         )
 
         build_command = "bash utils/build_package.sh"
@@ -445,9 +482,9 @@ class PackagingTests(unittest.TestCase):
             "publish-desktop.yml": 4,
         }
         for workflow, expected in publisher_repo_flags.items():
-            contents = (
-                ROOT / ".github" / "workflows" / workflow
-            ).read_text(encoding="utf-8")
+            contents = (ROOT / ".github" / "workflows" / workflow).read_text(
+                encoding="utf-8"
+            )
             self.assertEqual(
                 contents.count('--repo "$GITHUB_REPOSITORY"'),
                 expected,
@@ -466,23 +503,23 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn("--latest", core_publish)
 
         for workflow in ("ci.yml", "desktop.yml", "security.yml"):
-            contents = (
-                ROOT / ".github" / "workflows" / workflow
-            ).read_text(encoding="utf-8")
+            contents = (ROOT / ".github" / "workflows" / workflow).read_text(
+                encoding="utf-8"
+            )
             self.assertIn("      - release", contents, workflow)
             self.assertIn("github.base_ref != 'release'", contents, workflow)
             self.assertIn("github.head_ref != 'main'", contents, workflow)
-        desktop_ci = (
-            ROOT / ".github" / "workflows" / "desktop.yml"
-        ).read_text(encoding="utf-8")
+        desktop_ci = (ROOT / ".github" / "workflows" / "desktop.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn(
             "!startsWith(github.head_ref, 'release-please--branches--')",
             desktop_ci,
         )
 
-        promotion = (
-            ROOT / ".github" / "workflows" / "promotion-pr.yml"
-        ).read_text(encoding="utf-8")
+        promotion = (ROOT / ".github" / "workflows" / "promotion-pr.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('"$status" == "diverged"', promotion)
         synchronization = (
             ROOT / ".github" / "workflows" / "sync-channels.yml"
@@ -501,9 +538,9 @@ class PackagingTests(unittest.TestCase):
         )
 
     def test_windows_release_binary_uses_the_gui_subsystem(self):
-        main = (
-            ROOT / "desktop" / "src-tauri" / "src" / "main.rs"
-        ).read_text(encoding="utf-8")
+        main = (ROOT / "desktop" / "src-tauri" / "src" / "main.rs").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn(
             '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]',

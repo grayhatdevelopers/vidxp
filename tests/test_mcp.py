@@ -6,10 +6,12 @@ import json
 import socket
 import sys
 import unittest
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock
+from urllib.parse import urlsplit
 
 import httpx2
 import uvicorn
@@ -32,6 +34,7 @@ from vidxp.application_models import (
     JobQueue,
     JobState,
     MediaPage,
+    MediaUploadStatus,
     Principal,
     QueryVideoCommand,
     WorkspaceOverview,
@@ -52,17 +55,40 @@ from vidxp.branding import (
 from vidxp.composition import HttpApplicationContext
 from vidxp.control_plane import ControlPlaneApplication
 from vidxp.core.artifacts import ArtifactKind, ArtifactState
+from vidxp.core.uploads import UploadState
 from vidxp.job_service import JobService
 from vidxp.mcp import VidXPTokenVerifier, create_mcp_server
 from vidxp.mcp_cli import main as mcp_main
 from vidxp.mcp_cli import stdio_client_config
 from vidxp.ports import LocalFileResource
 from vidxp.settings import VidXPSettings
+from vidxp.upload_service import RemoteUploadService, UploadHandoff
 
 
 MEDIA_ID = "123456781234423481234567890abcde"
 JOB_ID = "223456781234423481234567890abcde"
 ARTIFACT_ID = "323456781234423481234567890abcde"
+MCP_TOOL_NAMES = [
+    "get_workspace",
+    "list_capabilities",
+    "get_capability",
+    "get_runtime_readiness",
+    "list_media",
+    "get_media",
+    "create_media_upload",
+    "get_media_upload",
+    "get_index_status",
+    "start_indexing",
+    "prepare_models",
+    "search_moments",
+    "query_video",
+    "create_clip",
+    "get_artifact_download",
+    "list_jobs",
+    "get_job",
+    "retry_job",
+    "cancel_job",
+]
 
 
 def queued_job() -> Job:
@@ -121,6 +147,31 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             settings=settings,
         )
 
+    def upload_context(
+        self,
+        root: Path,
+    ) -> tuple[HttpApplicationContext, Mock]:
+        context = self.context(root)
+        settings = VidXPSettings(
+            repository_root=root,
+            runtime_backend="cpu",
+            upload_public_endpoint="https://uploads.example/uploads/",
+            upload_internal_endpoint="http://tusd:8080/uploads/",
+            upload_cleanup_token="c" * 32,
+            upload_handoff_public_url=("https://vidxp.example/upload-handoff"),
+            upload_handoff_secret="h" * 32,
+        )
+        uploads = Mock(spec=RemoteUploadService)
+        return (
+            replace(
+                context,
+                settings=settings,
+                authenticator=create_authenticator(settings),
+                uploads=uploads,
+            ),
+            uploads,
+        )
+
     async def test_curated_tools_have_structured_output_schemas(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
@@ -137,41 +188,158 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [tool.name for tool in discovered.tools],
-            [
-                "get_workspace",
-                "list_capabilities",
-                "get_capability",
-                "get_runtime_readiness",
-                "list_media",
-                "get_media",
-                "get_index_status",
-                "start_indexing",
-                "prepare_models",
-                "search_moments",
-                "query_video",
-                "create_clip",
-                "get_artifact_download",
-                "list_jobs",
-                "get_job",
-                "retry_job",
-                "cancel_job",
-            ],
+            MCP_TOOL_NAMES,
         )
         self.assertTrue(
             all(tool.output_schema is not None for tool in discovered.tools)
         )
         tools = {tool.name: tool for tool in discovered.tools}
+        self.assertFalse(tools["create_media_upload"].annotations.read_only_hint)
+        self.assertTrue(tools["create_media_upload"].annotations.idempotent_hint)
+        self.assertTrue(tools["get_media_upload"].annotations.read_only_hint)
+        upload_properties = tools["create_media_upload"].input_schema["$defs"][
+            "CreateUploadIntentCommand"
+        ]["properties"]
+        self.assertEqual(
+            set(upload_properties),
+            {"original_filename", "byte_size", "declared_mime_type"},
+        )
+        serialized_upload_schema = json.dumps(
+            tools["create_media_upload"].input_schema
+        ).lower()
+        for forbidden in (
+            '"base64"',
+            '"blob"',
+            '"chunk"',
+            '"chunks"',
+            '"content"',
+            '"data"',
+        ):
+            self.assertNotIn(forbidden, serialized_upload_schema)
         for name in ("search_moments", "query_video"):
             schema = tools[name].input_schema
             command_ref = schema["properties"]["command"]["$ref"]
             command_name = command_ref.rsplit("/", 1)[-1]
-            media_description = schema["$defs"][command_name]["properties"][
-                "media_id"
-            ]["description"]
+            media_description = schema["$defs"][command_name]["properties"]["media_id"][
+                "description"
+            ]
             self.assertIn("omit it", media_description)
             self.assertIn("active index snapshot", media_description)
         self.assertEqual(result.structured_content, {"items": []})
         self.assertFalse(result.is_error)
+
+    async def test_media_upload_tools_return_bounded_idempotent_handoff(self):
+        with TemporaryDirectory() as directory:
+            context, uploads = self.upload_context(Path(directory))
+            now = datetime.now(timezone.utc)
+            status = MediaUploadStatus(
+                intent_id=MEDIA_ID,
+                state=UploadState.pending,
+                original_filename="sample.mp4",
+                byte_size=5 * 1024 * 1024,
+                declared_mime_type="video/mp4",
+                maximum_bytes=50 * 1024 * 1024 * 1024,
+                expires_at=now + timedelta(hours=24),
+                status="Waiting for the expected video to be selected.",
+                next_action="Open the upload page.",
+            )
+            uploads.create_handoff.return_value = UploadHandoff(
+                status=status,
+                capability="v1.selector.signature",
+                expires_at=now + timedelta(minutes=15),
+            )
+            uploads.get_status.return_value = status
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"*"}),
+                ),
+            )
+            arguments = {
+                "command": {
+                    "original_filename": "sample.mp4",
+                    "byte_size": 5 * 1024 * 1024,
+                    "declared_mime_type": "video/mp4",
+                },
+                "idempotency_key": "agent-upload-0001",
+            }
+            async with Client(server) as client:
+                first = await client.call_tool(
+                    "create_media_upload",
+                    arguments,
+                )
+                second = await client.call_tool(
+                    "create_media_upload",
+                    arguments,
+                )
+                current = await client.call_tool(
+                    "get_media_upload",
+                    {"intent_id": MEDIA_ID},
+                )
+
+        self.assertEqual(first.structured_content, second.structured_content)
+        self.assertEqual(first.structured_content["transport"], "tus")
+        page_url = urlsplit(first.structured_content["upload_page_url"])
+        self.assertEqual(page_url.scheme, "https")
+        self.assertEqual(page_url.query, "")
+        self.assertTrue(page_url.fragment.startswith("capability="))
+        self.assertEqual(current.structured_content["state"], "pending")
+        request_keys = [
+            call.kwargs["request_key"] for call in uploads.create_handoff.call_args_list
+        ]
+        self.assertEqual(len(request_keys), 2)
+        self.assertEqual(request_keys[0], request_keys[1])
+        self.assertRegex(request_keys[0], r"^[0-9a-f]{64}$")
+
+    async def test_media_upload_tools_enforce_permissions_and_availability(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            arguments = {
+                "command": {
+                    "original_filename": "sample.mp4",
+                    "byte_size": 1024,
+                },
+                "idempotency_key": "agent-upload-0001",
+            }
+            write_server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="reader",
+                    scopes=frozenset({"vidxp.read"}),
+                ),
+            )
+            async with Client(write_server) as client:
+                denied = await client.call_tool(
+                    "create_media_upload",
+                    arguments,
+                )
+            unavailable_server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="writer",
+                    scopes=frozenset({"vidxp.write"}),
+                ),
+            )
+            async with Client(unavailable_server) as client:
+                unavailable = await client.call_tool(
+                    "create_media_upload",
+                    arguments,
+                )
+                read_denied = await client.call_tool(
+                    "get_media_upload",
+                    {"intent_id": MEDIA_ID},
+                )
+
+        self.assertIn('"required_scope":"vidxp.write"', denied.content[0].text)
+        self.assertIn(
+            '"code":"remote_upload_unavailable"',
+            unavailable.content[0].text,
+        )
+        self.assertIn(
+            '"required_scope":"vidxp.read"',
+            read_denied.content[0].text,
+        )
 
     async def test_workspace_tool_projects_actionable_repository_state(self):
         with TemporaryDirectory() as directory:
@@ -244,7 +412,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         rendered = output.getvalue()
         self.assertIn("OK VidXP MCP", rendered)
         self.assertIn("Index state: missing", rendered)
-        self.assertIn("Tools: 17", rendered)
+        self.assertIn("Tools: 19", rendered)
         self.assertIn("get_index_status", rendered)
 
     async def test_server_info_exposes_vidxp_branding(self):
@@ -499,8 +667,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             clip = root / "clip.mp4"
             clip.write_bytes(b"clip-content")
             context = self.context(root)
-            context.jobs.submit_snippet.return_value = (
-                queued_job().model_copy(update={"kind": JobKind.snippet})
+            context.jobs.submit_snippet.return_value = queued_job().model_copy(
+                update={"kind": JobKind.snippet}
             )
             context.application.get_artifact.return_value = Artifact(
                 artifact_id=ARTIFACT_ID,
@@ -513,14 +681,12 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 state=ArtifactState.ready,
                 created_at=datetime.now(timezone.utc),
             )
-            context.application.open_artifact_content.return_value = (
-                LocalFileResource(
-                    path=clip,
-                    filename=f"snippet-{ARTIFACT_ID}.mp4",
-                    mime_type="video/mp4",
-                    byte_size=12,
-                    etag="1" * 64,
-                )
+            context.application.open_artifact_content.return_value = LocalFileResource(
+                path=clip,
+                filename=f"snippet-{ARTIFACT_ID}.mp4",
+                mime_type="video/mp4",
+                byte_size=12,
+                etag="1" * 64,
             )
             server = create_mcp_server(
                 context,
@@ -651,25 +817,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [tool.name for tool in discovered.tools],
-            [
-                "get_workspace",
-                "list_capabilities",
-                "get_capability",
-                "get_runtime_readiness",
-                "list_media",
-                "get_media",
-                "get_index_status",
-                "start_indexing",
-                "prepare_models",
-                "search_moments",
-                "query_video",
-                "create_clip",
-                "get_artifact_download",
-                "list_jobs",
-                "get_job",
-                "retry_job",
-                "cancel_job",
-            ],
+            MCP_TOOL_NAMES,
         )
         self.assertEqual(
             [item["name"] for item in result.structured_content["items"]],
@@ -722,7 +870,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 17)
+        self.assertEqual(len(discovered.tools), 19)
         self.assertEqual(result.structured_content, {"items": []})
 
     async def test_oidc_verifier_projects_the_shared_validated_token(self):

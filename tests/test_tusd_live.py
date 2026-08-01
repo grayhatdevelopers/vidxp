@@ -1,0 +1,243 @@
+from __future__ import annotations
+
+import base64
+import os
+import socket
+import subprocess
+import threading
+import time
+from pathlib import Path
+from urllib.parse import urljoin
+
+import httpx
+import pytest
+import uvicorn
+
+from vidxp.application_models import CreateUploadIntentCommand, Principal
+from vidxp.authentication import StaticBearerAuthenticator
+from vidxp.authorization import AuthorizationPolicy
+from vidxp.composition import UploadHookContext
+from vidxp.core.uploads import UploadState
+from vidxp.hook_app import create_hook_app
+from vidxp.infrastructure.sql_catalog import SQLCatalog
+from vidxp.settings import VidXPSettings
+from vidxp.upload_service import RemoteUploadService
+
+
+class _Jobs:
+    def enqueue_media_import_in_transaction(
+        self,
+        upload_id: str,
+        *,
+        connection,
+        job_id: str,
+    ) -> str:
+        del upload_id, connection
+        return job_id
+
+    def close(self) -> None:
+        pass
+
+
+def _free_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _wait_for_http(url: str, *, process: subprocess.Popen[str] | None = None) -> None:
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if process is not None and process.poll() is not None:
+            stdout, stderr = process.communicate()
+            raise AssertionError(
+                f"tusd exited during startup ({process.returncode}):\n"
+                f"{stdout}\n{stderr}"
+            )
+        try:
+            if httpx.get(url, timeout=0.5).status_code < 500:
+                return
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.05)
+    raise AssertionError(f"Timed out waiting for {url}")
+
+
+def test_live_tusd_handoff_resumes_five_mib(tmp_path: Path) -> None:
+    executable_value = os.environ.get("VIDXP_TUSD_EXECUTABLE")
+    if not executable_value:
+        pytest.skip("set VIDXP_TUSD_EXECUTABLE to run the live tusd integration")
+    executable = Path(executable_value)
+    if not executable.is_file():
+        pytest.fail(f"VIDXP_TUSD_EXECUTABLE is not a file: {executable}")
+
+    hook_port = _free_port()
+    tusd_port = _free_port()
+    size = 5 * 1024 * 1024
+    settings = VidXPSettings(
+        repository_root=tmp_path,
+        upload_public_endpoint=f"http://127.0.0.1:{tusd_port}/uploads/",
+        upload_internal_endpoint=f"http://127.0.0.1:{tusd_port}/uploads/",
+        upload_cleanup_token="c" * 32,
+        upload_handoff_public_url="https://upload.example/upload-handoff",
+        upload_handoff_secret="h" * 32,
+        upload_max_bytes=2 * size,
+        upload_quota_bytes=2 * size,
+        upload_recovery_interval_seconds=3600,
+    )
+    catalog = SQLCatalog(
+        f"sqlite:///{(tmp_path / 'server.sqlite3').resolve().as_posix()}",
+        initialize=True,
+    )
+    jobs = _Jobs()
+    uploads = RemoteUploadService(
+        settings=settings,
+        catalog=catalog,
+        media=object(),
+        jobs=jobs,
+    )
+    authenticator = StaticBearerAuthenticator("t" * 32)
+    authorization = AuthorizationPolicy()
+    hook_context = UploadHookContext(
+        jobs=jobs,  # type: ignore[arg-type]
+        authenticator=authenticator,
+        authorization=authorization,
+        settings=settings,
+        catalog=catalog,
+        uploads=uploads,
+    )
+    hook_server = uvicorn.Server(
+        uvicorn.Config(
+            create_hook_app(context=hook_context),
+            host="127.0.0.1",
+            port=hook_port,
+            log_level="error",
+        )
+    )
+    hook_thread = threading.Thread(target=hook_server.run, daemon=True)
+    hook_thread.start()
+    _wait_for_http(f"http://127.0.0.1:{hook_port}/health")
+
+    settings.quarantine_root.mkdir(parents=True, exist_ok=True)
+    tusd = subprocess.Popen(
+        [
+            str(executable),
+            "-host=127.0.0.1",
+            f"-port={tusd_port}",
+            f"-upload-dir={settings.quarantine_root}",
+            "-base-path=/uploads/",
+            f"-max-size={2 * size}",
+            "-disable-download",
+            "-disable-concatenation",
+            f"-hooks-http=http://127.0.0.1:{hook_port}/hooks",
+            "-hooks-enabled-events=pre-create,post-finish",
+            "-hooks-http-timeout=5s",
+            "-show-startup-logs=false",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        _wait_for_http(
+            f"http://127.0.0.1:{tusd_port}/metrics",
+            process=tusd,
+        )
+        handoff = uploads.create_handoff(
+            CreateUploadIntentCommand(
+                original_filename="five-mib.mp4",
+                byte_size=size,
+                declared_mime_type="video/mp4",
+            ),
+            principal=Principal(subject="agent", scopes=frozenset({"*"})),
+            request_key="a" * 64,
+        )
+        session = uploads.exchange_handoff(
+            handoff.status.intent_id,
+            capability=handoff.capability,
+        )
+        grant = uploads.issue_creation_grant(
+            handoff.status.intent_id,
+            session_token=session.session_token,
+        )
+        metadata = base64.b64encode(handoff.status.intent_id.encode()).decode()
+
+        with httpx.Client(timeout=15) as client:
+            created = client.post(
+                f"http://127.0.0.1:{tusd_port}/uploads/",
+                headers={
+                    "Tus-Resumable": "1.0.0",
+                    "Upload-Length": str(size),
+                    "Upload-Metadata": f"intent_id {metadata}",
+                    "Authorization": f"VidXP-Handoff {grant.token}",
+                },
+            )
+            assert created.status_code == 201, created.text
+            upload_url = urljoin(str(created.url), created.headers["Location"])
+
+            first_chunk = 1024 * 1024
+            first_patch = client.patch(
+                upload_url,
+                headers={
+                    "Tus-Resumable": "1.0.0",
+                    "Upload-Offset": "0",
+                    "Content-Type": "application/offset+octet-stream",
+                },
+                content=b"a" * first_chunk,
+            )
+            assert first_patch.status_code == 204, first_patch.text
+
+            paused = client.head(
+                upload_url,
+                headers={"Tus-Resumable": "1.0.0"},
+            )
+            assert paused.status_code == 200
+            assert paused.headers["Upload-Offset"] == str(first_chunk)
+
+            resumed = client.patch(
+                upload_url,
+                headers={
+                    "Tus-Resumable": "1.0.0",
+                    "Upload-Offset": str(first_chunk),
+                    "Content-Type": "application/offset+octet-stream",
+                },
+                content=b"b" * (size - first_chunk),
+            )
+            assert resumed.status_code == 204, resumed.text
+
+            completed = client.head(
+                upload_url,
+                headers={"Tus-Resumable": "1.0.0"},
+            )
+            assert completed.status_code == 200
+            assert completed.headers["Upload-Offset"] == str(size)
+
+        deadline = time.monotonic() + 5
+        record = catalog.get_upload_intent(handoff.status.intent_id)
+        while record is not None and record.state != UploadState.processing:
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+            record = catalog.get_upload_intent(handoff.status.intent_id)
+
+        assert record is not None
+        assert record.state == UploadState.processing
+        assert record.job_id == record.upload_id
+        assert record.upload_id is not None
+        assert (settings.quarantine_root / record.upload_id).stat().st_size == size
+        info = (settings.quarantine_root / f"{record.upload_id}.info").read_text(
+            encoding="utf-8"
+        )
+        assert grant.token not in info
+        assert session.session_token not in info
+        assert "Authorization" not in info
+    finally:
+        tusd.terminate()
+        try:
+            tusd.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            tusd.kill()
+            tusd.communicate(timeout=5)
+        hook_server.should_exit = True
+        hook_thread.join(timeout=5)
+        catalog.close()

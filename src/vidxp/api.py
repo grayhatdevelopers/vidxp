@@ -14,6 +14,7 @@ from vidxp.api_middleware import (
     RequestBodyLimitMiddleware,
     RequestBodyTooLarge,
     TypedTrustedHostMiddleware,
+    UploadHandoffSecurityHeadersMiddleware,
     request_too_large_response,
 )
 from vidxp.api_models import HealthResponse, ReadinessResponse
@@ -22,14 +23,14 @@ from vidxp.api_routes.dependencies import context
 from vidxp.composition import HttpApplicationContext, create_http_application
 from vidxp.mcp import MCPTransportSecurityBoundary, create_remote_mcp
 from vidxp.settings import VidXPSettings
+from vidxp.upload_page import router as upload_page_router
 
 
 _BEARER_SECURITY = HTTPBearer(
     auto_error=False,
     scheme_name="BearerAuth",
     description=(
-        "Bearer access token. Authentication is enforced once by the "
-        "server middleware."
+        "Bearer access token. Authentication is enforced once by the server middleware."
     ),
 )
 
@@ -127,6 +128,7 @@ def create_app(
         create_api_router(),
         dependencies=api_dependencies,
     )
+    app.include_router(upload_page_router)
     app.mount("/", remote_mcp.app)
     app.add_exception_handler(
         RequestBodyTooLarge,
@@ -142,6 +144,10 @@ def create_app(
         BearerAuthenticationMiddleware,
         authenticator=active_context.authenticator,
         delegated_paths=delegated_auth_paths,
+    )
+    app.add_middleware(
+        UploadHandoffSecurityHeadersMiddleware,
+        upload_endpoint=active_settings.upload_public_endpoint,
     )
     if active_settings.http_allowed_origins:
         app.add_middleware(

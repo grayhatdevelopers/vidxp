@@ -5,20 +5,34 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Engine, create_engine, delete, event, func, insert, select, update
+from sqlalchemy import (
+    Engine,
+    create_engine,
+    delete,
+    event,
+    func,
+    insert,
+    select,
+    update,
+)
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool
 
 from vidxp.core.artifacts import ArtifactRecord, ArtifactState
 from vidxp.core.media import MediaRecord, utc_now
-from vidxp.core.uploads import UploadIntentRecord, UploadState
+from vidxp.core.uploads import (
+    UploadHandoffRecord,
+    UploadIntentRecord,
+    UploadState,
+)
 from vidxp.infrastructure.sql_tables import (
     artifact_requests,
     artifacts,
     media,
     media_import_requests,
     metadata,
+    upload_handoffs,
     upload_intents,
     upload_quota,
 )
@@ -59,6 +73,24 @@ def _upload_record(row: Any) -> UploadIntentRecord:
         upload_id=row.upload_id,
         job_id=row.job_id,
         media_id=row.media_id,
+    )
+
+
+def _upload_handoff_record(row: Any) -> UploadHandoffRecord:
+    return UploadHandoffRecord(
+        selector=row.selector,
+        intent_id=row.intent_id,
+        repository_binding=row.repository_binding,
+        byte_size=row.byte_size,
+        created_at=datetime.fromisoformat(row.created_at),
+        expires_at=datetime.fromisoformat(row.expires_at),
+        session_digest=row.session_digest,
+        creation_grant_digest=row.creation_grant_digest,
+        creation_grant_expires_at=(
+            datetime.fromisoformat(row.creation_grant_expires_at)
+            if row.creation_grant_expires_at is not None
+            else None
+        ),
     )
 
 
@@ -134,22 +166,14 @@ class SQLCatalog:
             payload = connection.execute(
                 select(media.c.payload).where(media.c.media_id == media_id)
             ).scalar_one_or_none()
-        return (
-            None
-            if payload is None
-            else _record(MediaRecord, payload)
-        )
+        return None if payload is None else _record(MediaRecord, payload)
 
     def get_media_by_checksum(self, sha256: str) -> MediaRecord | None:
         with self.engine.connect() as connection:
             payload = connection.execute(
                 select(media.c.payload).where(media.c.sha256 == sha256)
             ).scalar_one_or_none()
-        return (
-            None
-            if payload is None
-            else _record(MediaRecord, payload)
-        )
+        return None if payload is None else _record(MediaRecord, payload)
 
     def put_media(self, record: MediaRecord) -> MediaRecord:
         values = {
@@ -193,11 +217,7 @@ class SQLCatalog:
         payload = connection.execute(
             select(media.c.payload).where(media.c.media_id == media_id)
         ).scalar_one_or_none()
-        return (
-            None
-            if payload is None
-            else _record(MediaRecord, payload)
-        )
+        return None if payload is None else _record(MediaRecord, payload)
 
     @staticmethod
     def _media_by_checksum(
@@ -207,11 +227,7 @@ class SQLCatalog:
         payload = connection.execute(
             select(media.c.payload).where(media.c.sha256 == sha256)
         ).scalar_one_or_none()
-        return (
-            None
-            if payload is None
-            else _record(MediaRecord, payload)
-        )
+        return None if payload is None else _record(MediaRecord, payload)
 
     def list_media(
         self,
@@ -228,17 +244,12 @@ class SQLCatalog:
                 .limit(limit)
                 .offset(offset)
             ).scalars()
-            return tuple(
-                _record(MediaRecord, payload)
-                for payload in payloads
-            )
+            return tuple(_record(MediaRecord, payload) for payload in payloads)
 
     def count_media(self) -> int:
         with self.engine.connect() as connection:
             return int(
-                connection.execute(
-                    select(func.count()).select_from(media)
-                ).scalar_one()
+                connection.execute(select(func.count()).select_from(media)).scalar_one()
             )
 
     def reserve_media_import(
@@ -271,9 +282,7 @@ class SQLCatalog:
                             media_import_requests.c.request_fingerprint,
                             media_import_requests.c.media_id,
                         )
-                        .where(
-                            media_import_requests.c.request_key == request_key
-                        )
+                        .where(media_import_requests.c.request_key == request_key)
                         .with_for_update()
                     ).one()
             if row.request_fingerprint != request_fingerprint:
@@ -284,9 +293,7 @@ class SQLCatalog:
                 return None
             stored = self._media_by_id(connection, row.media_id)
             if stored is None:
-                raise RuntimeError(
-                    "A completed media import references missing media."
-                )
+                raise RuntimeError("A completed media import references missing media.")
             return stored
 
     def complete_media_import(
@@ -309,9 +316,7 @@ class SQLCatalog:
                     "The media import reservation does not match the content."
                 )
             if row.media_id is not None and row.media_id != record.media_id:
-                raise FileExistsError(
-                    "The media import key is already completed."
-                )
+                raise FileExistsError("The media import key is already completed.")
             connection.execute(
                 update(media_import_requests)
                 .where(media_import_requests.c.request_key == request_key)
@@ -325,11 +330,7 @@ class SQLCatalog:
                     artifacts.c.artifact_id == artifact_id
                 )
             ).scalar_one_or_none()
-        return (
-            None
-            if payload is None
-            else _record(ArtifactRecord, payload)
-        )
+        return None if payload is None else _record(ArtifactRecord, payload)
 
     def get_artifact_by_request(
         self,
@@ -341,8 +342,7 @@ class SQLCatalog:
                 .select_from(
                     artifact_requests.join(
                         artifacts,
-                        artifact_requests.c.artifact_id
-                        == artifacts.c.artifact_id,
+                        artifact_requests.c.artifact_id == artifacts.c.artifact_id,
                     )
                 )
                 .where(artifact_requests.c.request_key == request_key)
@@ -350,12 +350,8 @@ class SQLCatalog:
         if payload is None:
             return None
         record = _record(ArtifactRecord, payload)
-        if (
-            record.state != ArtifactState.ready
-            or (
-                record.expires_at is not None
-                and record.expires_at <= utc_now()
-            )
+        if record.state != ArtifactState.ready or (
+            record.expires_at is not None and record.expires_at <= utc_now()
         ):
             return None
         return record
@@ -367,12 +363,9 @@ class SQLCatalog:
                 record.request_key,
             )
             if request_match is not None:
-                if (
-                    request_match.state == ArtifactState.ready
-                    and (
-                        request_match.expires_at is None
-                        or request_match.expires_at > utc_now()
-                    )
+                if request_match.state == ArtifactState.ready and (
+                    request_match.expires_at is None
+                    or request_match.expires_at > utc_now()
                 ):
                     return request_match
                 connection.execute(
@@ -412,15 +405,9 @@ class SQLCatalog:
         artifact_id: str,
     ) -> ArtifactRecord | None:
         payload = connection.execute(
-            select(artifacts.c.payload).where(
-                artifacts.c.artifact_id == artifact_id
-            )
+            select(artifacts.c.payload).where(artifacts.c.artifact_id == artifact_id)
         ).scalar_one_or_none()
-        return (
-            None
-            if payload is None
-            else _record(ArtifactRecord, payload)
-        )
+        return None if payload is None else _record(ArtifactRecord, payload)
 
     @staticmethod
     def _artifact_by_request(
@@ -437,11 +424,7 @@ class SQLCatalog:
             )
             .where(artifact_requests.c.request_key == request_key)
         ).scalar_one_or_none()
-        return (
-            None
-            if payload is None
-            else _record(ArtifactRecord, payload)
-        )
+        return None if payload is None else _record(ArtifactRecord, payload)
 
     def invalidate_artifact_request(
         self,
@@ -484,6 +467,119 @@ class SQLCatalog:
                 )
             )
         return record
+
+    def create_upload_handoff(
+        self,
+        record: UploadHandoffRecord,
+    ) -> UploadHandoffRecord:
+        with self._write_transaction() as connection:
+            connection.execute(
+                insert(upload_handoffs).values(
+                    selector=record.selector,
+                    intent_id=record.intent_id,
+                    repository_binding=record.repository_binding,
+                    byte_size=record.byte_size,
+                    created_at=record.created_at.isoformat(),
+                    expires_at=record.expires_at.isoformat(),
+                    session_digest=record.session_digest,
+                    creation_grant_digest=record.creation_grant_digest,
+                    creation_grant_expires_at=(
+                        record.creation_grant_expires_at.isoformat()
+                        if record.creation_grant_expires_at is not None
+                        else None
+                    ),
+                )
+            )
+        return record
+
+    def get_upload_handoff_by_intent(
+        self,
+        intent_id: str,
+        *,
+        connection: Connection | None = None,
+        for_update: bool = False,
+    ) -> UploadHandoffRecord | None:
+        statement = select(upload_handoffs).where(
+            upload_handoffs.c.intent_id == intent_id
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        if connection is not None:
+            row = connection.execute(statement).one_or_none()
+        else:
+            with self.engine.connect() as active:
+                row = active.execute(statement).one_or_none()
+        return None if row is None else _upload_handoff_record(row)
+
+    def get_upload_handoff(
+        self,
+        selector: str,
+        *,
+        connection: Connection | None = None,
+        for_update: bool = False,
+    ) -> UploadHandoffRecord | None:
+        statement = select(upload_handoffs).where(
+            upload_handoffs.c.selector == selector
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        if connection is not None:
+            row = connection.execute(statement).one_or_none()
+        else:
+            with self.engine.connect() as active:
+                row = active.execute(statement).one_or_none()
+        return None if row is None else _upload_handoff_record(row)
+
+    def set_upload_handoff_session(
+        self,
+        selector: str,
+        *,
+        session_digest: str,
+        connection: Connection,
+    ) -> None:
+        result = connection.execute(
+            update(upload_handoffs)
+            .where(upload_handoffs.c.selector == selector)
+            .values(session_digest=session_digest)
+        )
+        if result.rowcount != 1:
+            raise RuntimeError("The upload handoff session update was lost.")
+
+    def set_upload_creation_grant(
+        self,
+        selector: str,
+        *,
+        digest: str,
+        expires_at: datetime,
+        connection: Connection,
+    ) -> None:
+        result = connection.execute(
+            update(upload_handoffs)
+            .where(upload_handoffs.c.selector == selector)
+            .values(
+                creation_grant_digest=digest,
+                creation_grant_expires_at=expires_at.isoformat(),
+            )
+        )
+        if result.rowcount != 1:
+            raise RuntimeError("The upload creation grant update was lost.")
+
+    def consume_upload_creation_grant(
+        self,
+        selector: str,
+        *,
+        connection: Connection,
+    ) -> None:
+        result = connection.execute(
+            update(upload_handoffs)
+            .where(upload_handoffs.c.selector == selector)
+            .values(
+                creation_grant_digest=None,
+                creation_grant_expires_at=None,
+            )
+        )
+        if result.rowcount != 1:
+            raise RuntimeError("The upload creation grant update was lost.")
 
     @staticmethod
     def _reserve_upload_quota(
@@ -631,9 +727,7 @@ class SQLCatalog:
                 .where(
                     upload_quota.c.singleton_id == _UPLOAD_QUOTA_ID,
                 )
-                .values(
-                    reserved_bytes=max(0, int(quota) - current.byte_size)
-                )
+                .values(reserved_bytes=max(0, int(quota) - current.byte_size))
             )
         return True
 

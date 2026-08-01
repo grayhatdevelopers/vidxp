@@ -116,6 +116,35 @@ class SettingsTests(unittest.TestCase):
         ):
             VidXPSettings(mode=ApplicationMode.remote)
 
+    def test_upload_handoff_requires_https_url_and_dedicated_secret(self):
+        base = {
+            "upload_public_endpoint": "https://uploads.example/uploads/",
+            "upload_internal_endpoint": "http://tusd:8080/uploads/",
+            "upload_cleanup_token": "c" * 32,
+        }
+        with self.assertRaisesRegex(ValidationError, "HTTPS URL"):
+            VidXPSettings(
+                **base,
+                upload_handoff_public_url=("http://vidxp.example/upload-handoff"),
+                upload_handoff_secret="h" * 32,
+            )
+        with self.assertRaisesRegex(ValidationError, "dedicated secret"):
+            VidXPSettings(
+                **base,
+                upload_handoff_public_url=("https://vidxp.example/upload-handoff"),
+            )
+
+        settings = VidXPSettings(
+            **base,
+            upload_handoff_public_url=("https://vidxp.example/upload-handoff/"),
+            upload_handoff_secret="h" * 32,
+        )
+        self.assertEqual(
+            settings.upload_handoff_public_url,
+            "https://vidxp.example/upload-handoff",
+        )
+        self.assertEqual(settings.mcp_max_request_body_bytes, 4 * 1024 * 1024)
+
 
 if __name__ == "__main__":
     unittest.main()

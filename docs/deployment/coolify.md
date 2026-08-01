@@ -25,8 +25,16 @@ VIDXP_HTTP_STATIC_BEARER_TOKEN=<random-secret-at-least-32-characters>
 VIDXP_UPLOAD_CLEANUP_TOKEN=<different-random-secret-at-least-32-characters>
 VIDXP_PUBLIC_API_HOST=api.example.com
 VIDXP_UPLOAD_PUBLIC_ENDPOINT=https://uploads.example.com/uploads/
+VIDXP_UPLOAD_HANDOFF_PUBLIC_URL=https://api.example.com/upload-handoff
+VIDXP_UPLOAD_HANDOFF_SECRET=<third-random-secret-at-least-32-characters>
 VIDXP_UPLOAD_CORS_ORIGIN_REGEX=^https://app\.example\.com$
 ```
+
+`VIDXP_UPLOAD_HANDOFF_PUBLIC_URL` must be the externally reachable HTTPS API
+URL ending exactly in `/upload-handoff`. Keep its secret distinct from the MCP
+bearer and upload-cleanup credentials. The generated handoff URL contains a
+short-lived capability in its fragment; the fragment is not sent in HTTP
+requests, and the page removes it from browser history after bootstrap.
 
 Optional deployment-wide upload limits use `VIDXP_UPLOAD_MAX_BYTES` for one object
 and `VIDXP_UPLOAD_QUOTA_BYTES` for all reserved upload bytes in the singleton
@@ -46,9 +54,20 @@ The upload path is a capability URL used to resume an upload. Disable or redact
 reverse-proxy access logging for `/uploads/`; VidXP cannot control logs written by
 an upstream proxy.
 
-Video bytes do not travel through MCP. Create and resume the upload through the
-HTTP/tus endpoints, wait for its `media_id`, and then use that ID with
-`start_indexing`.
+Video bytes do not travel through MCP. A remote MCP client calls
+`create_media_upload` with the expected filename, size, and MIME type and gives
+the returned HTTPS page to the user. The page validates that exact file and
+uploads it directly to tusd with pause, resume, retry, and browser recovery.
+The client polls `get_media_upload`; once it returns a `media_id`, pass that ID
+to `start_indexing`.
+
+The page exchanges its fragment capability for an `HttpOnly`, `Secure`,
+`SameSite=Strict` session cookie. Each tus creation uses a separate one-time,
+five-minute creation grant; the MCP bearer never enters the page or tusd. Keep
+access logging disabled or redacted for `/uploads/`, because the tus resume URL
+is itself a bearer capability. The page's Content Security Policy permits only
+same-origin scripts/styles and connections to the configured tus origin, so
+both public URLs must be correct before startup.
 
 ## Prepare worker models
 
