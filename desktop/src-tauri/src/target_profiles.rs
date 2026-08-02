@@ -3,11 +3,13 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Arc, atomic::AtomicBool},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::background_process::{self, BackgroundErrorKind, BackgroundOutput, BackgroundPolicy};
+use crate::background_process::{
+    self, BackgroundErrorKind, BackgroundOutput, BackgroundPolicy, CancellationToken,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -82,6 +84,10 @@ pub enum TargetErrorCode {
     ValidationStale,
     LifecycleForbidden,
     ManagedRuntimeUnavailable,
+    OperationConflict,
+    DraftMismatch,
+    DraftApplying,
+    ManagedProfileOwned,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -259,7 +265,7 @@ struct ProbeDocument {
     capabilities: ProbeCapabilities,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct DecodedState {
     profiles: Vec<TargetProfile>,
     selected_profile_id: Option<String>,
@@ -376,7 +382,7 @@ fn collect_command_output(
     executable: &Path,
     arguments: &[&str],
     operation: &str,
-    cancellation: Option<&AtomicBool>,
+    cancellation: Option<&CancellationToken>,
 ) -> Result<ProbeOutput, TargetError> {
     let mut command = Command::new(executable);
     command.args(arguments);
@@ -385,7 +391,7 @@ fn collect_command_output(
         stdout,
         stderr,
     } = background_process::run(
-        &mut command,
+        command,
         BackgroundPolicy {
             timeout: PROBE_TIMEOUT,
             max_output_bytes: MAX_PROBE_STREAM_BYTES,
@@ -1034,20 +1040,43 @@ pub fn initialize(
     _desktop_version: &str,
 ) -> Result<TargetState, TargetError> {
     let (store, mut decoded) = load_state(app)?;
+    let selected_was_managed = decoded
+        .selected_profile_id
+        .as_ref()
+        .is_some_and(|selected| {
+            decoded
+                .profiles
+                .iter()
+                .any(|profile| profile.id == *selected && profile.kind == TargetKind::Managed)
+        });
     if let Some(managed_runtime) = managed_runtime {
-        let expected_id = format!("managed-{}", managed_runtime.runtime_profile);
         let profile = reconcile_managed_profile(
             decoded
                 .profiles
                 .iter()
-                .find(|existing| existing.id == expected_id),
+                .find(|existing| existing.kind == TargetKind::Managed),
             managed_runtime,
         );
         let id = profile.id.clone();
         let was_empty = decoded.profiles.is_empty();
+        decoded
+            .profiles
+            .retain(|existing| existing.kind != TargetKind::Managed);
         upsert_profile(&mut decoded, profile);
-        if was_empty && decoded.selected_profile_id.is_none() {
+        if selected_was_managed || (was_empty && decoded.selected_profile_id.is_none()) {
             decoded.selected_profile_id = Some(id);
+            decoded.changed = true;
+        }
+    } else {
+        let previous_length = decoded.profiles.len();
+        decoded
+            .profiles
+            .retain(|profile| profile.kind != TargetKind::Managed);
+        if decoded.profiles.len() != previous_length {
+            decoded.changed = true;
+        }
+        if selected_was_managed {
+            decoded.selected_profile_id = None;
             decoded.changed = true;
         }
     }
@@ -1107,7 +1136,7 @@ pub fn validated_selected_profile(
 pub fn validated_selected_profile_with_cancellation(
     app: &AppHandle,
     desktop_version: &str,
-    cancellation: Option<&AtomicBool>,
+    cancellation: Option<&CancellationToken>,
 ) -> Result<TargetProfile, TargetError> {
     let (store, mut decoded) = load_state(app)?;
     let selected = decoded.selected_profile_id.clone().ok_or_else(|| {
@@ -1167,7 +1196,7 @@ pub fn adopt_local(
     executable: &Path,
     display_name: Option<String>,
     desktop_version: &str,
-) -> Result<TargetProfile, TargetError> {
+) -> Result<TargetState, TargetError> {
     let validated = validate_executable(executable, desktop_version)?;
     adopt_validated(app, validated, display_name)
 }
@@ -1176,20 +1205,20 @@ pub fn adopt_validated(
     app: &AppHandle,
     validated: ValidatedTarget,
     display_name: Option<String>,
-) -> Result<TargetProfile, TargetError> {
+) -> Result<TargetState, TargetError> {
     let profile = local_profile(validated, display_name);
     let (store, mut decoded) = load_state(app)?;
     upsert_profile(&mut decoded, profile.clone());
     decoded.selected_profile_id = Some(profile.id.clone());
     persist_state(&store, &decoded)?;
-    Ok(profile)
+    Ok(state_snapshot(decoded))
 }
 
 pub fn select_profile(
     app: &AppHandle,
     profile_id: &str,
     desktop_version: &str,
-) -> Result<TargetProfile, TargetError> {
+) -> Result<TargetState, TargetError> {
     let (store, mut decoded) = load_state(app)?;
     let profile = decoded
         .profiles
@@ -1203,15 +1232,24 @@ pub fn select_profile(
         })?;
     let validated = validate_executable(&profile.executable, desktop_version)?;
     apply_validation(profile, validated);
-    let result = profile.clone();
     decoded.selected_profile_id = Some(profile_id.to_owned());
     decoded.changed = true;
     persist_state(&store, &decoded)?;
-    Ok(result)
+    Ok(state_snapshot(decoded))
 }
 
 pub fn delete_profile(app: &AppHandle, profile_id: &str) -> Result<TargetState, TargetError> {
     let (store, mut decoded) = load_state(app)?;
+    if decoded
+        .profiles
+        .iter()
+        .any(|profile| profile.id == profile_id && profile.kind == TargetKind::Managed)
+    {
+        return Err(TargetError::new(
+            TargetErrorCode::ManagedProfileOwned,
+            "The active Desktop-managed target cannot be forgotten. Create or select another target instead.",
+        ));
+    }
     let original_length = decoded.profiles.len();
     decoded.profiles.retain(|profile| profile.id != profile_id);
     if decoded.profiles.len() == original_length {
@@ -1228,28 +1266,36 @@ pub fn delete_profile(app: &AppHandle, profile_id: &str) -> Result<TargetState, 
     Ok(state_snapshot(decoded))
 }
 
-pub fn project_managed(
+pub fn prepare_managed_activation(
     app: &AppHandle,
     managed_runtime: ManagedRuntimeProjection,
     desktop_version: &str,
-) -> Result<TargetProfile, TargetError> {
-    let expected_id = format!("managed-{}", managed_runtime.runtime_profile);
-    let (store, mut decoded) = load_state(app)?;
+) -> Result<TargetState, TargetError> {
+    let (_, mut decoded) = load_state(app)?;
+    let executable = managed_runtime.executable.clone();
+    let validated = validate_executable(&executable, desktop_version);
+    prepare_managed_state(&mut decoded, managed_runtime, validated)
+}
+
+fn prepare_managed_state(
+    decoded: &mut DecodedState,
+    managed_runtime: ManagedRuntimeProjection,
+    validated: Result<ValidatedTarget, TargetError>,
+) -> Result<TargetState, TargetError> {
     let mut profile = reconcile_managed_profile(
         decoded
             .profiles
             .iter()
-            .find(|existing| existing.id == expected_id),
+            .find(|existing| existing.kind == TargetKind::Managed),
         managed_runtime,
     );
-    match validate_executable(&profile.executable, desktop_version) {
-        Ok(validated) => apply_validation(&mut profile, validated),
-        Err(error) => profile.validation_error = Some(error),
-    }
-    upsert_profile(&mut decoded, profile.clone());
+    apply_validation(&mut profile, validated?);
+    decoded
+        .profiles
+        .retain(|existing| existing.kind != TargetKind::Managed);
+    upsert_profile(decoded, profile.clone());
     decoded.selected_profile_id = Some(profile.id.clone());
-    persist_state(&store, &decoded)?;
-    Ok(profile)
+    Ok(state_snapshot(decoded.clone()))
 }
 
 #[cfg(test)]
@@ -1827,5 +1873,109 @@ mod tests {
         assert_eq!(reconciled.capabilities, ["scene"]);
         assert_eq!(reconciled.surfaces, ["browser"]);
         assert_eq!(reconciled.observed_vidxp_version, "0.5.0");
+    }
+
+    fn managed_projection_for_test() -> ManagedRuntimeProjection {
+        ManagedRuntimeProjection {
+            runtime_profile: "runtime-new".into(),
+            executable: PathBuf::from("/runtime/bin/vidxp"),
+            data_root: PathBuf::from("/data"),
+            repository_root: PathBuf::from("/data/repositories/default"),
+            model_directory: PathBuf::from("/models"),
+            package_version: "0.5.0".into(),
+            capabilities: vec!["scene".into()],
+            surfaces: vec!["browser".into()],
+        }
+    }
+
+    fn validated_managed_target() -> ValidatedTarget {
+        ValidatedTarget {
+            executable: PathBuf::from("/runtime/bin/vidxp"),
+            product_version: "0.5.0".into(),
+            probe_schema_version: 1,
+            probe_protocol_version: 1,
+            launch_protocol_version: 1,
+            runtime: RuntimeIdentity {
+                python_executable: PathBuf::from("/runtime/bin/python"),
+                python_version: "3.14.6".into(),
+                implementation: "CPython".into(),
+                prefix: PathBuf::from("/runtime"),
+                base_prefix: PathBuf::from("/python"),
+            },
+            data_root: PathBuf::from("/data"),
+            repository_root: PathBuf::from("/data/repositories/default"),
+            frontend: FrontendCapability {
+                available: true,
+                launchable: true,
+                optional: true,
+                code: "frontend_available".into(),
+                message: "Available".into(),
+                remediation: String::new(),
+            },
+            validated_at: 200,
+        }
+    }
+
+    #[test]
+    fn failed_managed_candidate_probe_cannot_replace_target_state() {
+        let old = profile(TargetKind::Managed, LifecycleOwnership::Desktop);
+        let mut decoded = DecodedState {
+            profiles: vec![old.clone()],
+            selected_profile_id: Some(old.id.clone()),
+            ..DecodedState::default()
+        };
+
+        let error = prepare_managed_state(
+            &mut decoded,
+            managed_projection_for_test(),
+            Err(TargetError::new(
+                TargetErrorCode::UnsupportedLaunchProtocol,
+                "candidate launch contract failed",
+            )),
+        )
+        .expect_err("candidate must not activate");
+
+        assert_eq!(error.code, TargetErrorCode::UnsupportedLaunchProtocol);
+        assert_eq!(decoded.profiles.as_slice(), std::slice::from_ref(&old));
+        assert_eq!(
+            decoded.selected_profile_id.as_deref(),
+            Some(old.id.as_str())
+        );
+    }
+
+    #[test]
+    fn managed_activation_replaces_all_stale_managed_profiles() {
+        let external = profile(TargetKind::ExistingLocal, LifecycleOwnership::External);
+        let mut old = profile(TargetKind::Managed, LifecycleOwnership::Desktop);
+        old.id = "managed-old".into();
+        old.display_name = "Editing workstation".into();
+        let mut stale = old.clone();
+        stale.id = "managed-stale".into();
+        let mut decoded = DecodedState {
+            profiles: vec![external.clone(), old, stale],
+            selected_profile_id: Some("managed-old".into()),
+            ..DecodedState::default()
+        };
+
+        let state = prepare_managed_state(
+            &mut decoded,
+            managed_projection_for_test(),
+            Ok(validated_managed_target()),
+        )
+        .expect("managed candidate");
+
+        let managed: Vec<_> = state
+            .profiles
+            .iter()
+            .filter(|profile| profile.kind == TargetKind::Managed)
+            .collect();
+        assert_eq!(managed.len(), 1);
+        assert_eq!(managed[0].id, "managed-runtime-new");
+        assert_eq!(managed[0].display_name, "Editing workstation");
+        assert_eq!(
+            state.selected_profile_id.as_deref(),
+            Some("managed-runtime-new")
+        );
+        assert!(state.profiles.contains(&external));
     }
 }

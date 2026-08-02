@@ -1,11 +1,11 @@
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     io::{self, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::Command,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -24,11 +24,7 @@ use tauri::{
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
-use tauri_plugin_shell::{
-    ShellExt,
-    process::{Command as ShellCommand, CommandChild, CommandEvent},
-};
-use wait_timeout::ChildExt;
+use tauri_plugin_shell::ShellExt;
 
 mod background_process;
 mod target_profiles;
@@ -82,10 +78,10 @@ struct InstallRequest {
     surfaces: Vec<String>,
     prepare_models: bool,
     model_directory: Option<String>,
-    draft_id: Option<String>,
+    draft_id: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct ManagedSetupDraft {
     id: String,
     previous_profile_id: Option<String>,
@@ -98,6 +94,12 @@ struct InstallResult {
     surfaces: Vec<String>,
     model_directory: String,
     prepared: bool,
+}
+
+#[derive(Serialize)]
+struct InstallTransitionResult {
+    install: InstallResult,
+    setup: target_profiles::TargetState,
 }
 
 #[derive(Serialize)]
@@ -221,13 +223,14 @@ fn activation_recovery(stage: &ActivationStage) -> ActivationRecovery {
 struct ActivationJournal {
     schema_version: u32,
     stage: ActivationStage,
-    previous_active: Option<ActiveRuntime>,
+    previous_active_bytes: Option<Vec<u8>>,
     previous_targets: target_profiles::TargetState,
     candidate_active: ActiveRuntime,
+    candidate_targets: target_profiles::TargetState,
 }
 
 struct ManagedUi {
-    process: Child,
+    process: background_process::OwnedChild,
     url: String,
     profile_id: String,
 }
@@ -261,61 +264,214 @@ enum DesktopActivation<'a> {
 
 struct DesktopState {
     ui_process: Mutex<Option<ManagedUi>>,
-    operation_process: Mutex<Option<CommandChild>>,
     operation_worker_runtime: Mutex<Option<PathBuf>>,
-    operation_active: AtomicBool,
-    managed_setup_draft: Mutex<Option<ManagedSetupDraft>>,
-    inspected_targets: Mutex<HashMap<PathBuf, target_profiles::ValidatedTarget>>,
-    revalidation_active: Arc<AtomicBool>,
-    shutdown_started: Arc<AtomicBool>,
+    operation_cancellation: Arc<Mutex<Option<background_process::CancellationToken>>>,
+    transition: Arc<Mutex<TransitionState>>,
+    browser_open_active: AtomicBool,
+    shutdown: background_process::CancellationToken,
 }
 
 impl Default for DesktopState {
     fn default() -> Self {
         Self {
             ui_process: Mutex::new(None),
-            operation_process: Mutex::new(None),
             operation_worker_runtime: Mutex::new(None),
-            operation_active: AtomicBool::new(false),
-            managed_setup_draft: Mutex::new(None),
-            inspected_targets: Mutex::new(HashMap::new()),
-            revalidation_active: Arc::new(AtomicBool::new(false)),
-            shutdown_started: Arc::new(AtomicBool::new(false)),
+            operation_cancellation: Arc::new(Mutex::new(None)),
+            transition: Arc::new(Mutex::new(TransitionState::default())),
+            browser_open_active: AtomicBool::new(false),
+            shutdown: background_process::CancellationToken::default(),
         }
     }
 }
 
-struct TargetTransitionCoordinator<'a> {
-    app: &'a AppHandle,
-    state: &'a DesktopState,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DraftPhase {
+    Draft,
+    Applying,
+    Committed,
+    Cancelled,
 }
 
-impl<'a> TargetTransitionCoordinator<'a> {
-    fn new(app: &'a AppHandle, state: &'a DesktopState) -> Self {
-        Self { app, state }
-    }
+#[derive(Clone, Debug)]
+struct DraftRecord {
+    draft: ManagedSetupDraft,
+    phase: DraftPhase,
+}
 
-    fn stop_browser(&self) {
-        stop_ui_process(self.state);
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransitionKind {
+    Revalidate,
+    Adopt,
+    Select,
+    Delete,
+    InstallMedia,
+    InstallRuntime,
+    PrepareModels,
+    RecoverActivation,
+    OpenBrowser,
+}
 
-    fn finish_transition(&self) {
-        self.stop_browser();
-        if let Ok(mut draft) = self.state.managed_setup_draft.lock() {
-            draft.take();
+#[derive(Clone, Copy, Debug)]
+struct ActiveTransition {
+    id: u64,
+    kind: TransitionKind,
+}
+
+#[derive(Default)]
+struct TransitionState {
+    next_id: u64,
+    active: Option<ActiveTransition>,
+    draft: Option<DraftRecord>,
+}
+
+fn transition_error(
+    code: target_profiles::TargetErrorCode,
+    message: impl Into<String>,
+) -> target_profiles::TargetError {
+    target_profiles::TargetError {
+        code,
+        message: message.into(),
+    }
+}
+
+struct TransitionGuard {
+    shared: Arc<Mutex<TransitionState>>,
+    id: u64,
+    applying_draft: Option<String>,
+}
+
+impl TransitionGuard {
+    fn commit_draft(&mut self) {
+        let Some(draft_id) = self.applying_draft.take() else {
+            return;
+        };
+        if let Ok(mut transition) = self.shared.lock()
+            && let Some(record) = transition.draft.as_mut()
+            && record.draft.id == draft_id
+            && record.phase == DraftPhase::Applying
+        {
+            record.phase = DraftPhase::Committed;
         }
     }
+}
 
-    fn begin_managed_draft(&self) -> Result<ManagedSetupDraft, target_profiles::TargetError> {
-        let current = target_profiles::current_state(self.app)?;
+impl Drop for TransitionGuard {
+    fn drop(&mut self) {
+        let Ok(mut transition) = self.shared.lock() else {
+            return;
+        };
+        if transition.active.is_some_and(|active| active.id == self.id) {
+            transition.active = None;
+        }
+        if let Some(draft_id) = self.applying_draft.take()
+            && let Some(record) = transition.draft.as_mut()
+            && record.draft.id == draft_id
+            && record.phase == DraftPhase::Applying
+        {
+            record.phase = DraftPhase::Draft;
+        }
+    }
+}
+
+struct TargetTransitionCoordinator;
+
+impl TargetTransitionCoordinator {
+    fn begin(
+        state: &DesktopState,
+        kind: TransitionKind,
+    ) -> Result<TransitionGuard, target_profiles::TargetError> {
+        let mut transition = state.transition.lock().map_err(|_| {
+            transition_error(
+                target_profiles::TargetErrorCode::StoreUnavailable,
+                "The target transition coordinator is unavailable.",
+            )
+        })?;
+        if let Some(active) = transition.active {
+            return Err(transition_error(
+                target_profiles::TargetErrorCode::OperationConflict,
+                format!(
+                    "Another target transition ({:?}) is already active.",
+                    active.kind
+                ),
+            ));
+        }
+        transition.next_id = transition.next_id.wrapping_add(1).max(1);
+        let id = transition.next_id;
+        transition.active = Some(ActiveTransition { id, kind });
+        Ok(TransitionGuard {
+            shared: state.transition.clone(),
+            id,
+            applying_draft: None,
+        })
+    }
+
+    fn begin_apply(
+        state: &DesktopState,
+        draft_id: &str,
+        kind: TransitionKind,
+    ) -> Result<TransitionGuard, target_profiles::TargetError> {
+        let mut guard = Self::begin(state, kind)?;
+        let mut transition = state.transition.lock().map_err(|_| {
+            transition_error(
+                target_profiles::TargetErrorCode::StoreUnavailable,
+                "The managed setup draft is unavailable.",
+            )
+        })?;
+        let record = transition.draft.as_mut().ok_or_else(|| {
+            transition_error(
+                target_profiles::TargetErrorCode::DraftMismatch,
+                "This managed setup draft has expired.",
+            )
+        })?;
+        if record.draft.id != draft_id {
+            return Err(transition_error(
+                target_profiles::TargetErrorCode::DraftMismatch,
+                "A stale managed setup screen cannot modify the current draft.",
+            ));
+        }
+        if record.phase != DraftPhase::Draft {
+            return Err(transition_error(
+                target_profiles::TargetErrorCode::DraftApplying,
+                "This managed setup draft is already applying or has finished.",
+            ));
+        }
+        record.phase = DraftPhase::Applying;
+        guard.applying_draft = Some(draft_id.to_owned());
+        Ok(guard)
+    }
+
+    fn begin_managed_draft(
+        app: &AppHandle,
+        state: &DesktopState,
+    ) -> Result<ManagedSetupDraft, target_profiles::TargetError> {
+        let mut transition = state.transition.lock().map_err(|_| {
+            transition_error(
+                target_profiles::TargetErrorCode::StoreUnavailable,
+                "The managed setup draft could not be created.",
+            )
+        })?;
+        if transition.active.is_some() {
+            return Err(transition_error(
+                target_profiles::TargetErrorCode::OperationConflict,
+                "Another target transition is already active.",
+            ));
+        }
+        if let Some(record) = &transition.draft
+            && record.phase == DraftPhase::Draft
+        {
+            return Ok(record.draft.clone());
+        }
+        let current = target_profiles::current_state(app)?;
         let seed = format!(
             "{}:{}:{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map_err(|error| target_profiles::TargetError {
-                    code: target_profiles::TargetErrorCode::ValidationRequired,
-                    message: format!("The system clock is invalid: {error}"),
+                .map_err(|error| {
+                    transition_error(
+                        target_profiles::TargetErrorCode::ValidationRequired,
+                        format!("The system clock is invalid: {error}"),
+                    )
                 })?
                 .as_nanos(),
             current.selected_profile_id.as_deref().unwrap_or_default()
@@ -324,39 +480,101 @@ impl<'a> TargetTransitionCoordinator<'a> {
             id: hex::encode(Sha256::digest(seed.as_bytes())),
             previous_profile_id: current.selected_profile_id,
         };
-        *self
-            .state
-            .managed_setup_draft
-            .lock()
-            .map_err(|_| target_profiles::TargetError {
-                code: target_profiles::TargetErrorCode::StoreUnavailable,
-                message: "The managed setup draft could not be created.".into(),
-            })? = Some(draft.clone());
+        transition.draft = Some(DraftRecord {
+            draft: draft.clone(),
+            phase: DraftPhase::Draft,
+        });
         Ok(draft)
     }
 
-    fn cancel_managed_draft(&self) {
-        if let Ok(mut draft) = self.state.managed_setup_draft.lock() {
-            draft.take();
+    fn cancel_managed_draft(
+        app: &AppHandle,
+        state: &DesktopState,
+        draft_id: &str,
+    ) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+        Self::cancel_draft(state, draft_id)?;
+        target_profiles::current_state(app)
+    }
+
+    fn cancel_draft(
+        state: &DesktopState,
+        draft_id: &str,
+    ) -> Result<(), target_profiles::TargetError> {
+        let mut transition = state.transition.lock().map_err(|_| {
+            transition_error(
+                target_profiles::TargetErrorCode::StoreUnavailable,
+                "The managed setup draft could not be cancelled.",
+            )
+        })?;
+        if transition.active.is_some() {
+            return Err(transition_error(
+                target_profiles::TargetErrorCode::DraftApplying,
+                "Managed setup is applying and cannot be cancelled until it settles.",
+            ));
         }
+        let record = transition.draft.as_mut().ok_or_else(|| {
+            transition_error(
+                target_profiles::TargetErrorCode::DraftMismatch,
+                "This managed setup draft has expired.",
+            )
+        })?;
+        if record.draft.id != draft_id {
+            return Err(transition_error(
+                target_profiles::TargetErrorCode::DraftMismatch,
+                "A stale managed setup screen cannot cancel the current draft.",
+            ));
+        }
+        match record.phase {
+            DraftPhase::Draft => {}
+            DraftPhase::Applying => {
+                return Err(transition_error(
+                    target_profiles::TargetErrorCode::DraftApplying,
+                    "Managed setup is applying and cannot be cancelled until it settles.",
+                ));
+            }
+            DraftPhase::Committed | DraftPhase::Cancelled => {
+                return Err(transition_error(
+                    target_profiles::TargetErrorCode::DraftMismatch,
+                    "This managed setup draft has already finished.",
+                ));
+            }
+        }
+        record.phase = DraftPhase::Cancelled;
+        Ok(())
     }
 }
 
-struct OperationGuard<'a> {
-    active: &'a AtomicBool,
+struct OperationCancellationGuard {
+    slot: Arc<Mutex<Option<background_process::CancellationToken>>>,
+    token: background_process::CancellationToken,
 }
 
-struct OwnedOperationGuard(Arc<AtomicBool>);
+impl OperationCancellationGuard {
+    fn register(state: &DesktopState) -> Result<Self, String> {
+        let token = background_process::CancellationToken::default();
+        *state
+            .operation_cancellation
+            .lock()
+            .map_err(|_| "The setup cancellation supervisor is unavailable.".to_string())? =
+            Some(token.clone());
+        Ok(Self {
+            slot: state.operation_cancellation.clone(),
+            token,
+        })
+    }
 
-impl Drop for OwnedOperationGuard {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+    fn token(&self) -> background_process::CancellationToken {
+        self.token.clone()
     }
 }
 
-impl Drop for OperationGuard<'_> {
+impl Drop for OperationCancellationGuard {
     fn drop(&mut self) {
-        self.active.store(false, Ordering::Release);
+        if let Ok(mut active) = self.slot.lock()
+            && active.as_ref().is_some_and(|token| token.same(&self.token))
+        {
+            active.take();
+        }
     }
 }
 
@@ -998,22 +1216,17 @@ fn clean_environment(paths: &DesktopPaths) -> Vec<(String, String)> {
 
 fn configured_command(executable_path: &Path, paths: &DesktopPaths) -> Command {
     let mut command = Command::new(executable_path);
-    hide_child_console(&mut command);
     command.env_clear();
     command.envs(clean_environment(paths));
     command
 }
 
-pub(crate) fn hide_child_console(command: &mut Command) {
-    background_process::hidden(command);
-}
-
 fn checked_output(
-    mut command: Command,
+    command: Command,
     operation: &str,
 ) -> Result<background_process::BackgroundOutput, String> {
     let output = background_process::run(
-        &mut command,
+        command,
         background_process::BackgroundPolicy {
             timeout: Duration::from_secs(30),
             max_output_bytes: 1024 * 1024,
@@ -1081,12 +1294,32 @@ fn write_activation_journal(
         .map_err(|error| format!("Could not persist the activation journal: {error}"))
 }
 
-fn restore_active_runtime(
-    paths: &DesktopPaths,
-    previous: Option<&ActiveRuntime>,
-) -> Result<(), String> {
+fn read_active_runtime_snapshot(paths: &DesktopPaths) -> Result<Option<Vec<u8>>, String> {
+    match fs::read(&paths.active_runtime) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!(
+            "Could not snapshot the previous active runtime pointer: {error}"
+        )),
+    }
+}
+
+fn restore_active_runtime(paths: &DesktopPaths, previous: Option<&[u8]>) -> Result<(), String> {
     match previous {
-        Some(active) => write_active_runtime(paths, active),
+        Some(bytes) => {
+            let mut destination = AtomicWriteFile::options()
+                .open(&paths.active_runtime)
+                .map_err(|error| {
+                    format!("Could not stage the previous runtime pointer: {error}")
+                })?;
+            destination.write_all(bytes).map_err(|error| {
+                format!("Could not restore the previous runtime pointer: {error}")
+            })?;
+            destination
+                .flush()
+                .and_then(|_| destination.commit())
+                .map_err(|error| format!("Could not restore the previous runtime pointer: {error}"))
+        }
         None if paths.active_runtime.exists() => fs::remove_file(&paths.active_runtime)
             .map_err(|error| format!("Could not restore the empty runtime selection: {error}")),
         None => Ok(()),
@@ -1136,7 +1369,9 @@ fn managed_runtime_projection(
     Some(managed_runtime_projection_for(paths, &active))
 }
 
-fn recover_interrupted_activation(app: &AppHandle) -> Result<(), String> {
+fn recover_interrupted_activation(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
+    let _transition = TargetTransitionCoordinator::begin(state, TransitionKind::RecoverActivation)
+        .map_err(|error| error.to_string())?;
     let paths = desktop_paths(app)?;
     if !paths.activation_journal.exists() {
         return Ok(());
@@ -1145,7 +1380,7 @@ fn recover_interrupted_activation(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| format!("Could not read the activation journal: {error}"))?;
     let journal: ActivationJournal = serde_json::from_slice(&contents)
         .map_err(|error| format!("The activation journal is invalid: {error}"))?;
-    if journal.schema_version != 1 {
+    if journal.schema_version != 2 {
         return Err(format!(
             "The activation journal uses unsupported schema version {}.",
             journal.schema_version
@@ -1154,16 +1389,11 @@ fn recover_interrupted_activation(app: &AppHandle) -> Result<(), String> {
     match activation_recovery(&journal.stage) {
         ActivationRecovery::Complete => {
             write_active_runtime(&paths, &journal.candidate_active)?;
-            let manifest = manifest()?;
-            target_profiles::project_managed(
-                app,
-                managed_runtime_projection_for(&paths, &journal.candidate_active),
-                &manifest.desktop_version,
-            )
-            .map_err(|error| error.to_string())?;
+            target_profiles::replace_state(app, journal.candidate_targets)
+                .map_err(|error| error.to_string())?;
         }
         ActivationRecovery::RollBack => {
-            restore_active_runtime(&paths, journal.previous_active.as_ref())?;
+            restore_active_runtime(&paths, journal.previous_active_bytes.as_deref())?;
             target_profiles::replace_state(app, journal.previous_targets)
                 .map_err(|error| error.to_string())?;
         }
@@ -1182,96 +1412,35 @@ fn initialize_target_profiles(app: &AppHandle) -> Result<target_profiles::Target
     .map_err(|error| error.to_string())
 }
 
-fn managed_mutation_allowed(
-    app: &AppHandle,
-    state: &DesktopState,
-    draft_id: Option<&str>,
-) -> Result<(), String> {
-    if let Some(draft_id) = draft_id {
-        let draft = state
-            .managed_setup_draft
-            .lock()
-            .map_err(|_| "The managed setup draft is unavailable.".to_string())?;
-        if draft.as_ref().is_some_and(|draft| draft.id == draft_id) {
-            return Ok(());
-        }
-        return Err("This managed setup draft has expired. Return to the target screen and start setup again.".into());
-    }
-    let profile = target_profiles::selected_profile(app).map_err(|error| error.to_string())?;
-    target_profiles::authorize_lifecycle(&profile, target_profiles::LifecycleAction::Install)
-        .map_err(|error| error.to_string())
-}
-
 async fn supervised_output(
-    state: &DesktopState,
-    command: ShellCommand,
+    command: Command,
+    cancellation: background_process::CancellationToken,
     operation: &str,
-) -> Result<(Vec<u8>, Vec<u8>), String> {
-    if state.shutdown_started.load(Ordering::Acquire) {
-        return Err(format!(
-            "{operation} was cancelled because VidXP is closing."
-        ));
+) -> Result<background_process::BackgroundOutput, String> {
+    let output = background_process::run_async(
+        command,
+        background_process::BackgroundPolicy {
+            timeout: Duration::from_secs(30 * 60),
+            max_output_bytes: MAX_SETUP_OUTPUT_BYTES,
+        },
+        cancellation,
+    )
+    .await
+    .map_err(|error| format!("{operation} failed: {}", error.detail))?;
+    if output.status.success() {
+        return Ok(output);
     }
-    let (mut events, child) = command
-        .spawn()
-        .map_err(|error| format!("{operation} could not start: {error}"))?;
-    {
-        let mut active_child = state
-            .operation_process
-            .lock()
-            .map_err(|_| "The setup process supervisor is unavailable.".to_string())?;
-        if active_child.is_some() {
-            drop(active_child);
-            let _ = child.kill();
-            return Err("Another desktop setup process is already running.".into());
-        }
-        *active_child = Some(child);
-    }
-
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let mut exit_code = None;
-    while let Some(event) = events.recv().await {
-        match event {
-            CommandEvent::Stdout(bytes) => stdout.extend(bytes),
-            CommandEvent::Stderr(bytes) => stderr.extend(bytes),
-            CommandEvent::Error(error) => stderr.extend(error.as_bytes()),
-            CommandEvent::Terminated(status) => {
-                exit_code = status.code;
-                break;
-            }
-            _ => {}
-        }
-        if stdout.len() > MAX_SETUP_OUTPUT_BYTES || stderr.len() > MAX_SETUP_OUTPUT_BYTES {
-            if let Ok(mut active_child) = state.operation_process.lock()
-                && let Some(child) = active_child.take()
-            {
-                let _ = child.kill();
-            }
-            return Err(format!(
-                "{operation} returned more than {} MiB per output stream and was stopped.",
-                MAX_SETUP_OUTPUT_BYTES / (1024 * 1024)
-            ));
-        }
-    }
-    if let Ok(mut active_child) = state.operation_process.lock() {
-        active_child.take();
-    }
-    if exit_code == Some(0) {
-        return Ok((stdout, stderr));
-    }
-    let detail = String::from_utf8_lossy(&stderr).trim().to_owned();
-    Err(format!(
-        "{operation} failed{}: {detail}",
-        exit_code.map_or_else(String::new, |code| format!(" with exit code {code}"))
-    ))
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let detail = if stderr.is_empty() { stdout } else { stderr };
+    Err(format!("{operation} failed ({}): {detail}", output.status))
 }
 
 async fn uv_output(
     app: &AppHandle,
-    state: &DesktopState,
     paths: &DesktopPaths,
     arguments: Vec<String>,
+    cancellation: background_process::CancellationToken,
     operation: &str,
 ) -> Result<(), String> {
     let mut command = app
@@ -1288,7 +1457,8 @@ async fn uv_output(
         .env("UV_PYTHON_INSTALL_DIR", &paths.python)
         .env("UV_NO_CONFIG", "1")
         .env("UV_MANAGED_PYTHON", "1");
-    supervised_output(state, command, operation).await?;
+    let command: Command = command.into();
+    supervised_output(command, cancellation, operation).await?;
     Ok(())
 }
 
@@ -1307,25 +1477,18 @@ fn run_vidxp(
 }
 
 async fn run_vidxp_supervised(
-    app: &AppHandle,
-    state: &DesktopState,
     runtime: &Path,
     paths: &DesktopPaths,
     arguments: &[String],
+    cancellation: background_process::CancellationToken,
     operation: &str,
 ) -> Result<(), String> {
-    let mut command = app
-        .shell()
-        .command(executable(runtime, "vidxp"))
-        .env_clear();
-    for (key, value) in clean_environment(paths) {
-        command = command.env(key, value);
-    }
-    command = command
+    let mut command = configured_command(&executable(runtime, "vidxp"), paths);
+    command
         .arg("--index-dir")
         .arg(&paths.repository)
         .args(arguments);
-    supervised_output(state, command, operation).await?;
+    supervised_output(command, cancellation, operation).await?;
     Ok(())
 }
 
@@ -1351,16 +1514,10 @@ async fn refresh_target_state(
         message: error,
     })?;
     let desktop_version = manifest.desktop_version;
-    let active = state.revalidation_active.clone();
-    let cancellation = state.shutdown_started.clone();
-    if active
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return target_profiles::current_state(&app);
-    }
+    let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::Revalidate)?;
+    let cancellation = state.shutdown.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = OwnedOperationGuard(active);
+        let _transition = transition;
         match target_profiles::selected_profile(&app) {
             Ok(_) => {
                 let _ = target_profiles::validated_selected_profile_with_cancellation(
@@ -1383,8 +1540,10 @@ async fn refresh_target_state(
 }
 
 #[tauri::command]
-fn discover_local_targets() -> Vec<target_profiles::DiscoveredTarget> {
-    target_profiles::discover_local_targets()
+async fn discover_local_targets() -> Result<Vec<target_profiles::DiscoveredTarget>, String> {
+    tauri::async_runtime::spawn_blocking(target_profiles::discover_local_targets)
+        .await
+        .map_err(|error| format!("Target discovery stopped unexpectedly: {error}"))
 }
 
 #[tauri::command]
@@ -1402,105 +1561,154 @@ fn choose_local_executable(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn inspect_local_target(
-    state: tauri::State<'_, DesktopState>,
+async fn inspect_local_target(
     executable: String,
 ) -> Result<target_profiles::TargetInspection, target_profiles::TargetError> {
     let manifest = manifest().map_err(|error| target_profiles::TargetError {
         code: target_profiles::TargetErrorCode::ValidationRequired,
         message: error,
     })?;
-    let inspection =
-        target_profiles::inspect_executable(Path::new(&executable), &manifest.desktop_version)?;
-    if let Some(validated) = inspection.validated.clone() {
-        state
-            .inspected_targets
-            .lock()
-            .map_err(|_| target_profiles::TargetError {
-                code: target_profiles::TargetErrorCode::ValidationRequired,
-                message: "The inspected target cache is unavailable.".into(),
-            })?
-            .insert(validated.executable.clone(), validated);
-    }
-    Ok(inspection)
+    let desktop_version = manifest.desktop_version;
+    tauri::async_runtime::spawn_blocking(move || {
+        target_profiles::inspect_executable(Path::new(&executable), &desktop_version)
+    })
+    .await
+    .map_err(|error| {
+        transition_error(
+            target_profiles::TargetErrorCode::ValidationRequired,
+            format!("Target inspection stopped unexpectedly: {error}"),
+        )
+    })?
 }
 
 #[tauri::command]
-fn adopt_local_target(
+async fn adopt_local_target(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
     executable: String,
     display_name: Option<String>,
-) -> Result<target_profiles::TargetProfile, target_profiles::TargetError> {
+) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
     let manifest = manifest().map_err(|error| target_profiles::TargetError {
         code: target_profiles::TargetErrorCode::ValidationRequired,
         message: error,
     })?;
-    let canonical =
-        fs::canonicalize(Path::new(&executable)).unwrap_or_else(|_| PathBuf::from(&executable));
-    let cached = state
-        .inspected_targets
-        .lock()
-        .map_err(|_| target_profiles::TargetError {
-            code: target_profiles::TargetErrorCode::ValidationRequired,
-            message: "The inspected target cache is unavailable.".into(),
-        })?
-        .remove(&canonical);
-    let profile = match cached {
-        Some(validated) => target_profiles::adopt_validated(&app, validated, display_name)?,
-        None => {
-            target_profiles::adopt_local(&app, &canonical, display_name, &manifest.desktop_version)?
-        }
-    };
-    TargetTransitionCoordinator::new(&app, &state).finish_transition();
-    Ok(profile)
+    let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::Adopt)?;
+    let desktop_version = manifest.desktop_version;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _transition = transition;
+        let canonical =
+            fs::canonicalize(Path::new(&executable)).unwrap_or_else(|_| PathBuf::from(&executable));
+        let setup = target_profiles::adopt_local(&app, &canonical, display_name, &desktop_version)?;
+        stop_ui_process(&app.state::<DesktopState>());
+        Ok(setup)
+    })
+    .await
+    .map_err(|error| {
+        transition_error(
+            target_profiles::TargetErrorCode::ValidationRequired,
+            format!("Target adoption stopped unexpectedly: {error}"),
+        )
+    })?
 }
 
 #[tauri::command]
-fn select_target_profile(
-    app: AppHandle,
-    state: tauri::State<'_, DesktopState>,
-    profile_id: String,
-) -> Result<target_profiles::TargetProfile, target_profiles::TargetError> {
-    let manifest = manifest().map_err(|error| target_profiles::TargetError {
-        code: target_profiles::TargetErrorCode::ValidationRequired,
-        message: error,
-    })?;
-    let profile = target_profiles::select_profile(&app, &profile_id, &manifest.desktop_version)?;
-    TargetTransitionCoordinator::new(&app, &state).finish_transition();
-    Ok(profile)
-}
-
-#[tauri::command]
-fn delete_target_profile(
+async fn select_target_profile(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
     profile_id: String,
 ) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
-    let selected = target_profiles::current_state(&app)?.selected_profile_id;
-    let result = target_profiles::delete_profile(&app, &profile_id)?;
-    if selected.as_deref() == Some(&profile_id) {
-        TargetTransitionCoordinator::new(&app, &state).stop_browser();
-    }
-    Ok(result)
+    let manifest = manifest().map_err(|error| target_profiles::TargetError {
+        code: target_profiles::TargetErrorCode::ValidationRequired,
+        message: error,
+    })?;
+    let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::Select)?;
+    let desktop_version = manifest.desktop_version;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _transition = transition;
+        let setup = target_profiles::select_profile(&app, &profile_id, &desktop_version)?;
+        stop_ui_process(&app.state::<DesktopState>());
+        Ok(setup)
+    })
+    .await
+    .map_err(|error| {
+        transition_error(
+            target_profiles::TargetErrorCode::ValidationRequired,
+            format!("Target selection stopped unexpectedly: {error}"),
+        )
+    })?
 }
 
 #[tauri::command]
-fn begin_managed_setup(
+async fn delete_target_profile(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    profile_id: String,
+) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::Delete)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _transition = transition;
+        let selected = target_profiles::current_state(&app)?.selected_profile_id;
+        let result = target_profiles::delete_profile(&app, &profile_id)?;
+        if selected.as_deref() == Some(&profile_id) {
+            stop_ui_process(&app.state::<DesktopState>());
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|error| {
+        transition_error(
+            target_profiles::TargetErrorCode::ValidationRequired,
+            format!("Target deletion stopped unexpectedly: {error}"),
+        )
+    })?
+}
+
+#[tauri::command]
+async fn begin_managed_setup(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
 ) -> Result<ManagedSetupDraft, target_profiles::TargetError> {
-    TargetTransitionCoordinator::new(&app, &state).begin_managed_draft()
+    let transition = state.transition.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<DesktopState>();
+        debug_assert!(Arc::ptr_eq(&transition, &state.transition));
+        TargetTransitionCoordinator::begin_managed_draft(&app, &state)
+    })
+    .await
+    .map_err(|error| {
+        transition_error(
+            target_profiles::TargetErrorCode::ValidationRequired,
+            format!("Managed setup could not start: {error}"),
+        )
+    })?
 }
 
 #[tauri::command]
-fn cancel_managed_setup(app: AppHandle, state: tauri::State<'_, DesktopState>) {
-    TargetTransitionCoordinator::new(&app, &state).cancel_managed_draft();
+async fn cancel_managed_setup(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    draft_id: String,
+) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    let transition = state.transition.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<DesktopState>();
+        debug_assert!(Arc::ptr_eq(&transition, &state.transition));
+        TargetTransitionCoordinator::cancel_managed_draft(&app, &state, &draft_id)
+    })
+    .await
+    .map_err(|error| {
+        transition_error(
+            target_profiles::TargetErrorCode::ValidationRequired,
+            format!("Managed setup cancellation stopped unexpectedly: {error}"),
+        )
+    })?
 }
 
 #[tauri::command]
-fn media_runtime_status() -> MediaRuntimeStatus {
-    inspect_media_runtime()
+async fn media_runtime_status() -> Result<MediaRuntimeStatus, String> {
+    tauri::async_runtime::spawn_blocking(inspect_media_runtime)
+        .await
+        .map_err(|error| format!("Media runtime inspection stopped unexpectedly: {error}"))
 }
 
 #[tauri::command]
@@ -1523,23 +1731,18 @@ fn choose_model_directory(app: AppHandle) -> Result<Option<String>, String> {
 async fn install_media_runtime(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
-    draft_id: Option<String>,
+    draft_id: String,
 ) -> Result<MediaRuntimeStatus, String> {
-    managed_mutation_allowed(&app, &state, draft_id.as_deref())?;
-    let current = inspect_media_runtime();
+    let _transition =
+        TargetTransitionCoordinator::begin_apply(&state, &draft_id, TransitionKind::InstallMedia)
+            .map_err(|error| error.to_string())?;
+    let cancellation = OperationCancellationGuard::register(&state)?;
+    let current = tauri::async_runtime::spawn_blocking(inspect_media_runtime)
+        .await
+        .map_err(|error| format!("Media runtime inspection stopped unexpectedly: {error}"))?;
     if current.ready {
         return Ok(current);
     }
-    if state
-        .operation_active
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return Err("Another install or model-preparation operation is active.".into());
-    }
-    let _operation_guard = OperationGuard {
-        active: &state.operation_active,
-    };
     let plan = system_install_plan().ok_or("No supported system package manager was found.")?;
     if !plan.automatic {
         let instruction = format!(
@@ -1574,13 +1777,16 @@ async fn install_media_runtime(
         .shell()
         .command(plan.command[0].clone())
         .args(&plan.command[1..]);
+    let command: Command = command.into();
     supervised_output(
-        &state,
         command,
+        cancellation.token(),
         &format!("{} FFmpeg installation", plan.manager),
     )
     .await?;
-    let status = inspect_media_runtime();
+    let status = tauri::async_runtime::spawn_blocking(inspect_media_runtime)
+        .await
+        .map_err(|error| format!("Media runtime verification stopped unexpectedly: {error}"))?;
     if !status.ready {
         return Err(format!(
             "FFmpeg installation finished but verification failed: {}",
@@ -1591,9 +1797,15 @@ async fn install_media_runtime(
 }
 
 #[tauri::command]
-fn runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
+async fn runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || runtime_status_sync(&app))
+        .await
+        .map_err(|error| format!("Managed runtime inspection stopped unexpectedly: {error}"))?
+}
+
+fn runtime_status_sync(app: &AppHandle) -> Result<RuntimeStatus, String> {
     let manifest = manifest()?;
-    let mut paths = desktop_paths(&app)?;
+    let mut paths = desktop_paths(app)?;
     let default_model_directory = paths.models.to_string_lossy().into_owned();
     if !paths.active_runtime.exists() {
         return Ok(RuntimeStatus {
@@ -1668,13 +1880,76 @@ fn runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
 }
 
 #[tauri::command]
-fn model_directory_inventory(
+async fn model_directory_inventory(
     app: AppHandle,
     directory: Option<String>,
 ) -> Result<ModelDirectoryInventory, String> {
-    let paths = desktop_paths(&app)?;
-    let selected = model_directory(&paths, directory.as_deref())?;
-    Ok(inventory_model_directory(&selected))
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = desktop_paths(&app)?;
+        let selected = model_directory(&paths, directory.as_deref())?;
+        Ok(inventory_model_directory(&selected))
+    })
+    .await
+    .map_err(|error| format!("Model inventory stopped unexpectedly: {error}"))?
+}
+
+#[tauri::command]
+async fn prepare_managed_models(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    draft_id: String,
+) -> Result<target_profiles::TargetState, String> {
+    let _transition =
+        TargetTransitionCoordinator::begin_apply(&state, &draft_id, TransitionKind::PrepareModels)
+            .map_err(|error| error.to_string())?;
+    let cancellation = OperationCancellationGuard::register(&state)?;
+    let preparation_app = app.clone();
+    let (runtime, paths, capabilities) = tauri::async_runtime::spawn_blocking(move || {
+        let profile = target_profiles::selected_profile(&preparation_app)
+            .map_err(|error| error.to_string())?;
+        target_profiles::authorize_lifecycle(&profile, target_profiles::LifecycleAction::Install)
+            .map_err(|error| error.to_string())?;
+        let mut paths = desktop_paths(&preparation_app)?;
+        let active = active_runtime(&paths)?;
+        if profile.managed_runtime_profile.as_deref() != Some(active.profile.as_str()) {
+            return Err(
+                "The selected managed target no longer matches the active Desktop runtime."
+                    .to_string(),
+            );
+        }
+        paths.models = active.model_directory.clone();
+        let runtime = runtime_directory(&paths, &active);
+        Ok::<_, String>((runtime, paths, active.capabilities))
+    })
+    .await
+    .map_err(|error| format!("Model preparation setup stopped unexpectedly: {error}"))??;
+
+    let manifest = manifest()?;
+    let arguments = capability_command_arguments(&manifest, "prepare", &capabilities);
+    *state
+        .operation_worker_runtime
+        .lock()
+        .map_err(|_| "The preparation worker supervisor is unavailable.".to_string())? =
+        Some(runtime.clone());
+    let preparation = run_vidxp_supervised(
+        &runtime,
+        &paths,
+        &arguments,
+        cancellation.token(),
+        "VidXP model preparation",
+    )
+    .await;
+    let shutdown_runtime = runtime.clone();
+    let shutdown_paths = paths;
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        stop_worker(&shutdown_runtime, &shutdown_paths);
+    })
+    .await;
+    if let Ok(mut worker_runtime) = state.operation_worker_runtime.lock() {
+        worker_runtime.take();
+    }
+    preparation?;
+    target_profiles::current_state(&app).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1682,35 +1957,38 @@ async fn install_runtime(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
     request: InstallRequest,
-) -> Result<InstallResult, String> {
-    managed_mutation_allowed(&app, &state, request.draft_id.as_deref())?;
-    if state
-        .operation_active
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return Err("Another install or model-preparation operation is active.".into());
-    }
-    let _operation_guard = OperationGuard {
-        active: &state.operation_active,
-    };
+) -> Result<InstallTransitionResult, String> {
+    let mut transition = TargetTransitionCoordinator::begin_apply(
+        &state,
+        &request.draft_id,
+        TransitionKind::InstallRuntime,
+    )
+    .map_err(|error| error.to_string())?;
+    let cancellation = OperationCancellationGuard::register(&state)?;
     let manifest = manifest()?;
     let capabilities = selected_capabilities(&manifest, &request.capabilities)?;
     let surfaces = selected_surfaces(&manifest, &request.surfaces)?;
-    let media_runtime = verified_media_runtime()?;
-    let mut paths = desktop_paths(&app)?;
-    paths.models = model_directory(&paths, request.model_directory.as_deref())?;
-    for directory in [
-        &paths.data,
-        &paths.cache,
-        &paths.repository,
-        &paths.runtimes,
-        &paths.python,
-        &paths.models,
-    ] {
-        fs::create_dir_all(directory)
-            .map_err(|error| format!("Could not create {}: {error}", directory.display()))?;
-    }
+    let requested_model_directory = request.model_directory.clone();
+    let preparation_app = app.clone();
+    let (media_runtime, paths) = tauri::async_runtime::spawn_blocking(move || {
+        let media_runtime = verified_media_runtime()?;
+        let mut paths = desktop_paths(&preparation_app)?;
+        paths.models = model_directory(&paths, requested_model_directory.as_deref())?;
+        for directory in [
+            &paths.data,
+            &paths.cache,
+            &paths.repository,
+            &paths.runtimes,
+            &paths.python,
+            &paths.models,
+        ] {
+            fs::create_dir_all(directory)
+                .map_err(|error| format!("Could not create {}: {error}", directory.display()))?;
+        }
+        Ok::<_, String>((media_runtime, paths))
+    })
+    .await
+    .map_err(|error| format!("Managed runtime preparation stopped unexpectedly: {error}"))??;
 
     let profile_seed = format!(
         "{}:{}:{}:{}:{}",
@@ -1732,7 +2010,6 @@ async fn install_runtime(
     let install_result = async {
         uv_output(
             &app,
-            &state,
             &paths,
             vec![
                 "venv".into(),
@@ -1742,25 +2019,30 @@ async fn install_runtime(
                 "--managed-python".into(),
                 "--no-config".into(),
             ],
+            cancellation.token(),
             "Managed Python setup",
         )
         .await?;
 
-        fs::write(&constraints, normalized_runtime_constraints().as_ref())
-            .map_err(|error| format!("Could not write runtime constraints: {error}"))?;
+        let constraints_path = constraints.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            fs::write(&constraints_path, normalized_runtime_constraints().as_ref())
+                .map_err(|error| format!("Could not write runtime constraints: {error}"))
+        })
+        .await
+        .map_err(|error| format!("Runtime constraint staging stopped unexpectedly: {error}"))??;
 
         uv_output(
             &app,
-            &state,
             &paths,
             package_acquisition_arguments(&manifest, &executable(&staging, "python")),
+            cancellation.token(),
             "VidXP package acquisition",
         )
         .await?;
 
         uv_output(
             &app,
-            &state,
             &paths,
             dependency_installation_arguments(
                 &manifest,
@@ -1770,13 +2052,12 @@ async fn install_runtime(
                 &constraints,
                 !cfg!(target_os = "macos"),
             ),
+            cancellation.token(),
             "VidXP package installation",
         )
         .await?;
 
         run_vidxp_supervised(
-            &app,
-            &state,
             &staging,
             &paths,
             &[
@@ -1787,17 +2068,17 @@ async fn install_runtime(
                 "--ffprobe".into(),
                 media_runtime.ffprobe.to_string_lossy().into_owned(),
             ],
+            cancellation.token(),
             "FFmpeg configuration",
         )
         .await?;
 
         let doctor_arguments = capability_command_arguments(&manifest, "doctor", &capabilities);
         run_vidxp_supervised(
-            &app,
-            &state,
             &staging,
             &paths,
             &doctor_arguments,
+            cancellation.token(),
             "VidXP dependency validation",
         )
         .await?;
@@ -1811,11 +2092,10 @@ async fn install_runtime(
                 .map_err(|_| "The preparation worker supervisor is unavailable.")? =
                 Some(staging.clone());
             let preparation = run_vidxp_supervised(
-                &app,
-                &state,
                 &staging,
                 &paths,
                 &prepare_arguments,
+                cancellation.token(),
                 "VidXP model preparation",
             )
             .await;
@@ -1835,11 +2115,16 @@ async fn install_runtime(
     }
     .await;
     if let Err(error) = install_result {
-        let cleanup_error = if staging.exists() {
-            fs::remove_dir_all(&staging).err()
-        } else {
-            None
-        };
+        let failed_staging = staging.clone();
+        let cleanup_error = tauri::async_runtime::spawn_blocking(move || {
+            if failed_staging.exists() {
+                fs::remove_dir_all(&failed_staging).err()
+            } else {
+                None
+            }
+        })
+        .await
+        .map_err(|join| format!("{error}. Staged-runtime cleanup stopped unexpectedly: {join}"))?;
         return Err(match cleanup_error {
             Some(cleanup_error) => format!(
                 "{error}. The previous active runtime was not changed. VidXP could not remove the failed staged runtime at {}: {cleanup_error}",
@@ -1853,8 +2138,6 @@ async fn install_runtime(
 
     let profile = format!("{profile_hash}-{timestamp}");
     let runtime = paths.runtimes.join(&profile);
-    fs::rename(&staging, &runtime)
-        .map_err(|error| format!("Could not finalize the validated runtime: {error}"))?;
     let active = ActiveRuntime {
         schema_version: 2,
         manifest_sha256: manifest_digest(),
@@ -1864,60 +2147,105 @@ async fn install_runtime(
         surfaces: surfaces.clone(),
         model_directory: paths.models.clone(),
     };
-    let previous_active = if paths.active_runtime.exists() {
-        Some(active_runtime(&paths)?)
-    } else {
-        None
-    };
-    let previous_targets =
-        target_profiles::current_state(&app).map_err(|error| error.to_string())?;
-    let mut journal = ActivationJournal {
-        schema_version: 1,
-        stage: ActivationStage::Prepared,
-        previous_active,
-        previous_targets,
-        candidate_active: active.clone(),
-    };
-    write_activation_journal(&paths, &journal)?;
-    let activation = (|| {
-        target_profiles::project_managed(
-            &app,
-            managed_runtime_projection_for(&paths, &active),
-            &manifest.desktop_version,
-        )
-        .map_err(|error| error.to_string())?;
-        journal.stage = ActivationStage::ProfileProjected;
-        write_activation_journal(&paths, &journal)?;
-        write_active_runtime(&paths, &active)?;
-        journal.stage = ActivationStage::ActiveWritten;
-        write_activation_journal(&paths, &journal)?;
-        clear_activation_journal(&paths)
-    })();
-    if let Err(error) = activation {
-        let target_rollback =
-            target_profiles::replace_state(&app, journal.previous_targets.clone())
+    let activation_app = app.clone();
+    let activation_paths = paths;
+    let activation_manifest_version = manifest.desktop_version.clone();
+    let activation = tauri::async_runtime::spawn_blocking(move || {
+        let previous_active_bytes = read_active_runtime_snapshot(&activation_paths)?;
+        let previous_targets =
+            target_profiles::current_state(&activation_app).map_err(|error| error.to_string())?;
+        fs::rename(&staging, &runtime)
+            .map_err(|error| format!("Could not finalize the validated runtime: {error}"))?;
+
+        let candidate_targets = match target_profiles::prepare_managed_activation(
+            &activation_app,
+            managed_runtime_projection_for(&activation_paths, &active),
+            &activation_manifest_version,
+        ) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                let cleanup = fs::remove_dir_all(&runtime);
+                return Err(match cleanup {
+                    Ok(()) => format!(
+                        "The installed runtime failed the Desktop compatibility contract and was not activated: {error}"
+                    ),
+                    Err(cleanup) => format!(
+                        "The installed runtime failed the Desktop compatibility contract and was not activated: {error}. Cleanup also failed for {}: {cleanup}",
+                        runtime.display()
+                    ),
+                });
+            }
+        };
+        let mut journal = ActivationJournal {
+            schema_version: 2,
+            stage: ActivationStage::Prepared,
+            previous_active_bytes,
+            previous_targets,
+            candidate_active: active.clone(),
+            candidate_targets: candidate_targets.clone(),
+        };
+        if let Err(error) = write_activation_journal(&activation_paths, &journal) {
+            let cleanup = fs::remove_dir_all(&runtime);
+            return Err(match cleanup {
+                Ok(()) => error,
+                Err(cleanup) => format!(
+                    "{error}. The finalized but untracked runtime could not be removed from {}: {cleanup}",
+                    runtime.display()
+                ),
+            });
+        }
+
+        let activation_result = (|| {
+            target_profiles::replace_state(&activation_app, candidate_targets.clone())
+                .map_err(|error| error.to_string())?;
+            journal.stage = ActivationStage::ProfileProjected;
+            write_activation_journal(&activation_paths, &journal)?;
+            write_active_runtime(&activation_paths, &active)?;
+            journal.stage = ActivationStage::ActiveWritten;
+            write_activation_journal(&activation_paths, &journal)?;
+            clear_activation_journal(&activation_paths)
+        })();
+        if let Err(error) = activation_result {
+            let target_rollback = target_profiles::replace_state(
+                &activation_app,
+                journal.previous_targets.clone(),
+            )
                 .map_err(|rollback| rollback.to_string());
-        let runtime_rollback = restore_active_runtime(&paths, journal.previous_active.as_ref());
-        if target_rollback.is_ok() && runtime_rollback.is_ok() {
-            let _ = clear_activation_journal(&paths);
+            let runtime_rollback = restore_active_runtime(
+                &activation_paths,
+                journal.previous_active_bytes.as_deref(),
+            );
+            if target_rollback.is_ok() && runtime_rollback.is_ok() {
+                let _ = clear_activation_journal(&activation_paths);
+                return Err(format!(
+                    "{error}. The installed runtime was retained at {}, while the previous active runtime and target remain selected.",
+                    runtime.display()
+                ));
+            }
             return Err(format!(
-                "{error}. The installed runtime was retained at {}, while the previous active runtime and target remain selected.",
+                "{error}. Automatic rollback was incomplete; VidXP Desktop will recover the activation journal on its next start. The installed runtime remains at {}.",
                 runtime.display()
             ));
         }
-        return Err(format!(
-            "{error}. Automatic rollback was incomplete; VidXP Desktop will recover the activation journal on its next start. The installed runtime remains at {}.",
-            runtime.display()
-        ));
-    }
-    TargetTransitionCoordinator::new(&app, &state).finish_transition();
+        Ok::<_, String>(candidate_targets)
+    })
+    .await
+    .map_err(|error| format!("Managed activation stopped unexpectedly: {error}"))??;
+    stop_ui_process(&state);
+    transition.commit_draft();
 
-    Ok(InstallResult {
-        package_version: manifest.package_version,
-        capabilities,
-        surfaces,
-        model_directory: paths.models.to_string_lossy().into_owned(),
-        prepared: request.prepare_models,
+    Ok(InstallTransitionResult {
+        install: InstallResult {
+            package_version: manifest.package_version,
+            capabilities,
+            surfaces,
+            model_directory: activation
+                .selected_profile()
+                .and_then(|profile| profile.model_directory.as_ref())
+                .map_or_else(String::new, |path| path.to_string_lossy().into_owned()),
+            prepared: request.prepare_models,
+        },
+        setup: activation,
     })
 }
 
@@ -1950,8 +2278,7 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
         match ui_process_action(running, &ui.profile_id, &profile.id) {
             UiProcessAction::Reuse => return Ok(ui.url.clone()),
             UiProcessAction::Replace => {
-                let _ = ui.process.kill();
-                let _ = ui.process.wait_timeout(Duration::from_secs(5));
+                ui.process.terminate_and_reap();
             }
             UiProcessAction::Start => {}
         }
@@ -1977,20 +2304,11 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
             }
             configured_command(&profile.executable, &paths)
         }
-        target_profiles::TargetKind::ExistingLocal => {
-            let mut command = Command::new(&profile.executable);
-            hide_child_console(&mut command);
-            command
-        }
+        target_profiles::TargetKind::ExistingLocal => Command::new(&profile.executable),
     };
     configure_ui_service_command(&mut command, &profile.repository_root, port);
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut process = command
-        .spawn()
-        .map_err(|error| format!("Could not start the VidXP interface: {error}"))?;
+    let mut process = background_process::spawn_service(command)
+        .map_err(|error| format!("Could not start the VidXP interface: {}", error.detail))?;
 
     let address = SocketAddr::from(([127, 0, 0, 1], port));
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -2014,8 +2332,7 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
         }
         thread::sleep(Duration::from_millis(100));
     }
-    let _ = process.kill();
-    let _ = process.wait();
+    process.terminate_and_reap();
     Err("The VidXP interface did not become ready in 30 seconds.".into())
 }
 
@@ -2024,9 +2341,7 @@ fn stop_ui_process(state: &DesktopState) {
         return;
     };
     if let Some(mut ui) = active.take() {
-        let _ = ui.process.kill();
-        let _ = ui.process.wait_timeout(Duration::from_secs(5));
-        let _ = ui.process.wait();
+        ui.process.terminate_and_reap();
     }
 }
 
@@ -2094,12 +2409,43 @@ fn browser_surface_configured(app: &AppHandle) -> bool {
         .is_some_and(|profile| profile.is_ready(now) && profile.frontend.launchable)
 }
 
-fn open_ui_in_browser(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
-    let url = start_ui(app, state)?;
+struct BrowserOpenGuard(AppHandle);
+
+fn claim_browser_open(active: &AtomicBool) -> bool {
+    active
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+}
+
+impl Drop for BrowserOpenGuard {
+    fn drop(&mut self) {
+        self.0
+            .state::<DesktopState>()
+            .browser_open_active
+            .store(false, Ordering::Release);
+    }
+}
+
+async fn open_ui_in_browser(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<DesktopState>();
+    if !claim_browser_open(&state.browser_open_active) {
+        return Ok(());
+    }
+    let _browser_guard = BrowserOpenGuard(app.clone());
+    let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::OpenBrowser)
+        .map_err(|error| error.to_string())?;
+    let worker_app = app.clone();
+    let url = tauri::async_runtime::spawn_blocking(move || {
+        let _transition = transition;
+        let state = worker_app.state::<DesktopState>();
+        start_ui(&worker_app, &state)
+    })
+    .await
+    .map_err(|error| format!("VidXP interface startup stopped unexpectedly: {error}"))??;
     app.opener()
         .open_url(&url, None::<&str>)
         .map_err(|error| format!("Could not open VidXP in the default browser: {error}"))?;
-    hide_main_window(app)
+    hide_main_window(&app)
 }
 
 fn open_browser_or_show_manager(app: &AppHandle) {
@@ -2108,9 +2454,8 @@ fn open_browser_or_show_manager(app: &AppHandle) {
         return;
     }
     let app = app.clone();
-    thread::spawn(move || {
-        let state = app.state::<DesktopState>();
-        if let Err(error) = open_ui_in_browser(&app, &state) {
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = open_ui_in_browser(app.clone()).await {
             show_main_window(&app);
             app.dialog()
                 .message(error)
@@ -2150,15 +2495,16 @@ fn close_action(configured: bool) -> DesktopCloseAction {
 }
 
 fn begin_shutdown(app: &AppHandle) {
-    if app
-        .state::<DesktopState>()
-        .shutdown_started
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
+    let state = app.state::<DesktopState>();
+    if state.shutdown.is_cancelled() {
         return;
     }
-    TargetTransitionCoordinator::new(app, &app.state::<DesktopState>()).cancel_managed_draft();
+    state.shutdown.cancel();
+    if let Ok(active) = state.operation_cancellation.lock()
+        && let Some(cancellation) = active.as_ref()
+    {
+        cancellation.cancel();
+    }
     log::info!("VidXP supervised shutdown requested");
     shutdown(app);
     log::info!("VidXP supervised shutdown completed");
@@ -2166,8 +2512,8 @@ fn begin_shutdown(app: &AppHandle) {
 }
 
 #[tauri::command]
-fn launch_ui(app: AppHandle, state: tauri::State<'_, DesktopState>) -> Result<(), String> {
-    open_ui_in_browser(&app, &state)
+async fn launch_ui(app: AppHandle) -> Result<(), String> {
+    open_ui_in_browser(app).await
 }
 
 fn create_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -2198,42 +2544,26 @@ fn stop_worker(runtime: &Path, paths: &DesktopPaths) {
     command
         .arg("--index-dir")
         .arg(&paths.repository)
-        .args(["jobs", "stop-worker"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let Ok(mut process) = command.spawn() else {
-        return;
-    };
-    match process.wait_timeout(Duration::from_secs(5)) {
-        Ok(Some(_)) => {}
-        _ => {
-            let _ = process.kill();
-            let _ = process.wait();
-        }
-    }
+        .args(["jobs", "stop-worker"]);
+    let _ = background_process::run(
+        command,
+        background_process::BackgroundPolicy {
+            timeout: Duration::from_secs(5),
+            max_output_bytes: 64 * 1024,
+        },
+        None,
+    );
 }
 
 fn shutdown(app: &AppHandle) {
     log::info!("Stopping active VidXP processes");
     let state = app.state::<DesktopState>();
-    if let Ok(mut active_operation) = state.operation_process.lock()
-        && let Some(process) = active_operation.take()
+    if let Ok(active_operation) = state.operation_cancellation.lock()
+        && let Some(cancellation) = active_operation.as_ref()
     {
-        let _ = process.kill();
+        cancellation.cancel();
     }
-    if let Ok(mut active_process) = state.ui_process.lock()
-        && let Some(mut ui) = active_process.take()
-    {
-        let _ = ui.process.kill();
-        match ui.process.wait_timeout(Duration::from_secs(5)) {
-            Ok(Some(_)) => {}
-            _ => {
-                let _ = ui.process.kill();
-                let _ = ui.process.wait_timeout(Duration::from_secs(1));
-            }
-        }
-    }
+    stop_ui_process(&state);
     let Ok(mut paths) = desktop_paths(app) else {
         log::warn!("Could not resolve desktop paths during shutdown");
         return;
@@ -2285,7 +2615,8 @@ pub fn run() {
         .manage(DesktopState::default())
         .setup(|app| {
             migrate_legacy_shared_data(app.handle()).map_err(io::Error::other)?;
-            recover_interrupted_activation(app.handle()).map_err(io::Error::other)?;
+            recover_interrupted_activation(app.handle(), &app.state::<DesktopState>())
+                .map_err(io::Error::other)?;
             if let Err(error) = initialize_target_profiles(app.handle()) {
                 log::error!("Target profile initialization failed: {error}");
             }
@@ -2312,6 +2643,7 @@ pub fn run() {
             install_media_runtime,
             runtime_status,
             model_directory_inventory,
+            prepare_managed_models,
             install_runtime,
             launch_ui
         ]);
@@ -2324,11 +2656,7 @@ pub fn run() {
             event: WindowEvent::CloseRequested { api, .. },
             ..
         } if label == "main" => {
-            if app_handle
-                .state::<DesktopState>()
-                .shutdown_started
-                .load(Ordering::Acquire)
-            {
+            if app_handle.state::<DesktopState>().shutdown.is_cancelled() {
                 return;
             }
             api.prevent_close();
@@ -2340,10 +2668,7 @@ pub fn run() {
             }
         }
         RunEvent::ExitRequested { api, .. }
-            if !app_handle
-                .state::<DesktopState>()
-                .shutdown_started
-                .load(Ordering::Acquire) =>
+            if !app_handle.state::<DesktopState>().shutdown.is_cancelled() =>
         {
             api.prevent_exit();
             begin_shutdown(app_handle);
@@ -2356,13 +2681,14 @@ pub fn run() {
 mod tests {
     use super::{
         ActivationRecovery, ActivationStage, DesktopAction, DesktopActivation, DesktopCloseAction,
-        UiProcessAction, action_for_activation, activation_recovery, base_package_specification,
-        capability_command_arguments, close_action, configure_ui_service_command,
-        dependency_installation_arguments, desktop_paths_from_roots, display_command,
-        inventory_model_directory, manifest, normalize_line_endings,
+        DesktopState, DraftPhase, DraftRecord, ManagedSetupDraft, TargetTransitionCoordinator,
+        TransitionKind, UiProcessAction, action_for_activation, activation_recovery,
+        base_package_specification, capability_command_arguments, claim_browser_open, close_action,
+        configure_ui_service_command, dependency_installation_arguments, desktop_paths_from_roots,
+        display_command, inventory_model_directory, manifest, normalize_line_endings,
         normalized_runtime_constraints, package_acquisition_arguments, package_index,
-        package_specification, required_encoder_missing, selected_capabilities, selected_surfaces,
-        ui_process_action,
+        package_specification, read_active_runtime_snapshot, required_encoder_missing,
+        restore_active_runtime, selected_capabilities, selected_surfaces, ui_process_action,
     };
     use std::{
         ffi::OsStr,
@@ -2414,6 +2740,119 @@ mod tests {
             activation_recovery(&ActivationStage::ActiveWritten),
             ActivationRecovery::Complete
         );
+    }
+
+    #[test]
+    fn concurrent_target_transitions_return_a_stable_conflict() {
+        let state = DesktopState::default();
+        let first = TargetTransitionCoordinator::begin(&state, TransitionKind::Adopt)
+            .expect("first transition");
+        let conflict = TargetTransitionCoordinator::begin(&state, TransitionKind::Select)
+            .err()
+            .expect("conflict");
+
+        assert_eq!(
+            conflict.code,
+            crate::target_profiles::TargetErrorCode::OperationConflict
+        );
+        drop(first);
+        assert!(TargetTransitionCoordinator::begin(&state, TransitionKind::Select).is_ok());
+    }
+
+    #[test]
+    fn managed_draft_cancellation_is_scoped_and_rejected_while_applying() {
+        let state = DesktopState::default();
+        state.transition.lock().expect("transition").draft = Some(DraftRecord {
+            draft: ManagedSetupDraft {
+                id: "draft-current".into(),
+                previous_profile_id: Some("local-1".into()),
+            },
+            phase: DraftPhase::Draft,
+        });
+
+        let stale = TargetTransitionCoordinator::cancel_draft(&state, "draft-stale")
+            .expect_err("stale draft");
+        assert_eq!(
+            stale.code,
+            crate::target_profiles::TargetErrorCode::DraftMismatch
+        );
+
+        let applying = TargetTransitionCoordinator::begin_apply(
+            &state,
+            "draft-current",
+            TransitionKind::InstallRuntime,
+        )
+        .expect("apply");
+        let conflict = TargetTransitionCoordinator::cancel_draft(&state, "draft-current")
+            .expect_err("applying draft");
+        assert_eq!(
+            conflict.code,
+            crate::target_profiles::TargetErrorCode::DraftApplying
+        );
+        drop(applying);
+        TargetTransitionCoordinator::cancel_draft(&state, "draft-current")
+            .expect("cancel settled draft");
+        assert_eq!(
+            state
+                .transition
+                .lock()
+                .expect("transition")
+                .draft
+                .as_ref()
+                .expect("draft")
+                .phase,
+            DraftPhase::Cancelled
+        );
+        let finished = TargetTransitionCoordinator::cancel_draft(&state, "draft-current")
+            .expect_err("finished draft");
+        assert_eq!(
+            finished.code,
+            crate::target_profiles::TargetErrorCode::DraftMismatch
+        );
+    }
+
+    #[test]
+    fn previous_runtime_snapshot_accepts_current_old_malformed_and_missing_pointers() {
+        let root = std::env::temp_dir().join(format!(
+            "vidxp-active-snapshot-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("private")).expect("private directory");
+        let paths = desktop_paths_from_roots(
+            &root.join("private"),
+            &root.join("cache"),
+            &root.join("local"),
+        );
+        assert_eq!(read_active_runtime_snapshot(&paths).expect("missing"), None);
+
+        for bytes in [
+            br#"{"schema_version":2,"manifest_sha256":"current"}"#.as_slice(),
+            br#"{"schema_version":2,"manifest_sha256":"old"}"#.as_slice(),
+            br#"not-json"#.as_slice(),
+        ] {
+            fs::write(&paths.active_runtime, bytes).expect("pointer");
+            assert_eq!(
+                read_active_runtime_snapshot(&paths).expect("snapshot"),
+                Some(bytes.to_vec())
+            );
+            restore_active_runtime(&paths, Some(bytes)).expect("restore");
+            assert_eq!(fs::read(&paths.active_runtime).expect("restored"), bytes);
+        }
+        restore_active_runtime(&paths, None).expect("remove pointer");
+        assert!(!paths.active_runtime.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn repeated_browser_open_requests_are_coalesced() {
+        let active = std::sync::atomic::AtomicBool::new(false);
+        assert!(claim_browser_open(&active));
+        assert!(!claim_browser_open(&active));
     }
 
     #[test]
