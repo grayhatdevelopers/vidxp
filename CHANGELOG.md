@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## [0.4.0-b.1](https://github.com/grayhatdevelopers/vidxp/compare/v0.4.0-b...v0.4.0-b.1) (2026-08-02)
+
+
+### Features
+
+* add capability-aware agent preflight ([#41](https://github.com/grayhatdevelopers/vidxp/issues/41)) ([62af88e](https://github.com/grayhatdevelopers/vidxp/commit/62af88e70e6dd1c2ac629fdaa7584d8679740ef0))
+* **desktop:** add local target and managed runtime workflows ([#50](https://github.com/grayhatdevelopers/vidxp/issues/50)) ([9a96b3a](https://github.com/grayhatdevelopers/vidxp/commit/9a96b3ac4dd299fafa6c682a6794b627c16b2bf1))
+* **mcp:** add native media ingestion and inspectable evidence ([#53](https://github.com/grayhatdevelopers/vidxp/issues/53)) ([9a5a911](https://github.com/grayhatdevelopers/vidxp/commit/9a5a911bef79474e55152c62e9289023fcf10c5a))
+* **mcp:** add reusable evidence boards ([#56](https://github.com/grayhatdevelopers/vidxp/issues/56)) ([549e727](https://github.com/grayhatdevelopers/vidxp/commit/549e727a7132dbc46ade7d521f11947afeaac745))
+* **skills:** add VidXP agent workflows ([#54](https://github.com/grayhatdevelopers/vidxp/issues/54)) ([e321e29](https://github.com/grayhatdevelopers/vidxp/commit/e321e298f64d51dfbcc7276ee3e071d20d698f9b))
+
+
+### Bug Fixes
+
+* **mcp:** complete follow-up evidence delivery ([#55](https://github.com/grayhatdevelopers/vidxp/issues/55)) ([58a6db8](https://github.com/grayhatdevelopers/vidxp/commit/58a6db807480ed562bb2b44f62414ca78de568e5))
+
 ## [0.4.0-b](https://github.com/grayhatdevelopers/vidxp/compare/v0.3.0...v0.4.0-b) (2026-07-31)
 
 
