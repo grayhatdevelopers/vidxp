@@ -4,6 +4,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, TryRecvError},
     },
     thread,
     time::{Duration, Instant},
@@ -62,19 +63,65 @@ pub struct BackgroundError {
     pub detail: String,
 }
 
-fn read_bounded(
-    stream: impl Read + Send + 'static,
-    limit: usize,
-    exceeded: Arc<AtomicBool>,
-) -> thread::JoinHandle<std::io::Result<Vec<u8>>> {
-    thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stream.take(limit as u64 + 1).read_to_end(&mut bytes)?;
-        if bytes.len() > limit {
-            exceeded.store(true, Ordering::Release);
+struct OutputReader {
+    receiver: Receiver<std::io::Result<Vec<u8>>>,
+    handle: Option<thread::JoinHandle<()>>,
+    result: Option<std::io::Result<Vec<u8>>>,
+}
+
+impl OutputReader {
+    fn poll(&mut self) -> Result<bool, BackgroundError> {
+        if self.result.is_some() {
+            return Ok(true);
         }
-        Ok(bytes)
-    })
+        match self.receiver.try_recv() {
+            Ok(result) => {
+                self.result = Some(result);
+                Ok(true)
+            }
+            Err(TryRecvError::Empty) => Ok(false),
+            Err(TryRecvError::Disconnected) => Err(BackgroundError {
+                kind: BackgroundErrorKind::Output,
+                detail: "an output reader stopped without returning its result".into(),
+            }),
+        }
+    }
+
+    fn finish(mut self) -> Result<Vec<u8>, BackgroundError> {
+        let result = self.result.take().ok_or_else(|| BackgroundError {
+            kind: BackgroundErrorKind::Output,
+            detail: "an output reader was collected before it finished".into(),
+        })?;
+        self.handle
+            .take()
+            .expect("reader handle is retained until collection")
+            .join()
+            .map_err(|_| BackgroundError {
+                kind: BackgroundErrorKind::Output,
+                detail: "an output reader panicked".into(),
+            })?;
+        result.map_err(|error| BackgroundError {
+            kind: BackgroundErrorKind::Output,
+            detail: error.to_string(),
+        })
+    }
+}
+
+fn read_bounded(stream: impl Read + Send + 'static, limit: usize) -> OutputReader {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let handle = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stream
+            .take(limit as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes);
+        let _ = sender.send(result);
+    });
+    OutputReader {
+        receiver,
+        handle: Some(handle),
+        result: None,
+    }
 }
 
 fn wrapped(command: Command) -> CommandWrap {
@@ -93,6 +140,10 @@ fn wrapped(command: Command) -> CommandWrap {
 pub struct OwnedChild(Box<dyn ChildWrapper>);
 
 impl OwnedChild {
+    pub fn id(&self) -> u32 {
+        self.0.id()
+    }
+
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
         self.0.try_wait()
     }
@@ -123,32 +174,31 @@ pub fn spawn_service(mut command: Command) -> Result<OwnedChild, BackgroundError
         })
 }
 
-fn join_reader(
-    reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
-) -> Result<Vec<u8>, BackgroundError> {
-    reader
-        .join()
-        .map_err(|_| BackgroundError {
-            kind: BackgroundErrorKind::Output,
-            detail: "an output reader stopped unexpectedly".into(),
-        })?
-        .map_err(|error| BackgroundError {
-            kind: BackgroundErrorKind::Output,
-            detail: error.to_string(),
-        })
-}
-
 fn finish_error(
     child: &mut OwnedChild,
-    stdout: thread::JoinHandle<std::io::Result<Vec<u8>>>,
-    stderr: thread::JoinHandle<std::io::Result<Vec<u8>>>,
+    mut stdout: OutputReader,
+    mut stderr: OutputReader,
     kind: BackgroundErrorKind,
     detail: String,
 ) -> BackgroundError {
     child.terminate_and_reap();
-    let _ = stdout.join();
-    let _ = stderr.join();
-    BackgroundError { kind, detail }
+    let cleanup_deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < cleanup_deadline {
+        let stdout_done = stdout.poll().unwrap_or(true);
+        let stderr_done = stderr.poll().unwrap_or(true);
+        if stdout_done && stderr_done {
+            let _ = stdout.finish();
+            let _ = stderr.finish();
+            return BackgroundError { kind, detail };
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    BackgroundError {
+        kind: BackgroundErrorKind::Output,
+        detail: format!(
+            "{detail}; owned process output pipes did not close after whole-tree termination"
+        ),
+    }
 }
 
 fn run_with_monitor<F>(
@@ -171,16 +221,13 @@ where
             kind: BackgroundErrorKind::Start,
             detail: error.to_string(),
         })?;
-    let exceeded = Arc::new(AtomicBool::new(false));
-    let stdout = read_bounded(
+    let mut stdout = read_bounded(
         child.0.stdout().take().expect("background stdout is piped"),
         policy.max_output_bytes,
-        exceeded.clone(),
     );
-    let stderr = read_bounded(
+    let mut stderr = read_bounded(
         child.0.stderr().take().expect("background stderr is piped"),
         policy.max_output_bytes,
-        exceeded.clone(),
     );
     let deadline = Instant::now() + policy.timeout;
     let status = loop {
@@ -193,7 +240,15 @@ where
                 "the operation was cancelled".into(),
             ));
         }
-        if exceeded.load(Ordering::Acquire) {
+        if stdout.result.as_ref().is_some_and(|result| {
+            result
+                .as_ref()
+                .is_ok_and(|bytes| bytes.len() > policy.max_output_bytes)
+        }) || stderr.result.as_ref().is_some_and(|result| {
+            result
+                .as_ref()
+                .is_ok_and(|bytes| bytes.len() > policy.max_output_bytes)
+        }) {
             return Err(finish_error(
                 &mut child,
                 stdout,
@@ -203,6 +258,15 @@ where
                     "the operation returned more than {} bytes per output stream",
                     policy.max_output_bytes
                 ),
+            ));
+        }
+        if let Err(error) = stdout.poll().and_then(|_| stderr.poll()) {
+            return Err(finish_error(
+                &mut child,
+                stdout,
+                stderr,
+                error.kind,
+                error.detail,
             ));
         }
         if Instant::now() >= deadline {
@@ -231,8 +295,41 @@ where
             }
         }
     };
-    let stdout = join_reader(stdout)?;
-    let stderr = join_reader(stderr)?;
+    while !(stdout.poll()? && stderr.poll()?) {
+        if cancellation.is_some_and(CancellationToken::is_cancelled) {
+            return Err(finish_error(
+                &mut child,
+                stdout,
+                stderr,
+                BackgroundErrorKind::Cancelled,
+                "the operation was cancelled while collecting process output".into(),
+            ));
+        }
+        if Instant::now() >= deadline {
+            return Err(finish_error(
+                &mut child,
+                stdout,
+                stderr,
+                BackgroundErrorKind::Timeout,
+                format!(
+                    "the operation exceeded {} seconds while descendants retained its output pipes",
+                    policy.timeout.as_secs()
+                ),
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let stdout = stdout.finish()?;
+    let stderr = stderr.finish()?;
+    if stdout.len() > policy.max_output_bytes || stderr.len() > policy.max_output_bytes {
+        return Err(BackgroundError {
+            kind: BackgroundErrorKind::OutputTooLarge,
+            detail: format!(
+                "the operation returned more than {} bytes per output stream",
+                policy.max_output_bytes
+            ),
+        });
+    }
     Ok(BackgroundOutput {
         status,
         stdout,
@@ -345,5 +442,26 @@ mod tests {
         )
         .expect_err("monitor failure");
         assert_eq!(error.kind, BackgroundErrorKind::Monitor);
+    }
+
+    #[test]
+    fn inherited_output_pipe_cannot_outlive_the_operation_deadline() {
+        let script = if cfg!(windows) {
+            "start \"\" /b cmd /c \"ping 127.0.0.1 -n 10 ^> nul\" & echo root-finished"
+        } else {
+            "(sleep 10) & echo root-finished"
+        };
+        let started = Instant::now();
+        let error = run(
+            shell_command(script),
+            BackgroundPolicy {
+                timeout: Duration::from_millis(150),
+                max_output_bytes: 1024,
+            },
+            None,
+        )
+        .expect_err("inherited pipe timeout");
+        assert_eq!(error.kind, BackgroundErrorKind::Timeout);
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 }

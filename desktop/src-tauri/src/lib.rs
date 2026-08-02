@@ -3,14 +3,13 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
     io::{self, Write},
-    net::{SocketAddr, TcpListener, TcpStream},
+    net::TcpListener,
     path::{Path, PathBuf},
     process::Command,
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -26,14 +25,26 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::ShellExt;
 
+mod activation;
 mod background_process;
+mod browser_readiness;
+mod lifecycle;
+mod media_setup;
 mod target_profiles;
+
+use activation::{ActivationRecovery, ActivationStage, activation_recovery};
+use lifecycle::{
+    ActiveOperationGuard, ActiveOperations, DesktopAction, DesktopActivation, DesktopCloseAction,
+    UiProcessAction, action_for_activation, close_action, ui_process_action,
+};
+use media_setup::{SystemInstallPlan, display_command, required_encoder_missing};
 
 const RUNTIME_MANIFEST_BYTES: &[u8] = include_bytes!("../../runtime-manifest.json");
 const RUNTIME_CONSTRAINTS_BYTES: &[u8] = include_bytes!("../../runtime-constraints.txt");
 const MODEL_CACHE_CATALOG_BYTES: &[u8] = include_bytes!("../../model-cache-catalog.json");
 const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
 const MAX_SETUP_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+static READINESS_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Deserialize, Serialize)]
 struct CapabilitySpec {
@@ -106,6 +117,7 @@ struct InstallTransitionResult {
 struct RuntimeStatus {
     state: RuntimeState,
     ready: bool,
+    runtime_profile: Option<String>,
     package_version: String,
     capabilities: Vec<String>,
     surfaces: Vec<String>,
@@ -113,7 +125,7 @@ struct RuntimeStatus {
     detail: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum RuntimeState {
     NeverConfigured,
@@ -165,12 +177,6 @@ struct VerifiedMediaRuntime {
     ffprobe: PathBuf,
 }
 
-struct SystemInstallPlan {
-    manager: String,
-    command: Vec<String>,
-    automatic: bool,
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct ActiveRuntime {
     schema_version: u32,
@@ -196,29 +202,6 @@ struct DesktopPaths {
     activation_journal: PathBuf,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ActivationStage {
-    Prepared,
-    ProfileProjected,
-    ActiveWritten,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ActivationRecovery {
-    RollBack,
-    Complete,
-}
-
-fn activation_recovery(stage: &ActivationStage) -> ActivationRecovery {
-    match stage {
-        ActivationStage::ActiveWritten => ActivationRecovery::Complete,
-        ActivationStage::Prepared | ActivationStage::ProfileProjected => {
-            ActivationRecovery::RollBack
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct ActivationJournal {
     schema_version: u32,
@@ -229,37 +212,17 @@ struct ActivationJournal {
     candidate_targets: target_profiles::TargetState,
 }
 
+#[derive(Debug, Default, Eq, PartialEq)]
+struct RuntimeReconciliation {
+    removed_directories: usize,
+    reclaimed_bytes: u64,
+    failures: Vec<String>,
+}
+
 struct ManagedUi {
     process: background_process::OwnedChild,
     url: String,
     profile_id: String,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum UiProcessAction {
-    Reuse,
-    Replace,
-    Start,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DesktopAction {
-    Manage,
-    OpenBrowser,
-    Quit,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DesktopCloseAction {
-    HideToTray,
-    Quit,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DesktopActivation<'a> {
-    Startup,
-    SingleInstance,
-    Tray(&'a str),
 }
 
 struct DesktopState {
@@ -269,6 +232,8 @@ struct DesktopState {
     transition: Arc<Mutex<TransitionState>>,
     browser_open_active: AtomicBool,
     shutdown: background_process::CancellationToken,
+    shutdown_started: AtomicBool,
+    active_operations: Arc<ActiveOperations>,
 }
 
 impl Default for DesktopState {
@@ -280,6 +245,8 @@ impl Default for DesktopState {
             transition: Arc::new(Mutex::new(TransitionState::default())),
             browser_open_active: AtomicBool::new(false),
             shutdown: background_process::CancellationToken::default(),
+            shutdown_started: AtomicBool::new(false),
+            active_operations: Arc::new(ActiveOperations::default()),
         }
     }
 }
@@ -332,6 +299,14 @@ fn transition_error(
         code,
         message: message.into(),
     }
+}
+
+fn track_target_operation(
+    state: &DesktopState,
+) -> Result<ActiveOperationGuard, target_profiles::TargetError> {
+    state.active_operations.register().map_err(|message| {
+        transition_error(target_profiles::TargetErrorCode::OperationConflict, message)
+    })
 }
 
 struct TransitionGuard {
@@ -547,11 +522,13 @@ impl TargetTransitionCoordinator {
 struct OperationCancellationGuard {
     slot: Arc<Mutex<Option<background_process::CancellationToken>>>,
     token: background_process::CancellationToken,
+    _active: ActiveOperationGuard,
 }
 
 impl OperationCancellationGuard {
     fn register(state: &DesktopState) -> Result<Self, String> {
         let token = background_process::CancellationToken::default();
+        let active = state.active_operations.register()?;
         *state
             .operation_cancellation
             .lock()
@@ -560,6 +537,7 @@ impl OperationCancellationGuard {
         Ok(Self {
             slot: state.operation_cancellation.clone(),
             token,
+            _active: active,
         })
     }
 
@@ -1021,83 +999,8 @@ fn combined_output(output: &background_process::BackgroundOutput) -> String {
     )
 }
 
-fn required_encoder_missing(output: &str, encoder: &str) -> bool {
-    !output
-        .lines()
-        .flat_map(|line| line.split_whitespace())
-        .any(|token| token == encoder)
-}
-
 fn system_install_plan() -> Option<SystemInstallPlan> {
-    if cfg!(windows) {
-        resolve_system_executable("winget")?;
-        return Some(SystemInstallPlan {
-            manager: "Windows Package Manager".into(),
-            command: vec![
-                "winget".into(),
-                "install".into(),
-                "--id".into(),
-                "Gyan.FFmpeg".into(),
-                "--exact".into(),
-                "--source".into(),
-                "winget".into(),
-                "--accept-package-agreements".into(),
-                "--accept-source-agreements".into(),
-            ],
-            automatic: true,
-        });
-    }
-    if cfg!(target_os = "macos") {
-        let brew = resolve_system_executable("brew")?;
-        return Some(SystemInstallPlan {
-            manager: "Homebrew".into(),
-            command: vec![
-                brew.to_string_lossy().into_owned(),
-                "install".into(),
-                "ffmpeg".into(),
-            ],
-            automatic: true,
-        });
-    }
-    if resolve_system_executable("apt-get").is_some() {
-        return Some(SystemInstallPlan {
-            manager: "APT".into(),
-            command: vec![
-                "sudo".into(),
-                "apt-get".into(),
-                "install".into(),
-                "ffmpeg".into(),
-            ],
-            automatic: false,
-        });
-    }
-    if resolve_system_executable("dnf").is_some() {
-        return Some(SystemInstallPlan {
-            manager: "DNF".into(),
-            command: vec![
-                "sudo".into(),
-                "dnf".into(),
-                "install".into(),
-                "ffmpeg".into(),
-            ],
-            automatic: false,
-        });
-    }
-    None
-}
-
-fn display_command(arguments: &[String]) -> String {
-    arguments
-        .iter()
-        .map(|argument| {
-            if argument.contains(char::is_whitespace) {
-                format!("\"{}\"", argument.replace('"', "\\\""))
-            } else {
-                argument.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    media_setup::system_install_plan(resolve_system_executable)
 }
 
 fn inspect_media_runtime() -> MediaRuntimeStatus {
@@ -1179,7 +1082,15 @@ fn verified_media_runtime() -> Result<VerifiedMediaRuntime, String> {
 }
 
 fn clean_environment(paths: &DesktopPaths) -> Vec<(String, String)> {
-    let mut environment: Vec<_> = std::env::vars()
+    clean_environment_from(paths, std::env::vars())
+}
+
+fn clean_environment_from(
+    paths: &DesktopPaths,
+    source: impl IntoIterator<Item = (String, String)>,
+) -> Vec<(String, String)> {
+    let mut environment: Vec<_> = source
+        .into_iter()
         .filter(|(key, _)| {
             let upper = key.to_ascii_uppercase();
             !upper.starts_with("VIDXP_")
@@ -1248,6 +1159,11 @@ fn active_runtime(paths: &DesktopPaths) -> Result<ActiveRuntime, String> {
         .map_err(|_| "Local video processing has not been configured yet.".to_string())?;
     let active: ActiveRuntime = serde_json::from_slice(&contents)
         .map_err(|error| format!("The active runtime pointer is invalid: {error}"))?;
+    validate_active_runtime_pointer(&active)?;
+    Ok(active)
+}
+
+fn validate_active_runtime_pointer(active: &ActiveRuntime) -> Result<(), String> {
     if active.schema_version != 2 || active.manifest_sha256 != manifest_digest() {
         return Err("The desktop runtime needs to be installed for this app version.".into());
     }
@@ -1258,7 +1174,7 @@ fn active_runtime(paths: &DesktopPaths) -> Result<ActiveRuntime, String> {
     {
         return Err("The active runtime profile identity is invalid.".into());
     }
-    Ok(active)
+    Ok(())
 }
 
 fn runtime_directory(paths: &DesktopPaths, active: &ActiveRuntime) -> PathBuf {
@@ -1353,6 +1269,87 @@ fn managed_runtime_projection_for(
     }
 }
 
+fn resolved_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    let left = resolved_path(left);
+    let right = resolved_path(right);
+    #[cfg(windows)]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+fn path_is_confined(path: &Path, root: &Path) -> bool {
+    let path = resolved_path(path);
+    let root = resolved_path(root);
+    #[cfg(windows)]
+    {
+        let path = path.to_string_lossy().to_ascii_lowercase();
+        let root = root.to_string_lossy().to_ascii_lowercase();
+        path == root || path.starts_with(&format!("{root}\\"))
+    }
+    #[cfg(not(windows))]
+    {
+        path.starts_with(root)
+    }
+}
+
+fn managed_probe_error(message: impl Into<String>) -> target_profiles::TargetError {
+    target_profiles::TargetError {
+        code: target_profiles::TargetErrorCode::InvalidDataRoot,
+        message: message.into(),
+    }
+}
+
+fn validate_managed_projection(
+    paths: &DesktopPaths,
+    projection: &target_profiles::ManagedRuntimeProjection,
+    desktop_version: &str,
+    cancellation: Option<&background_process::CancellationToken>,
+) -> Result<target_profiles::ValidatedTarget, target_profiles::TargetError> {
+    let runtime = paths.runtimes.join(&projection.runtime_profile);
+    let validated = target_profiles::validate_executable_using(
+        &projection.executable,
+        desktop_version,
+        cancellation,
+        |executable| configured_command(executable, paths),
+    )?;
+    for (label, reported, authoritative) in [
+        ("data", &validated.data_root, &projection.data_root),
+        (
+            "repository",
+            &validated.repository_root,
+            &projection.repository_root,
+        ),
+        ("model", &validated.model_root, &projection.model_directory),
+    ] {
+        if !same_path(reported, authoritative) {
+            return Err(managed_probe_error(format!(
+                "The managed probe reported {label} root {}, but VidXP Desktop owns {}.",
+                reported.display(),
+                authoritative.display()
+            )));
+        }
+    }
+    if !path_is_confined(&validated.executable, &runtime)
+        || !path_is_confined(&validated.runtime.python_executable, &runtime)
+        || !same_path(&validated.runtime.prefix, &runtime)
+    {
+        return Err(managed_probe_error(
+            "The managed probe reported a launcher or Python runtime outside the active Desktop-owned environment.",
+        ));
+    }
+    Ok(validated)
+}
+
 fn managed_runtime_projection(
     paths: &DesktopPaths,
 ) -> Option<target_profiles::ManagedRuntimeProjection> {
@@ -1369,6 +1366,209 @@ fn managed_runtime_projection(
     Some(managed_runtime_projection_for(paths, &active))
 }
 
+fn candidate_authorities_match(
+    app: &AppHandle,
+    paths: &DesktopPaths,
+    journal: &ActivationJournal,
+) -> bool {
+    let active_matches = fs::read(&paths.active_runtime)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<ActiveRuntime>(&bytes).ok())
+        .is_some_and(|active| active == journal.candidate_active);
+    let targets_match = target_profiles::current_state(app)
+        .is_ok_and(|targets| targets == journal.candidate_targets);
+    active_matches && targets_match
+}
+
+fn mark_journal_stage(
+    paths: &DesktopPaths,
+    journal: &mut ActivationJournal,
+    stage: ActivationStage,
+) -> Result<(), String> {
+    journal.stage = stage;
+    write_activation_journal(paths, journal)
+}
+
+fn finish_journal_cleanup(paths: &DesktopPaths, context: &str) {
+    if let Err(error) = clear_activation_journal(paths) {
+        log::warn!("{context}; activation journal cleanup will be retried: {error}");
+    }
+}
+
+fn owned_runtime_directory_name(name: &str) -> bool {
+    let mut parts = name.split('-');
+    let Some(digest) = parts.next() else {
+        return false;
+    };
+    let Some(timestamp) = parts.next() else {
+        return false;
+    };
+    parts.next().is_none()
+        && digest.len() == 64
+        && digest
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+        && !timestamp.is_empty()
+        && timestamp
+            .chars()
+            .all(|character| character.is_ascii_digit())
+}
+
+fn owned_staging_directory_name(name: &str) -> bool {
+    let Some(remainder) = name.strip_prefix(".staging-") else {
+        return false;
+    };
+    let mut parts = remainder.split('-');
+    let (Some(digest), Some(timestamp), Some(pid)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    parts.next().is_none()
+        && digest.len() == 64
+        && digest
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+        && !timestamp.is_empty()
+        && timestamp
+            .chars()
+            .all(|character| character.is_ascii_digit())
+        && !pid.is_empty()
+        && pid.chars().all(|character| character.is_ascii_digit())
+}
+
+fn directory_size(path: &Path) -> io::Result<u64> {
+    let mut total = 0_u64;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let metadata = entry.path().symlink_metadata()?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            total = total.saturating_add(directory_size(&entry.path())?);
+        } else if metadata.is_file() {
+            total = total.saturating_add(metadata.len());
+        }
+    }
+    Ok(total)
+}
+
+fn reconcile_managed_runtime_storage(paths: &DesktopPaths) -> RuntimeReconciliation {
+    let mut report = RuntimeReconciliation::default();
+    let mut retained = BTreeSet::new();
+    if let Ok(contents) = fs::read(&paths.active_runtime)
+        && let Ok(active) = serde_json::from_slice::<ActiveRuntime>(&contents)
+    {
+        retained.insert(active.profile);
+    }
+    if let Ok(contents) = fs::read(&paths.activation_journal)
+        && let Ok(journal) = serde_json::from_slice::<ActivationJournal>(&contents)
+    {
+        retained.insert(journal.candidate_active.profile);
+        if let Some(previous) = journal.previous_active_bytes
+            && let Ok(active) = serde_json::from_slice::<ActiveRuntime>(&previous)
+        {
+            retained.insert(active.profile);
+        }
+    }
+    let Ok(entries) = fs::read_dir(&paths.runtimes) else {
+        return report;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() || file_type.is_symlink() || retained.contains(&name) {
+            continue;
+        }
+        if !owned_runtime_directory_name(&name) && !owned_staging_directory_name(&name) {
+            continue;
+        }
+        if !path_is_confined(&path, &paths.runtimes) {
+            report.failures.push(format!(
+                "Refused to reconcile a runtime path outside {}: {}",
+                paths.runtimes.display(),
+                path.display()
+            ));
+            continue;
+        }
+        let bytes = directory_size(&path).unwrap_or_default();
+        match fs::remove_dir_all(&path) {
+            Ok(()) => {
+                report.removed_directories += 1;
+                report.reclaimed_bytes = report.reclaimed_bytes.saturating_add(bytes);
+            }
+            Err(error) => report.failures.push(format!(
+                "Could not remove untracked Desktop runtime {}: {error}",
+                path.display()
+            )),
+        }
+    }
+    report
+}
+
+fn log_runtime_reconciliation(paths: &DesktopPaths) {
+    let report = reconcile_managed_runtime_storage(paths);
+    if report.removed_directories > 0 {
+        log::info!(
+            "Reconciled {} obsolete managed runtime directories and reclaimed {} bytes",
+            report.removed_directories,
+            report.reclaimed_bytes
+        );
+    }
+    for failure in report.failures {
+        log::warn!("Managed runtime storage cleanup failed: {failure}");
+    }
+}
+
+fn rollback_activation(
+    app: &AppHandle,
+    paths: &DesktopPaths,
+    journal: &mut ActivationJournal,
+    runtime: &Path,
+    activation_error: &str,
+) -> String {
+    if let Err(error) = mark_journal_stage(paths, journal, ActivationStage::RollingBack) {
+        return format!(
+            "{activation_error}. Rollback could not be durably started: {error}. VidXP Desktop will recover the existing activation journal on its next start. The candidate runtime remains at {}.",
+            runtime.display()
+        );
+    }
+    let active_restore = restore_active_runtime(paths, journal.previous_active_bytes.as_deref());
+    let target_restore = target_profiles::replace_state(app, journal.previous_targets.clone())
+        .map_err(|error| error.to_string());
+    if let (Err(active_error), Err(target_error)) = (&active_restore, &target_restore) {
+        return format!(
+            "{activation_error}. Rollback remains incomplete (runtime pointer: {active_error}; target profile: {target_error}); startup will retry it. The candidate runtime remains at {}.",
+            runtime.display()
+        );
+    }
+    if let Err(error) = active_restore {
+        return format!(
+            "{activation_error}. Target profiles were restored, but the runtime pointer could not be restored: {error}; startup will retry rollback. The candidate runtime remains at {}.",
+            runtime.display()
+        );
+    }
+    if let Err(error) = target_restore {
+        return format!(
+            "{activation_error}. The runtime pointer was restored, but target profiles could not be restored: {error}; startup will retry rollback. The candidate runtime remains at {}.",
+            runtime.display()
+        );
+    }
+    if let Err(error) = mark_journal_stage(paths, journal, ActivationStage::RolledBack) {
+        log::warn!(
+            "Managed activation rolled back, but its completion marker could not be written: {error}"
+        );
+    }
+    finish_journal_cleanup(paths, "Rolled back a failed managed activation");
+    format!(
+        "{activation_error}. The candidate runtime was retained at {}, while the previous active runtime and target remain selected.",
+        runtime.display()
+    )
+}
+
 fn recover_interrupted_activation(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
     let _transition = TargetTransitionCoordinator::begin(state, TransitionKind::RecoverActivation)
         .map_err(|error| error.to_string())?;
@@ -1378,7 +1578,7 @@ fn recover_interrupted_activation(app: &AppHandle, state: &DesktopState) -> Resu
     }
     let contents = fs::read(&paths.activation_journal)
         .map_err(|error| format!("Could not read the activation journal: {error}"))?;
-    let journal: ActivationJournal = serde_json::from_slice(&contents)
+    let mut journal: ActivationJournal = serde_json::from_slice(&contents)
         .map_err(|error| format!("The activation journal is invalid: {error}"))?;
     if journal.schema_version != 2 {
         return Err(format!(
@@ -1386,19 +1586,24 @@ fn recover_interrupted_activation(app: &AppHandle, state: &DesktopState) -> Resu
             journal.schema_version
         ));
     }
-    match activation_recovery(&journal.stage) {
+    let authorities_match = candidate_authorities_match(app, &paths, &journal);
+    match activation_recovery(&journal.stage, authorities_match) {
         ActivationRecovery::Complete => {
             write_active_runtime(&paths, &journal.candidate_active)?;
-            target_profiles::replace_state(app, journal.candidate_targets)
+            target_profiles::replace_state(app, journal.candidate_targets.clone())
                 .map_err(|error| error.to_string())?;
+            mark_journal_stage(&paths, &mut journal, ActivationStage::Committed)?;
         }
         ActivationRecovery::RollBack => {
+            mark_journal_stage(&paths, &mut journal, ActivationStage::RollingBack)?;
             restore_active_runtime(&paths, journal.previous_active_bytes.as_deref())?;
-            target_profiles::replace_state(app, journal.previous_targets)
+            target_profiles::replace_state(app, journal.previous_targets.clone())
                 .map_err(|error| error.to_string())?;
+            mark_journal_stage(&paths, &mut journal, ActivationStage::RolledBack)?;
         }
     }
-    clear_activation_journal(&paths)
+    finish_journal_cleanup(&paths, "Recovered an interrupted managed activation");
+    Ok(())
 }
 
 fn initialize_target_profiles(app: &AppHandle) -> Result<target_profiles::TargetState, String> {
@@ -1509,6 +1714,7 @@ async fn refresh_target_state(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
 ) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    let _active = track_target_operation(&state)?;
     let manifest = manifest().map_err(|error| target_profiles::TargetError {
         code: target_profiles::TargetErrorCode::ValidationRequired,
         message: error,
@@ -1519,12 +1725,45 @@ async fn refresh_target_state(
     tauri::async_runtime::spawn_blocking(move || {
         let _transition = transition;
         match target_profiles::selected_profile(&app) {
-            Ok(_) => {
-                let _ = target_profiles::validated_selected_profile_with_cancellation(
-                    &app,
-                    &desktop_version,
-                    Some(&cancellation),
-                );
+            Ok(profile) => {
+                if profile.kind == target_profiles::TargetKind::Managed {
+                    let validation = (|| {
+                        let paths = desktop_paths(&app).map_err(|message| {
+                            transition_error(
+                                target_profiles::TargetErrorCode::ManagedRuntimeUnavailable,
+                                message,
+                            )
+                        })?;
+                        let active = active_runtime(&paths).map_err(|message| {
+                            transition_error(
+                                target_profiles::TargetErrorCode::ManagedRuntimeUnavailable,
+                                message,
+                            )
+                        })?;
+                        if profile.managed_runtime_profile.as_deref()
+                            != Some(active.profile.as_str())
+                        {
+                            return Err(transition_error(
+                                target_profiles::TargetErrorCode::ManagedRuntimeUnavailable,
+                                "The selected managed target does not match the active Desktop runtime.",
+                            ));
+                        }
+                        let projection = managed_runtime_projection_for(&paths, &active);
+                        validate_managed_projection(
+                            &paths,
+                            &projection,
+                            &desktop_version,
+                            Some(&cancellation),
+                        )
+                    })();
+                    let _ = target_profiles::persist_selected_validation(&app, validation);
+                } else {
+                    let _ = target_profiles::validated_selected_profile_with_cancellation(
+                        &app,
+                        &desktop_version,
+                        Some(&cancellation),
+                    );
+                }
             }
             Err(error)
                 if error.code == target_profiles::TargetErrorCode::SelectedProfileMissing => {}
@@ -1562,15 +1801,22 @@ fn choose_local_executable(app: AppHandle) -> Result<Option<String>, String> {
 
 #[tauri::command]
 async fn inspect_local_target(
+    state: tauri::State<'_, DesktopState>,
     executable: String,
 ) -> Result<target_profiles::TargetInspection, target_profiles::TargetError> {
+    let _active = track_target_operation(&state)?;
     let manifest = manifest().map_err(|error| target_profiles::TargetError {
         code: target_profiles::TargetErrorCode::ValidationRequired,
         message: error,
     })?;
     let desktop_version = manifest.desktop_version;
+    let cancellation = state.shutdown.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        target_profiles::inspect_executable(Path::new(&executable), &desktop_version)
+        target_profiles::inspect_executable_with_cancellation(
+            Path::new(&executable),
+            &desktop_version,
+            &cancellation,
+        )
     })
     .await
     .map_err(|error| {
@@ -1588,17 +1834,25 @@ async fn adopt_local_target(
     executable: String,
     display_name: Option<String>,
 ) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    let _active = track_target_operation(&state)?;
     let manifest = manifest().map_err(|error| target_profiles::TargetError {
         code: target_profiles::TargetErrorCode::ValidationRequired,
         message: error,
     })?;
     let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::Adopt)?;
     let desktop_version = manifest.desktop_version;
+    let cancellation = state.shutdown.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _transition = transition;
         let canonical =
             fs::canonicalize(Path::new(&executable)).unwrap_or_else(|_| PathBuf::from(&executable));
-        let setup = target_profiles::adopt_local(&app, &canonical, display_name, &desktop_version)?;
+        let validated = target_profiles::validate_executable_using(
+            &canonical,
+            &desktop_version,
+            Some(&cancellation),
+            |path| Command::new(path),
+        )?;
+        let setup = target_profiles::adopt_validated(&app, validated, display_name)?;
         stop_ui_process(&app.state::<DesktopState>());
         Ok(setup)
     })
@@ -1617,15 +1871,56 @@ async fn select_target_profile(
     state: tauri::State<'_, DesktopState>,
     profile_id: String,
 ) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    let _active = track_target_operation(&state)?;
     let manifest = manifest().map_err(|error| target_profiles::TargetError {
         code: target_profiles::TargetErrorCode::ValidationRequired,
         message: error,
     })?;
     let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::Select)?;
     let desktop_version = manifest.desktop_version;
+    let cancellation = state.shutdown.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _transition = transition;
-        let setup = target_profiles::select_profile(&app, &profile_id, &desktop_version)?;
+        let candidate = target_profiles::current_state(&app)?
+            .profiles
+            .into_iter()
+            .find(|profile| profile.id == profile_id)
+            .ok_or_else(|| {
+                transition_error(
+                    target_profiles::TargetErrorCode::ProfileNotFound,
+                    "The selected VidXP target no longer exists.",
+                )
+            })?;
+        let setup = if candidate.kind == target_profiles::TargetKind::Managed {
+            let paths = desktop_paths(&app).map_err(|message| {
+                transition_error(
+                    target_profiles::TargetErrorCode::ManagedRuntimeUnavailable,
+                    message,
+                )
+            })?;
+            let active = active_runtime(&paths).map_err(|message| {
+                transition_error(
+                    target_profiles::TargetErrorCode::ManagedRuntimeUnavailable,
+                    message,
+                )
+            })?;
+            if candidate.managed_runtime_profile.as_deref() != Some(active.profile.as_str()) {
+                return Err(transition_error(
+                    target_profiles::TargetErrorCode::ManagedRuntimeUnavailable,
+                    "The selected managed target does not match the active Desktop runtime.",
+                ));
+            }
+            let projection = managed_runtime_projection_for(&paths, &active);
+            let validated = validate_managed_projection(
+                &paths,
+                &projection,
+                &desktop_version,
+                Some(&cancellation),
+            )?;
+            target_profiles::select_validated_profile(&app, &profile_id, validated)?
+        } else {
+            target_profiles::select_profile(&app, &profile_id, &desktop_version)?
+        };
         stop_ui_process(&app.state::<DesktopState>());
         Ok(setup)
     })
@@ -1644,6 +1939,7 @@ async fn delete_target_profile(
     state: tauri::State<'_, DesktopState>,
     profile_id: String,
 ) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    let _active = track_target_operation(&state)?;
     let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::Delete)?;
     tauri::async_runtime::spawn_blocking(move || {
         let _transition = transition;
@@ -1661,6 +1957,22 @@ async fn delete_target_profile(
             format!("Target deletion stopped unexpectedly: {error}"),
         )
     })?
+}
+
+#[tauri::command]
+async fn confirm_forget_target(app: AppHandle, display_name: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .message(format!(
+                "Forget “{display_name}” from VidXP Desktop? The installation itself will not be changed."
+            ))
+            .title("Forget saved target?")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancel)
+            .blocking_show()
+    })
+    .await
+    .map_err(|error| format!("The confirmation dialog stopped unexpectedly: {error}"))
 }
 
 #[tauri::command]
@@ -1705,7 +2017,10 @@ async fn cancel_managed_setup(
 }
 
 #[tauri::command]
-async fn media_runtime_status() -> Result<MediaRuntimeStatus, String> {
+async fn media_runtime_status(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<MediaRuntimeStatus, String> {
+    let _active = state.active_operations.register()?;
     tauri::async_runtime::spawn_blocking(inspect_media_runtime)
         .await
         .map_err(|error| format!("Media runtime inspection stopped unexpectedly: {error}"))
@@ -1743,7 +2058,13 @@ async fn install_media_runtime(
     if current.ready {
         return Ok(current);
     }
-    let plan = system_install_plan().ok_or("No supported system package manager was found.")?;
+    let plan = system_install_plan().ok_or_else(|| {
+        if cfg!(target_os = "macos") {
+            "FFmpeg is required. Install Homebrew from https://brew.sh and run `brew install ffmpeg`, or install FFmpeg and ffprobe manually on PATH, then retry.".to_string()
+        } else {
+            "No supported system package manager was found. Install FFmpeg and ffprobe on PATH, then retry.".to_string()
+        }
+    })?;
     if !plan.automatic {
         let instruction = format!(
             "VidXP needs FFmpeg and ffprobe.\n\nRun this command in a terminal, then return to VidXP:\n\n{}",
@@ -1797,7 +2118,11 @@ async fn install_media_runtime(
 }
 
 #[tauri::command]
-async fn runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
+async fn runtime_status(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<RuntimeStatus, String> {
+    let _active = state.active_operations.register()?;
     tauri::async_runtime::spawn_blocking(move || runtime_status_sync(&app))
         .await
         .map_err(|error| format!("Managed runtime inspection stopped unexpectedly: {error}"))?
@@ -1811,6 +2136,7 @@ fn runtime_status_sync(app: &AppHandle) -> Result<RuntimeStatus, String> {
         return Ok(RuntimeStatus {
             state: RuntimeState::NeverConfigured,
             ready: false,
+            runtime_profile: None,
             package_version: manifest.package_version,
             capabilities: Vec::new(),
             surfaces: Vec::new(),
@@ -1818,33 +2144,32 @@ fn runtime_status_sync(app: &AppHandle) -> Result<RuntimeStatus, String> {
             detail: "No Desktop-managed runtime has been created yet.".into(),
         });
     }
-    if let Err(detail) = verified_media_runtime() {
-        return Ok(RuntimeStatus {
-            state: RuntimeState::Broken,
-            ready: false,
-            package_version: manifest.package_version,
-            capabilities: Vec::new(),
-            surfaces: Vec::new(),
-            model_directory: default_model_directory,
-            detail,
-        });
-    }
-    let active = match active_runtime(&paths) {
+    let contents = fs::read(&paths.active_runtime)
+        .map_err(|error| format!("Could not read the active runtime pointer: {error}"))?;
+    let active: ActiveRuntime = match serde_json::from_slice(&contents) {
         Ok(active) => active,
-        Err(detail) => {
+        Err(error) => {
             return Ok(RuntimeStatus {
                 state: RuntimeState::Broken,
                 ready: false,
+                runtime_profile: None,
                 package_version: manifest.package_version,
                 capabilities: Vec::new(),
                 surfaces: Vec::new(),
                 model_directory: default_model_directory,
-                detail,
+                detail: format!("The active runtime pointer is invalid: {error}"),
             });
         }
     };
     paths.models = active.model_directory.clone();
     let runtime = runtime_directory(&paths, &active);
+    let mut problems = Vec::new();
+    if let Err(error) = validate_active_runtime_pointer(&active) {
+        problems.push(error);
+    }
+    if let Err(error) = verified_media_runtime() {
+        problems.push(error);
+    }
     let version = run_vidxp(
         &runtime,
         &paths,
@@ -1862,21 +2187,32 @@ fn runtime_status_sync(app: &AppHandle) -> Result<RuntimeStatus, String> {
             ))
         }
     });
-    Ok(RuntimeStatus {
-        state: if version.is_ok() {
+    if let Err(error) = version {
+        problems.push(error);
+    }
+    Ok(configured_runtime_status(active, problems))
+}
+
+fn configured_runtime_status(active: ActiveRuntime, problems: Vec<String>) -> RuntimeStatus {
+    let ready = problems.is_empty();
+    RuntimeStatus {
+        state: if ready {
             RuntimeState::Ready
         } else {
             RuntimeState::Broken
         },
-        ready: version.is_ok(),
+        ready,
+        runtime_profile: Some(active.profile.clone()),
         package_version: active.package_version,
         capabilities: active.capabilities,
         surfaces: active.surfaces,
         model_directory: active.model_directory.to_string_lossy().into_owned(),
-        detail: version
-            .err()
-            .unwrap_or_else(|| "Local video processing is ready.".into()),
-    })
+        detail: if ready {
+            "Local video processing is ready.".into()
+        } else {
+            problems.join(" ")
+        },
+    }
 }
 
 #[tauri::command]
@@ -2154,14 +2490,31 @@ async fn install_runtime(
         let previous_active_bytes = read_active_runtime_snapshot(&activation_paths)?;
         let previous_targets =
             target_profiles::current_state(&activation_app).map_err(|error| error.to_string())?;
-        fs::rename(&staging, &runtime)
-            .map_err(|error| format!("Could not finalize the validated runtime: {error}"))?;
+        if let Err(error) = fs::rename(&staging, &runtime) {
+            let cleanup = fs::remove_dir_all(&staging);
+            return Err(match cleanup {
+                Ok(()) => format!("Could not finalize the validated runtime: {error}"),
+                Err(cleanup) => format!(
+                    "Could not finalize the validated runtime: {error}. The staging directory at {} could not be removed: {cleanup}",
+                    staging.display()
+                ),
+            });
+        }
 
-        let candidate_targets = match target_profiles::prepare_managed_activation(
-            &activation_app,
-            managed_runtime_projection_for(&activation_paths, &active),
+        let projection = managed_runtime_projection_for(&activation_paths, &active);
+        let validated = validate_managed_projection(
+            &activation_paths,
+            &projection,
             &activation_manifest_version,
-        ) {
+            Some(&cancellation.token()),
+        );
+        let candidate_targets = match validated.and_then(|validated| {
+            target_profiles::prepare_managed_activation(
+                &activation_app,
+                projection,
+                validated,
+            )
+        }) {
             Ok(candidate) => candidate,
             Err(error) => {
                 let cleanup = fs::remove_dir_all(&runtime);
@@ -2195,38 +2548,54 @@ async fn install_runtime(
             });
         }
 
-        let activation_result = (|| {
-            target_profiles::replace_state(&activation_app, candidate_targets.clone())
-                .map_err(|error| error.to_string())?;
-            journal.stage = ActivationStage::ProfileProjected;
-            write_activation_journal(&activation_paths, &journal)?;
-            write_active_runtime(&activation_paths, &active)?;
-            journal.stage = ActivationStage::ActiveWritten;
-            write_activation_journal(&activation_paths, &journal)?;
-            clear_activation_journal(&activation_paths)
-        })();
-        if let Err(error) = activation_result {
-            let target_rollback = target_profiles::replace_state(
+        if let Err(error) = target_profiles::replace_state(&activation_app, candidate_targets.clone())
+            .map_err(|error| error.to_string())
+        {
+            return Err(rollback_activation(
                 &activation_app,
-                journal.previous_targets.clone(),
-            )
-                .map_err(|rollback| rollback.to_string());
-            let runtime_rollback = restore_active_runtime(
                 &activation_paths,
-                journal.previous_active_bytes.as_deref(),
-            );
-            if target_rollback.is_ok() && runtime_rollback.is_ok() {
-                let _ = clear_activation_journal(&activation_paths);
-                return Err(format!(
-                    "{error}. The installed runtime was retained at {}, while the previous active runtime and target remain selected.",
-                    runtime.display()
-                ));
-            }
-            return Err(format!(
-                "{error}. Automatic rollback was incomplete; VidXP Desktop will recover the activation journal on its next start. The installed runtime remains at {}.",
-                runtime.display()
+                &mut journal,
+                &runtime,
+                &error,
             ));
         }
+        if let Err(error) = mark_journal_stage(
+            &activation_paths,
+            &mut journal,
+            ActivationStage::ProfileWritten,
+        ) {
+            return Err(rollback_activation(
+                &activation_app,
+                &activation_paths,
+                &mut journal,
+                &runtime,
+                &error,
+            ));
+        }
+        if let Err(error) = write_active_runtime(&activation_paths, &active) {
+            return Err(rollback_activation(
+                &activation_app,
+                &activation_paths,
+                &mut journal,
+                &runtime,
+                &error,
+            ));
+        }
+
+        // Both authoritative files are durable at this point. Journal marking and
+        // removal are retryable cleanup and must never turn a committed activation
+        // into a reported rollback.
+        if let Err(error) = mark_journal_stage(
+            &activation_paths,
+            &mut journal,
+            ActivationStage::Committed,
+        ) {
+            log::warn!(
+                "Managed activation committed, but its journal could not be marked committed: {error}"
+            );
+        }
+        finish_journal_cleanup(&activation_paths, "Committed a managed activation");
+        log_runtime_reconciliation(&activation_paths);
         Ok::<_, String>(candidate_targets)
     })
     .await
@@ -2251,8 +2620,33 @@ async fn install_runtime(
 
 fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
     let manifest = manifest()?;
-    let profile = target_profiles::validated_selected_profile(app, &manifest.desktop_version)
-        .map_err(|error| error.to_string())?;
+    let selected = target_profiles::selected_profile(app).map_err(|error| error.to_string())?;
+    let mut paths = desktop_paths(app)?;
+    let profile = if selected.kind == target_profiles::TargetKind::Managed {
+        let active = active_runtime(&paths)?;
+        if selected.managed_runtime_profile.as_deref() != Some(active.profile.as_str()) {
+            return Err(
+                "The selected managed target no longer matches the active Desktop runtime.".into(),
+            );
+        }
+        paths.models = active.model_directory.clone();
+        let projection = managed_runtime_projection_for(&paths, &active);
+        let validation = validate_managed_projection(
+            &paths,
+            &projection,
+            &manifest.desktop_version,
+            Some(&state.shutdown),
+        );
+        target_profiles::persist_selected_validation(app, validation)
+            .map_err(|error| error.to_string())?
+    } else {
+        target_profiles::validated_selected_profile_with_cancellation(
+            app,
+            &manifest.desktop_version,
+            Some(&state.shutdown),
+        )
+        .map_err(|error| error.to_string())?
+    };
     target_profiles::authorize_lifecycle(&profile, target_profiles::LifecycleAction::Launch)
         .map_err(|error| error.to_string())?;
     if !profile.frontend.launchable {
@@ -2260,7 +2654,6 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
             "The selected VidXP installation cannot launch the supported browser interface.".into(),
         );
     }
-    let mut paths = desktop_paths(app)?;
     paths.repository = profile.repository_root.clone();
     if let Some(model_directory) = &profile.model_directory {
         paths.models = model_directory.clone();
@@ -2292,6 +2685,17 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
         .map_err(|error| format!("Could not identify the local interface port: {error}"))?
         .port();
     drop(listener);
+    let nonce = browser_readiness_nonce();
+    let readiness_file = paths
+        .private_data
+        .join(format!("browser-readiness-{nonce}.json"));
+    if let Err(error) = fs::remove_file(&readiness_file)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        return Err(format!(
+            "Could not clear the stale browser readiness marker: {error}"
+        ));
+    }
 
     let mut command = match profile.kind {
         target_profiles::TargetKind::Managed => {
@@ -2306,34 +2710,30 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
         }
         target_profiles::TargetKind::ExistingLocal => Command::new(&profile.executable),
     };
-    configure_ui_service_command(&mut command, &profile.repository_root, port);
+    configure_ui_service_command(
+        &mut command,
+        &profile.repository_root,
+        port,
+        &readiness_file,
+        &nonce,
+    );
     let mut process = background_process::spawn_service(command)
         .map_err(|error| format!("Could not start the VidXP interface: {}", error.detail))?;
-
-    let address = SocketAddr::from(([127, 0, 0, 1], port));
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < deadline {
-        if let Some(status) = process
-            .try_wait()
-            .map_err(|error| format!("Could not inspect the interface process: {error}"))?
-        {
-            return Err(format!(
-                "The VidXP interface exited during startup ({status})."
-            ));
-        }
-        if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
-            let url = format!("http://127.0.0.1:{port}");
-            *active_process = Some(ManagedUi {
-                process,
-                url: url.clone(),
-                profile_id: profile.id.clone(),
-            });
-            return Ok(url);
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    process.terminate_and_reap();
-    Err("The VidXP interface did not become ready in 30 seconds.".into())
+    browser_readiness::wait_for_browser_readiness(
+        &mut process,
+        &readiness_file,
+        &nonce,
+        port,
+        Instant::now() + Duration::from_secs(30),
+        &state.shutdown,
+    )?;
+    let url = format!("http://127.0.0.1:{port}");
+    *active_process = Some(ManagedUi {
+        process,
+        url: url.clone(),
+        profile_id: profile.id.clone(),
+    });
+    Ok(url)
 }
 
 fn stop_ui_process(state: &DesktopState) {
@@ -2345,26 +2745,33 @@ fn stop_ui_process(state: &DesktopState) {
     }
 }
 
-fn ui_process_action(
-    running: bool,
-    active_profile_id: &str,
-    requested_profile_id: &str,
-) -> UiProcessAction {
-    if !running {
-        UiProcessAction::Start
-    } else if active_profile_id == requested_profile_id {
-        UiProcessAction::Reuse
-    } else {
-        UiProcessAction::Replace
-    }
+fn browser_readiness_nonce() -> String {
+    let sequence = READINESS_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    hex::encode(Sha256::digest(format!(
+        "{}:{timestamp}:{sequence}",
+        std::process::id()
+    )))
 }
 
-fn configure_ui_service_command(command: &mut Command, repository_root: &Path, port: u16) {
+fn configure_ui_service_command(
+    command: &mut Command,
+    repository_root: &Path,
+    port: u16,
+    readiness_file: &Path,
+    nonce: &str,
+) {
     command
         // The desktop owns the one intentional browser open after readiness. Without
         // headless mode Streamlit also opens the URL, producing duplicate tabs and
         // potentially visible launcher consoles on Windows.
         .env("STREAMLIT_SERVER_HEADLESS", "true")
+        .env("VIDXP_DESKTOP_READINESS_FILE", readiness_file)
+        .env("VIDXP_DESKTOP_READINESS_NONCE", nonce)
+        .env("VIDXP_DESKTOP_UI_PORT", port.to_string())
         .arg("--index-dir")
         .arg(repository_root)
         .args(["ui", "--host", "127.0.0.1", "--port", &port.to_string()]);
@@ -2388,14 +2795,9 @@ fn show_main_window(app: &AppHandle) {
 }
 
 fn configured_runtime(app: &AppHandle) -> bool {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(u64::MAX);
     target_profiles::current_state(app)
         .ok()
-        .and_then(|state| state.selected_profile().cloned())
-        .is_some_and(|profile| profile.is_ready(now))
+        .is_some_and(|state| state.selected_profile().is_some())
 }
 
 fn browser_surface_configured(app: &AppHandle) -> bool {
@@ -2431,6 +2833,7 @@ async fn open_ui_in_browser(app: AppHandle) -> Result<(), String> {
     if !claim_browser_open(&state.browser_open_active) {
         return Ok(());
     }
+    let _active = state.active_operations.register()?;
     let _browser_guard = BrowserOpenGuard(app.clone());
     let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::OpenBrowser)
         .map_err(|error| error.to_string())?;
@@ -2466,18 +2869,6 @@ fn open_browser_or_show_manager(app: &AppHandle) {
     });
 }
 
-fn action_for_activation(activation: DesktopActivation<'_>) -> Option<DesktopAction> {
-    match activation {
-        DesktopActivation::Startup | DesktopActivation::SingleInstance => {
-            Some(DesktopAction::Manage)
-        }
-        DesktopActivation::Tray("open") => Some(DesktopAction::OpenBrowser),
-        DesktopActivation::Tray("manage") => Some(DesktopAction::Manage),
-        DesktopActivation::Tray("quit") => Some(DesktopAction::Quit),
-        DesktopActivation::Tray(_) => None,
-    }
-}
-
 fn perform_desktop_action(app: &AppHandle, action: DesktopAction) {
     match action {
         DesktopAction::Manage => show_main_window(app),
@@ -2486,17 +2877,9 @@ fn perform_desktop_action(app: &AppHandle, action: DesktopAction) {
     }
 }
 
-fn close_action(configured: bool) -> DesktopCloseAction {
-    if configured {
-        DesktopCloseAction::HideToTray
-    } else {
-        DesktopCloseAction::Quit
-    }
-}
-
 fn begin_shutdown(app: &AppHandle) {
     let state = app.state::<DesktopState>();
-    if state.shutdown.is_cancelled() {
+    if state.shutdown_started.swap(true, Ordering::AcqRel) {
         return;
     }
     state.shutdown.cancel();
@@ -2506,9 +2889,27 @@ fn begin_shutdown(app: &AppHandle) {
         cancellation.cancel();
     }
     log::info!("VidXP supervised shutdown requested");
-    shutdown(app);
-    log::info!("VidXP supervised shutdown completed");
-    std::process::exit(0);
+    stop_ui_process(&state);
+    let app = app.clone();
+    let operations = state.active_operations.clone();
+    tauri::async_runtime::spawn(async move {
+        let shutdown_app = app.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            if !operations.wait_until_idle(Instant::now() + Duration::from_secs(10)) {
+                log::error!(
+                    "Timed out waiting for supervised operations to acknowledge cancellation; forcing final owned-process cleanup"
+                );
+            }
+            shutdown(&shutdown_app, deadline);
+        })
+        .await;
+        if let Err(error) = result {
+            log::error!("The shutdown coordinator stopped unexpectedly: {error}");
+        }
+        log::info!("VidXP supervised shutdown completed");
+        app.exit(0);
+    });
 }
 
 #[tauri::command]
@@ -2540,6 +2941,15 @@ fn create_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 fn stop_worker(runtime: &Path, paths: &DesktopPaths) {
+    stop_worker_before(runtime, paths, Instant::now() + Duration::from_secs(5));
+}
+
+fn stop_worker_before(runtime: &Path, paths: &DesktopPaths, deadline: Instant) {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        log::error!("Shutdown deadline elapsed before a managed worker could be stopped");
+        return;
+    }
     let mut command = configured_command(&executable(runtime, "vidxp"), paths);
     command
         .arg("--index-dir")
@@ -2548,14 +2958,14 @@ fn stop_worker(runtime: &Path, paths: &DesktopPaths) {
     let _ = background_process::run(
         command,
         background_process::BackgroundPolicy {
-            timeout: Duration::from_secs(5),
+            timeout: remaining.min(Duration::from_secs(5)),
             max_output_bytes: 64 * 1024,
         },
         None,
     );
 }
 
-fn shutdown(app: &AppHandle) {
+fn shutdown(app: &AppHandle, deadline: Instant) {
     log::info!("Stopping active VidXP processes");
     let state = app.state::<DesktopState>();
     if let Ok(active_operation) = state.operation_cancellation.lock()
@@ -2571,7 +2981,7 @@ fn shutdown(app: &AppHandle) {
     if let Ok(mut operation_worker) = state.operation_worker_runtime.lock()
         && let Some(runtime) = operation_worker.take()
     {
-        stop_worker(&runtime, &paths);
+        stop_worker_before(&runtime, &paths, deadline);
     }
     let Ok(profile) = target_profiles::selected_profile(app) else {
         log::info!("No selected VidXP target needs worker shutdown");
@@ -2596,7 +3006,7 @@ fn shutdown(app: &AppHandle) {
     }
     paths.models = active.model_directory.clone();
     let runtime = runtime_directory(&paths, &active);
-    stop_worker(&runtime, &paths);
+    stop_worker_before(&runtime, &paths, deadline);
     log::info!("Active VidXP worker shutdown finished");
 }
 
@@ -2617,6 +3027,9 @@ pub fn run() {
             migrate_legacy_shared_data(app.handle()).map_err(io::Error::other)?;
             recover_interrupted_activation(app.handle(), &app.state::<DesktopState>())
                 .map_err(io::Error::other)?;
+            if let Ok(paths) = desktop_paths(app.handle()) {
+                log_runtime_reconciliation(&paths);
+            }
             if let Err(error) = initialize_target_profiles(app.handle()) {
                 log::error!("Target profile initialization failed: {error}");
             }
@@ -2636,6 +3049,7 @@ pub fn run() {
             adopt_local_target,
             select_target_profile,
             delete_target_profile,
+            confirm_forget_target,
             begin_managed_setup,
             cancel_managed_setup,
             media_runtime_status,
@@ -2680,15 +3094,18 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        ActivationRecovery, ActivationStage, DesktopAction, DesktopActivation, DesktopCloseAction,
-        DesktopState, DraftPhase, DraftRecord, ManagedSetupDraft, TargetTransitionCoordinator,
-        TransitionKind, UiProcessAction, action_for_activation, activation_recovery,
-        base_package_specification, capability_command_arguments, claim_browser_open, close_action,
-        configure_ui_service_command, dependency_installation_arguments, desktop_paths_from_roots,
-        display_command, inventory_model_directory, manifest, normalize_line_endings,
-        normalized_runtime_constraints, package_acquisition_arguments, package_index,
-        package_specification, read_active_runtime_snapshot, required_encoder_missing,
+        ActivationJournal, ActivationRecovery, ActivationStage, ActiveRuntime, DesktopAction,
+        DesktopActivation, DesktopCloseAction, DesktopState, DraftPhase, DraftRecord,
+        ManagedSetupDraft, TargetTransitionCoordinator, TransitionKind, UiProcessAction,
+        action_for_activation, activation_recovery, base_package_specification,
+        capability_command_arguments, claim_browser_open, clean_environment_from, close_action,
+        configure_ui_service_command, configured_runtime_status, dependency_installation_arguments,
+        desktop_paths_from_roots, display_command, inventory_model_directory, manifest,
+        manifest_digest, normalize_line_endings, normalized_runtime_constraints,
+        package_acquisition_arguments, package_index, package_specification,
+        read_active_runtime_snapshot, reconcile_managed_runtime_storage, required_encoder_missing,
         restore_active_runtime, selected_capabilities, selected_surfaces, ui_process_action,
+        write_activation_journal, write_active_runtime,
     };
     use std::{
         ffi::OsStr,
@@ -2727,19 +3144,72 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_activation_recovers_only_after_both_authorities_were_written() {
+    fn managed_commands_discard_hostile_inherited_environment_and_restore_owned_roots() {
+        let paths =
+            desktop_paths_from_roots(Path::new("private"), Path::new("cache"), Path::new("local"));
+        let environment = clean_environment_from(
+            &paths,
+            [
+                ("PATH".into(), "safe-path".into()),
+                ("VIDXP_DATA_DIR".into(), "attacker-data".into()),
+                ("VIDXP_MODEL_CACHE".into(), "attacker-models".into()),
+                ("PYTHONPATH".into(), "attacker-python".into()),
+                ("VIRTUAL_ENV".into(), "attacker-venv".into()),
+                ("PIP_INDEX_URL".into(), "attacker-index".into()),
+                ("CONDA_PREFIX".into(), "attacker-conda".into()),
+                ("UV_INDEX".into(), "attacker-uv".into()),
+            ],
+        )
+        .into_iter()
+        .collect::<std::collections::BTreeMap<_, _>>();
+
         assert_eq!(
-            activation_recovery(&ActivationStage::Prepared),
+            environment.get("PATH").map(String::as_str),
+            Some("safe-path")
+        );
+        assert_eq!(
+            environment.get("VIDXP_DATA_DIR").map(String::as_str),
+            Some(paths.data.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            environment.get("VIDXP_MODEL_CACHE").map(String::as_str),
+            Some(paths.models.to_string_lossy().as_ref())
+        );
+        for rejected in [
+            "PYTHONPATH",
+            "VIRTUAL_ENV",
+            "PIP_INDEX_URL",
+            "CONDA_PREFIX",
+            "UV_INDEX",
+        ] {
+            assert!(!environment.contains_key(rejected));
+        }
+    }
+
+    #[test]
+    fn interrupted_activation_never_recommits_after_rollback_begins() {
+        assert_eq!(
+            activation_recovery(&ActivationStage::Prepared, false),
             ActivationRecovery::RollBack
         );
         assert_eq!(
-            activation_recovery(&ActivationStage::ProfileProjected),
+            activation_recovery(&ActivationStage::ProfileWritten, false),
             ActivationRecovery::RollBack
         );
         assert_eq!(
-            activation_recovery(&ActivationStage::ActiveWritten),
+            activation_recovery(&ActivationStage::ProfileWritten, true),
             ActivationRecovery::Complete
         );
+        assert_eq!(
+            activation_recovery(&ActivationStage::Committed, false),
+            ActivationRecovery::Complete
+        );
+        for stage in [ActivationStage::RollingBack, ActivationStage::RolledBack] {
+            assert_eq!(
+                activation_recovery(&stage, true),
+                ActivationRecovery::RollBack
+            );
+        }
     }
 
     #[test]
@@ -2757,6 +3227,52 @@ mod tests {
         );
         drop(first);
         assert!(TargetTransitionCoordinator::begin(&state, TransitionKind::Select).is_ok());
+    }
+
+    #[test]
+    fn shutdown_tracking_waits_for_probe_install_model_and_browser_operations() {
+        let state = DesktopState::default();
+        let probe = state.active_operations.register().expect("probe");
+        let install = state.active_operations.register().expect("package install");
+        let models = state
+            .active_operations
+            .register()
+            .expect("model preparation");
+        let browser = state.active_operations.register().expect("browser startup");
+        assert!(
+            !state
+                .active_operations
+                .wait_until_idle(std::time::Instant::now() + std::time::Duration::from_millis(20))
+        );
+        drop((probe, install, models, browser));
+        assert!(
+            state
+                .active_operations
+                .wait_until_idle(std::time::Instant::now() + std::time::Duration::from_secs(1))
+        );
+    }
+
+    #[test]
+    fn shutdown_cancels_the_current_python_or_package_operation() {
+        let state = DesktopState::default();
+        let operation = super::OperationCancellationGuard::register(&state).expect("operation");
+        let token = operation.token();
+        state.shutdown.cancel();
+        state
+            .operation_cancellation
+            .lock()
+            .expect("cancellation slot")
+            .as_ref()
+            .expect("active cancellation")
+            .cancel();
+        assert!(state.shutdown.is_cancelled());
+        assert!(token.is_cancelled());
+        drop(operation);
+        assert!(
+            state
+                .active_operations
+                .wait_until_idle(std::time::Instant::now() + std::time::Duration::from_secs(1))
+        );
     }
 
     #[test]
@@ -2846,6 +3362,129 @@ mod tests {
         restore_active_runtime(&paths, None).expect("remove pointer");
         assert!(!paths.active_runtime.exists());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_reconciliation_preserves_authorities_and_bounds_repeated_updates() {
+        let root = std::env::temp_dir().join(format!(
+            "vidxp-runtime-reconcile-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let paths = desktop_paths_from_roots(
+            &root.join("private"),
+            &root.join("cache"),
+            &root.join("local"),
+        );
+        fs::create_dir_all(&paths.runtimes).expect("runtimes");
+        let profile = |digest: char, generation: u8| {
+            format!("{}-{generation}", digest.to_string().repeat(64))
+        };
+        let active_profile = profile('a', 3);
+        let candidate_profile = profile('b', 4);
+        let previous_profile = profile('c', 2);
+        let obsolete_profile = profile('d', 1);
+        let staging_profile = format!(".staging-{}-5-42", "e".repeat(64));
+        for name in [
+            &active_profile,
+            &candidate_profile,
+            &previous_profile,
+            &obsolete_profile,
+            &staging_profile,
+            "external-runtime",
+        ] {
+            fs::create_dir_all(paths.runtimes.join(name)).expect("runtime directory");
+            fs::write(paths.runtimes.join(name).join("payload"), b"runtime").expect("payload");
+        }
+        let runtime = |profile: String| ActiveRuntime {
+            schema_version: 2,
+            manifest_sha256: manifest_digest(),
+            profile,
+            package_version: "0.4.0-b".into(),
+            capabilities: vec!["scene".into()],
+            surfaces: vec!["browser".into()],
+            model_directory: paths.models.clone(),
+        };
+        let active = runtime(active_profile.clone());
+        write_active_runtime(&paths, &active).expect("active pointer");
+        let journal = ActivationJournal {
+            schema_version: 2,
+            stage: ActivationStage::Prepared,
+            previous_active_bytes: Some(
+                serde_json::to_vec(&runtime(previous_profile.clone())).expect("previous"),
+            ),
+            previous_targets: crate::target_profiles::TargetState::default(),
+            candidate_active: runtime(candidate_profile.clone()),
+            candidate_targets: crate::target_profiles::TargetState::default(),
+        };
+        write_activation_journal(&paths, &journal).expect("journal");
+
+        let report = reconcile_managed_runtime_storage(&paths);
+        assert_eq!(report.removed_directories, 2);
+        assert!(report.reclaimed_bytes > 0);
+        for retained in [
+            &active_profile,
+            &candidate_profile,
+            &previous_profile,
+            "external-runtime",
+        ] {
+            assert!(
+                paths.runtimes.join(retained).exists(),
+                "retained {retained}"
+            );
+        }
+        assert!(!paths.runtimes.join(obsolete_profile).exists());
+        assert!(!paths.runtimes.join(staging_profile).exists());
+
+        fs::remove_file(&paths.activation_journal).expect("clear journal");
+        let report = reconcile_managed_runtime_storage(&paths);
+        assert_eq!(report.removed_directories, 2);
+        assert!(paths.runtimes.join(active_profile).exists());
+        assert!(paths.runtimes.join("external-runtime").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn status_fixture(model_directory: &str) -> ActiveRuntime {
+        ActiveRuntime {
+            schema_version: 2,
+            manifest_sha256: manifest_digest(),
+            profile: "a".repeat(64) + "-1",
+            package_version: "0.4.0-b".into(),
+            capabilities: vec!["scene".into()],
+            surfaces: vec!["browser".into()],
+            model_directory: PathBuf::from(model_directory),
+        }
+    }
+
+    #[test]
+    fn missing_ffmpeg_preserves_the_managed_runtime_configuration() {
+        let status = configured_runtime_status(
+            status_fixture("custom-models"),
+            vec!["FFmpeg was not found.".into()],
+        );
+        assert_eq!(status.state, super::RuntimeState::Broken);
+        assert_eq!(status.capabilities, ["scene"]);
+        assert_eq!(status.surfaces, ["browser"]);
+        assert_eq!(status.model_directory, "custom-models");
+        assert!(status.runtime_profile.is_some());
+    }
+
+    #[test]
+    fn missing_encoder_and_damaged_runtime_preserve_custom_model_storage() {
+        for problem in [
+            "FFmpeg does not provide required encoder libx264.",
+            "The active runtime executable is damaged.",
+        ] {
+            let status =
+                configured_runtime_status(status_fixture("D:\\VidXP models"), vec![problem.into()]);
+            assert_eq!(status.state, super::RuntimeState::Broken);
+            assert_eq!(status.capabilities, ["scene"]);
+            assert_eq!(status.surfaces, ["browser"]);
+            assert_eq!(status.model_directory, "D:\\VidXP models");
+        }
     }
 
     #[test]
@@ -2980,10 +3619,19 @@ mod tests {
     fn desktop_ui_service_is_headless_so_only_the_desktop_opens_the_browser() {
         let mut command = Command::new("vidxp");
 
-        configure_ui_service_command(&mut command, Path::new("repository"), 43123);
+        configure_ui_service_command(
+            &mut command,
+            Path::new("repository"),
+            43123,
+            Path::new("readiness.json"),
+            "nonce",
+        );
 
         assert!(command.get_envs().any(|(key, value)| {
             key == OsStr::new("STREAMLIT_SERVER_HEADLESS") && value == Some(OsStr::new("true"))
+        }));
+        assert!(command.get_envs().any(|(key, value)| {
+            key == OsStr::new("VIDXP_DESKTOP_READINESS_NONCE") && value == Some(OsStr::new("nonce"))
         }));
         assert_eq!(
             command

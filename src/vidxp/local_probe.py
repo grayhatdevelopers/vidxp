@@ -9,6 +9,7 @@ from typing import Any
 from vidxp import __version__
 from vidxp.app_paths import (
     default_data_directory,
+    default_model_directory,
     default_repository_directory,
 )
 from vidxp.media_runtime import media_runtime_is_initialized
@@ -16,7 +17,7 @@ from vidxp.media_runtime import media_runtime_is_initialized
 
 DESKTOP_PROBE_SCHEMA_VERSION = 1
 DESKTOP_PROBE_PROTOCOL_VERSION = 1
-DESKTOP_LAUNCH_PROTOCOL_VERSION = 1
+DESKTOP_LAUNCH_PROTOCOL_VERSION = 2
 PRODUCT_ID = "dev.grayhat.vidxp"
 
 
@@ -106,6 +107,7 @@ def build_desktop_probe(
     launcher: str | Path | None = None,
     data_root: str | Path | None = None,
     repository_root: str | Path | None = None,
+    model_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Describe this local VidXP installation without mutating it."""
 
@@ -119,6 +121,15 @@ def build_desktop_probe(
             repository_root
             if repository_root is not None
             else default_repository_directory(resolved_data_root)
+        )
+        .expanduser()
+        .resolve(strict=False)
+    )
+    resolved_model_root = (
+        Path(
+            model_root
+            if model_root is not None
+            else default_model_directory(resolved_data_root)
         )
         .expanduser()
         .resolve(strict=False)
@@ -146,6 +157,7 @@ def build_desktop_probe(
         },
         "data_root": str(resolved_data_root),
         "repository_root": str(resolved_repository_root),
+        "model_root": str(resolved_model_root),
         "compatibility": {
             "compatible": True,
             "code": "contract_compatible",

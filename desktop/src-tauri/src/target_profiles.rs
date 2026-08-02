@@ -24,7 +24,7 @@ const CURRENT_STORE_SCHEMA_VERSION: u32 = 1;
 pub const CURRENT_PROFILE_SCHEMA_VERSION: u32 = 1;
 const SUPPORTED_PROBE_SCHEMA_VERSION: u32 = 1;
 const SUPPORTED_PROBE_PROTOCOL_VERSION: u32 = 1;
-const SUPPORTED_LAUNCH_PROTOCOL_VERSION: u32 = 1;
+const SUPPORTED_LAUNCH_PROTOCOL_VERSION: u32 = 2;
 const PRODUCT_ID: &str = "dev.grayhat.vidxp";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const VALIDATION_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -197,6 +197,7 @@ pub struct ValidatedTarget {
     pub runtime: RuntimeIdentity,
     pub data_root: PathBuf,
     pub repository_root: PathBuf,
+    pub model_root: PathBuf,
     pub frontend: FrontendCapability,
     pub validated_at: u64,
 }
@@ -261,6 +262,7 @@ struct ProbeDocument {
     runtime: ProbeRuntime,
     data_root: PathBuf,
     repository_root: PathBuf,
+    model_root: PathBuf,
     #[serde(default)]
     capabilities: ProbeCapabilities,
 }
@@ -386,6 +388,14 @@ fn collect_command_output(
 ) -> Result<ProbeOutput, TargetError> {
     let mut command = Command::new(executable);
     command.args(arguments);
+    collect_prepared_command_output(command, operation, cancellation)
+}
+
+fn collect_prepared_command_output(
+    command: Command,
+    operation: &str,
+    cancellation: Option<&CancellationToken>,
+) -> Result<ProbeOutput, TargetError> {
     let BackgroundOutput {
         status,
         stdout,
@@ -414,6 +424,30 @@ fn collect_command_output(
     })
 }
 
+pub(crate) fn validate_executable_using(
+    path: &Path,
+    desktop_version: &str,
+    cancellation: Option<&CancellationToken>,
+    command_for: impl FnOnce(&Path) -> Command,
+) -> Result<ValidatedTarget, TargetError> {
+    validate_executable_with(path, desktop_version, |canonical, version, request_id| {
+        let mut command = command_for(canonical);
+        command.args([
+            "desktop-probe",
+            "--json",
+            "--desktop-version",
+            version,
+            "--request-id",
+            request_id,
+        ]);
+        collect_prepared_command_output(
+            command,
+            "The managed VidXP compatibility probe",
+            cancellation,
+        )
+    })
+}
+
 fn collect_probe_output(
     executable: &Path,
     desktop_version: &str,
@@ -434,6 +468,7 @@ fn collect_probe_output(
     )
 }
 
+#[cfg(test)]
 fn collect_version_output(executable: &Path) -> Result<ProbeOutput, TargetError> {
     collect_command_output(executable, &["--version"], "The VidXP version check", None)
 }
@@ -493,6 +528,7 @@ fn validate_probe_document(
     for (label, path) in [
         ("data", &document.data_root),
         ("repository", &document.repository_root),
+        ("model", &document.model_root),
         ("Python executable", &document.runtime.python_executable),
         ("Python prefix", &document.runtime.prefix),
         ("Python base prefix", &document.runtime.base_prefix),
@@ -519,6 +555,7 @@ fn validate_probe_document(
         },
         data_root: document.data_root,
         repository_root: document.repository_root,
+        model_root: document.model_root,
         frontend: document.capabilities.frontend,
         validated_at: now,
     })
@@ -646,15 +683,47 @@ pub fn validate_executable(
     validate_executable_with(path, desktop_version, collect_probe_output)
 }
 
-pub fn inspect_executable(
-    path: &Path,
-    desktop_version: &str,
-) -> Result<TargetInspection, TargetError> {
+#[cfg(test)]
+fn inspect_executable(path: &Path, desktop_version: &str) -> Result<TargetInspection, TargetError> {
     inspect_executable_with(
         path,
         desktop_version,
         collect_probe_output,
         collect_version_output,
+    )
+}
+
+pub fn inspect_executable_with_cancellation(
+    path: &Path,
+    desktop_version: &str,
+    cancellation: &CancellationToken,
+) -> Result<TargetInspection, TargetError> {
+    inspect_executable_with(
+        path,
+        desktop_version,
+        |executable, version, request_id| {
+            collect_command_output(
+                executable,
+                &[
+                    "desktop-probe",
+                    "--json",
+                    "--desktop-version",
+                    version,
+                    "--request-id",
+                    request_id,
+                ],
+                "The VidXP compatibility probe",
+                Some(cancellation),
+            )
+        },
+        |executable| {
+            collect_command_output(
+                executable,
+                &["--version"],
+                "The VidXP version check",
+                Some(cancellation),
+            )
+        },
     )
 }
 
@@ -1126,35 +1195,12 @@ pub fn selected_profile(app: &AppHandle) -> Result<TargetProfile, TargetError> {
     })
 }
 
-pub fn validated_selected_profile(
-    app: &AppHandle,
-    desktop_version: &str,
-) -> Result<TargetProfile, TargetError> {
-    validated_selected_profile_with_cancellation(app, desktop_version, None)
-}
-
 pub fn validated_selected_profile_with_cancellation(
     app: &AppHandle,
     desktop_version: &str,
     cancellation: Option<&CancellationToken>,
 ) -> Result<TargetProfile, TargetError> {
-    let (store, mut decoded) = load_state(app)?;
-    let selected = decoded.selected_profile_id.clone().ok_or_else(|| {
-        TargetError::new(
-            TargetErrorCode::SelectedProfileMissing,
-            "Choose a VidXP target before continuing.",
-        )
-    })?;
-    let profile = decoded
-        .profiles
-        .iter_mut()
-        .find(|profile| profile.id == selected)
-        .ok_or_else(|| {
-            TargetError::new(
-                TargetErrorCode::ProfileNotFound,
-                "The selected VidXP target no longer exists.",
-            )
-        })?;
+    let profile = selected_profile(app)?;
     let validated = validate_executable_with(
         &profile.executable,
         desktop_version,
@@ -1174,6 +1220,30 @@ pub fn validated_selected_profile_with_cancellation(
             )
         },
     );
+    persist_selected_validation(app, validated)
+}
+
+pub(crate) fn persist_selected_validation(
+    app: &AppHandle,
+    validated: Result<ValidatedTarget, TargetError>,
+) -> Result<TargetProfile, TargetError> {
+    let (store, mut decoded) = load_state(app)?;
+    let selected = decoded.selected_profile_id.clone().ok_or_else(|| {
+        TargetError::new(
+            TargetErrorCode::SelectedProfileMissing,
+            "Choose a VidXP target before continuing.",
+        )
+    })?;
+    let profile = decoded
+        .profiles
+        .iter_mut()
+        .find(|profile| profile.id == selected)
+        .ok_or_else(|| {
+            TargetError::new(
+                TargetErrorCode::ProfileNotFound,
+                "The selected VidXP target no longer exists.",
+            )
+        })?;
     match validated {
         Ok(validated) => {
             apply_validation(profile, validated);
@@ -1189,16 +1259,6 @@ pub fn validated_selected_profile_with_cancellation(
             Err(error)
         }
     }
-}
-
-pub fn adopt_local(
-    app: &AppHandle,
-    executable: &Path,
-    display_name: Option<String>,
-    desktop_version: &str,
-) -> Result<TargetState, TargetError> {
-    let validated = validate_executable(executable, desktop_version)?;
-    adopt_validated(app, validated, display_name)
 }
 
 pub fn adopt_validated(
@@ -1219,6 +1279,25 @@ pub fn select_profile(
     profile_id: &str,
     desktop_version: &str,
 ) -> Result<TargetState, TargetError> {
+    let profile = current_state(app)?
+        .profiles
+        .into_iter()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| {
+            TargetError::new(
+                TargetErrorCode::ProfileNotFound,
+                "The selected VidXP target no longer exists.",
+            )
+        })?;
+    let validated = validate_executable(&profile.executable, desktop_version)?;
+    select_validated_profile(app, profile_id, validated)
+}
+
+pub(crate) fn select_validated_profile(
+    app: &AppHandle,
+    profile_id: &str,
+    validated: ValidatedTarget,
+) -> Result<TargetState, TargetError> {
     let (store, mut decoded) = load_state(app)?;
     let profile = decoded
         .profiles
@@ -1230,7 +1309,6 @@ pub fn select_profile(
                 "The selected VidXP target no longer exists.",
             )
         })?;
-    let validated = validate_executable(&profile.executable, desktop_version)?;
     apply_validation(profile, validated);
     decoded.selected_profile_id = Some(profile_id.to_owned());
     decoded.changed = true;
@@ -1269,12 +1347,10 @@ pub fn delete_profile(app: &AppHandle, profile_id: &str) -> Result<TargetState, 
 pub fn prepare_managed_activation(
     app: &AppHandle,
     managed_runtime: ManagedRuntimeProjection,
-    desktop_version: &str,
+    validated: ValidatedTarget,
 ) -> Result<TargetState, TargetError> {
     let (_, mut decoded) = load_state(app)?;
-    let executable = managed_runtime.executable.clone();
-    let validated = validate_executable(&executable, desktop_version);
-    prepare_managed_state(&mut decoded, managed_runtime, validated)
+    prepare_managed_state(&mut decoded, managed_runtime, Ok(validated))
 }
 
 fn prepare_managed_state(
@@ -1463,7 +1539,7 @@ mod tests {
             schema_version: 1,
             protocol_version: 1,
             launch_contract: ProbeLaunchContract {
-                protocol_version: 1,
+                protocol_version: 2,
                 surface: "browser".into(),
                 command: "ui".into(),
             },
@@ -1478,6 +1554,7 @@ mod tests {
             },
             data_root: root.join("data"),
             repository_root: root.join("data").join("repositories").join("default"),
+            model_root: root.join("data").join("models"),
             capabilities: ProbeCapabilities::default(),
         }
     }
@@ -1602,7 +1679,7 @@ mod tests {
             .expect("compatible contract");
 
         assert_eq!(validated.product_version, "0.3.0");
-        assert_eq!(validated.launch_protocol_version, 1);
+        assert_eq!(validated.launch_protocol_version, 2);
     }
 
     #[test]
@@ -1693,7 +1770,7 @@ mod tests {
         let executable = std::env::current_exe().expect("current executable");
         let canonical = fs::canonicalize(executable).expect("canonical executable");
         let mut incompatible = document(&canonical, "nonce");
-        incompatible.launch_contract.protocol_version = 2;
+        incompatible.launch_contract.protocol_version = 1;
 
         assert_eq!(
             validate_probe_document(&canonical, "nonce", incompatible, 100)
@@ -1805,7 +1882,7 @@ mod tests {
         assert!(inspected.adoptable);
         assert_eq!(validated.product_version, "0.4.0b0");
         assert_eq!(validated.probe_protocol_version, 1);
-        assert_eq!(validated.launch_protocol_version, 1);
+        assert_eq!(validated.launch_protocol_version, 2);
         assert_eq!(validated.runtime.python_version, "3.14.0");
         assert!(validated.frontend.launchable);
         let expected_data_root =
@@ -1894,7 +1971,7 @@ mod tests {
             product_version: "0.5.0".into(),
             probe_schema_version: 1,
             probe_protocol_version: 1,
-            launch_protocol_version: 1,
+            launch_protocol_version: 2,
             runtime: RuntimeIdentity {
                 python_executable: PathBuf::from("/runtime/bin/python"),
                 python_version: "3.14.6".into(),
@@ -1904,6 +1981,7 @@ mod tests {
             },
             data_root: PathBuf::from("/data"),
             repository_root: PathBuf::from("/data/repositories/default"),
+            model_root: PathBuf::from("/models"),
             frontend: FrontendCapability {
                 available: true,
                 launchable: true,
