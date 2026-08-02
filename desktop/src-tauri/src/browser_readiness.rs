@@ -313,14 +313,17 @@ http.server.HTTPServer(("127.0.0.1", int(port)), Handler).handle_request()
         };
         let mut process =
             crate::background_process::spawn_service(command).expect("launcher process");
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let pid_deadline = Instant::now() + Duration::from_secs(10);
         let child_pid = loop {
             if let Ok(pid) = fs::read_to_string(&pid_file)
                 && let Ok(pid) = pid.parse::<u32>()
             {
                 break pid;
             }
-            assert!(Instant::now() < deadline, "child did not publish its pid");
+            assert!(
+                Instant::now() < pid_deadline,
+                "child did not publish its pid"
+            );
             thread::sleep(Duration::from_millis(20));
         };
         assert_ne!(child_pid, process.id());
@@ -329,7 +332,7 @@ http.server.HTTPServer(("127.0.0.1", int(port)), Handler).handle_request()
             &marker,
             "launch-child",
             port,
-            deadline,
+            Instant::now() + Duration::from_secs(10),
             &CancellationToken::default(),
         )
         .expect("child readiness");

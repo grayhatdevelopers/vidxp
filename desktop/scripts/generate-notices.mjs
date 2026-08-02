@@ -54,7 +54,7 @@ function frontendLicenseText(identity, metadata) {
   }
   const vendored = vendoredArtifacts.get(identity);
   if (vendored) {
-    const contents = readFileSync(vendored.path, 'utf8').trim();
+    const contents = readFileSync(vendored.path, 'utf8').replace(/\r\n?/g, '\n').trim();
     const actual = createHash('sha256').update(`${contents}\n`, 'utf8').digest('hex');
     if (actual !== vendored.sha256) {
       throw new Error(`${identity} vendored license digest ${actual} does not match ${vendored.sha256}.`);
