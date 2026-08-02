@@ -30,6 +30,11 @@ can deliver frames and clips itself.
    ResourceLinks.
 6. Inspect returned keyframes before asserting that a person or action is
    visibly present. Distinguish visual appearances from dialogue mentions.
+7. When useful candidates extend beyond the initial evidence delivery, call
+   `materialize_job_evidence` with evidence IDs from the completed job in
+   batches of at most ten. Request keyframes for verification and add clips
+   only for results worth presenting. Do not rerun retrieval or reconstruct
+   timestamps in FFmpeg.
 
 ## Polling and presentation
 
@@ -45,6 +50,10 @@ can deliver frames and clips itself.
   `get_job` response supplies keyframes, clips, or ResourceLinks, present them to
   the user directly instead of returning only timestamps or waiting for another
   request.
+- Include the returned evidence blocks or working resource/download references
+  in the final answer. Never leave an evidence heading empty. If the host does
+  not render a ResourceLink, say so and use `get_artifact_download` to provide
+  the transport-authoritative alternative.
 - Stop polling on success, failure, or cancellation. Preserve the job ID and
   report structured remediation when the job does not succeed.
 
@@ -66,3 +75,6 @@ can deliver frames and clips itself.
   `create_evidence_clip`; VidXP resolves and clamps its range. Use
   `get_artifact_download` only when the returned ResourceLink is insufficient for
   the host or the user explicitly asks for a path or download link.
+- Use external FFmpeg extraction only after VidXP returns a structured failure
+  for both follow-up materialization and the evidence-clip fallback, and disclose
+  that substitution to the user.

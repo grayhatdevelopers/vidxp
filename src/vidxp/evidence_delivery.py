@@ -286,6 +286,33 @@ class EvidenceDeliveryService:
         )
         return answer.model_copy(update={"evidence_delivery": delivery})
 
+    def deliver_selected(
+        self,
+        result: FusedSearchResult | QueryAnswer,
+        evidence_ids: tuple[str, ...],
+        policy: EvidenceDeliveryPolicy,
+        *,
+        execution: ExecutionContext | None = None,
+    ) -> EvidenceDeliveryResult:
+        """Materialize a bounded selection from a completed retrieval result."""
+
+        candidates = (
+            self._search_candidates(result)
+            if isinstance(result, FusedSearchResult)
+            else self._query_candidates(result)
+        )
+        by_id = {candidate.evidence_id: candidate for candidate in candidates}
+        missing = tuple(item for item in evidence_ids if item not in by_id)
+        if missing:
+            raise ApplicationError(
+                "evidence_not_in_source_job",
+                ErrorCategory.not_found,
+                "One or more evidence IDs do not belong to the completed source job.",
+                details={"evidence_ids": list(missing)},
+            )
+        selected = tuple(by_id[item] for item in evidence_ids)
+        return self._deliver(selected, policy, execution=execution)
+
     def _deliver(
         self,
         candidates: tuple[_Candidate, ...],

@@ -45,6 +45,7 @@ from vidxp.application_models import (
     EvidenceDeliveryMode,
     EvidenceDeliveryPolicy,
     IndexStatus,
+    InitialEvidenceDeliveryPolicy,
     Job,
     JobKind,
     JobPage,
@@ -112,6 +113,7 @@ MCP_TOOL_NAMES = [
     "query_video",
     "create_clip",
     "create_evidence_clip",
+    "materialize_job_evidence",
     "get_artifact_download",
     "list_jobs",
     "get_job",
@@ -650,9 +652,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     "get_media_upload",
                     {"upload_session_id": UPLOAD_SESSION_ID},
                 )
-                preserved_media_id = status.structured_content["items"][0][
-                    "media_id"
-                ]
+                preserved_media_id = status.structured_content["items"][0]["media_id"]
                 retried = await client.call_tool(
                     "start_indexing",
                     {
@@ -1104,7 +1104,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         rendered = output.getvalue()
         self.assertIn("OK VidXP MCP", rendered)
         self.assertIn("Index state: missing", rendered)
-        self.assertIn("Tools: 20", rendered)
+        self.assertIn("Tools: 21", rendered)
         self.assertIn("get_index_status", rendered)
 
     async def test_server_info_exposes_vidxp_branding(self):
@@ -1266,7 +1266,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 question="What happens after the taxi arrives?",
                 media_id=MEDIA_ID,
                 modalities=("scene", "dialogue"),
-                evidence_delivery=EvidenceDeliveryPolicy(
+                evidence_delivery=InitialEvidenceDeliveryPolicy(
                     mode=EvidenceDeliveryMode.keyframes
                 ),
             ),
@@ -1413,9 +1413,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         artifact_delivery=transport,
                     )
                     async with Client(server) as client:
-                        result = await client.call_tool(
-                            "get_job", {"job_id": JOB_ID}
-                        )
+                        result = await client.call_tool("get_job", {"job_id": JOB_ID})
                         uri = f"vidxp://artifacts/{ARTIFACT_ID}/content.png"
                         resource = await client.read_resource(uri)
 
@@ -1555,9 +1553,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             context.jobs.submit_snippet.return_value = queued_job().model_copy(
                 update={"kind": JobKind.snippet}
             )
-            context.application.evidence_delivery = Mock()
+            evidence_delivery = Mock()
+            context = replace(context, evidence_delivery=evidence_delivery)
             resolved = source.result.result.evidence_delivery.items[0].range
-            context.application.evidence_delivery.resolve_job_evidence.return_value = (
+            evidence_delivery.resolve_job_evidence.return_value = (
                 SimpleNamespace(media_id=MEDIA_ID),
                 resolved,
             )
@@ -1587,12 +1586,93 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(command.end_seconds, resolved.clip_end_seconds)
             calls = context.jobs.submit_snippet.call_args_list
             self.assertEqual(calls[0].kwargs["job_id"], calls[1].kwargs["job_id"])
-            resolver = context.application.evidence_delivery.resolve_job_evidence
+            resolver = evidence_delivery.resolve_job_evidence
             resolver.assert_called_with(
                 source.result.result,
                 "e" * 64,
                 padding_before=2.0,
                 padding_after=2.0,
+            )
+
+    async def test_materialize_job_evidence_returns_selected_frames_and_clips(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            frame_path = root / "frame.png"
+            frame_path.write_bytes(b"x")
+            context = self.context(root, mcp_stdio_filesystem_accessible=False)
+            frame = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                generation_id="523456781234423481234567890abcde",
+                job_id=JOB_ID,
+                kind=ArtifactKind.evidence_frame,
+                profile="png",
+                mime_type="image/png",
+                byte_size=1,
+                sha256="a" * 64,
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            clip = Artifact(
+                artifact_id="423456781234423481234567890abcde",
+                media_id=MEDIA_ID,
+                job_id=JOB_ID,
+                kind=ArtifactKind.snippet,
+                profile="compatible_mp4",
+                mime_type="video/mp4",
+                byte_size=4,
+                sha256="b" * 64,
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            source = search_evidence_job(frame, clip)
+            delivery = source.result.result.evidence_delivery
+            evidence_delivery = Mock()
+            evidence_delivery.deliver_selected.return_value = delivery
+            context = replace(context, evidence_delivery=evidence_delivery)
+            context.jobs.get.return_value = source
+            context.application.open_artifact_content.return_value = LocalFileResource(
+                path=frame_path,
+                filename="frame.png",
+                mime_type="image/png",
+                byte_size=1,
+                etag="a" * 64,
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.read", "vidxp.write"}),
+                ),
+            )
+
+            async with Client(server) as client:
+                result = await client.call_tool(
+                    "materialize_job_evidence",
+                    {
+                        "source_job_id": JOB_ID,
+                        "evidence_ids": ["e" * 64],
+                        "mode": "keyframes_and_clips",
+                    },
+                )
+
+            self.assertFalse(result.is_error, result.content)
+            self.assertTrue(
+                any(isinstance(block, ImageContent) for block in result.content)
+            )
+            self.assertEqual(
+                sum(isinstance(block, ResourceLink) for block in result.content),
+                2,
+            )
+            item = result.structured_content["items"][0]
+            self.assertIsNotNone(item["keyframe"]["artifact"]["resource_uri"])
+            self.assertIsNotNone(item["clip"]["resource_uri"])
+            call = evidence_delivery.deliver_selected.call_args
+            self.assertEqual(call.args[0], source.result.result)
+            self.assertEqual(call.args[1], ("e" * 64,))
+            self.assertEqual(
+                call.args[2].mode,
+                EvidenceDeliveryMode.keyframes_and_clips,
             )
 
     async def test_one_job_search_returns_frame_and_ready_clip(self):
@@ -2323,7 +2403,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 18)
+        self.assertEqual(len(discovered.tools), 19)
         self.assertNotIn(
             "create_media_upload",
             {tool.name for tool in discovered.tools},

@@ -11,6 +11,8 @@ from vidxp.application_models import (
     ApplicationError,
     ErrorCategory,
     ErrorDetail,
+    EvidenceDeliveryMode,
+    EvidenceDeliveryPolicy,
     CreateActorOverlayCommand,
     CreateIndexCommand,
     Job,
@@ -278,6 +280,18 @@ class JobContractTests(unittest.TestCase):
             )
         )
         self.assertIn("%20", encoded_cluster.cluster_id)
+
+    def test_initial_evidence_stays_bounded_while_followup_allows_ten(self):
+        followup = EvidenceDeliveryPolicy(
+            mode=EvidenceDeliveryMode.keyframes,
+            max_items=10,
+        )
+        self.assertEqual(followup.max_items, 10)
+
+        with self.assertRaises(ValidationError):
+            SearchCommand(query="taxi", evidence_delivery=followup)
+        with self.assertRaises(ValidationError):
+            QueryVideoCommand(question="Where is it?", evidence_delivery=followup)
 
     def test_canonical_dbos_job_id_has_a_hex_operation_identity(self):
         execution = ExecutionContext(

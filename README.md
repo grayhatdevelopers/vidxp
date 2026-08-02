@@ -192,7 +192,8 @@ self-hosted VidXP server.
 Search and question results can include directly inspectable frames and clips, so
 agents can show the evidence behind an answer without making users translate raw
 timestamps. Evidence rendering is best-effort: a result can still be useful when
-an individual frame or clip cannot be produced.
+an individual frame or clip cannot be produced. Agents can request additional
+ranked evidence in small batches without rerunning the search.
 
 Remote agents can hand users a short-lived page for selecting and uploading
 multiple videos. Local agents can ingest approved filesystem paths without moving

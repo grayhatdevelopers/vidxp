@@ -43,10 +43,12 @@ from vidxp.application_models import (
     CreateIndexCommand,
     ErrorCategory,
     ErrorDetail,
-    EvidenceArtifact,
     EvidenceDeliveryMode,
     EvidenceDeliveryPolicy,
+    EvidenceDeliveryResult,
+    FusedSearchResult,
     Identifier,
+    InitialEvidenceDeliveryPolicy,
     IndexStatus,
     Job,
     JobId,
@@ -63,6 +65,7 @@ from vidxp.application_models import (
     Principal,
     PrepareModelsCommand,
     QueryVideoCommand,
+    QueryAnswer,
     RuntimeReadiness,
     SearchCommand,
     Sha256,
@@ -95,7 +98,7 @@ from vidxp.idempotency import (
     scoped_request_key,
 )
 from vidxp.core.identifiers import ArtifactId
-from vidxp.evidence_projection import project_job_artifacts
+from vidxp.evidence_delivery import EvidenceDeliveryService
 from vidxp.settings import HttpAuthMode
 from vidxp.upload_service import RemoteUploadService
 
@@ -214,6 +217,16 @@ def _uploads(context: ControlPlaneContext) -> RemoteUploadService:
             "Media ingestion is unavailable on this transport.",
         )
     return context.uploads
+
+
+def _evidence_delivery(context: ControlPlaneContext) -> EvidenceDeliveryService:
+    if context.evidence_delivery is None:
+        raise ApplicationError(
+            "evidence_delivery_unavailable",
+            ErrorCategory.unavailable,
+            "Evidence materialization is unavailable on this runtime.",
+        )
+    return context.evidence_delivery
 
 
 def _ingestion_modalities(
@@ -509,9 +522,12 @@ def create_mcp_server(
             "snapshot. MCP defaults to three ranked evidence frames; request "
             "keyframes_and_clips to receive bounded ready clips in the same "
             "completed job. The ordinary flow is submit search/query, then poll "
-            "that job. create_evidence_clip, create_clip, and "
-            "get_artifact_download remain advanced fallbacks. Use list_jobs to "
-            "recover job IDs across agent sessions."
+            "that job. Use materialize_job_evidence with evidence IDs from the "
+            "completed result to inspect additional candidates in batches of "
+            "ten without rerunning retrieval or supplying timestamps. "
+            "create_evidence_clip, create_clip, and get_artifact_download remain "
+            "advanced fallbacks. Use list_jobs to recover job IDs across agent "
+            "sessions."
         ),
         version=__version__,
         token_verifier=token_verifier,
@@ -776,6 +792,103 @@ def create_mcp_server(
             download_expires_at=download_expires_at,
             delivery_error=delivery_error,
         ), link
+
+    async def project_evidence_delivery(
+        delivery: EvidenceDeliveryResult,
+    ) -> tuple[
+        EvidenceDeliveryResult,
+        list[ImageContent | ResourceLink | TextContent],
+    ]:
+        blocks: list[ImageContent | ResourceLink | TextContent] = []
+        projected_items = []
+        for item in delivery.items:
+            keyframe = item.keyframe
+            clip = item.clip
+            label = (
+                f"evidence {item.evidence_id} rank {item.rank}; "
+                f"media {item.media_id}; {','.join(item.modalities)}"
+            )
+            if item.range is not None:
+                label += (
+                    f"; {item.range.source_start_seconds:.3f}-"
+                    f"{item.range.source_end_seconds:.3f}s"
+                )
+            if keyframe is not None:
+                frame_delivery, frame_link = await project_artifact_delivery(
+                    keyframe.artifact.artifact,
+                    title=f"VidXP evidence frame #{item.rank}",
+                    description=label,
+                )
+                keyframe = keyframe.model_copy(
+                    update={
+                        "artifact": keyframe.artifact.model_copy(
+                            update={
+                                "resource_uri": frame_delivery.resource_uri,
+                                "delivery": frame_delivery,
+                            }
+                        )
+                    }
+                )
+                frame = keyframe.artifact.artifact
+                if (
+                    frame.byte_size <= 512_000
+                    and frame.byte_size <= settings.mcp_max_resource_bytes
+                    and keyframe.width <= 1280
+                    and keyframe.height <= 1280
+                ):
+                    image_bytes = await artifact_bytes(
+                        frame.artifact_id,
+                        expected_mime_type="image/png",
+                    )
+                    blocks.append(
+                        ImageContent(
+                            data=base64.b64encode(image_bytes).decode(),
+                            mimeType="image/png",
+                        )
+                    )
+                if frame_link is not None:
+                    blocks.append(frame_link)
+            if clip is not None and item.range is not None:
+                clip_delivery, clip_link = await project_artifact_delivery(
+                    clip.artifact,
+                    title=f"VidXP evidence clip #{item.rank}",
+                    description=(
+                        f"{label}; resolved clip "
+                        f"{item.range.clip_start_seconds:.3f}-"
+                        f"{item.range.clip_end_seconds:.3f}s"
+                    ),
+                )
+                clip = clip.model_copy(
+                    update={
+                        "resource_uri": clip_delivery.resource_uri,
+                        "delivery": clip_delivery,
+                    }
+                )
+                if clip_link is not None:
+                    blocks.append(clip_link)
+            projected_items.append(
+                item.model_copy(update={"keyframe": keyframe, "clip": clip})
+            )
+        return (
+            delivery.model_copy(update={"items": tuple(projected_items)}),
+            blocks,
+        )
+
+    def completed_evidence_result(
+        source_job_id: JobId,
+    ) -> FusedSearchResult | QueryAnswer:
+        source = context.jobs.get(source_job_id)
+        if (
+            source.state != JobState.succeeded
+            or source.result is None
+            or source.kind not in {JobKind.search, JobKind.query}
+        ):
+            raise ApplicationError(
+                "evidence_source_job_not_complete",
+                ErrorCategory.conflict,
+                "Evidence materialization requires a completed search or query job.",
+            )
+        return source.result.result
 
     @server.tool(
         title="Inspect VidXP workspace",
@@ -1144,7 +1257,7 @@ def create_mcp_server(
             if command.evidence_delivery is None:
                 projected = command.model_copy(
                     update={
-                        "evidence_delivery": EvidenceDeliveryPolicy(
+                        "evidence_delivery": InitialEvidenceDeliveryPolicy(
                             mode=EvidenceDeliveryMode.keyframes
                         )
                     }
@@ -1194,7 +1307,7 @@ def create_mcp_server(
             if command.evidence_delivery is None:
                 projected = command.model_copy(
                     update={
-                        "evidence_delivery": EvidenceDeliveryPolicy(
+                        "evidence_delivery": InitialEvidenceDeliveryPolicy(
                             mode=EvidenceDeliveryMode.keyframes
                         )
                     }
@@ -1273,25 +1386,12 @@ def create_mcp_server(
         profile: SnippetProfile = SnippetProfile.compatible_mp4,
     ) -> Job:
         def submit(actor: Principal) -> Job:
-            source = context.jobs.get(source_job_id)
-            if (
-                source.state != JobState.succeeded
-                or source.result is None
-                or source.kind not in {JobKind.search, JobKind.query}
-            ):
-                raise ApplicationError(
-                    "evidence_source_job_not_complete",
-                    ErrorCategory.conflict,
-                    "Evidence clips require a completed search or query job.",
-                )
-            result = source.result.result
-            candidate, resolved = (
-                context.application.evidence_delivery.resolve_job_evidence(
-                    result,
-                    evidence_id,
-                    padding_before=padding_before_seconds,
-                    padding_after=padding_after_seconds,
-                )
+            result = completed_evidence_result(source_job_id)
+            candidate, resolved = _evidence_delivery(context).resolve_job_evidence(
+                result,
+                evidence_id,
+                padding_before=padding_before_seconds,
+                padding_after=padding_after_seconds,
             )
             return context.jobs.submit_snippet(
                 CreateSnippetCommand(
@@ -1317,6 +1417,77 @@ def create_mcp_server(
             default_principal=default_principal,
             permission=RepositoryPermission.write,
             operation=submit,
+        )
+
+    @server.tool(
+        title="Materialize job evidence",
+        description=(
+            "Prepare keyframes and optional clips for one to ten evidence IDs "
+            "from a completed search/query job. Use this to inspect candidates "
+            "outside the initial bounded evidence delivery without supplying "
+            "timestamps or rerunning retrieval."
+        ),
+        annotations=_SUBMIT,
+        structured_output=True,
+    )
+    async def materialize_job_evidence(
+        source_job_id: JobId,
+        evidence_ids: Annotated[
+            tuple[Sha256, ...],
+            Field(min_length=1, max_length=10),
+        ],
+        mode: Literal[
+            EvidenceDeliveryMode.keyframes,
+            EvidenceDeliveryMode.keyframes_and_clips,
+        ] = EvidenceDeliveryMode.keyframes,
+        padding_before_seconds: Annotated[float, Field(ge=0, le=30)] = 2.0,
+        padding_after_seconds: Annotated[float, Field(ge=0, le=30)] = 2.0,
+        profile: SnippetProfile = SnippetProfile.compatible_mp4,
+    ) -> Annotated[CallToolResult, EvidenceDeliveryResult]:
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise _application_error(
+                ApplicationError(
+                    "duplicate_evidence_ids",
+                    ErrorCategory.validation,
+                    "Evidence IDs must be unique within one materialization request.",
+                )
+            )
+
+        def materialize(_actor: Principal) -> EvidenceDeliveryResult:
+            result = completed_evidence_result(source_job_id)
+            return _evidence_delivery(context).deliver_selected(
+                result,
+                evidence_ids,
+                EvidenceDeliveryPolicy(
+                    mode=mode,
+                    max_items=len(evidence_ids),
+                    padding_before_seconds=padding_before_seconds,
+                    padding_after_seconds=padding_after_seconds,
+                    clip_profile=profile,
+                ),
+            )
+
+        delivery = await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=(
+                RepositoryPermission.write
+                if mode == EvidenceDeliveryMode.keyframes_and_clips
+                else RepositoryPermission.read
+            ),
+            operation=materialize,
+        )
+        projected, blocks = await project_evidence_delivery(delivery)
+        if not blocks:
+            blocks.append(
+                TextContent(
+                    type="text",
+                    text="VidXP could not produce the requested evidence artifacts.",
+                )
+            )
+        return CallToolResult(
+            content=blocks,
+            structured_content=projected.model_dump(mode="json"),
         )
 
     @server.tool(
@@ -1399,77 +1570,17 @@ def create_mcp_server(
             result = job.result.result
             delivery = result.evidence_delivery
             if delivery is not None:
-                projected_artifacts: dict[str, EvidenceArtifact] = {}
-                for item in delivery.items:
-                    keyframe = item.keyframe
-                    clip = item.clip
-                    label = (
-                        f"evidence {item.evidence_id} rank {item.rank}; "
-                        f"media {item.media_id}; "
-                        f"{','.join(item.modalities)}"
-                    )
-                    if item.range is not None:
-                        label += (
-                            f"; {item.range.source_start_seconds:.3f}-"
-                            f"{item.range.source_end_seconds:.3f}s"
-                        )
-                    if keyframe is not None:
-                        frame_delivery, frame_link = await project_artifact_delivery(
-                            keyframe.artifact.artifact,
-                            title=f"VidXP evidence frame #{item.rank}",
-                            description=label,
-                        )
-                        projected_artifacts[
-                            keyframe.artifact.artifact.artifact_id
-                        ] = keyframe.artifact.model_copy(
+                projected_delivery, blocks = await project_evidence_delivery(delivery)
+                projected = job.model_copy(
+                    update={
+                        "result": job.result.model_copy(
                             update={
-                                "resource_uri": frame_delivery.resource_uri,
-                                "delivery": frame_delivery,
-                            }
-                        )
-                        if (
-                            keyframe.artifact.artifact.byte_size <= 512_000
-                            and keyframe.artifact.artifact.byte_size
-                            <= settings.mcp_max_resource_bytes
-                            and keyframe.width <= 1280
-                            and keyframe.height <= 1280
-                        ):
-                            image_bytes = await artifact_bytes(
-                                keyframe.artifact.artifact.artifact_id,
-                                expected_mime_type="image/png",
-                            )
-                            blocks.append(
-                                ImageContent(
-                                    data=base64.b64encode(image_bytes).decode(),
-                                    mimeType="image/png",
+                                "result": result.model_copy(
+                                    update={"evidence_delivery": projected_delivery}
                                 )
-                            )
-                        if frame_link is not None:
-                            blocks.append(frame_link)
-                    if clip is not None and item.range is not None:
-                        clip_delivery, clip_link = await project_artifact_delivery(
-                            clip.artifact,
-                            title=f"VidXP evidence clip #{item.rank}",
-                            description=(
-                                f"{label}; resolved clip "
-                                f"{item.range.clip_start_seconds:.3f}-"
-                                f"{item.range.clip_end_seconds:.3f}s"
-                            ),
-                        )
-                        projected_artifacts[clip.artifact.artifact_id] = clip.model_copy(
-                            update={
-                                "resource_uri": clip_delivery.resource_uri,
-                                "delivery": clip_delivery,
                             }
                         )
-                        if clip_link is not None:
-                            blocks.append(clip_link)
-                projected = project_job_artifacts(
-                    job,
-                    project_artifact=lambda evidence: projected_artifacts.get(
-                        evidence.artifact.artifact_id,
-                        evidence,
-                    ),
+                    }
                 )
         if not blocks:
             blocks.append(

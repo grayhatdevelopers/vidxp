@@ -31,6 +31,9 @@ changes.
    request.
 6. Stop polling when the returned aggregate state is terminal. Treat each file
    independently so one failure does not hide successful siblings.
+7. If the same request also asks to find or explain video content, continue with
+   the VidXP evidence workflow as soon as the successful media becomes indexed
+   and searchable; do not stop after ingestion or make the user ask again.
 
 ## Long-running operations
 

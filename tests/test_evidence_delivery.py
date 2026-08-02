@@ -306,6 +306,37 @@ class EvidenceDeliveryTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, "evidence_not_in_source_job")
 
+    def test_selected_delivery_materializes_only_requested_job_evidence(self):
+        service, artifacts = self.service()
+        source = fused()
+        evidence_id = source.moments[0].moment_id
+
+        delivery = service.deliver_selected(
+            source,
+            (evidence_id,),
+            EvidenceDeliveryPolicy(
+                mode=EvidenceDeliveryMode.keyframes_and_clips,
+                max_items=1,
+            ),
+        )
+
+        self.assertEqual([item.evidence_id for item in delivery.items], [evidence_id])
+        self.assertIsNotNone(delivery.items[0].keyframe)
+        self.assertIsNotNone(delivery.items[0].clip)
+        artifacts.create_evidence_frame.assert_called_once()
+        artifacts.create_snippet.assert_called_once()
+
+        with self.assertRaises(ApplicationError) as raised:
+            service.deliver_selected(
+                source,
+                ("f" * 64,),
+                EvidenceDeliveryPolicy(
+                    mode=EvidenceDeliveryMode.keyframes,
+                    max_items=1,
+                ),
+            )
+        self.assertEqual(raised.exception.code, "evidence_not_in_source_job")
+
     def test_range_resolution_failure_is_scoped_to_the_evidence_item(self):
         service, _artifacts = self.service()
         service.media.require_record.side_effect = RuntimeError("media unavailable")

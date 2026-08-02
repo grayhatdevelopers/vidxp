@@ -793,10 +793,14 @@ class EvidenceDeliveryMode(StrEnum):
 
 class EvidenceDeliveryPolicy(ApplicationModel):
     mode: EvidenceDeliveryMode = EvidenceDeliveryMode.none
-    max_items: int = Field(default=3, ge=1, le=5)
+    max_items: int = Field(default=3, ge=1, le=10)
     padding_before_seconds: float = Field(default=2.0, ge=0, le=30)
     padding_after_seconds: float = Field(default=2.0, ge=0, le=30)
     clip_profile: SnippetProfile = SnippetProfile.compatible_mp4
+
+
+class InitialEvidenceDeliveryPolicy(EvidenceDeliveryPolicy):
+    max_items: int = Field(default=3, ge=1, le=5)
 
 
 class SearchCommand(ApplicationModel):
@@ -822,7 +826,7 @@ class SearchCommand(ApplicationModel):
         le=100,
         description="Maximum fused moments to return across the selected scope.",
     )
-    evidence_delivery: EvidenceDeliveryPolicy | None = Field(
+    evidence_delivery: InitialEvidenceDeliveryPolicy | None = Field(
         default=None,
         description=(
             "Optional bounded frame/clip delivery. Omit to preserve the "
@@ -972,7 +976,7 @@ class QueryVideoCommand(ApplicationModel):
         le=50,
         description="Maximum ranked evidence moments used for the answer.",
     )
-    evidence_delivery: EvidenceDeliveryPolicy | None = Field(
+    evidence_delivery: InitialEvidenceDeliveryPolicy | None = Field(
         default=None,
         description=(
             "Optional bounded frame/clip delivery. Omit to preserve the "
@@ -1136,7 +1140,7 @@ class EvidenceDeliveryItem(ApplicationModel):
 
 class EvidenceDeliveryResult(ApplicationModel):
     policy: EvidenceDeliveryPolicy
-    items: tuple[EvidenceDeliveryItem, ...] = Field(max_length=5)
+    items: tuple[EvidenceDeliveryItem, ...] = Field(max_length=10)
 
 
 class DraftClaim(ApplicationModel):

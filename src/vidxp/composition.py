@@ -24,6 +24,7 @@ from vidxp.capabilities.registry import (
 from vidxp.control_plane import ControlPlaneApplication
 from vidxp.core.storage import BUNDLED_CHROMA_SERVER_URL
 from vidxp.dependencies import active_requirements, packaged_requirements
+from vidxp.evidence_delivery import EvidenceDeliveryService
 from vidxp.infrastructure.local_index import (
     LOCAL_INDEX_RUNTIME_CHECKS,
     SERVER_INDEX_RUNTIME_CHECKS,
@@ -122,6 +123,7 @@ class ControlPlaneContext:
     jobs: JobService
     authorization: AuthorizationPolicy
     settings: VidXPSettings
+    evidence_delivery: EvidenceDeliveryService | None = None
     catalog: SQLCatalog | None = None
     uploads: RemoteUploadService | None = None
     _closed: bool = field(default=False, init=False, repr=False, compare=False)
@@ -279,6 +281,22 @@ def _create_control_plane_components(
     )
 
 
+def _create_artifact_service(
+    settings: VidXPSettings,
+    components: _ControlPlaneComponents,
+) -> ArtifactService:
+    return ArtifactService(
+        catalog=components.catalog,
+        store=components.artifact_store,
+        media=components.media,
+        probe=components.probe,
+        actor_renderer=LocalActorRenderer(),
+        snippet_renderer=FFmpegSnippetRenderer(settings.ffmpeg_executable),
+        frame_renderer=FFmpegFrameRenderer(settings.ffmpeg_executable),
+        max_snippet_duration_seconds=settings.max_snippet_duration_seconds,
+    )
+
+
 def settings_for_repository(
     repository: RepositoryConfig,
     *,
@@ -318,16 +336,7 @@ def create_application(
         chroma_server_url=_server_chroma_url(active_settings),
         snapshot_repository=components.snapshots,
     )
-    artifacts = ArtifactService(
-        catalog=components.catalog,
-        store=components.artifact_store,
-        media=components.media,
-        probe=components.probe,
-        actor_renderer=LocalActorRenderer(),
-        snippet_renderer=FFmpegSnippetRenderer(active_settings.ffmpeg_executable),
-        frame_renderer=FFmpegFrameRenderer(active_settings.ffmpeg_executable),
-        max_snippet_duration_seconds=(active_settings.max_snippet_duration_seconds),
-    )
+    artifacts = _create_artifact_service(active_settings, components)
     upload_service = RemoteUploadService(
         settings=active_settings,
         catalog=components.catalog,
@@ -420,6 +429,7 @@ def create_control_plane_application(
 ) -> ControlPlaneContext:
     active_settings = settings or VidXPSettings()
     components = _create_control_plane_components(active_settings)
+    artifacts = _create_artifact_service(active_settings, components)
     application = ControlPlaneApplication(
         layout=active_settings.layout,
         capabilities=CapabilityService(components.registry),
@@ -451,6 +461,11 @@ def create_control_plane_application(
         jobs=jobs,
         authorization=AuthorizationPolicy(),
         settings=active_settings,
+        evidence_delivery=EvidenceDeliveryService(
+            artifacts=artifacts,
+            media=components.media,
+            max_clip_duration_seconds=(active_settings.max_snippet_duration_seconds),
+        ),
         catalog=components.catalog,
         uploads=uploads,
     )
@@ -506,6 +521,7 @@ def create_http_application(
         jobs=control.jobs,
         authorization=control.authorization,
         settings=control.settings,
+        evidence_delivery=control.evidence_delivery,
         catalog=control.catalog,
         uploads=control.uploads,
         readiness=ReadinessService(

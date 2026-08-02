@@ -924,10 +924,12 @@ the authoritative indexed frame number. Other intervals and anonymous actor
 clusters use a clearly labeled representative full frame. Requested clips are
 range-clamped and rendered through the same snippet artifact service before the
 original search/query job succeeds, so the ordinary agent path is one submit plus
-polling that same job. `create_evidence_clip` derives a fallback clip solely from a
-completed source job and its stable evidence ID; callers cannot supply authoritative
-timestamps. Keyframe-only retrieval keeps the existing read scope; requesting clip
-rendering requires repository write scope, matching the low-level clip operation.
+polling that same job. `materialize_job_evidence` accepts one to ten stable evidence
+IDs from that completed result and produces follow-up keyframes or clips without
+rerunning retrieval. `create_evidence_clip` derives a single fallback clip from the
+same source-job contract; callers cannot supply authoritative timestamps.
+Keyframe-only retrieval keeps the existing read scope; requesting clip rendering
+requires repository write scope, matching the low-level clip operation.
 Evidence artifacts are best-effort and may fail independently, so completed result
 sets can contain partial frame or clip delivery.
 
@@ -1049,6 +1051,7 @@ Initial curated tools:
 - `query_video`
 - `create_clip`
 - `create_evidence_clip`
+- `materialize_job_evidence`
 - `get_artifact_download`
 - `list_jobs`
 - `get_job`
