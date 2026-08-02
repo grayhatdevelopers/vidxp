@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import json
 import base64
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
@@ -443,18 +444,49 @@ def create_mcp_server(
             required_scopes=list(settings.http_required_scopes),
         )
 
-    ingestion_instructions = (
-        "Use ingest_local_media for up to ten local paths; no media bytes pass "
-        "through MCP. Poll get_media_ingestion until each successful file is "
-        "indexed and searchable. "
-        if filesystem_accessible
-        else (
+    browser_upload_available = (
+        not filesystem_accessible
+        and context.uploads is not None
+        and settings.upload_handoff_public_url is not None
+    )
+    if filesystem_accessible:
+        ingestion_instructions = (
+            "Use ingest_local_media for up to ten local paths; no media bytes pass "
+            "through MCP. Poll get_media_ingestion until each successful file is "
+            "indexed and searchable. "
+        )
+    elif browser_upload_available:
+        ingestion_instructions = (
             "Use create_media_upload to give the user the returned capability "
             "page, then poll get_media_upload until every successful file is "
             "indexed and searchable. The returned status states whether the "
             "active backend is bounded multipart or resumable tus. "
         )
-    )
+    else:
+        ingestion_instructions = (
+            "Browser upload tools are unavailable because this listener has no "
+            "secure advertised upload-handoff origin. Configure an HTTPS "
+            "VIDXP_UPLOAD_HANDOFF_PUBLIC_URL and dedicated secret, or use local "
+            "stdio ingestion. "
+        )
+
+    @asynccontextmanager
+    async def lifecycle(_server):
+        coordinator = (
+            getattr(context.uploads, "coordinator", None)
+            if context.uploads is not None
+            else None
+        )
+        if coordinator is not None:
+            # Stdio workers remain lazy: the first durable submission starts
+            # one, while the coordinator itself is owned by the MCP lifespan.
+            coordinator.start(context.uploads.reconcile)
+        try:
+            yield None
+        finally:
+            if coordinator is not None:
+                coordinator.stop()
+
     server = MCPServer(
         name="vidxp",
         title="VidXP",
@@ -491,6 +523,7 @@ def create_mcp_server(
         version=__version__,
         token_verifier=token_verifier,
         auth=auth,
+        lifespan=lifecycle,
     )
 
     async def artifact_bytes(
@@ -516,7 +549,81 @@ def create_mcp_server(
                     "retryable": False,
                 },
             )
-        return await anyio.to_thread.run_sync(resource.path.read_bytes)
+        maximum = settings.mcp_max_resource_bytes
+        try:
+            actual_size = await anyio.to_thread.run_sync(
+                lambda: resource.path.stat().st_size
+            )
+        except OSError as exc:
+            raise MCPError(
+                -32603,
+                "The artifact resource is unavailable.",
+                {
+                    "code": "artifact_resource_unavailable",
+                    "category": "unavailable",
+                    "retryable": True,
+                },
+            ) from exc
+        if actual_size != resource.byte_size:
+            raise MCPError(
+                -32603,
+                "The artifact resource size no longer matches its record.",
+                {
+                    "code": "artifact_resource_size_mismatch",
+                    "category": "internal",
+                    "recorded_bytes": resource.byte_size,
+                    "actual_bytes": actual_size,
+                    "retryable": False,
+                },
+            )
+        if resource.byte_size > maximum or actual_size > maximum:
+            if artifact_delivery == "local_stdio":
+                remediation = (
+                    "Use the verified local_path returned by "
+                    "get_artifact_download."
+                )
+            elif settings.artifact_download_public_url is not None:
+                remediation = (
+                    "Use the streaming/range-capable download_url returned by "
+                    "get_artifact_download."
+                )
+            else:
+                remediation = (
+                    "Configure VIDXP_ARTIFACT_DOWNLOAD_PUBLIC_URL and its "
+                    "dedicated secret, or request a smaller artifact."
+                )
+            raise MCPError(
+                -32602,
+                "The artifact is too large for an in-memory MCP resource read. "
+                + remediation,
+                {
+                    "code": "artifact_resource_too_large",
+                    "category": "resource_limit",
+                    "maximum_bytes": maximum,
+                    "actual_bytes": actual_size,
+                    "remediation": remediation,
+                    "retryable": False,
+                },
+            )
+
+        def bounded_read() -> bytes:
+            with resource.path.open("rb") as handle:
+                return handle.read(maximum + 1)
+
+        content = await anyio.to_thread.run_sync(bounded_read)
+        if len(content) != actual_size:
+            raise MCPError(
+                -32603,
+                "The artifact changed while it was being read.",
+                {
+                    "code": "artifact_resource_size_mismatch",
+                    "category": "internal",
+                    "recorded_bytes": resource.byte_size,
+                    "actual_bytes": len(content),
+                    "retryable": False,
+                },
+            )
+        return content
 
     @server.resource(
         "vidxp://artifacts/{artifact_id}/content.mp4",
@@ -650,6 +757,7 @@ def create_mcp_server(
         ), link
 
     @server.tool(
+        title="Inspect VidXP workspace",
         description=(
             "Inspect registered media, the active index, installed capabilities, "
             "and the searchable, queryable, inspectable, or renderable roles "
@@ -676,6 +784,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="List capabilities",
         description="List installed VidXP capabilities.",
         annotations=_READ_ONLY,
         structured_output=True,
@@ -691,6 +800,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Get capability",
         description="Get one capability and its public operation schemas.",
         annotations=_READ_ONLY,
         structured_output=True,
@@ -704,6 +814,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Check runtime readiness",
         description=(
             "Check runtime components and whether model artifacts are prepared."
         ),
@@ -719,6 +830,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="List media",
         description=(
             "List registered video filenames, metadata, and stable media IDs "
             "without transferring video bytes. Registration does not imply "
@@ -744,6 +856,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Get media",
         description=(
             "Get one registered video's metadata by the stable media ID "
             "returned by list_media."
@@ -760,6 +873,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Create media upload",
         description=(
             "Create an idempotent multi-file upload session and return its "
             "short-lived capability link. The user selects files in the "
@@ -820,6 +934,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Get media upload",
         description=(
             "Get durable aggregate and per-file state for an upload session. "
             "Poll this single operation through uploaded, importing, "
@@ -844,6 +959,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Ingest local media",
         description=(
             "Local stdio only: ingest one to ten filesystem paths without "
             "transferring media bytes through MCP. Paths are canonicalized and "
@@ -880,6 +996,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Get media ingestion",
         description=(
             "Local stdio only: recover and poll one durable local-path "
             "ingestion batch until every successful file is indexed/searchable "
@@ -902,6 +1019,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Get index status",
         description=(
             "Inspect the active index snapshot, including its indexed media "
             "count and media IDs."
@@ -918,6 +1036,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Start indexing",
         description=(
             "Add or replace one registered media ID in the active multi-video "
             "index snapshot. Obtain the ID from list_media or a completed "
@@ -949,6 +1068,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Prepare models",
         description=(
             "Explicitly download and validate selected model artifacts. Poll "
             "get_job for byte progress and completion before indexing."
@@ -979,6 +1099,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Search moments",
         description=(
             "Submit a durable ranked moment search. Set command.media_id to "
             "search one registered video; omit it to search across every media "
@@ -1027,6 +1148,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Query video",
         description=(
             "Submit a durable grounded natural-language query over indexed "
             "moments and actor evidence. Set command.media_id for one video, "
@@ -1076,6 +1198,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Create clip",
         description=(
             "Create a downloadable clip from a media ID and time range returned "
             "by search_moments or query_video. Poll get_job, then pass the "
@@ -1107,6 +1230,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Create evidence clip",
         description=(
             "Advanced fallback: create a clip from authoritative evidence in a "
             "completed search/query job. VidXP resolves and clamps the range; "
@@ -1171,6 +1295,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Get artifact download",
         description=(
             "Return a readable MCP resource link plus transport-appropriate "
             "delivery metadata for a completed clip or video artifact. Local "
@@ -1196,6 +1321,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="List jobs",
         description="List durable jobs so work can be recovered across sessions.",
         annotations=_READ_ONLY,
         structured_output=True,
@@ -1217,6 +1343,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Get job",
         description=(
             "Poll a durable VidXP job and its typed result. Completed search "
             "and query jobs include ranked evidence frames/resources and any "
@@ -1273,24 +1400,14 @@ def create_mcp_server(
                             and keyframe.width <= 1280
                             and keyframe.height <= 1280
                         ):
-                            resource = await _invoke_async(
-                                context,
-                                default_principal=default_principal,
-                                permission=RepositoryPermission.read,
-                                operation=lambda _actor,
-                                artifact_id=(keyframe.artifact.artifact.artifact_id): (
-                                    context.application.open_artifact_content(
-                                        artifact_id
-                                    )
-                                ),
-                            )
-                            image_bytes = await anyio.to_thread.run_sync(
-                                resource.path.read_bytes
+                            image_bytes = await artifact_bytes(
+                                keyframe.artifact.artifact.artifact_id,
+                                expected_mime_type="image/png",
                             )
                             blocks.append(
                                 ImageContent(
                                     data=base64.b64encode(image_bytes).decode(),
-                                    mimeType=resource.mime_type,
+                                    mimeType="image/png",
                                 )
                             )
                         blocks.append(frame_link)
@@ -1332,6 +1449,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Retry job",
         description="Retry a failed or cancelled durable job.",
         annotations=_SUBMIT,
         structured_output=True,
@@ -1359,6 +1477,7 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Cancel job",
         description="Explicitly cancel an active durable job.",
         annotations=_CANCEL,
         structured_output=True,
@@ -1377,6 +1496,9 @@ def create_mcp_server(
     else:
         server.remove_tool("ingest_local_media")
         server.remove_tool("get_media_ingestion")
+        if not browser_upload_available:
+            server.remove_tool("create_media_upload")
+            server.remove_tool("get_media_upload")
     return server
 
 

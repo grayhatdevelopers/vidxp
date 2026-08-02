@@ -324,6 +324,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         artifact_download_public_url: str | None = None,
         artifact_download_secret: str | None = None,
         mcp_stdio_filesystem_accessible: bool = True,
+        mcp_max_resource_bytes: int = 16 * 1024 * 1024,
     ) -> HttpApplicationContext:
         settings = VidXPSettings(
             repository_root=root,
@@ -336,7 +337,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             artifact_download_public_url=artifact_download_public_url,
             artifact_download_secret=artifact_download_secret,
             mcp_stdio_filesystem_accessible=mcp_stdio_filesystem_accessible,
+            mcp_max_resource_bytes=mcp_max_resource_bytes,
         )
+
         application = Mock(spec=ControlPlaneApplication)
         application.list_capabilities.return_value = ()
         application.index_status.return_value = IndexStatus(
@@ -361,6 +364,20 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             authorization=AuthorizationPolicy(),
             settings=settings,
         )
+
+    def test_job_contract_declares_terminal_state_and_poll_cadence(self):
+        active = queued_job()
+        terminal = Job(
+            job_id=JOB_ID,
+            kind=JobKind.index,
+            state=JobState.cancelled,
+            queue=JobQueue.cpu,
+        )
+
+        self.assertFalse(active.terminal)
+        self.assertEqual(active.poll_after_seconds, 1)
+        self.assertTrue(terminal.terminal)
+        self.assertEqual(terminal.poll_after_seconds, 0)
 
     def upload_context(
         self,
@@ -405,7 +422,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_curated_tools_have_structured_output_schemas(self):
         with TemporaryDirectory() as directory:
-            context = self.context(Path(directory))
+            context, _uploads = self.upload_context(Path(directory))
             server = create_mcp_server(
                 context,
                 default_principal=Principal(
@@ -424,6 +441,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             all(tool.output_schema is not None for tool in discovered.tools)
         )
+        self.assertTrue(all(tool.title for tool in discovered.tools))
         tools = {tool.name: tool for tool in discovered.tools}
         self.assertFalse(tools["create_media_upload"].annotations.read_only_hint)
         self.assertTrue(tools["create_media_upload"].annotations.idempotent_hint)
@@ -918,7 +936,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_media_upload_tools_enforce_permissions_and_availability(self):
         with TemporaryDirectory() as directory:
-            context = self.context(Path(directory))
+            context, _uploads = self.upload_context(Path(directory))
             arguments = {"idempotency_key": "agent-upload-0001"}
             write_server = create_mcp_server(
                 context,
@@ -932,32 +950,22 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     "create_media_upload",
                     arguments,
                 )
+            unavailable_context = self.context(Path(directory))
             unavailable_server = create_mcp_server(
-                context,
+                unavailable_context,
                 default_principal=Principal(
                     subject="writer",
                     scopes=frozenset({"vidxp.write"}),
                 ),
             )
             async with Client(unavailable_server) as client:
-                unavailable = await client.call_tool(
-                    "create_media_upload",
-                    arguments,
-                )
-                read_denied = await client.call_tool(
-                    "get_media_upload",
-                    {"upload_session_id": UPLOAD_SESSION_ID},
-                )
+                unavailable_tools = {
+                    tool.name for tool in (await client.list_tools()).tools
+                }
 
         self.assertIn('"required_scope":"vidxp.write"', denied.content[0].text)
-        self.assertIn(
-            '"code":"remote_upload_unavailable"',
-            unavailable.content[0].text,
-        )
-        self.assertIn(
-            '"required_scope":"vidxp.read"',
-            read_denied.content[0].text,
-        )
+        self.assertNotIn("create_media_upload", unavailable_tools)
+        self.assertNotIn("get_media_upload", unavailable_tools)
 
     async def test_workspace_tool_projects_actionable_repository_state(self):
         with TemporaryDirectory() as directory:
@@ -1001,8 +1009,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(SystemExit) as raised:
                 mcp_main(["--help"])
         self.assertEqual(raised.exception.code, 0)
-        self.assertIn("COPY/PASTE MCP CLIENT CONFIG", output.getvalue())
+        self.assertIn("CLAUDE DESKTOP / COMPATIBLE STDIO CONFIG", output.getvalue())
         self.assertIn('"mcpServers"', output.getvalue())
+        self.assertIn("codex mcp add vidxp", output.getvalue())
+        self.assertIn("ChatGPT web", output.getvalue())
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -1667,6 +1677,118 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(linked.structured_content["download_url"])
         self.assertEqual(downloaded.contents[0].blob, "Y2xpcC1jb250ZW50")
 
+    async def test_artifact_resource_read_enforces_exact_configured_boundary(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            content = b"12345678"
+            clip = root / "boundary.mp4"
+            clip.write_bytes(content)
+            context = self.context(root, mcp_max_resource_bytes=len(content))
+            context.application.open_artifact_content.return_value = LocalFileResource(
+                path=clip,
+                filename=f"snippet-{ARTIFACT_ID}.mp4",
+                mime_type="video/mp4",
+                byte_size=len(content),
+                etag=hashlib.sha256(content).hexdigest(),
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(subject="agent", scopes=frozenset({"*"})),
+            )
+            async with Client(server) as client:
+                resource = await client.read_resource(
+                    f"vidxp://artifacts/{ARTIFACT_ID}/content.mp4"
+                )
+
+        self.assertEqual(
+            resource.contents[0].blob,
+            base64.b64encode(content).decode(),
+        )
+
+    async def test_artifact_resource_read_rejects_oversize_for_stdio_and_http(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            content = b"123456789"
+            clip = root / "oversize.mp4"
+            clip.write_bytes(content)
+            for transport in ("local_stdio", "streamable_http"):
+                with self.subTest(transport=transport):
+                    options = (
+                        {
+                            "artifact_download_public_url": (
+                                "https://public.example/artifact-download"
+                            ),
+                            "artifact_download_secret": "d" * 32,
+                        }
+                        if transport == "streamable_http"
+                        else {}
+                    )
+                    context = self.context(
+                        root,
+                        mcp_max_resource_bytes=len(content) - 1,
+                        **options,
+                    )
+                    context.application.open_artifact_content.return_value = (
+                        LocalFileResource(
+                            path=clip,
+                            filename=f"snippet-{ARTIFACT_ID}.mp4",
+                            mime_type="video/mp4",
+                            byte_size=len(content),
+                            etag=hashlib.sha256(content).hexdigest(),
+                        )
+                    )
+                    server = create_mcp_server(
+                        context,
+                        default_principal=Principal(
+                            subject="agent", scopes=frozenset({"*"})
+                        ),
+                        artifact_delivery=transport,
+                    )
+                    async with Client(server) as client:
+                        with self.assertRaises(MCPError) as caught:
+                            await client.read_resource(
+                                f"vidxp://artifacts/{ARTIFACT_ID}/content.mp4"
+                            )
+
+                    self.assertEqual(
+                        caught.exception.data["code"],
+                        "artifact_resource_too_large",
+                    )
+                    self.assertEqual(caught.exception.data["maximum_bytes"], 8)
+                    remediation = caught.exception.data["remediation"]
+                    self.assertIn(
+                        "local_path" if transport == "local_stdio" else "download_url",
+                        remediation,
+                    )
+
+    async def test_artifact_resource_read_rejects_tampered_actual_size(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            clip = root / "tampered.mp4"
+            clip.write_bytes(b"changed-after-registration")
+            context = self.context(root, mcp_max_resource_bytes=1024)
+            context.application.open_artifact_content.return_value = LocalFileResource(
+                path=clip,
+                filename=f"snippet-{ARTIFACT_ID}.mp4",
+                mime_type="video/mp4",
+                byte_size=8,
+                etag="1" * 64,
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(subject="agent", scopes=frozenset({"*"})),
+            )
+            async with Client(server) as client:
+                with self.assertRaises(MCPError) as caught:
+                    await client.read_resource(
+                        f"vidxp://artifacts/{ARTIFACT_ID}/content.mp4"
+                    )
+
+        self.assertEqual(
+            caught.exception.data["code"],
+            "artifact_resource_size_mismatch",
+        )
+
     async def test_isolated_stdio_preserves_resource_without_misleading_path(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1957,7 +2079,11 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 20)
+        self.assertEqual(len(discovered.tools), 18)
+        self.assertNotIn(
+            "create_media_upload",
+            {tool.name for tool in discovered.tools},
+        )
         self.assertEqual(result.structured_content, {"items": []})
 
     async def test_oidc_verifier_projects_the_shared_validated_token(self):

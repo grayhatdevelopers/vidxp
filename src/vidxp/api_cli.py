@@ -89,6 +89,12 @@ def _print_share_details(settings, token: str) -> None:
         "Keep this token private. LAN traffic uses HTTP and is not encrypted.",
         flush=True,
     )
+    if settings.upload_handoff_public_url is None:
+        print(
+            "Browser upload tools are omitted on this HTTP LAN listener. "
+            "Configure an advertised HTTPS handoff origin to enable them.",
+            flush=True,
+        )
 
 
 def main(arguments: Sequence[str] | None = None) -> None:

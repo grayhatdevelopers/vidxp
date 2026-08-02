@@ -32,7 +32,7 @@ def stdio_client_config(
     data_directory: Path | None = None,
     device: str | None = None,
 ) -> dict[str, Any]:
-    """Build a broadly supported copy/paste MCP client configuration."""
+    """Build Claude Desktop/compatible stdio ``mcpServers`` JSON."""
 
     arguments: list[str] = []
     for flag, value in (
@@ -68,12 +68,13 @@ def _parser() -> argparse.ArgumentParser:
         description="Run the local VidXP MCP server over stdio.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "COPY/PASTE MCP CLIENT CONFIG\n"
-            "Import this JSON into any stdio MCP client:\n\n"
+            "CLAUDE DESKTOP / COMPATIBLE STDIO CONFIG\n"
+            "Add this JSON to a client that supports the mcpServers format:\n\n"
             f"{example}\n\n"
-            "Run `vidxp-mcp --print-config` to print only the JSON. Add the "
-            "same repository/data/device options to either command when you "
-            "need non-default values."
+            "Codex: run `codex mcp add vidxp -- vidxp-mcp --repository default`, "
+            "or configure [mcp_servers.vidxp] in ~/.codex/config.toml. "
+            "ChatGPT web connects to a hosted HTTPS /mcp endpoint, not this "
+            "local JSON. Run `vidxp-mcp --print-config` to print only the JSON."
         ),
     )
 
@@ -125,7 +126,7 @@ def main(arguments: Sequence[str] | None = None) -> None:
     actions.add_argument(
         "--print-config",
         action="store_true",
-        help="Print import-ready MCP client JSON and exit.",
+        help="Print Claude Desktop/compatible mcpServers JSON and exit.",
     )
     actions.add_argument(
         "--check",

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from importlib.resources import files
 from typing import Annotated
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
 
@@ -11,15 +9,14 @@ from vidxp.api_models import (
     ArtifactDownloadBootstrapResponse,
 )
 from vidxp.api_routes.dependencies import context, file_response
-from vidxp.application_models import ApplicationError, ErrorCategory
 from vidxp.artifact_delivery import (
     ArtifactDownloadCapabilities,
     artifact_binding,
     require_resource_binding,
 )
+from vidxp.browser_capability import BrowserCapabilitySurface
 from vidxp.composition import HttpApplicationContext
 from vidxp.core.identifiers import ArtifactId
-from vidxp.core.media import utc_now
 
 
 router = APIRouter(prefix="/artifact-download", tags=["artifact-download"])
@@ -31,57 +28,42 @@ _ASSETS = {
 }
 
 
+def _surface(service: HttpApplicationContext) -> BrowserCapabilitySurface:
+    return BrowserCapabilitySurface(
+        public_url=service.settings.artifact_download_public_url,
+        package_directory="artifact_download",
+        assets=_ASSETS,
+        cookie_name=_SESSION_COOKIE,
+        unavailable_code="public_download_origin_unavailable",
+        unavailable_message=(
+            "Public artifact downloads are not configured for this deployment."
+        ),
+        forbidden_code="artifact_download_origin_forbidden",
+        forbidden_message=(
+            "The capability exchange must come from its VidXP download page."
+        ),
+    )
+
+
 def _capabilities(service: HttpApplicationContext) -> ArtifactDownloadCapabilities:
     return ArtifactDownloadCapabilities(service.settings)
 
 
-def _require_same_origin(
-    request: Request,
-    service: HttpApplicationContext,
-) -> None:
-    public_url = service.settings.artifact_download_public_url
-    if public_url is None:
-        raise ApplicationError(
-            "public_download_origin_unavailable",
-            ErrorCategory.unavailable,
-            "Public artifact downloads are not configured for this deployment.",
-        )
-    parsed = urlsplit(public_url)
-    expected = f"{parsed.scheme}://{parsed.netloc}"
-    origin = request.headers.get("origin", "")
-    if (
-        origin.lower() != expected.lower()
-        or request.headers.get("sec-fetch-site", "same-origin") != "same-origin"
-    ):
-        raise ApplicationError(
-            "artifact_download_origin_forbidden",
-            ErrorCategory.authorization,
-            "The capability exchange must come from its VidXP download page.",
-        )
-
-
 @router.get("/assets/{asset_name}", include_in_schema=False)
-def artifact_download_asset(asset_name: str) -> Response:
-    media_type = _ASSETS.get(asset_name)
-    if media_type is None:
-        raise ApplicationError(
-            "resource_not_found",
-            ErrorCategory.not_found,
-            "The requested artifact-download asset was not found.",
-        )
-    content = files("vidxp").joinpath(
-        "assets", "artifact_download", asset_name
-    ).read_bytes()
-    return Response(content=content, media_type=media_type)
+def artifact_download_asset(
+    asset_name: str,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+) -> Response:
+    return _surface(service).asset(asset_name)
 
 
 @router.get("/{artifact_id}", include_in_schema=False)
-def artifact_download_page(artifact_id: ArtifactId) -> Response:
+def artifact_download_page(
+    artifact_id: ArtifactId,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+) -> Response:
     del artifact_id
-    content = files("vidxp").joinpath(
-        "assets", "artifact_download", "index.html"
-    ).read_bytes()
-    return Response(content=content, media_type="text/html; charset=utf-8")
+    return _surface(service).page()
 
 
 @router.post(
@@ -96,22 +78,19 @@ def bootstrap_artifact_download(
     response: Response,
     service: Annotated[HttpApplicationContext, Depends(context)],
 ) -> ArtifactDownloadBootstrapResponse:
-    _require_same_origin(request, service)
+    surface = _surface(service)
+    surface.require_same_origin(request)
     artifact = service.application.get_artifact(artifact_id)
     binding = artifact_binding(artifact)
     session_token, expires_at = _capabilities(service).exchange(
         artifact,
         command.capability,
     )
-    response.set_cookie(
-        _SESSION_COOKIE,
-        session_token,
-        max_age=max(0, int((expires_at - utc_now()).total_seconds())),
-        expires=expires_at,
+    surface.establish_session(
+        response,
+        token=session_token,
+        expires_at=expires_at,
         path=f"/artifact-download/{artifact_id}",
-        secure=True,
-        httponly=True,
-        samesite="strict",
     )
     return ArtifactDownloadBootstrapResponse(
         content_url=f"/artifact-download/{artifact_id}/content",

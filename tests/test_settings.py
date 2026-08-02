@@ -289,6 +289,20 @@ class SettingsTests(unittest.TestCase):
                 upload_session_max_bytes=512,
             )
 
+    def test_compose_oidc_profile_accepts_blank_static_credentials(self):
+        settings = VidXPSettings(
+            http_auth_mode="oidc",
+            http_static_bearer_token="",
+            http_oidc_issuer="https://identity.example/",
+            http_oidc_audience="vidxp-api",
+            http_oidc_jwks_url="https://identity.example/jwks.json",
+            http_required_scopes=("vidxp.read",),
+            mcp_public_url="https://api.example/mcp",
+        )
+
+        self.assertIsNone(settings.http_static_bearer_token)
+        settings.validate_http_server()
+
 
 if __name__ == "__main__":
     unittest.main()

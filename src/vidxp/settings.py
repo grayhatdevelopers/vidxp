@@ -211,6 +211,11 @@ class VidXPSettings(BaseSettings):
         gt=0,
         le=16 * 1024 * 1024,
     )
+    mcp_max_resource_bytes: int = Field(
+        default=16 * 1024 * 1024,
+        gt=0,
+        le=256 * 1024 * 1024,
+    )
     mcp_allowed_hosts: tuple[str, ...] = (
         "127.0.0.1:*",
         "[::1]:*",
@@ -258,6 +263,21 @@ class VidXPSettings(BaseSettings):
         ge=10,
         le=3600,
     )
+
+    @field_validator(
+        "http_static_bearer_token",
+        "http_oidc_issuer",
+        "http_oidc_audience",
+        "http_oidc_jwks_url",
+        "mcp_public_url",
+        mode="before",
+    )
+    @classmethod
+    def _empty_auth_values_are_unset(cls, value):
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     upload_quarantine_root: Path | None = None
     upload_cleanup_token: SecretStr | None = None
     upload_handoff_public_url: str | None = Field(

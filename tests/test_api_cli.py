@@ -1,6 +1,9 @@
 import unittest
+import asyncio
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from vidxp.api_cli import _shared_settings, main
@@ -32,6 +35,42 @@ class ApiCliTests(unittest.TestCase):
         self.assertIn("192.168.100.131", settings.http_trusted_hosts)
         self.assertIn("192.168.100.131:*", settings.mcp_allowed_hosts)
         settings.validate_http_server()
+
+    def test_share_mode_omits_unavailable_browser_upload_tools(self):
+        from mcp.client import Client
+
+        from vidxp.application_models import Principal
+        from vidxp.composition import create_http_application
+        from vidxp.mcp import create_mcp_server
+
+        with TemporaryDirectory() as directory:
+            settings, _token = _shared_settings(
+                VidXPSettings(data_dir=Path(directory)),
+                host="192.168.100.131",
+                token="x" * 43,
+            )
+            context = create_http_application(settings)
+
+            async def discover() -> set[str]:
+                server = create_mcp_server(
+                    context,
+                    default_principal=Principal(
+                        subject="lan-client",
+                        scopes=frozenset({"*"}),
+                    ),
+                    artifact_delivery="streamable_http",
+                )
+                async with Client(server) as client:
+                    return {
+                        tool.name for tool in (await client.list_tools()).tools
+                    }
+
+            try:
+                names = asyncio.run(discover())
+            finally:
+                context.close()
+        self.assertNotIn("create_media_upload", names)
+        self.assertNotIn("get_media_upload", names)
 
     def test_share_mode_reuses_an_explicit_static_token(self):
         settings, token = _shared_settings(
@@ -78,6 +117,7 @@ class ApiCliTests(unittest.TestCase):
             output.getvalue(),
         )
         self.assertIn("Bearer token:", output.getvalue())
+        self.assertIn("Browser upload tools are omitted", output.getvalue())
 
     def test_main_accepts_an_explicit_port(self):
         import uvicorn
