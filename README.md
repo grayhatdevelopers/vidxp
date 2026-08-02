@@ -206,6 +206,17 @@ inspectable, or renderable roles available for each video. Invalid capability
 or media selections are rejected before a durable job is queued and include an
 actionable next step.
 
+### ChatGPT and Codex skills
+
+VidXP includes reusable skill source folders for the two common agent workflows:
+
+- [Ingest and index videos](skills/vidxp-ingest-video/SKILL.md)
+- [Find moments and return inspectable evidence](skills/vidxp-find-video-evidence/SKILL.md)
+
+Download a skill folder and add it through a supported ChatGPT desktop or Codex
+Skills surface. The skills require a connected VidXP MCP server; installable
+plugin packaging for additional ChatGPT surfaces will follow separately.
+
 - [Python, HTTP, and MCP installation](INSTALLATION_GUIDE.md)
 - [Optional capability packages](INSTALLATION_GUIDE.md#optional-dependency-extras)
 - [Coolify server setup](docs/deployment/coolify.md)
