@@ -102,6 +102,8 @@ async def _stdio_ingestion_scenario(tmp_path: Path) -> None:
             }
             submitted = await client.call_tool("ingest_local_media", arguments)
             assert not submitted.is_error
+            assert "get_media_ingestion" in submitted.structured_content["next_action"]
+            assert "get_media_upload" not in submitted.structured_content["next_action"]
             ingestion_id = submitted.structured_content["session_id"]
             for _attempt in range(300):
                 current = await client.call_tool(

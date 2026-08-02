@@ -215,6 +215,11 @@ class UploadStatusProjector:
             session_state != UploadSessionState.open
             and all(item.terminal for item in items)
         )
+        status_tool = (
+            "get_media_ingestion"
+            if record.purpose == "local-media-ingestion"
+            else "get_media_upload"
+        )
         if session_state == UploadSessionState.open and current_work_complete:
             status = (
                 "Current ingestion work is complete; the upload session remains "
@@ -242,7 +247,7 @@ class UploadStatusProjector:
         else:
             status = "The upload session is closed to new files."
             next_action = (
-                "Poll get_media_upload until every successful child is indexed "
+                f"Poll {status_tool} until every successful child is indexed "
                 "and searchable."
             )
         return MediaUploadSessionStatus(
