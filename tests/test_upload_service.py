@@ -20,12 +20,13 @@ from vidxp.application_models import (
     CreateUploadFileCommand,
     CreateUploadIntentCommand,
     ErrorCategory,
+    ErrorDetail,
     JobState,
     Principal,
     ResourceNotFoundError,
 )
 from vidxp.core.media import utc_now
-from vidxp.composition import ControlPlaneContext
+from vidxp.composition import ControlPlaneContext, UploadHookContext
 from vidxp.core.uploads import UploadIntentRecord, UploadSessionState, UploadState
 from vidxp.infrastructure.sql_catalog import SQLCatalog
 from vidxp.infrastructure.sql_tables import media as media_table
@@ -105,13 +106,30 @@ class _RestartingCoordinatorJobs:
         self.index_failure: ApplicationError | None = None
         self.import_submissions: list[str] = []
         self.index_submissions: list[str] = []
+        self.import_submitted = Event()
+        self.index_submitted = Event()
+        self.start_calls = 0
+        self.close_calls = 0
+
+    def start(self) -> None:
+        self.start_calls += 1
+
+    def stop_worker(self) -> bool:
+        return True
+
+    def close(self) -> None:
+        self.close_calls += 1
 
     def submit_local_media_import(self, _command, *, job_id: str):
         self.import_submissions.append(job_id)
+        self.import_submitted.set()
         return self.jobs.setdefault(
             job_id,
             SimpleNamespace(job_id=job_id, state=JobState.queued, result=None),
         )
+
+    def submit_completed_media_import(self, _upload_id: str, *, job_id: str):
+        return self.submit_local_media_import(None, job_id=job_id)
 
     def submit_index(self, _command, *, job_id: str):
         if self.index_crashes:
@@ -119,6 +137,7 @@ class _RestartingCoordinatorJobs:
         if self.index_failure is not None:
             raise self.index_failure
         self.index_submissions.append(job_id)
+        self.index_submitted.set()
         return self.jobs.setdefault(
             job_id,
             SimpleNamespace(job_id=job_id, state=JobState.queued, result=None),
@@ -129,6 +148,36 @@ class _RestartingCoordinatorJobs:
             return self.jobs[job_id]
         except KeyError as exc:
             raise ResourceNotFoundError("job") from exc
+
+
+def test_upload_hook_context_starts_jobs_without_background_coordinator() -> None:
+    jobs = Mock()
+    catalog = Mock()
+    coordinator = Mock()
+    context = UploadHookContext(
+        jobs=jobs,
+        authenticator=Mock(),
+        authorization=Mock(),
+        settings=Mock(),
+        catalog=catalog,
+        uploads=SimpleNamespace(coordinator=coordinator),
+    )
+
+    context.start()
+    context.start()
+    context.stop()
+    context.stop()
+
+    assert jobs.start.call_count == 2
+    coordinator.start.assert_not_called()
+    coordinator.stop.assert_not_called()
+
+    context.close()
+    context.close()
+    jobs.close.assert_called_once_with()
+    catalog.close.assert_called_once_with()
+    with pytest.raises(RuntimeError, match="closed upload-hook"):
+        context.start()
 
 
 def test_coordinator_blocked_stop_cannot_overlap_restart(tmp_path: Path) -> None:
@@ -401,6 +450,88 @@ def _command(size: int = 60) -> CreateUploadIntentCommand:
         byte_size=size,
         declared_mime_type="video/mp4",
     )
+
+
+def test_hook_completion_queues_until_control_plane_recovers_and_indexes(
+    tmp_path: Path,
+) -> None:
+    hook_uploads, catalog, hook_jobs = _service(tmp_path)
+    owner = Principal(subject="owner")
+    intent = hook_uploads.create_intent(
+        _command(),
+        principal=owner,
+        request_key="a" * 64,
+    )
+    accepted = hook_uploads.accept_creation(
+        intent.intent_id,
+        principal=owner,
+        byte_size=60,
+    )
+    assert accepted.upload_id is not None
+
+    import_job_id = hook_uploads.complete_tus_transfer(
+        intent_id=intent.intent_id,
+        upload_id=accepted.upload_id,
+        byte_size=60,
+        offset=60,
+    )
+    queued = catalog.get_upload_intent(intent.intent_id)
+    assert queued is not None
+    assert queued.state == UploadState.processing
+    assert queued.job_id == import_job_id == accepted.upload_id
+    assert hook_jobs.calls == [(accepted.upload_id, import_job_id)]
+
+    control_jobs = _RestartingCoordinatorJobs()
+    control_jobs.index_crashes = False
+    control_uploads = RemoteUploadService(
+        settings=hook_uploads.settings,
+        catalog=catalog,
+        media=_Media(),
+        jobs=control_jobs,
+    )
+    context = ControlPlaneContext(
+        application=Mock(),
+        jobs=control_jobs,
+        authorization=Mock(),
+        settings=hook_uploads.settings,
+        catalog=catalog,
+        uploads=control_uploads,
+    )
+
+    context.start()
+    assert control_jobs.import_submitted.wait(2)
+    context.stop()
+    assert control_jobs.import_submissions == [import_job_id]
+
+    media_id = uuid4().hex
+    with catalog.engine.begin() as connection:
+        connection.execute(
+            insert(media_table).values(
+                media_id=media_id,
+                sha256="8" * 64,
+                created_at=utc_now().isoformat(),
+                payload={},
+            )
+        )
+    control_jobs.jobs[import_job_id] = SimpleNamespace(
+        job_id=import_job_id,
+        state=JobState.succeeded,
+        result=SimpleNamespace(result=SimpleNamespace(media_id=media_id)),
+    )
+    control_jobs.index_submitted.clear()
+
+    context.start()
+    assert control_jobs.index_submitted.wait(2)
+    context.stop()
+    recovered = catalog.get_upload_intent(intent.intent_id)
+    assert recovered is not None
+    assert recovered.state == UploadState.ready
+    assert recovered.media_id == media_id
+    assert recovered.index_job_id == derived_ingestion_job_id(intent.intent_id, "index")
+    assert control_jobs.index_submissions == [recovered.index_job_id]
+
+    context.close()
+    assert control_jobs.close_calls == 1
 
 
 def test_upload_intent_is_idempotent_and_repository_shared(
@@ -787,9 +918,158 @@ def test_coordinator_recovers_import_and_pre_index_restart_without_status_pollin
         "The indexing request is invalid.",
     )
     restarted_process.run_once()
-    failed = catalog.get_upload_intent(terminal.intent_id)
-    assert failed is not None and failed.state == UploadState.failed
-    assert failed.failure_code == "index_request_invalid"
+    index_failed = catalog.get_upload_intent(terminal.intent_id)
+    assert index_failed is not None and index_failed.state == UploadState.ready
+    assert index_failed.media_id == terminal.media_id
+    assert index_failed.job_id == terminal.job_id
+    assert index_failed.index_job_id is not None
+    assert index_failed.failure_code == "index_request_invalid"
+    catalog.close()
+
+
+def test_coordinator_stale_transitions_are_compare_and_set_safe(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "stale.mp4"
+    source.write_bytes(b"video")
+    catalog = SQLCatalog(
+        f"sqlite:///{(tmp_path / 'stale.sqlite3').resolve().as_posix()}",
+        initialize=True,
+    )
+    jobs = _RestartingCoordinatorJobs()
+    jobs.index_crashes = False
+    service = RemoteUploadService(
+        settings=VidXPSettings(
+            repository_root=tmp_path,
+            trusted_local_import_roots=(tmp_path,),
+            max_local_import_bytes=100,
+            upload_max_bytes=100,
+            upload_session_max_bytes=200,
+        ),
+        catalog=catalog,
+        media=SimpleNamespace(resolve_local_source=lambda path: path.resolve()),
+        jobs=jobs,
+    )
+    intent_id = service.create_local_ingestion(
+        (str(source),),
+        principal=Principal(subject="local"),
+        request_key="7" * 64,
+        index_after_import=True,
+        index_modalities=("scene",),
+    ).items[0].intent_id
+    coordinator = service.coordinator
+    pending = catalog.get_upload_intent(intent_id)
+    assert pending is not None
+    stale_processing = coordinator._start_import(pending)
+    assert stale_processing.state == UploadState.processing
+
+    media_id = uuid4().hex
+    with catalog.engine.begin() as connection:
+        connection.execute(
+            insert(media_table).values(
+                media_id=media_id,
+                sha256="7" * 64,
+                created_at=utc_now().isoformat(),
+                payload={},
+            )
+        )
+    catalog.with_upload_transaction(
+        lambda connection: catalog.update_upload(
+            intent_id,
+            state=UploadState.ready,
+            connection=connection,
+            media_id=media_id,
+            expected_states={UploadState.processing},
+            expected_job_id=stale_processing.job_id,
+        )
+    )
+
+    after_stale_import_failure = coordinator._fail_import(
+        stale_processing,
+        ErrorDetail(
+            code="stale_import_failure",
+            category=ErrorCategory.internal,
+            message="A stale import observer failed.",
+        ),
+    )
+    assert after_stale_import_failure.state == UploadState.ready
+    assert after_stale_import_failure.media_id == media_id
+    assert after_stale_import_failure.failure_code is None
+
+    indexing = coordinator._start_index(after_stale_import_failure)
+    assert indexing.index_job_id is not None
+    catalog.with_upload_transaction(
+        lambda connection: catalog.update_upload(
+            intent_id,
+            state=UploadState.indexed,
+            connection=connection,
+            expected_states={UploadState.ready},
+            expected_index_job_id=indexing.index_job_id,
+        )
+    )
+    after_stale_index_failure = coordinator._fail_index(
+        indexing,
+        ErrorDetail(
+            code="stale_index_failure",
+            category=ErrorCategory.internal,
+            message="A stale index observer failed.",
+        ),
+    )
+    assert after_stale_index_failure.state == UploadState.indexed
+    assert after_stale_index_failure.failure_code is None
+
+    expiring_id = uuid4().hex
+    expiring = pending.model_copy(
+        update={
+            "intent_id": expiring_id,
+            "request_key": "8" * 64,
+            "upload_id": None,
+            "job_id": None,
+            "state": UploadState.pending,
+        }
+    )
+    catalog.create_upload_intent(expiring, quota_limit=1_000)
+    stale_expiring = coordinator._start_import(expiring)
+    assert stale_expiring.job_id is not None
+    catalog.with_upload_transaction(
+        lambda connection: catalog.update_upload(
+            expiring_id,
+            state=UploadState.expired,
+            connection=connection,
+            expected_states={UploadState.processing},
+            expected_job_id=stale_expiring.job_id,
+        )
+    )
+    jobs.jobs[stale_expiring.job_id] = SimpleNamespace(
+        job_id=stale_expiring.job_id,
+        state=JobState.failed,
+        result=None,
+        error=ErrorDetail(
+            code="late_import_failure",
+            category=ErrorCategory.internal,
+            message="The stale job failed after cancellation.",
+        ),
+    )
+    assert coordinator.advance(stale_expiring).state == UploadState.expired
+    expired = catalog.get_upload_intent(expiring_id)
+    assert expired is not None and expired.failure_code is None
+
+    competing_id = uuid4().hex
+    ready = after_stale_index_failure.model_copy(
+        update={
+            "intent_id": competing_id,
+            "request_key": "9" * 64,
+            "upload_id": competing_id,
+            "job_id": derived_ingestion_job_id(competing_id, "import"),
+            "state": UploadState.ready,
+            "index_job_id": None,
+        }
+    )
+    catalog.create_upload_intent(ready, quota_limit=1_000)
+    first = coordinator._start_index(ready)
+    second = coordinator._start_index(ready)
+    assert first.index_job_id == second.index_job_id
+    assert jobs.index_submissions.count(first.index_job_id) == 1
     catalog.close()
 
 
@@ -1036,6 +1316,131 @@ def test_resume_probe_timeout_is_reported_as_service_unavailable(
     catalog.close()
 
 
+@pytest.mark.parametrize(
+    ("job_state", "expected_code"),
+    (
+        (JobState.failed, "media_index_failed"),
+        (JobState.cancelled, "media_index_cancelled"),
+        (JobState.recovery_exhausted, "media_index_recovery_exhausted"),
+    ),
+)
+def test_index_terminal_failure_preserves_registered_media_and_status(
+    tmp_path: Path,
+    job_state: JobState,
+    expected_code: str,
+) -> None:
+    service, catalog, jobs = _service(tmp_path)
+    owner = Principal(subject="owner", client_id="mcp-client")
+    link = service.create_upload_session(
+        principal=owner,
+        request_key="a" * 64,
+        index_after_import=True,
+        index_modalities=("scene",),
+    )
+    browser = service.exchange_upload_session(
+        link.status.session_id,
+        capability=link.capability,
+    )
+    authorization = service.authorize_session_file(
+        link.status.session_id,
+        _file("index-failure", size=20),
+        session_token=browser.session_token,
+    )
+    successful = service.authorize_session_file(
+        link.status.session_id,
+        _file("indexed-sibling", size=20),
+        session_token=browser.session_token,
+    )
+    media_id = uuid4().hex
+    successful_media_id = uuid4().hex
+    import_job_id = derived_ingestion_job_id(authorization.status.intent_id, "import")
+    index_job_id = derived_ingestion_job_id(authorization.status.intent_id, "index")
+    successful_import_job_id = derived_ingestion_job_id(
+        successful.status.intent_id, "import"
+    )
+    successful_index_job_id = derived_ingestion_job_id(
+        successful.status.intent_id, "index"
+    )
+    with catalog.engine.begin() as connection:
+        connection.execute(
+            insert(media_table).values(
+                media_id=media_id,
+                sha256="6" * 64,
+                created_at=utc_now().isoformat(),
+                payload={},
+            )
+        )
+        connection.execute(
+            insert(media_table).values(
+                media_id=successful_media_id,
+                sha256="5" * 64,
+                created_at=utc_now().isoformat(),
+                payload={},
+            )
+        )
+    catalog.with_upload_transaction(
+        lambda connection: catalog.update_upload(
+            authorization.status.intent_id,
+            state=UploadState.ready,
+            connection=connection,
+            upload_id=authorization.status.intent_id,
+            job_id=import_job_id,
+            media_id=media_id,
+            index_job_id=index_job_id,
+            expected_states={UploadState.pending},
+            expected_job_id=None,
+            expected_index_job_id=None,
+        )
+    )
+    catalog.with_upload_transaction(
+        lambda connection: catalog.update_upload(
+            successful.status.intent_id,
+            state=UploadState.indexed,
+            connection=connection,
+            upload_id=successful.status.intent_id,
+            job_id=successful_import_job_id,
+            media_id=successful_media_id,
+            index_job_id=successful_index_job_id,
+            expected_states={UploadState.pending},
+            expected_job_id=None,
+            expected_index_job_id=None,
+        )
+    )
+    jobs.states[index_job_id] = job_state
+
+    service.coordinator.run_once()
+
+    stored = catalog.get_upload_intent(authorization.status.intent_id)
+    assert stored is not None
+    assert stored.state == UploadState.ready
+    assert stored.media_id == media_id
+    assert stored.job_id == import_job_id
+    assert stored.index_job_id == index_job_id
+    assert stored.failure_code == expected_code
+
+    status = service.get_status(link.status.session_id, principal=owner)
+    items = {item.client_file_key: item for item in status.items}
+    item = items["index-failure"]
+    assert item.phase == "index_failed"
+    assert item.media_id == media_id
+    assert item.error is not None and item.error.code == expected_code
+    assert item.terminal is True
+    assert item.poll_after_seconds == 0
+    assert item.searchable is False
+    assert "start_indexing" in item.next_action
+    assert "do not upload" in item.next_action
+    assert items["indexed-sibling"].phase == "indexed"
+    assert items["indexed-sibling"].searchable is True
+    assert status.aggregate_state == "partial_index_failure"
+    assert status.ready_file_count == 2
+    assert status.searchable_file_count == 1
+    assert status.failed_file_count == 0
+    assert status.index_failed_file_count == 1
+    assert status.terminal is True
+    assert status.poll_after_seconds == 0
+    catalog.close()
+
+
 def test_sibling_success_failure_and_cancellation_are_independent(
     tmp_path: Path,
 ) -> None:
@@ -1057,7 +1462,7 @@ def test_sibling_success_failure_and_cancellation_are_independent(
         grant=ready.grant,
         byte_size=20,
     )
-    ready_job = service.complete_upload(
+    ready_job = service.complete_tus_transfer(
         intent_id=ready.status.intent_id,
         upload_id=accepted_ready.upload_id or "",
         byte_size=20,
@@ -1068,7 +1473,7 @@ def test_sibling_success_failure_and_cancellation_are_independent(
         grant=failed.grant,
         byte_size=20,
     )
-    failed_job = service.complete_upload(
+    failed_job = service.complete_tus_transfer(
         intent_id=failed.status.intent_id,
         upload_id=accepted_failed.upload_id or "",
         byte_size=20,
@@ -1239,13 +1644,13 @@ def test_duplicate_finish_enqueues_one_import_job(tmp_path: Path) -> None:
     )
     assert accepted.upload_id is not None
 
-    first = service.complete_upload(
+    first = service.complete_tus_transfer(
         intent_id=intent.intent_id,
         upload_id=accepted.upload_id,
         byte_size=60,
         offset=60,
     )
-    second = service.complete_upload(
+    second = service.complete_tus_transfer(
         intent_id=intent.intent_id,
         upload_id=accepted.upload_id,
         byte_size=60,
@@ -1319,7 +1724,7 @@ def test_termination_reserves_state_before_finish_can_enqueue(
     )
 
     with pytest.raises(ApplicationError) as rejected:
-        service.complete_upload(
+        service.complete_tus_transfer(
             intent_id=intent.intent_id,
             upload_id=accepted.upload_id,
             byte_size=60,
@@ -1440,7 +1845,7 @@ def test_terminal_import_job_releases_processing_upload(
         byte_size=60,
     )
     assert accepted.upload_id is not None
-    job_id = service.complete_upload(
+    job_id = service.complete_tus_transfer(
         intent_id=intent.intent_id,
         upload_id=accepted.upload_id,
         byte_size=60,
@@ -1453,6 +1858,8 @@ def test_terminal_import_job_releases_processing_upload(
     assert result["advanced"] == 1
     stored = catalog.get_upload_intent(intent.intent_id)
     assert stored is not None and stored.state == UploadState.failed
+    assert stored.media_id is None
+    assert stored.failure_code == "media_import_failed"
     catalog.close()
 
 

@@ -429,6 +429,7 @@ class MediaUploadStatus(ApplicationModel):
         "importing",
         "registered",
         "indexing",
+        "index_failed",
         "indexed",
         "failed",
     ] = "transferring"
@@ -507,6 +508,8 @@ class MediaUploadSessionStatus(ApplicationModel):
         "uploading",
         "processing",
         "ready",
+        "index_failed",
+        "partial_index_failure",
         "partial_failure",
         "failed",
     ]
@@ -527,6 +530,7 @@ class MediaUploadSessionStatus(ApplicationModel):
     ready_file_count: NonNegativeInt
     searchable_file_count: NonNegativeInt = 0
     failed_file_count: NonNegativeInt
+    index_failed_file_count: NonNegativeInt = 0
     items: tuple[MediaUploadStatus, ...] = ()
     terminal: bool = False
     poll_after_seconds: int = Field(default=2, ge=0, le=60)

@@ -82,7 +82,7 @@ from vidxp.capabilities.registry import create_capability_registry
 from vidxp.composition import HttpApplicationContext
 from vidxp.control_plane import ControlPlaneApplication
 from vidxp.core.artifacts import ArtifactKind, ArtifactState
-from vidxp.core.uploads import UploadSessionState
+from vidxp.core.uploads import UploadSessionState, UploadState
 from vidxp.job_service import JobService
 from vidxp.mcp import VidXPTokenVerifier, create_mcp_server, create_remote_mcp
 from vidxp.mcp_cli import main as mcp_main
@@ -598,6 +598,75 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("get_workspace", result.content[0].text)
         uploads.create_upload_session.assert_not_called()
+
+    async def test_index_failed_upload_media_can_use_normal_index_workflow(self):
+        with TemporaryDirectory() as directory:
+            context, uploads = self.upload_context(Path(directory))
+            now = datetime.now(timezone.utc)
+            item = MediaUploadStatus(
+                intent_id="523456781234423481234567890abcde",
+                client_file_key="index-failed-file",
+                state=UploadState.ready,
+                original_filename="registered.mp4",
+                byte_size=20,
+                declared_mime_type="video/mp4",
+                expires_at=now + timedelta(hours=1),
+                phase="index_failed",
+                job_id="623456781234423481234567890abcde",
+                import_job_id="623456781234423481234567890abcde",
+                index_job_id="723456781234423481234567890abcde",
+                media_id=MEDIA_ID,
+                error=ErrorDetail(
+                    code="model_unavailable",
+                    category=ErrorCategory.unavailable,
+                    message="Prepare the configured scene model.",
+                ),
+                terminal=True,
+                poll_after_seconds=0,
+                status="The video is registered but automatic indexing failed.",
+                next_action="Fix the error and use start_indexing with media_id.",
+            )
+            uploads.get_status.return_value = upload_session_status(
+                items=(item,)
+            ).model_copy(
+                update={
+                    "aggregate_state": "index_failed",
+                    "ready_file_count": 1,
+                    "index_failed_file_count": 1,
+                    "terminal": True,
+                    "poll_after_seconds": 0,
+                }
+            )
+            context.jobs.submit_index.return_value = queued_job()
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"*"}),
+                ),
+            )
+            async with Client(server) as client:
+                status = await client.call_tool(
+                    "get_media_upload",
+                    {"upload_session_id": UPLOAD_SESSION_ID},
+                )
+                preserved_media_id = status.structured_content["items"][0][
+                    "media_id"
+                ]
+                retried = await client.call_tool(
+                    "start_indexing",
+                    {
+                        "command": {
+                            "media_id": preserved_media_id,
+                            "modalities": ["scene"],
+                        },
+                        "idempotency_key": "retry-index-failed-media-0001",
+                    },
+                )
+
+        self.assertFalse(retried.is_error)
+        command = context.jobs.submit_index.call_args.args[0]
+        self.assertEqual(command.media_id, MEDIA_ID)
 
     async def test_oidc_upload_returns_capability_without_url_elicitation(self):
         seen = []
@@ -1352,6 +1421,92 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                             delivery["delivery_error"]["code"],
                             "public_download_origin_unavailable",
                         )
+
+    async def test_inline_evidence_respects_configured_resource_byte_limit(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            maximum = 64
+            for byte_size, expect_inline in ((32, True), (128, False)):
+                with self.subTest(byte_size=byte_size):
+                    content = b"p" * byte_size
+                    frame_path = root / f"frame-{byte_size}.png"
+                    frame_path.write_bytes(content)
+                    frame = Artifact(
+                        artifact_id=ARTIFACT_ID,
+                        media_id=MEDIA_ID,
+                        generation_id="523456781234423481234567890abcde",
+                        job_id=JOB_ID,
+                        kind=ArtifactKind.evidence_frame,
+                        profile="png",
+                        mime_type="image/png",
+                        byte_size=byte_size,
+                        sha256=hashlib.sha256(content).hexdigest(),
+                        state=ArtifactState.ready,
+                        created_at=datetime.now(timezone.utc),
+                    )
+                    context = self.context(
+                        root,
+                        mcp_max_resource_bytes=maximum,
+                        artifact_download_public_url=(
+                            "https://public.example/artifact-download"
+                        ),
+                        artifact_download_secret="d" * 32,
+                    )
+                    context.jobs.get.return_value = search_evidence_job(frame)
+                    context.application.open_artifact_content.return_value = (
+                        LocalFileResource(
+                            path=frame_path,
+                            filename=f"evidence_frame-{ARTIFACT_ID}.png",
+                            mime_type="image/png",
+                            byte_size=byte_size,
+                            etag=frame.sha256,
+                        )
+                    )
+                    server = create_mcp_server(
+                        context,
+                        default_principal=Principal(
+                            subject="agent",
+                            scopes=frozenset({"vidxp.read"}),
+                        ),
+                        artifact_delivery="streamable_http",
+                    )
+                    async with Client(server) as client:
+                        result = await client.call_tool(
+                            "get_job", {"job_id": JOB_ID}
+                        )
+                        self.assertFalse(result.is_error)
+                        self.assertEqual(
+                            any(
+                                isinstance(block, ImageContent)
+                                for block in result.content
+                            ),
+                            expect_inline,
+                        )
+                        self.assertTrue(
+                            any(
+                                isinstance(block, ResourceLink)
+                                for block in result.content
+                            )
+                        )
+                        projected = result.structured_content["result"]["result"][
+                            "evidence_delivery"
+                        ]["items"][0]["keyframe"]["artifact"]
+                        self.assertEqual(
+                            projected["delivery"]["delivery_mode"],
+                            "https_download",
+                        )
+                        self.assertEqual(
+                            projected["resource_uri"],
+                            f"vidxp://artifacts/{ARTIFACT_ID}/content.png",
+                        )
+                        if not expect_inline:
+                            context.application.open_artifact_content.assert_not_called()
+                            with self.assertRaises(MCPError) as caught:
+                                await client.read_resource(projected["resource_uri"])
+                            self.assertEqual(
+                                caught.exception.data["code"],
+                                "artifact_resource_too_large",
+                            )
 
     async def test_create_evidence_clip_derives_range_from_source_job(self):
         with TemporaryDirectory() as directory:

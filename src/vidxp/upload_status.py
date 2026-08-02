@@ -99,6 +99,20 @@ class UploadStatusProjector:
             phase = "indexed"
             status = "The video is registered, indexed, and searchable."
             next_action = "Use search_moments or query_video."
+        elif (
+            intent.state == UploadState.ready
+            and intent.index_job_id is not None
+            and intent.failure_code is not None
+        ):
+            phase = "index_failed"
+            status = (
+                "The video is registered, but automatic indexing failed and it "
+                "is not searchable."
+            )
+            next_action = (
+                "Inspect the structured index error, fix its cause, then use "
+                "start_indexing with this media_id; do not upload the video again."
+            )
         elif intent.state == UploadState.ready and intent.index_job_id is not None:
             phase = "indexing"
             status = "The registered video is being indexed."
@@ -113,7 +127,7 @@ class UploadStatusProjector:
             next_action = (
                 "Inspect the structured error and retry only this file with a new key."
             )
-        terminal = phase in {"indexed", "failed"} or (
+        terminal = phase in {"indexed", "index_failed", "failed"} or (
             phase == "registered" and not intent.index_after_import
         )
         return MediaUploadStatus(
@@ -177,10 +191,14 @@ class UploadStatusProjector:
             aggregate_state = "empty"
         elif all(phase in {"registered", "indexed"} for phase in phases):
             aggregate_state = "ready"
+        elif all(phase == "index_failed" for phase in phases):
+            aggregate_state = "index_failed"
         elif all(phase == "failed" for phase in phases):
             aggregate_state = "failed"
         elif any(phase == "failed" for phase in phases):
             aggregate_state = "partial_failure"
+        elif any(phase == "index_failed" for phase in phases):
+            aggregate_state = "partial_index_failure"
         elif any(phase == "transferring" for phase in phases):
             aggregate_state = "uploading"
         else:
@@ -246,10 +264,14 @@ class UploadStatusProjector:
             uploaded_file_count=len(uploaded),
             uploaded_bytes=sum(intent.byte_size for intent in uploaded),
             ready_file_count=sum(
-                item.phase in {"registered", "indexed"} for item in items
+                item.phase in {"registered", "index_failed", "indexed"}
+                for item in items
             ),
             searchable_file_count=sum(item.searchable for item in items),
             failed_file_count=sum(state in failed_states for state in states),
+            index_failed_file_count=sum(
+                item.phase == "index_failed" for item in items
+            ),
             items=items,
             terminal=terminal,
             poll_after_seconds=0 if terminal else 2,

@@ -141,7 +141,7 @@ class TusdHookService:
                 ErrorCategory.validation,
                 "The completed upload is missing its intent.",
             )
-        self.uploads.complete_upload(
+        self.uploads.complete_tus_transfer(
             intent_id=intent_id,
             upload_id=upload.upload_id,
             byte_size=upload.size,

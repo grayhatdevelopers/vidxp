@@ -15,11 +15,19 @@ export function needsFileAuthorization(file, child) {
   return !file?.tus?.uploadUrl
 }
 
-export function resumePollingForNewFile(sessionStatus, pollAfterSeconds = 2) {
-  if (!sessionStatus?.terminal) return sessionStatus
+export function resumePollingAfterFileAuthorization(
+  sessionStatus,
+  fileStatus,
+  pollAfterSeconds = 2,
+) {
+  if (!fileStatus?.intent_id || !sessionStatus?.terminal) return sessionStatus
   return {
     ...sessionStatus,
     terminal: false,
     poll_after_seconds: pollAfterSeconds,
   }
+}
+
+export function shouldPollSession(sessionStatus) {
+  return !sessionStatus?.terminal
 }

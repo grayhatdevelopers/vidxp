@@ -17,6 +17,9 @@ from vidxp.upload_service import RemoteUploadService
 
 
 class _Jobs:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
     def enqueue_media_import_in_transaction(
         self,
         upload_id: str,
@@ -24,7 +27,8 @@ class _Jobs:
         connection,
         job_id: str,
     ) -> str:
-        del upload_id, connection
+        del connection
+        self.calls.append((upload_id, job_id))
         return job_id
 
 
@@ -100,6 +104,27 @@ def _pre_create(
     )
 
 
+def _post_finish(intent_id: str, upload_id: str, *, size: int = 20) -> TusdHookRequest:
+    return TusdHookRequest.model_validate(
+        {
+            "Type": "post-finish",
+            "Event": {
+                "Upload": {
+                    "ID": upload_id,
+                    "Size": size,
+                    "Offset": size,
+                    "MetaData": {"intent_id": intent_id},
+                },
+                "HTTPRequest": {
+                    "Method": "PATCH",
+                    "URI": f"/uploads/{upload_id}",
+                    "Header": {},
+                },
+            },
+        }
+    )
+
+
 def test_pre_create_authenticates_and_assigns_stored_id(
     tmp_path: Path,
 ) -> None:
@@ -111,6 +136,30 @@ def test_pre_create_authenticates_and_assigns_stored_id(
     stored = catalog.get_upload_intent(intent.intent_id)
     assert stored is not None
     assert response.change_file_info.upload_id == stored.upload_id
+    catalog.close()
+
+
+def test_post_finish_atomically_links_deterministic_import_job(
+    tmp_path: Path,
+) -> None:
+    hooks, catalog, intent, token = _hooks(tmp_path)
+    created = hooks.handle(_pre_create(intent.intent_id, token))
+    assert created.change_file_info is not None
+    upload_id = created.change_file_info.upload_id
+
+    finished = hooks.handle(_post_finish(intent.intent_id, upload_id))
+
+    assert not finished.reject_upload
+    stored = catalog.get_upload_intent(intent.intent_id)
+    assert stored is not None
+    assert stored.state.value == "processing"
+    assert stored.upload_id == upload_id
+    assert stored.job_id == upload_id
+    assert hooks.uploads.jobs.calls == [(upload_id, upload_id)]
+
+    replay = hooks.handle(_post_finish(intent.intent_id, upload_id))
+    assert not replay.reject_upload
+    assert hooks.uploads.jobs.calls == [(upload_id, upload_id)]
     catalog.close()
 
 

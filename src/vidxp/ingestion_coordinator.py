@@ -145,23 +145,24 @@ class IngestionCoordinator:
                 if exc.detail.code != "resource_not_found":
                     if self._is_retryable(exc.detail):
                         return intent
-                    return self._fail(intent, exc.detail)
+                    return self._fail_import(intent, exc.detail)
                 try:
                     job = self._submit_import_job(intent)
                 except ApplicationError as submit_exc:
                     if self._is_retryable(submit_exc.detail):
                         return intent
-                    return self._fail(intent, submit_exc.detail)
+                    return self._fail_import(intent, submit_exc.detail)
             if job.state == JobState.succeeded and job.result is not None:
                 media_id = job.result.result.media_id
 
-                def register(connection: Connection) -> None:
-                    self.catalog.update_upload(
+                def register(connection: Connection) -> bool:
+                    return self.catalog.update_upload(
                         intent.intent_id,
                         state=UploadState.ready,
                         connection=connection,
                         media_id=media_id,
                         expected_states={UploadState.processing},
+                        expected_job_id=intent.job_id,
                     )
 
                 self.catalog.with_upload_transaction(register)
@@ -176,14 +177,18 @@ class IngestionCoordinator:
                     category=ErrorCategory.internal,
                     message="The durable media import failed.",
                 )
-                intent = self._fail(intent, detail)
+                intent = self._fail_import(intent, detail)
         if (
             intent.state == UploadState.ready
             and intent.index_after_import
             and intent.index_job_id is None
         ):
             return self._start_index(intent)
-        if intent.index_job_id is not None:
+        if (
+            intent.state == UploadState.ready
+            and intent.index_job_id is not None
+            and intent.failure_code is None
+        ):
             try:
                 job = self.jobs.get(intent.index_job_id)
             except ApplicationError as exc:
@@ -193,11 +198,11 @@ class IngestionCoordinator:
                     except ApplicationError as submit_exc:
                         if self._is_retryable(submit_exc.detail):
                             return intent
-                        return self._fail(intent, submit_exc.detail)
+                        return self._fail_index(intent, submit_exc.detail)
                 elif self._is_retryable(exc.detail):
                     return intent
                 else:
-                    return self._fail(intent, exc.detail)
+                    return self._fail_index(intent, exc.detail)
             if job.state == JobState.succeeded:
                 self.catalog.with_upload_transaction(
                     lambda connection: self.catalog.update_upload(
@@ -205,6 +210,7 @@ class IngestionCoordinator:
                         state=UploadState.indexed,
                         connection=connection,
                         expected_states={UploadState.ready},
+                        expected_index_job_id=intent.index_job_id,
                     )
                 )
                 intent = self.catalog.get_upload_intent(intent.intent_id) or intent
@@ -213,12 +219,8 @@ class IngestionCoordinator:
                 JobState.cancelled,
                 JobState.recovery_exhausted,
             }:
-                detail = job.error or ErrorDetail(
-                    code="media_index_failed",
-                    category=ErrorCategory.internal,
-                    message="Automatic indexing failed.",
-                )
-                intent = self._fail(intent, detail)
+                detail = job.error or self._index_terminal_detail(job.state)
+                intent = self._fail_index(intent, detail)
         return intent
 
     def complete_tus_transfer(
@@ -291,23 +293,26 @@ class IngestionCoordinator:
         )
         job_id = derived_ingestion_job_id(intent.intent_id, "import")
 
-        def link(connection: Connection) -> None:
-            self.catalog.update_upload(
+        def link(connection: Connection) -> bool:
+            return self.catalog.update_upload(
                 intent.intent_id,
                 state=UploadState.processing,
                 connection=connection,
                 upload_id=intent.upload_id or intent.intent_id,
                 job_id=job_id,
                 expected_states={expected_state},
+                expected_job_id=None,
             )
 
-        self.catalog.with_upload_transaction(link)
+        linked_by_this_attempt = self.catalog.with_upload_transaction(link)
         linked = self.catalog.get_upload_intent(intent.intent_id) or intent
+        if not linked_by_this_attempt:
+            return linked
         try:
             self._submit_import_job(linked)
         except ApplicationError as exc:
             if not self._is_retryable(exc.detail):
-                return self._fail(linked, exc.detail)
+                return self._fail_import(linked, exc.detail)
         return linked
 
     def _start_index(self, intent: UploadIntentRecord) -> UploadIntentRecord:
@@ -315,22 +320,25 @@ class IngestionCoordinator:
             return intent
         job_id = derived_ingestion_job_id(intent.intent_id, "index")
 
-        def link(connection: Connection) -> None:
-            self.catalog.update_upload(
+        def link(connection: Connection) -> bool:
+            return self.catalog.update_upload(
                 intent.intent_id,
                 state=UploadState.ready,
                 connection=connection,
                 index_job_id=job_id,
                 expected_states={UploadState.ready},
+                expected_index_job_id=None,
             )
 
-        self.catalog.with_upload_transaction(link)
+        linked_by_this_attempt = self.catalog.with_upload_transaction(link)
         linked = self.catalog.get_upload_intent(intent.intent_id) or intent
+        if not linked_by_this_attempt:
+            return linked
         try:
             self._submit_index_job(linked)
         except ApplicationError as exc:
             if not self._is_retryable(exc.detail):
-                return self._fail(linked, exc.detail)
+                return self._fail_index(linked, exc.detail)
         return linked
 
     def _submit_import_job(self, intent: UploadIntentRecord):
@@ -373,7 +381,27 @@ class IngestionCoordinator:
             or detail.code == "resource_not_found"
         )
 
-    def _fail(
+    @staticmethod
+    def _index_terminal_detail(state: JobState) -> ErrorDetail:
+        if state == JobState.cancelled:
+            return ErrorDetail(
+                code="media_index_cancelled",
+                category=ErrorCategory.conflict,
+                message="Automatic indexing was cancelled.",
+            )
+        if state == JobState.recovery_exhausted:
+            return ErrorDetail(
+                code="media_index_recovery_exhausted",
+                category=ErrorCategory.internal,
+                message="Automatic indexing exhausted durable recovery.",
+            )
+        return ErrorDetail(
+            code="media_index_failed",
+            category=ErrorCategory.internal,
+            message="Automatic indexing failed.",
+        )
+
+    def _fail_import(
         self,
         intent: UploadIntentRecord,
         detail: ErrorDetail,
@@ -385,6 +413,26 @@ class IngestionCoordinator:
                 connection=connection,
                 failure_code=detail.code,
                 failure_message=detail.message,
+                expected_states={UploadState.processing},
+                expected_job_id=intent.job_id,
+            )
+        )
+        return self.catalog.get_upload_intent(intent.intent_id) or intent
+
+    def _fail_index(
+        self,
+        intent: UploadIntentRecord,
+        detail: ErrorDetail,
+    ) -> UploadIntentRecord:
+        self.catalog.with_upload_transaction(
+            lambda connection: self.catalog.update_upload(
+                intent.intent_id,
+                state=UploadState.ready,
+                connection=connection,
+                failure_code=detail.code,
+                failure_message=detail.message,
+                expected_states={UploadState.ready},
+                expected_index_job_id=intent.index_job_id,
             )
         )
         return self.catalog.get_upload_intent(intent.intent_id) or intent

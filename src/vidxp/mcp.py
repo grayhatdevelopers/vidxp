@@ -1318,7 +1318,10 @@ def create_mcp_server(
 
     @server.tool(
         title="List jobs",
-        description="List durable jobs so work can be recovered across sessions.",
+        description=(
+            "List durable jobs and IDs so work can be recovered across sessions. "
+            "Use get_job for transport-projected evidence and ResourceLinks."
+        ),
         annotations=_READ_ONLY,
         structured_output=True,
     )
@@ -1396,6 +1399,8 @@ def create_mcp_server(
                         )
                         if (
                             keyframe.artifact.artifact.byte_size <= 512_000
+                            and keyframe.artifact.artifact.byte_size
+                            <= settings.mcp_max_resource_bytes
                             and keyframe.width <= 1280
                             and keyframe.height <= 1280
                         ):

@@ -1175,7 +1175,7 @@ class RemoteUploadService:
             session_token=session_token,
         ).status
 
-    def complete_upload(
+    def complete_tus_transfer(
         self,
         *,
         intent_id: str,
@@ -1280,7 +1280,7 @@ class RemoteUploadService:
                     and isinstance(offset, int)
                     and size == offset == record.byte_size
                 ):
-                    self.complete_upload(
+                    self.complete_tus_transfer(
                         intent_id=record.intent_id,
                         upload_id=record.upload_id,
                         byte_size=size,

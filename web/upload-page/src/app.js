@@ -10,7 +10,8 @@ import './app.css'
 import {
   isServerTransferComplete,
   needsFileAuthorization,
-  resumePollingForNewFile,
+  resumePollingAfterFileAuthorization,
+  shouldPollSession,
 } from './recovery.js'
 
 const elements = {
@@ -325,6 +326,11 @@ async function authorizeFile(file) {
       tus: { ...current.tus, uploadUrl: normalizedUrl(payload.resume_url) },
     })
   }
+  sessionStatus = resumePollingAfterFileAuthorization(
+    sessionStatus,
+    payload.status,
+    POLL_INTERVAL_MS / 1000,
+  )
   scheduleStatusPoll(0)
 }
 
@@ -388,16 +394,7 @@ function configureUppy() {
   })
 
   uppy.addPreProcessor(authorizeFiles)
-  uppy.on('file-added', () => {
-    if (sessionStatus?.terminal) {
-      sessionStatus = resumePollingForNewFile(
-        sessionStatus,
-        POLL_INTERVAL_MS / 1000,
-      )
-      scheduleStatusPoll(0)
-    }
-    setUploadMessage('Files are ready to upload.')
-  })
+  uppy.on('file-added', () => setUploadMessage('Files are ready to upload.'))
   uppy.on('file-removed', (file) => {
     const intentID = file.meta?.intent_id
     if (intentID) cancelFile(intentID).catch(() => {})
@@ -511,7 +508,7 @@ async function closeSession() {
 }
 
 async function pollStatus() {
-  if (pollInFlight || sessionStatus?.terminal) return
+  if (pollInFlight || !shouldPollSession(sessionStatus)) return
   pollInFlight = true
   try {
     const payload = await requestJson(apiUrl('./status'))
@@ -527,7 +524,7 @@ async function pollStatus() {
 
 function scheduleStatusPoll(delay = POLL_INTERVAL_MS) {
   window.clearTimeout(pollTimer)
-  if (sessionStatus?.terminal) return
+  if (!shouldPollSession(sessionStatus)) return
   const serverDelay = Number(sessionStatus?.poll_after_seconds) * 1000
   const requestedDelay = Number.isFinite(serverDelay) && serverDelay > 0
     ? serverDelay
@@ -556,7 +553,7 @@ async function bootstrap() {
   syncUppyFiles(payload.resume_urls ?? {})
   elements.closeSession.addEventListener('click', closeSession)
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && !sessionStatus?.terminal) scheduleStatusPoll(0)
+    if (!document.hidden && shouldPollSession(sessionStatus)) scheduleStatusPoll(0)
   })
   setUploadMessage(
     sessionStatus.resumable

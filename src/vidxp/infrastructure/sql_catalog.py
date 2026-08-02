@@ -50,6 +50,7 @@ _RESERVED_UPLOAD_STATES = {
     UploadState.failed.value,
 }
 _UPLOAD_QUOTA_ID = "1"
+_EXPECTED_VALUE_UNSET = object()
 
 
 class UploadQuotaExceededError(RuntimeError):
@@ -945,11 +946,15 @@ class SQLCatalog:
         content_sha256: str | None = None,
         clear_upload_id: bool = False,
         expected_states: set[UploadState] | None = None,
+        expected_job_id: str | None | object = _EXPECTED_VALUE_UNSET,
+        expected_index_job_id: str | None | object = _EXPECTED_VALUE_UNSET,
     ) -> bool:
         current = connection.execute(
             select(
                 upload_intents.c.byte_size,
                 upload_intents.c.state,
+                upload_intents.c.job_id,
+                upload_intents.c.index_job_id,
             )
             .where(upload_intents.c.intent_id == intent_id)
             .with_for_update()
@@ -959,6 +964,16 @@ class SQLCatalog:
         if (
             expected_states is not None
             and UploadState(current.state) not in expected_states
+        ):
+            return False
+        if (
+            expected_job_id is not _EXPECTED_VALUE_UNSET
+            and current.job_id != expected_job_id
+        ):
+            return False
+        if (
+            expected_index_job_id is not _EXPECTED_VALUE_UNSET
+            and current.index_job_id != expected_index_job_id
         ):
             return False
         values: dict[str, Any] = {"state": state.value}
@@ -1071,6 +1086,7 @@ class SQLCatalog:
                         and_(
                             upload_intents.c.state == UploadState.ready.value,
                             upload_intents.c.index_after_import.is_(True),
+                            upload_intents.c.failure_code.is_(None),
                         ),
                     )
                 )

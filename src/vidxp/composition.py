@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import Callable
@@ -123,8 +123,11 @@ class ControlPlaneContext:
     settings: VidXPSettings
     catalog: SQLCatalog | None = None
     uploads: RemoteUploadService | None = None
+    _closed: bool = field(default=False, init=False, repr=False, compare=False)
 
     def start(self, *, eager_jobs: bool = True) -> None:
+        if self._closed:
+            raise RuntimeError("A closed control-plane context cannot be restarted.")
         if eager_jobs:
             self.jobs.start()
         coordinator = (
@@ -145,6 +148,8 @@ class ControlPlaneContext:
             coordinator.stop()
 
     def close(self) -> None:
+        if self._closed:
+            return
         self.stop()
         try:
             if self.settings.mode != ApplicationMode.server:
@@ -155,6 +160,7 @@ class ControlPlaneContext:
             finally:
                 if self.catalog is not None:
                     self.catalog.close()
+        object.__setattr__(self, "_closed", True)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -171,20 +177,24 @@ class UploadHookContext:
     settings: VidXPSettings
     catalog: SQLCatalog
     uploads: RemoteUploadService
+    _closed: bool = field(default=False, init=False, repr=False, compare=False)
 
     def start(self) -> None:
+        if self._closed:
+            raise RuntimeError("A closed upload-hook context cannot be restarted.")
         self.jobs.start()
-        self.uploads.coordinator.start(self.uploads.reconcile)
 
     def stop(self) -> None:
-        self.uploads.coordinator.stop()
+        """The hook owns no background ingestion lifecycle."""
 
     def close(self) -> None:
-        self.stop()
+        if self._closed:
+            return
         try:
             self.jobs.close()
         finally:
             self.catalog.close()
+        object.__setattr__(self, "_closed", True)
 
 
 @dataclass(frozen=True)

@@ -329,6 +329,10 @@ The deployed resumable data plane is a four-stage protocol:
 4. The non-blocking `post-finish` hook idempotently upserts completion by upload ID
    and enqueues the durable ffprobe/import workflow.
 
+The hook process starts the durable job client needed for that atomic enqueue, but
+does not run background import or index advancement. The single API/MCP control
+plane owns the ingestion coordinator and recovers queued work after a restart.
+
 Streamable HTTP MCP uses a session-first browser handoff.
 `create_media_upload` accepts an idempotency key plus optional automatic-indexing
 policy, creates no child intent and reserves no quota, and returns a short-lived
@@ -382,7 +386,9 @@ intent's state, identifiers, and next action. No secret capability, creation gra
 or tus resume URL is exposed through MCP status. Its `terminal` flag applies to the
 currently accepted children, so agents stop polling once those files finish even
 if `session_state` remains `open`; accepting another file resumes the polling
-contract.
+contract. Import failures remain failed ingestions. An automatic-index failure is
+instead terminal `index_failed`: the upload remains `ready`, retains its `media_id`,
+and can be submitted through `start_indexing` after the index error is corrected.
 
 Application responses carrying upload URLs use `private, no-store` and
 `no-referrer`; hook payloads and MCP results do not persist them. The opaque path is
@@ -895,10 +901,11 @@ video bytes in JSON or text. Ordinary local stdio additionally returns the
 verified absolute artifact path and encoded `file://` URI because the agent and
 VidXP share a filesystem; `VIDXP_MCP_STDIO_FILESYSTEM_ACCESSIBLE=false` disables
 that hint for Docker, WSL, SSH-proxy, or other isolated stdio deployments. Remote
-Streamable HTTP never returns a server path and instead returns the expiring HTTPS
-capability URL. Filesystem-isolated stdio can use that same HTTPS mode when a
-public artifact-download origin is configured, otherwise the MCP resource remains
-the portable fallback.
+Streamable HTTP never returns a server path: configured deployments return an
+expiring HTTPS capability URL, while deployments without a public artifact-download
+origin retain the native MCP resource fallback. Filesystem-isolated stdio can use
+that same HTTPS mode when a public artifact-download origin is configured;
+otherwise the MCP resource remains the portable fallback.
 
 Search and query jobs can request bounded evidence delivery. MCP defaults to the
 strongest three keyframes; callers may select `none`, `keyframes`, or
