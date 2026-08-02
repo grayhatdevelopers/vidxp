@@ -4,6 +4,17 @@
   "version": "0.4.0-b",
   "type": "module",
   "scripts": {
+    "dev": "vite",
+    "prebuild": "npm run sync:branding",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "notices:write": "node scripts/generate-notices.mjs --write",
+    "notices:check": "node scripts/generate-notices.mjs",
+    "model-catalog:write": "uv run --frozen python scripts/model-catalog.py --write",
+    "model-catalog:check": "uv run --frozen python scripts/model-catalog.py --check",
     "tauri": "tauri",
     "sync:branding": "node scripts/sync-branding.mjs",
     "icons": "npm run sync:branding && tauri icon ../docs/images/logo.png --output src-tauri/icons",
@@ -14,7 +25,31 @@
     "sidecar:windows": "powershell -ExecutionPolicy Bypass -File scripts/fetch-uv.ps1",
     "sidecar:unix": "bash scripts/fetch-uv.sh"
   },
+  "dependencies": {
+    "@mantine/core": "9.5.0",
+    "@tabler/icons-react": "3.46.0",
+    "@tauri-apps/api": "2.11.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
   "devDependencies": {
-    "@tauri-apps/cli": "2.11.4"
+    "@eslint/js": "10.0.1",
+    "@tauri-apps/cli": "2.11.4",
+    "@testing-library/jest-dom": "7.0.0",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
+    "@types/node": "26.0.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "eslint": "10.8.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.3",
+    "jsdom": "29.1.1",
+    "license-checker-rseidelsohn": "4.4.2",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.65.0",
+    "vite": "8.2.0",
+    "vitest": "4.1.10"
   }
 }

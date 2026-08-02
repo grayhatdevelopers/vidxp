@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "VidXP",
+        "width": 920,
+        "height": 760,
+        "minWidth": 680,
+        "minHeight": 600,
+        "visible": false,
+        "resizable": true,
+        "decorations": false,
+        "shadow": false,
+        "transparent": false
+      }
+    ]
+  }
+}

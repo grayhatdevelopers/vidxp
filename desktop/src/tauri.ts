@@ -1,0 +1,322 @@
+import { invoke } from '@tauri-apps/api/core';
+
+export type TargetKind = 'existing_local' | 'managed';
+export type LifecycleOwnership = 'external' | 'desktop';
+
+const WINDOWS_EXTENDED_PATH_PREFIX = '\\\\?\\';
+const WINDOWS_EXTENDED_UNC_PREFIX = 'UNC\\';
+
+export function displayPath(path: string): string {
+  if (!path.startsWith(WINDOWS_EXTENDED_PATH_PREFIX)) return path;
+  const remainder = path.slice(WINDOWS_EXTENDED_PATH_PREFIX.length);
+  if (/^[a-z]:\\/i.test(remainder)) return remainder;
+  if (remainder.slice(0, WINDOWS_EXTENDED_UNC_PREFIX.length).toUpperCase() === WINDOWS_EXTENDED_UNC_PREFIX) {
+    const [server, share] = remainder.slice(WINDOWS_EXTENDED_UNC_PREFIX.length).split('\\');
+    if (server && share) return `\\\\${remainder.slice(WINDOWS_EXTENDED_UNC_PREFIX.length)}`;
+  }
+  return path;
+}
+
+export interface TargetError {
+  code: string;
+  message: string;
+}
+
+export interface FrontendCapability {
+  available: boolean;
+  launchable: boolean;
+  optional: boolean;
+  code: string;
+  message: string;
+  remediation: string;
+}
+
+interface RuntimeIdentity {
+  python_executable: string;
+  python_version: string;
+  implementation: string;
+  prefix: string;
+  base_prefix: string;
+}
+
+interface WireTargetProfile {
+  id: string;
+  display_name: string;
+  schema_version: number;
+  kind: TargetKind;
+  lifecycle_ownership: LifecycleOwnership;
+  executable: string;
+  data_root: string;
+  repository_root: string;
+  observed_vidxp_version: string;
+  probe_schema_version: number;
+  probe_protocol_version: number;
+  launch_protocol_version: number;
+  runtime: RuntimeIdentity | null;
+  frontend: FrontendCapability;
+  last_successful_validation_at: number | null;
+  validation_error: TargetError | null;
+  managed_runtime_profile?: string;
+  capabilities: string[];
+  surfaces: string[];
+  model_directory?: string;
+}
+
+interface WireTargetState {
+  profiles: WireTargetProfile[];
+  selected_profile_id: string | null;
+  issues: TargetError[];
+}
+
+export interface TargetProfile extends WireTargetProfile {
+  display_executable: string;
+  display_data_root: string;
+  display_repository_root: string;
+  display_model_directory?: string;
+  last_validated_at: string | null;
+}
+
+export interface TargetSetupState {
+  profiles: TargetProfile[];
+  selected_profile_id: string | null;
+  issues: TargetError[];
+}
+
+export interface LocalTargetCandidate {
+  executable: string;
+  display_path: string;
+  source: string;
+}
+
+interface WireValidatedTarget {
+  executable: string;
+  product_version: string;
+  probe_schema_version: number;
+  probe_protocol_version: number;
+  launch_protocol_version: number;
+  runtime: RuntimeIdentity;
+  data_root: string;
+  repository_root: string;
+  frontend: FrontendCapability;
+  validated_at: number;
+}
+
+interface WireTargetInspection {
+  state: 'ready_to_use' | 'update_required' | 'cannot_start';
+  adoptable: boolean;
+  executable: string;
+  reported_version: string | null;
+  probe_compatible: boolean;
+  launch_compatible: boolean;
+  validated: WireValidatedTarget | null;
+  message: string;
+  remediation: string;
+  technical_details: string | null;
+}
+
+export interface LocalTargetValidation {
+  canonical_executable: string;
+  protocol_version: number;
+  launch_protocol_version: number;
+  python_version: string;
+  display_data_root: string;
+  can_launch_frontend: boolean;
+  frontend: FrontendCapability;
+}
+
+export interface LocalTargetInspection extends Omit<WireTargetInspection, 'validated'> {
+  validation: LocalTargetValidation | null;
+}
+
+export interface CapabilitySpec {
+  extra: string;
+  label: string;
+  description?: string;
+}
+
+export interface SurfaceSpec {
+  extra: string;
+  label: string;
+  description: string;
+  default: boolean;
+}
+
+export interface RuntimeManifest {
+  package_version: string;
+  capabilities: Record<string, CapabilitySpec>;
+  surfaces: Record<string, SurfaceSpec>;
+}
+
+export interface RuntimeStatus {
+  state: 'never_configured' | 'ready' | 'broken';
+  ready: boolean;
+  runtime_profile: string | null;
+  package_version: string;
+  capabilities: string[];
+  surfaces: string[];
+  model_directory: string;
+  detail: string;
+}
+
+export interface ModelDirectoryInventory {
+  directory: string;
+  exists: boolean;
+  readable: boolean;
+  total_bytes: number;
+  file_count: number;
+  recognized_models: { id: string; label: string }[];
+  empty: boolean;
+  verification_required: boolean;
+  truncated: boolean;
+  detail: string;
+}
+
+export interface ManagedSetupDraft {
+  id: string;
+  previous_profile_id: string | null;
+}
+
+export interface InstallRuntimeRequest {
+  capabilities: string[];
+  surfaces: string[];
+  prepare_models: boolean;
+  model_directory?: string;
+  draft_id: string;
+}
+
+export interface InstallRuntimeResult {
+  package_version: string;
+  capabilities: string[];
+  surfaces: string[];
+  model_directory: string;
+  prepared: boolean;
+}
+
+export interface InstallTransitionResult {
+  install: InstallRuntimeResult;
+  setup: TargetSetupState;
+}
+
+interface WireInstallTransitionResult {
+  install: InstallRuntimeResult;
+  setup: WireTargetState;
+}
+
+function normalizeProfile(profile: WireTargetProfile): TargetProfile {
+  return {
+    ...profile,
+    display_executable: displayPath(profile.executable),
+    display_data_root: displayPath(profile.data_root),
+    display_repository_root: displayPath(profile.repository_root),
+    display_model_directory: profile.model_directory ? displayPath(profile.model_directory) : undefined,
+    last_validated_at: profile.last_successful_validation_at
+      ? new Date(profile.last_successful_validation_at * 1000).toISOString()
+      : null,
+  };
+}
+
+function normalizeState(state: WireTargetState): TargetSetupState {
+  return { ...state, profiles: state.profiles.map(normalizeProfile) };
+}
+
+export function targetSetupState(): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('target_state').then(normalizeState);
+}
+
+export function recheckTargetState(): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('refresh_target_state').then(normalizeState);
+}
+
+export async function discoverLocalTargets(): Promise<LocalTargetCandidate[]> {
+  const candidates = await invoke<{ executable: string }[]>('discover_local_targets');
+  return candidates.map(({ executable }) => ({
+    executable,
+    display_path: displayPath(executable),
+    source: 'PATH',
+  }));
+}
+
+export async function chooseLocalExecutable(): Promise<LocalTargetCandidate | null> {
+  const executable = await invoke<string | null>('choose_local_executable');
+  return executable
+    ? { executable, display_path: displayPath(executable), source: 'Selected file' }
+    : null;
+}
+
+export function inspectLocalTarget(executable: string): Promise<LocalTargetInspection> {
+  return invoke<WireTargetInspection>('inspect_local_target', { executable }).then((result) => ({
+    ...result,
+    validation: result.validated
+      ? {
+          canonical_executable: result.validated.executable,
+          protocol_version: result.validated.probe_protocol_version,
+          launch_protocol_version: result.validated.launch_protocol_version,
+          python_version: result.validated.runtime.python_version,
+          display_data_root: displayPath(result.validated.data_root),
+          can_launch_frontend: result.validated.frontend.launchable,
+          frontend: result.validated.frontend,
+        }
+      : null,
+  }));
+}
+
+export function activateLocalTarget(executable: string, displayName?: string): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('adopt_local_target', {
+    executable,
+    displayName: displayName || null,
+  }).then(normalizeState);
+}
+
+export function selectTargetProfile(profileId: string): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('select_target_profile', { profileId }).then(normalizeState);
+}
+
+export function deleteTargetProfile(profileId: string): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('delete_target_profile', { profileId }).then(normalizeState);
+}
+
+export function confirmForgetTarget(displayName: string): Promise<boolean> {
+  return invoke('confirm_forget_target', { displayName });
+}
+
+export function beginManagedSetup(): Promise<ManagedSetupDraft> {
+  return invoke('begin_managed_setup');
+}
+
+export function cancelManagedSetup(draftId: string): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('cancel_managed_setup', { draftId }).then(normalizeState);
+}
+
+export function runtimeManifest(): Promise<RuntimeManifest> { return invoke('runtime_manifest'); }
+export function runtimeStatus(): Promise<RuntimeStatus> { return invoke('runtime_status'); }
+export function modelDirectoryInventory(directory?: string): Promise<ModelDirectoryInventory> {
+  return invoke('model_directory_inventory', { directory: directory || null });
+}
+export function chooseModelDirectory(): Promise<string | null> { return invoke('choose_model_directory'); }
+export function installMediaRuntime(draftId: string): Promise<RuntimeStatus> {
+  return invoke('install_media_runtime', { draftId });
+}
+export function installRuntime(request: InstallRuntimeRequest): Promise<InstallTransitionResult> {
+  return invoke<WireInstallTransitionResult>('install_runtime', { request }).then((result) => ({
+    install: result.install,
+    setup: normalizeState(result.setup),
+  }));
+}
+export function prepareManagedModels(draftId: string): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('prepare_managed_models', { draftId }).then(normalizeState);
+}
+export function launchUi(): Promise<void> { return invoke('launch_ui'); }
+
+export function selectedProfile(state: TargetSetupState): TargetProfile | null {
+  return state.profiles.find((profile) => profile.id === state.selected_profile_id) ?? null;
+}
+
+export function errorMessage(error: unknown, fallback = 'Something went wrong.'): string {
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const targetError = error as Partial<TargetError>;
+    const message = targetError.message ?? fallback;
+    return targetError.code ? `${targetError.code} · ${message}` : message;
+  }
+  return fallback;
+}

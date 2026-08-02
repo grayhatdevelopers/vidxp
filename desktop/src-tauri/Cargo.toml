@@ -18,6 +18,7 @@ tauri-build = { version = "2.6.3", features = [] }
 atomic-write-file = "0.3.0"
 hex = "0.4.3"
 log = "0.4.29"
+process-wrap = { version = "9.1.0", features = ["std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
@@ -27,4 +28,8 @@ tauri-plugin-dialog = "2.7.2"
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-shell = "2.3.5"
 tauri-plugin-single-instance = "2.4.3"
-wait-timeout = "0.2.1"
+tauri-plugin-store = "2.4.4"
+which = "8.0.0"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_System_Threading"] }

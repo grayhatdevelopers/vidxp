@@ -1,5 +1,7 @@
 import argparse
+import json
 import logging
+import os
 import shutil
 import sys
 import tempfile
@@ -32,6 +34,36 @@ from vidxp.settings import LocalExecutionSettings, VidXPSettings
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _publish_desktop_readiness() -> None:
+    destination = os.environ.get("VIDXP_DESKTOP_READINESS_FILE")
+    nonce = os.environ.get("VIDXP_DESKTOP_READINESS_NONCE")
+    port = os.environ.get("VIDXP_DESKTOP_UI_PORT")
+    if not destination and not nonce and not port:
+        return
+    if not destination or not nonce or not port or not port.isdecimal():
+        raise RuntimeError("The VidXP Desktop readiness contract is incomplete.")
+    path = Path(destination).expanduser().resolve(strict=False)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps(
+            {
+                "product": "dev.grayhat.vidxp",
+                "protocol_version": 1,
+                "nonce": nonce,
+                "port": int(port),
+                "pid": os.getpid(),
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+_publish_desktop_readiness()
 
 
 @lru_cache(maxsize=1)

@@ -112,13 +112,16 @@ the terminal.
 Download the installer for Windows, Apple Silicon macOS, or Linux from
 [GitHub Releases](https://github.com/grayhatdevelopers/vidxp/releases).
 
-The desktop installer manages Python, VidXP, and the local worker for you. On
-first launch, choose the search capabilities you want, where model files should
-live, and whether to download them immediately. Python and uv do not need to be
+On first launch, choose whether to adopt an existing compatible VidXP
+installation without downloading another runtime, or create a private runtime
+managed by VidXP Desktop. For a managed runtime, choose the search capabilities,
+model location, and optional browser interface; Python and uv do not need to be
 installed separately.
 
-After setup, VidXP can stay available from the system tray. The browser
-interface is optional and can be left out of the installed VidXP runtime.
+Desktop opens its control panel when started. Browser launch is a separate,
+explicit **Open VidXP** action. After configuration, closing the control panel
+keeps VidXP available through **Manage VidXP**, **Open VidXP**, and **Quit
+VidXP** in the system tray.
 
 ### 3. Docker for a server
 
@@ -265,6 +268,13 @@ Contributions are welcome. Read the
 ## Credits
 
 Built by Grayhat Developers PVT Ltd. and maintained by the community.
+Originally researched by students:
+- [Abdullah Mansoor](https://github.com/abdullahmansoor321)
+- [Muhammad Haroon](https://github.com/haroon10725)
+- [Sarah Jawaid](https://github.com/sarr266)
+- [Talha Ahmed](https://github.com/talhaahmed1234)
+
+Working with [Dr Shahab Tahzeeb](https://scholar.google.com/citations?user=cryeRB0AAAAJ&hl=en) ([NED University of Engineering and Technology](https://www.neduet.edu.pk/)) and [Saad Bazaz](https://scholar.google.com/citations?user=mrJo09oAAAAJ&hl=en) ([Grayhat](https://grayhat.studio).
 
 Email: info@grayhat.studio
 

@@ -140,6 +140,7 @@ class CliTests(unittest.TestCase):
             "search",
             "actors",
             "artifacts",
+            "desktop-probe",
             "init",
             "doctor",
             "prepare",

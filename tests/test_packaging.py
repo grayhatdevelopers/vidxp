@@ -292,10 +292,11 @@ class PackagingTests(unittest.TestCase):
             ROOT / "desktop" / "scripts" / "sync-branding.mjs"
         ).read_text(encoding="utf-8")
         self.assertIn("../docs/images/logo.png", sync_script)
-        self.assertIn("web/icon.png", sync_script)
+        self.assertIn('resolve(desktopRoot, "public")', sync_script)
+        self.assertIn('resolve(publicDirectory, "icon.png")', sync_script)
         self.assertIn(
-            'href="icon.png"',
-            (ROOT / "desktop" / "web" / "index.html").read_text(
+            'href="/icon.png"',
+            (ROOT / "desktop" / "index.html").read_text(
                 encoding="utf-8"
             ),
         )
@@ -652,12 +653,17 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(version_file, manifest["desktop_version"])
         self.assertEqual(version_file, package["version"])
         self.assertEqual(version_file, cargo["package"]["version"])
-        self.assertIn(
-            f'version = "{version_file}" # x-release-please-version',
-            (
-                ROOT / "desktop" / "src-tauri" / "Cargo.toml"
-            ).read_text(encoding="utf-8"),
+        version_marker = (
+            f'version = "{version_file}" # x-release-please-version'
         )
+        for filename in ("Cargo.toml", "Cargo.lock"):
+            self.assertIn(
+                version_marker,
+                (
+                    ROOT / "desktop" / "src-tauri" / filename
+                ).read_text(encoding="utf-8"),
+                filename,
+            )
         self.assertNotIn(
             f"vidxp=={version_file}",
             (
@@ -726,7 +732,8 @@ class PackagingTests(unittest.TestCase):
         desktop_ci = (
             ROOT / ".github" / "workflows" / "desktop.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn(
+        self.assertIn("target: [windows, macos, linux]", desktop_ci)
+        self.assertNotIn(
             "!startsWith(github.head_ref, 'release-please--branches--')",
             desktop_ci,
         )
@@ -759,6 +766,32 @@ class PackagingTests(unittest.TestCase):
         self.assertIn(
             '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]',
             main,
+        )
+
+    def test_desktop_bundle_includes_generated_third_party_notices(self):
+        tauri = json.loads(
+            (ROOT / "desktop" / "src-tauri" / "tauri.conf.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIn(
+            "../THIRD_PARTY_NOTICES.txt",
+            tauri["bundle"]["resources"],
+        )
+
+        notices = (
+            ROOT / "desktop" / "THIRD_PARTY_NOTICES.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("RUST DEPENDENCIES", notices)
+        self.assertIn("FRONTEND DEPENDENCIES", notices)
+        self.assertGreater(len(notices), 100_000)
+
+        package = json.loads(
+            (ROOT / "desktop" / "package.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            package["scripts"]["notices:check"],
+            "node scripts/generate-notices.mjs",
         )
 
 

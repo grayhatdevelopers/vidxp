@@ -136,7 +136,7 @@ gate before opening a pull request.
 | MCP | Tool contract + `vidxp-mcp --check` |
 | Media/artifacts | Real ffprobe/FFmpeg smoke + path/ID confinement |
 | Models/providers | Dependency check, prepared/unprepared states, short real-media smoke |
-| Desktop | Rust tests, JavaScript syntax, setup/close lifecycle |
+| Desktop | Frontend typecheck/lint/tests/build, Rust tests, setup/close lifecycle |
 | Docker/Compose | Dockerfile targets, `docker compose config`, health checks |
 | Documentation | Commands, relative links, headings, and rendered tables |
 
@@ -145,16 +145,37 @@ Common commands:
 ```bash
 uv run --no-sync ruff check .
 uv run --no-sync pytest -q
-node --check desktop/web/app.js
+npm --prefix desktop run check
 docker compose config --quiet
 ```
 
 Desktop validation requires the pinned uv sidecar before Rust tests:
 
 ```bash
-npm --prefix desktop install
+npm --prefix desktop ci
+npm --prefix desktop run model-catalog:check
+npm --prefix desktop run notices:check
+npm --prefix desktop run check
 npm --prefix desktop run sidecar:windows
-cargo test --manifest-path desktop/src-tauri/Cargo.toml
+cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
+```
+
+Install the pinned notice generator and prefetch the locked Cargo graph before
+running notice generation in offline/frozen mode:
+
+```bash
+cargo install cargo-about --version 0.9.1 --locked --features cli
+cargo fetch --manifest-path desktop/src-tauri/Cargo.toml --locked
+npm --prefix desktop run notices:write
+npm --prefix desktop run notices:check
+```
+
+The Desktop model-cache catalog is derived from the canonical Python
+capability/model contracts. Do not edit its generated entries by hand:
+
+```bash
+npm --prefix desktop run model-catalog:write
+npm --prefix desktop run model-catalog:check
 ```
 
 Use `npm --prefix desktop run sidecar:unix` on macOS or Linux. Validate

@@ -4,12 +4,16 @@
   "version": "0.4.0-b",
   "identifier": "dev.grayhat.vidxp",
   "build": {
-    "frontendDist": "../web"
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost ws:"
     },
     "windows": [
       {
@@ -20,13 +24,20 @@
         "minWidth": 680,
         "minHeight": 600,
         "visible": false,
-        "resizable": true
+        "resizable": true,
+        "decorations": true,
+        "shadow": true,
+        "transparent": false
       }
     ]
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "../THIRD_PARTY_NOTICES.txt",
+      "../../LICENSE"
+    ],
     "externalBin": [
       "binaries/uv"
     ],
