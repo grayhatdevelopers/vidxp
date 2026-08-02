@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export type AsyncStatus = 'idle' | 'checking' | 'installing' | 'launching' | 'succeeded' | 'failed';
 
@@ -43,4 +43,39 @@ export function useAsyncAction<TArgs extends unknown[], TResult>(
   }, []);
 
   return { run, reset, status, error, pending: status === activeStatus };
+}
+
+export function useExclusiveOperation<TKind>() {
+  const generation = useRef(0);
+  const active = useRef<{ id: number; kind: TKind } | null>(null);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+      active.current = null;
+    };
+  }, []);
+
+  const begin = useCallback((kind: TKind) => {
+    if (active.current) return null;
+    const id = ++generation.current;
+    active.current = { id, kind };
+    return id;
+  }, []);
+
+  const current = useCallback(
+    (id: number) => mounted.current && active.current?.id === id,
+    [],
+  );
+
+  const settle = useCallback((id: number) => {
+    if (!mounted.current || active.current?.id !== id) return false;
+    active.current = null;
+    return true;
+  }, []);
+
+  return useMemo(() => ({ begin, current, settle }), [begin, current, settle]);
 }

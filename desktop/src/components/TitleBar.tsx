@@ -91,3 +91,8 @@ export function TitleBar() {
     </header>
   );
 }
+
+export function WindowsTitleBar() {
+  const platform = `${navigator.userAgent} ${navigator.platform}`;
+  return /Windows|Win32|Win64/i.test(platform) ? <TitleBar /> : null;
+}

@@ -10,7 +10,7 @@ function read(path: string) {
   return readFileSync(resolve(repository, path), 'utf8');
 }
 
-describe('generated Desktop contracts', () => {
+describe('Desktop packaging and documentation contracts', () => {
   it('packages the project license and complete third-party notices', () => {
     const config = JSON.parse(read('desktop/src-tauri/tauri.conf.json'));
     expect(config.bundle.resources).toEqual(expect.arrayContaining([
@@ -22,6 +22,13 @@ describe('generated Desktop contracts', () => {
     expect(notices).toContain('VIDXP PROJECT LICENSE');
     expect(notices).toContain('uv 0.12.0 | MIT OR Apache-2.0');
     expect(notices).toContain('Astral Software Inc.');
+  });
+
+  it('limits borderless custom chrome to the Windows configuration', () => {
+    const base = JSON.parse(read('desktop/src-tauri/tauri.conf.json'));
+    const windows = JSON.parse(read('desktop/src-tauri/tauri.windows.conf.json'));
+    expect(base.app.windows[0]).toMatchObject({ decorations: true, shadow: true });
+    expect(windows.app.windows[0]).toMatchObject({ decorations: false, shadow: false });
   });
 
   it('exposes deterministic write and check commands for the model catalog', () => {

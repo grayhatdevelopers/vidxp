@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   targetSetupState: vi.fn(), recheckTargetState: vi.fn(), discoverLocalTargets: vi.fn(),
   chooseLocalExecutable: vi.fn(), inspectLocalTarget: vi.fn(), activateLocalTarget: vi.fn(),
-  selectTargetProfile: vi.fn(), deleteTargetProfile: vi.fn(), beginManagedSetup: vi.fn(),
+  selectTargetProfile: vi.fn(), deleteTargetProfile: vi.fn(), confirmForgetTarget: vi.fn(), beginManagedSetup: vi.fn(),
   cancelManagedSetup: vi.fn(), installMediaRuntime: vi.fn(), installRuntime: vi.fn(),
   prepareManagedModels: vi.fn(),
   runtimeManifest: vi.fn(), runtimeStatus: vi.fn(), launchUi: vi.fn(),
@@ -86,6 +86,7 @@ describe('desktop target lifecycle', () => {
     });
     mocks.beginManagedSetup.mockResolvedValue({ id: 'draft-1', previous_profile_id: null });
     mocks.cancelManagedSetup.mockResolvedValue(emptyState);
+    mocks.confirmForgetTarget.mockResolvedValue(true);
     mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', capabilities: { scene: { extra: 'scene', label: 'Visual scene search' } }, surfaces: { browser: { extra: 'frontend', label: 'Browser interface', description: 'Browser UI', default: true } } });
     mocks.runtimeStatus.mockResolvedValue({ state: 'never_configured', ready: false, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'C:\\Models', detail: 'No managed runtime yet.' });
     mocks.modelDirectoryInventory.mockResolvedValue({ directory: 'C:\\Models', exists: false, readable: true, total_bytes: 0, file_count: 0, recognized_models: [], empty: true, verification_required: false, truncated: false, detail: 'Empty.' });
@@ -169,7 +170,6 @@ describe('desktop target lifecycle', () => {
     mocks.targetSetupState.mockResolvedValue(state); mocks.recheckTargetState.mockResolvedValue(state);
     mocks.selectTargetProfile.mockResolvedValue({ ...state, selected_profile_id: saved.id });
     mocks.deleteTargetProfile.mockResolvedValue({ profiles: [saved], selected_profile_id: saved.id, issues: [] });
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup(); renderApp();
     await user.click(await screen.findByRole('button', { name: 'Manage targets' }));
     await user.click(screen.getAllByRole('button', { name: 'Select' }).find((button) => !button.hasAttribute('disabled'))!);
@@ -207,6 +207,28 @@ describe('desktop target lifecycle', () => {
     expect(screen.getByText(/installed runtime remains active while Desktop creates/i)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Reset changes' }));
     expect(apply).toBeDisabled();
+    await waitFor(() => expect(mocks.modelDirectoryInventory).toHaveBeenCalledTimes(2));
+  });
+
+  it('preserves a broken managed runtime draft instead of selecting every option', async () => {
+    mocks.runtimeManifest.mockResolvedValue({
+      package_version: '0.4.0',
+      capabilities: {
+        actor: { extra: 'actor', label: 'Actor recognition' },
+        scene: { extra: 'scene', label: 'Visual scene search' },
+      },
+      surfaces: { browser: { extra: 'frontend', label: 'Browser interface', description: 'Browser UI', default: true } },
+    });
+    mocks.runtimeStatus.mockResolvedValue({
+      state: 'broken', ready: false, runtime_profile: 'runtime-a', package_version: '0.4.0',
+      capabilities: ['scene'], surfaces: [], model_directory: 'D:\\CustomModels', detail: 'FFmpeg was not found.',
+    });
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+    expect(screen.getByRole('checkbox', { name: /Visual scene search/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Actor recognition/i })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Browser interface/i })).not.toBeChecked();
+    expect(screen.getByText('D:\\CustomModels')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Repair VidXP' })).toBeEnabled();
   });
 
   it('passes the scoped draft through first-time installation and does not auto-open the browser', async () => {

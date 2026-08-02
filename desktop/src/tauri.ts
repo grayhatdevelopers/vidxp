@@ -150,6 +150,7 @@ export interface RuntimeManifest {
 export interface RuntimeStatus {
   state: 'never_configured' | 'ready' | 'broken';
   ready: boolean;
+  runtime_profile: string | null;
   package_version: string;
   capabilities: string[];
   surfaces: string[];
@@ -272,6 +273,10 @@ export function selectTargetProfile(profileId: string): Promise<TargetSetupState
 
 export function deleteTargetProfile(profileId: string): Promise<TargetSetupState> {
   return invoke<WireTargetState>('delete_target_profile', { profileId }).then(normalizeState);
+}
+
+export function confirmForgetTarget(displayName: string): Promise<boolean> {
+  return invoke('confirm_forget_target', { displayName });
 }
 
 export function beginManagedSetup(): Promise<ManagedSetupDraft> {

@@ -6,10 +6,11 @@ import { LocalSetup } from './components/LocalSetup';
 import { ManagedSetup } from './components/ManagedSetup';
 import { TargetChoice } from './components/TargetChoice';
 import { TargetSummary } from './components/TargetSummary';
-import { TitleBar } from './components/TitleBar';
+import { WindowsTitleBar } from './components/TitleBar';
 import {
   beginManagedSetup,
   cancelManagedSetup,
+  confirmForgetTarget,
   deleteTargetProfile,
   errorMessage,
   recheckTargetState,
@@ -20,6 +21,7 @@ import {
   type TargetKind,
   type TargetSetupState,
 } from './tauri';
+import { useExclusiveOperation } from './useAsyncAction';
 
 type Stage = 'loading' | 'choice' | 'local' | 'managed-confirm' | 'managed' | 'summary';
 type AppOperation = 'startup-check' | 'recheck' | 'begin-managed' | 'cancel-managed' | 'select-profile' | 'forget-profile';
@@ -77,23 +79,20 @@ function reducer(state: LifecycleState, action: Action): LifecycleState {
 
 export function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const generation = useRef(0);
-  const activeOperation = useRef<AppOperation | null>(null);
+  const operations = useExclusiveOperation<AppOperation>();
   const startupLoad = useRef<Promise<TargetSetupState> | null>(null);
 
   const startOperation = useCallback((operation: AppOperation, profileId?: string): number | null => {
-    if (activeOperation.current) return null;
-    activeOperation.current = operation;
-    const current = ++generation.current;
+    const current = operations.begin(operation);
+    if (current === null) return null;
     dispatch({ type: 'operationStarted', operation, profileId });
     return current;
-  }, []);
+  }, [operations]);
 
   const settleOperation = useCallback((current: number, action: Action) => {
-    if (generation.current !== current) return;
-    activeOperation.current = null;
+    if (!operations.settle(current)) return;
     dispatch(action);
-  }, []);
+  }, [operations]);
 
   const recheck = useCallback(async (operation: 'startup-check' | 'recheck' = 'recheck') => {
     const current = startOperation(operation);
@@ -128,8 +127,6 @@ export function App() {
       });
     return () => {
       mounted = false;
-      generation.current += 1;
-      activeOperation.current = null;
     };
   }, [recheck]);
 
@@ -180,7 +177,7 @@ export function App() {
   }
 
   async function forgetSaved(id: string, name: string) {
-    if (!window.confirm(`Forget “${name}” from VidXP Desktop? The installation itself will not be changed.`)) return;
+    if (!await confirmForgetTarget(name)) return;
     const current = startOperation('forget-profile', id);
     if (current === null) return;
     try {
@@ -198,7 +195,7 @@ export function App() {
   const operationPending = state.operation !== null;
   return (
     <div className="appViewport">
-      <TitleBar />
+      <WindowsTitleBar />
       <div className="appBackdrop"><div className="aurora auroraOne" aria-hidden="true" /><div className="aurora auroraTwo" aria-hidden="true" />
         <div className="mainScroller"><main className="appShell"><div className="contentFrame">
           {state.failure && <Alert icon={<IconAlertCircle />} color="red" title="Desktop issue" role="alert" mb="lg">{state.failure}</Alert>}

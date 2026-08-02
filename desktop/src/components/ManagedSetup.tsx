@@ -29,6 +29,7 @@ import {
   type ModelDirectoryInventory,
   type TargetSetupState,
 } from '../tauri';
+import { useExclusiveOperation } from '../useAsyncAction';
 
 interface ManagedSetupProps {
   draftId: string;
@@ -36,7 +37,7 @@ interface ManagedSetupProps {
   onCommitted: (setup: TargetSetupState) => void;
 }
 
-type ManagedOperation = 'load' | 'folder' | 'install' | 'prepare' | 'launch';
+type ManagedOperation = 'load' | 'folder' | 'reset' | 'install' | 'prepare' | 'launch';
 
 export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps) {
   const [manifest, setManifest] = useState<RuntimeManifest | null>(null);
@@ -49,38 +50,27 @@ export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps
   const [operation, setOperation] = useState<ManagedOperation | null>('load');
   const [message, setMessage] = useState('Loading managed runtime options…');
   const [failure, setFailure] = useState<string | null>(null);
-  const activeOperation = useRef<{ id: number; kind: ManagedOperation } | null>({ id: 1, kind: 'load' });
-  const nextOperation = useRef(1);
-  const mounted = useRef(true);
+  const operations = useExclusiveOperation<ManagedOperation>();
   const initialLoad = useRef<Promise<{
     manifest: RuntimeManifest;
     status: RuntimeStatus;
     inventory: ModelDirectoryInventory;
   }> | null>(null);
 
-  function beginOperation(kind: ManagedOperation): number | null {
-    if (activeOperation.current) return null;
-    const id = ++nextOperation.current;
-    activeOperation.current = { id, kind };
+  const beginOperation = useCallback((kind: ManagedOperation): number | null => {
+    const id = operations.begin(kind);
+    if (id === null) return null;
     setOperation(kind);
     return id;
-  }
+  }, [operations]);
 
   const settleOperation = useCallback((id: number) => {
-    if (!mounted.current || activeOperation.current?.id !== id) return;
-    activeOperation.current = null;
+    if (!operations.settle(id)) return;
     setOperation(null);
-  }, []);
+  }, [operations]);
 
   const load = useCallback(async () => {
-    let operationId = activeOperation.current?.kind === 'load'
-      ? activeOperation.current.id
-      : null;
-    if (operationId === null && !activeOperation.current) {
-      operationId = ++nextOperation.current;
-      activeOperation.current = { id: operationId, kind: 'load' };
-      setOperation('load');
-    }
+    const operationId = beginOperation('load');
     if (operationId === null) return;
     setFailure(null);
     try {
@@ -92,30 +82,30 @@ export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps
         }));
       initialLoad.current = request;
       const { manifest: nextManifest, status: nextStatus, inventory: nextInventory } = await request;
-      if (!mounted.current || activeOperation.current?.id !== operationId) return;
+      if (!operations.current(operationId)) return;
       setManifest(nextManifest);
       setStatus(nextStatus);
-      setCapabilities(
-        nextStatus.ready ? nextStatus.capabilities : Object.keys(nextManifest.capabilities),
-      );
+      const configured = nextStatus.state !== 'never_configured';
+      setCapabilities(configured ? nextStatus.capabilities : Object.keys(nextManifest.capabilities));
       setSurfaces(
-        nextStatus.ready
+        configured
           ? nextStatus.surfaces
           : Object.entries(nextManifest.surfaces)
               .filter(([, surface]) => surface.default)
               .map(([id]) => id),
       );
       setModelDirectory(nextStatus.model_directory);
+      setPrepareDuringInstall(!configured);
       setInventory(nextInventory);
       setMessage(nextStatus.ready ? 'The managed runtime is ready.' : nextStatus.detail);
     } catch (error) {
-      if (mounted.current && activeOperation.current?.id === operationId) {
+      if (operations.current(operationId)) {
         setFailure(errorMessage(error, 'Managed setup could not be loaded.'));
       }
     } finally {
       settleOperation(operationId);
     }
-  }, [settleOperation]);
+  }, [beginOperation, operations, settleOperation]);
 
   async function refreshInventory(directory: string): Promise<boolean> {
     try {
@@ -129,13 +119,8 @@ export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps
   }
 
   useEffect(() => {
-    mounted.current = true;
     void load();
-    return () => {
-      mounted.current = false;
-      nextOperation.current += 1;
-      activeOperation.current = null;
-    };
+    return undefined;
   }, [load]);
 
   function toggleValue(value: string, checked: boolean, setter: (next: string[]) => void, current: string[]) {
@@ -176,6 +161,14 @@ export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps
     try {
       setMessage('Checking FFmpeg and required codecs…');
       await installMediaRuntime(draftId);
+      if (status?.state === 'broken' && !dirty) {
+        const repaired = await runtimeStatus();
+        if (repaired.ready) {
+          setStatus(repaired);
+          setMessage('The managed runtime is ready.');
+          return;
+        }
+      }
       setMessage(
         captured.prepare_models
           ? 'Creating the managed runtime, verifying cached models, and downloading anything missing…'
@@ -183,7 +176,6 @@ export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps
       );
       const result = await installRuntime(captured);
       setMessage(result.install.prepared ? 'Runtime and selected models are ready.' : 'Runtime ready. Model downloads were deferred.');
-      activeOperation.current = null;
       onCommitted(result.setup);
     } catch (error) {
       setFailure(errorMessage(error, 'Managed setup failed. The previous target remains authoritative; any completed replacement runtime is retained for recovery.'));
@@ -226,18 +218,27 @@ export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps
 
   const sameValues = (left: string[], right: string[]) =>
     [...left].sort().join('\u0000') === [...right].sort().join('\u0000');
-  const dirty = Boolean(status?.ready) && (
+  const configured = status?.state !== undefined && status.state !== 'never_configured';
+  const dirty = configured && (
     !sameValues(capabilities, status?.capabilities ?? [])
     || !sameValues(surfaces, status?.surfaces ?? [])
     || modelDirectory !== status?.model_directory
   );
 
-  function resetDraft() {
-    if (!status?.ready) return;
+  async function resetDraft() {
+    if (!configured || !status) return;
+    const operationId = beginOperation('reset');
+    if (operationId === null) return;
     setCapabilities(status.capabilities);
     setSurfaces(status.surfaces);
     setModelDirectory(status.model_directory);
+    setInventory(null);
     setFailure(null);
+    try {
+      await refreshInventory(status.model_directory);
+    } finally {
+      settleOperation(operationId);
+    }
   }
 
   const isBusy = operation !== null;
@@ -300,7 +301,7 @@ export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps
               <Button variant="default" leftSection={<IconFolderOpen aria-hidden="true" size={16} />} loading={operation === 'folder'} disabled={isBusy} onClick={() => void chooseFolder()}>Choose folder…</Button>
             </Group>
             <div className="cacheInventory" aria-live="polite">
-              {operation === 'load' || operation === 'folder' ? (
+              {operation === 'load' || operation === 'folder' || operation === 'reset' ? (
                 <Text size="sm" mt="md"><Loader size="xs" /> Checking cached model files…</Text>
               ) : inventory && !inventory.readable ? (
                 <Alert mt="md" color="red" title="Model folder cannot be read">{inventory.detail}</Alert>
@@ -352,16 +353,16 @@ export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps
         </div>
       )}
 
-      {dirty && <Alert color="yellow" title="Update creates a replacement runtime">The installed runtime remains active while Desktop creates and validates this draft. It is replaced only after activation succeeds.</Alert>}
+      {configured && (dirty || status?.state === 'broken') && <Alert color="yellow" title={dirty ? 'Update creates a replacement runtime' : 'Repair keeps the current configuration'}>{dirty ? 'The installed runtime remains active while Desktop creates and validates this draft. It is replaced only after activation succeeds.' : 'Desktop will repair media tools first. It replaces the managed runtime only if the installed runtime is still damaged, preserving its capabilities, browser surface, and model folder.'}</Alert>}
 
       <div className="managedFooter">
         <div className="statusRegion" role="status" aria-live="polite" aria-atomic="true">{isBusy && <Loader size="xs" />}{(isBusy || status?.ready) && message}</div>
-        {status?.ready ? (
+        {configured ? (
           <Group>
-            <Button variant="default" disabled={!dirty || isBusy} onClick={resetDraft}>Reset changes</Button>
-            <Button loading={operation === 'install'} disabled={!dirty || !manifest || isBusy} onClick={() => void install()}>Apply update</Button>
-            <Button variant="light" loading={operation === 'prepare'} disabled={dirty || isBusy} onClick={() => void prepareModels()}>Prepare / verify models</Button>
-            <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={operation === 'launch'} disabled={dirty || isBusy} onClick={() => void launch()}>Open VidXP</Button>
+            <Button variant="default" disabled={!dirty || isBusy} onClick={() => void resetDraft()}>Reset changes</Button>
+            <Button loading={operation === 'install'} disabled={(!dirty && status?.state !== 'broken') || !manifest || isBusy} onClick={() => void install()}>{status?.state === 'broken' && !dirty ? 'Repair VidXP' : 'Apply update'}</Button>
+            <Button variant="light" loading={operation === 'prepare'} disabled={!status?.ready || dirty || isBusy} onClick={() => void prepareModels()}>Prepare / verify models</Button>
+            <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={operation === 'launch'} disabled={!status?.ready || dirty || isBusy} onClick={() => void launch()}>Open VidXP</Button>
           </Group>
         ) : (
           <Button loading={operation === 'install'} disabled={!manifest || isBusy} onClick={() => void install()}>Configure VidXP</Button>
