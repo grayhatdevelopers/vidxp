@@ -138,6 +138,17 @@ try {
   if (process.argv.includes('--write')) {
     writeFileSync(destination, artifact, 'utf8');
   } else if (readFileSync(destination, 'utf8') !== artifact) {
+    const generated = join(temporary, 'THIRD_PARTY_NOTICES.txt');
+    writeFileSync(generated, artifact, 'utf8');
+    try {
+      execFileSync(
+        'git',
+        ['diff', '--no-index', '--', destination, generated],
+        { cwd: desktop, stdio: 'inherit' },
+      );
+    } catch (error) {
+      if (error?.status !== 1) throw error;
+    }
     throw new Error('THIRD_PARTY_NOTICES.txt is stale; run npm run notices:write.');
   }
 } finally {
