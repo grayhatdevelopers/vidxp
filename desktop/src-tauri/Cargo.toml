@@ -29,7 +29,6 @@ tauri-plugin-opener = "2.5.4"
 tauri-plugin-shell = "2.3.5"
 tauri-plugin-single-instance = "2.4.3"
 tauri-plugin-store = "2.4.4"
-wait-timeout = "0.2.1"
 which = "8.0.0"
 
 [target.'cfg(windows)'.dependencies]

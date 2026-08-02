@@ -4563,7 +4563,6 @@ Used by:
 - unicode-segmentation 1.13.3 | https://github.com/unicode-rs/unicode-segmentation | registry+https://github.com/rust-lang/crates.io-index
 - url 2.5.8 | https://github.com/servo/rust-url | registry+https://github.com/rust-lang/crates.io-index
 - uuid 1.24.0 | https://github.com/uuid-rs/uuid | registry+https://github.com/rust-lang/crates.io-index
-- wait-timeout 0.2.1 | https://github.com/alexcrichton/wait-timeout | registry+https://github.com/rust-lang/crates.io-index
 - wasi 0.11.1+wasi-snapshot-preview1 | https://github.com/bytecodealliance/wasi | registry+https://github.com/rust-lang/crates.io-index
 - wasm-bindgen-futures 0.4.76 | https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/futures | registry+https://github.com/rust-lang/crates.io-index
 - wasm-bindgen-macro-support 0.2.126 | https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support | registry+https://github.com/rust-lang/crates.io-index
@@ -11178,9 +11177,13 @@ SOFTWARE.
 -------------------------------------------------------------------------------
 react-remove-scroll-bar@2.3.8 | MIT | https://github.com/theKashey/react-remove-scroll-bar
 
+Vendored verbatim upstream license for react-remove-scroll-bar@2.3.8
+Source: https://github.com/theKashey/react-remove-scroll-bar/blob/8ca9ba5ea52de03308fe8ced94f7b159a44d28ff/LICENSE
+SHA-256: a79aae0c0f21990d9d963bb3c5a79cdcea9a46f8523ba55c58d7fe776b6ebc84
+
 MIT License
 
-Copyright holder: Anton Korzunov <thekashey@gmail.com>
+Copyright (c) 2025 Anton Korzunov <thekashey@gmail.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

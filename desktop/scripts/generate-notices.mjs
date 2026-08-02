@@ -8,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -19,23 +20,13 @@ const cargoLock = join(desktop, 'src-tauri', 'Cargo.lock');
 const preferredArtifact = /^(licen[cs]e|copying|notice)(?:[._-].*)?$/i;
 const documentationArtifact = /^(readme|changelog)(?:[._-].*)?$/i;
 
-const mitBody = `Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.`;
+const vendoredArtifacts = new Map([
+  ['react-remove-scroll-bar@2.3.8', {
+    path: join(desktop, 'licenses', 'npm', 'react-remove-scroll-bar-2.3.8-LICENSE.txt'),
+    source: 'https://github.com/theKashey/react-remove-scroll-bar/blob/8ca9ba5ea52de03308fe8ced94f7b159a44d28ff/LICENSE',
+    sha256: 'a79aae0c0f21990d9d963bb3c5a79cdcea9a46f8523ba55c58d7fe776b6ebc84',
+  }],
+]);
 
 function packageRoot(metadata) {
   if (!metadata.licenseFile) return null;
@@ -61,20 +52,16 @@ function frontendLicenseText(identity, metadata) {
   if (artifacts.length > 0) {
     return artifacts.map((path) => readFileSync(path, 'utf8').trim()).join('\n\n');
   }
-  if (metadata.licenses === 'MIT') {
-    const root = packageRoot(metadata);
-    const packageMetadata = root
-      ? JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-      : {};
-    const author = typeof packageMetadata.author === 'string'
-      ? packageMetadata.author
-      : packageMetadata.author?.name;
-    if (!author) {
-      throw new Error(`${identity} declares MIT but publishes no preferred license artifact or author attribution.`);
+  const vendored = vendoredArtifacts.get(identity);
+  if (vendored) {
+    const contents = readFileSync(vendored.path, 'utf8').trim();
+    const actual = createHash('sha256').update(`${contents}\n`, 'utf8').digest('hex');
+    if (actual !== vendored.sha256) {
+      throw new Error(`${identity} vendored license digest ${actual} does not match ${vendored.sha256}.`);
     }
-    return `MIT License\n\nCopyright holder: ${author}\n\n${mitBody}`;
+    return `Vendored verbatim upstream license for ${identity}\nSource: ${vendored.source}\nSHA-256: ${vendored.sha256}\n\n${contents}`;
   }
-  throw new Error(`${identity} has no resolvable published license artifact for ${metadata.licenses}.`);
+  throw new Error(`${identity} has no published license artifact and no exact, provenance-pinned vendored exception for ${metadata.licenses}.`);
 }
 
 try {
