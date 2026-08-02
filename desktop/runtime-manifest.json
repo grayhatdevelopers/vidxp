@@ -4,7 +4,7 @@
   "package_name": "vidxp",
   "package_version": "0.4.0-b",
   "dependency_index": "https://pypi.org/simple",
-  "dependency_constraints_sha256": "d3ed16906841952017f112903356bfe433a8515a37aa3f56e4af4dfa1f985835",
+  "dependency_constraints_sha256": "4225babc5298044494772e13c59a3346c706468069f0490025c988244e0b5bbb",
   "python_version": "3.14.6",
   "uv_version": "0.12.0",
   "surfaces": {
