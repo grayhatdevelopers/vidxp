@@ -16,10 +16,12 @@ button, [role='radio'], [role='checkbox'], input { -webkit-tap-highlight-color: 
   height: 100dvh;
   min-height: 0;
   display: grid;
-  grid-template-rows: 2.75rem minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   background: #080b12;
 }
+.appViewport.windowsCustomChrome { grid-template-rows: 2.75rem minmax(0, 1fr); }
+.appViewport.nativePlatformChrome { grid-template-rows: minmax(0, 1fr); }
 .titleBar {
   position: relative;
   z-index: 10;

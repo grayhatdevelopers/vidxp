@@ -1,7 +1,7 @@
 import { ActionIcon } from '@mantine/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { IconCopy, IconMinus, IconSquare, IconX } from '@tabler/icons-react';
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useEffect, useState, type MouseEvent, type PropsWithChildren } from 'react';
 
 const appWindow = getCurrentWindow();
 
@@ -92,7 +92,24 @@ export function TitleBar() {
   );
 }
 
-export function WindowsTitleBar() {
-  const platform = `${navigator.userAgent} ${navigator.platform}`;
-  return /Windows|Win32|Win64/i.test(platform) ? <TitleBar /> : null;
+function usesWindowsCustomChrome(
+  platform = `${navigator.userAgent} ${navigator.platform}`,
+) {
+  return /Windows|Win32|Win64/i.test(platform);
+}
+
+export function DesktopViewport({
+  children,
+  platform,
+}: PropsWithChildren<{ platform?: string }>) {
+  const customChrome = usesWindowsCustomChrome(platform);
+  return (
+    <div
+      className={`appViewport ${customChrome ? 'windowsCustomChrome' : 'nativePlatformChrome'}`}
+      data-testid="desktop-viewport"
+    >
+      {customChrome && <TitleBar />}
+      {children}
+    </div>
+  );
 }

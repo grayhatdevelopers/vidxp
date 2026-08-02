@@ -6,13 +6,14 @@ import { LocalSetup } from './components/LocalSetup';
 import { ManagedSetup } from './components/ManagedSetup';
 import { TargetChoice } from './components/TargetChoice';
 import { TargetSummary } from './components/TargetSummary';
-import { WindowsTitleBar } from './components/TitleBar';
+import { DesktopViewport } from './components/TitleBar';
 import {
   beginManagedSetup,
   cancelManagedSetup,
   confirmForgetTarget,
   deleteTargetProfile,
   errorMessage,
+  launchUi,
   recheckTargetState,
   selectTargetProfile,
   selectedProfile,
@@ -24,7 +25,7 @@ import {
 import { useExclusiveOperation } from './useAsyncAction';
 
 type Stage = 'loading' | 'choice' | 'local' | 'managed-confirm' | 'managed' | 'summary';
-type AppOperation = 'startup-check' | 'recheck' | 'begin-managed' | 'cancel-managed' | 'select-profile' | 'forget-profile';
+type AppOperation = 'startup-check' | 'recheck' | 'begin-managed' | 'cancel-managed' | 'select-profile' | 'forget-profile' | 'open-browser';
 
 interface LifecycleState {
   stage: Stage;
@@ -191,11 +192,24 @@ export function App() {
     }
   }
 
+  async function openBrowser() {
+    const current = startOperation('open-browser');
+    if (current === null) return;
+    try {
+      await launchUi();
+      settleOperation(current, { type: 'operationSettled' });
+    } catch (error) {
+      settleOperation(current, {
+        type: 'operationFailed',
+        failure: errorMessage(error, 'VidXP could not be opened.'),
+      });
+    }
+  }
+
   const profile = state.setup ? selectedProfile(state.setup) : null;
   const operationPending = state.operation !== null;
   return (
-    <div className="appViewport">
-      <WindowsTitleBar />
+    <DesktopViewport>
       <div className="appBackdrop"><div className="aurora auroraOne" aria-hidden="true" /><div className="aurora auroraTwo" aria-hidden="true" />
         <div className="mainScroller"><main className="appShell"><div className="contentFrame">
           {state.failure && <Alert icon={<IconAlertCircle />} color="red" title="Desktop issue" role="alert" mb="lg">{state.failure}</Alert>}
@@ -215,9 +229,9 @@ export function App() {
           {state.stage === 'local' && <LocalSetup onBack={() => dispatch({ type: 'navigate', stage: 'choice' })} onActivated={(setup) => dispatch({ type: 'operationSettled', setup, stage: 'summary' })} />}
           {state.stage === 'managed-confirm' && <section aria-labelledby="managed-confirm-title"><Button variant="subtle" leftSection={<IconArrowLeft size={17} />} disabled={operationPending} onClick={() => dispatch({ type: 'navigate', stage: 'choice' })}>Back</Button><div className="confirmationPanel"><ThemeIcon size={54} radius="xl" variant="light"><IconDownload size={28} /></ThemeIcon><Text className="eyebrow" mt="xl">CONFIRM MANAGED SETUP</Text><Title id="managed-confirm-title" order={1} className="pageTitle">Let VidXP Desktop manage a private runtime?</Title><Text className="lede centeredCopy">Your active target stays available until the replacement is installed, validated, and activated.</Text><Group justify="center" mt="xl"><Button variant="default" disabled={operationPending} onClick={() => dispatch({ type: 'navigate', stage: 'choice' })}>Cancel</Button><Button loading={state.operation === 'begin-managed'} disabled={operationPending} onClick={() => void beginManaged()}>Continue to setup</Button></Group></div></section>}
           {state.stage === 'managed' && state.draft && <ManagedSetup draftId={state.draft.id} onBack={cancelManaged} onCommitted={(setup) => dispatch({ type: 'operationSettled', setup, draft: null, stage: 'summary' })} />}
-          {state.stage === 'summary' && profile && <TargetSummary profile={profile} validationError={profile.validation_error} checking={state.operation === 'startup-check' || state.operation === 'recheck'} operationPending={operationPending} onRecheck={() => recheck()} onManageManaged={() => dispatch({ type: 'navigate', stage: 'managed-confirm' })} onChooseAnother={() => dispatch({ type: 'navigate', stage: 'choice', choice: null })} />}
+          {state.stage === 'summary' && profile && <TargetSummary profile={profile} validationError={profile.validation_error} checking={state.operation === 'startup-check' || state.operation === 'recheck'} opening={state.operation === 'open-browser'} operationPending={operationPending} onRecheck={() => recheck()} onManageManaged={() => dispatch({ type: 'navigate', stage: 'managed-confirm' })} onChooseAnother={() => dispatch({ type: 'navigate', stage: 'choice', choice: null })} onOpen={openBrowser} />}
         </div><footer className="appFooter"><span>Target metadata stays private to VidXP Desktop.</span><span>Credentials are never stored in this setup profile.</span></footer></main></div>
       </div>
-    </div>
+    </DesktopViewport>
   );
 }

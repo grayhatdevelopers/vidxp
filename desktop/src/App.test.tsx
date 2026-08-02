@@ -88,7 +88,7 @@ describe('desktop target lifecycle', () => {
     mocks.cancelManagedSetup.mockResolvedValue(emptyState);
     mocks.confirmForgetTarget.mockResolvedValue(true);
     mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', capabilities: { scene: { extra: 'scene', label: 'Visual scene search' } }, surfaces: { browser: { extra: 'frontend', label: 'Browser interface', description: 'Browser UI', default: true } } });
-    mocks.runtimeStatus.mockResolvedValue({ state: 'never_configured', ready: false, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'C:\\Models', detail: 'No managed runtime yet.' });
+    mocks.runtimeStatus.mockResolvedValue({ state: 'never_configured', ready: false, runtime_profile: null, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'C:\\Models', detail: 'No managed runtime yet.' });
     mocks.modelDirectoryInventory.mockResolvedValue({ directory: 'C:\\Models', exists: false, readable: true, total_bytes: 0, file_count: 0, recognized_models: [], empty: true, verification_required: false, truncated: false, detail: 'Empty.' });
     mocks.installMediaRuntime.mockResolvedValue({ ready: true });
     mocks.installRuntime.mockResolvedValue({
@@ -125,6 +125,28 @@ describe('desktop target lifecycle', () => {
     const open = await screen.findByRole('button', { name: 'Open VidXP' });
     await user.click(open);
     expect(mocks.launchUi).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(open).not.toHaveAttribute('data-loading'));
+  });
+
+  it('uses the parent exclusive operation while browser startup is pending', async () => {
+    const browserManaged = {
+      ...managedProfile,
+      frontend,
+      surfaces: ['browser'],
+    };
+    const setup = { profiles: [browserManaged], selected_profile_id: browserManaged.id, issues: [] };
+    const opening = deferred<void>();
+    mocks.targetSetupState.mockResolvedValue(setup);
+    mocks.recheckTargetState.mockResolvedValue(setup);
+    mocks.launchUi.mockReturnValue(opening.promise);
+    const user = userEvent.setup(); renderApp();
+    const open = await screen.findByRole('button', { name: 'Open VidXP' });
+    await user.click(open);
+    expect(open).toHaveAttribute('data-loading');
+    expect(screen.getByRole('button', { name: 'Manage targets' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Recheck target' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Manage setup' })).toBeDisabled();
+    opening.resolve();
     await waitFor(() => expect(open).not.toHaveAttribute('data-loading'));
   });
 
@@ -198,7 +220,7 @@ describe('desktop target lifecycle', () => {
   });
 
   it('keeps ready managed settings read-only until a draft is dirty, then offers Apply and Reset', async () => {
-    mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models', detail: 'Ready.' });
+    mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, runtime_profile: 'runtime-a', package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models', detail: 'Ready.' });
     const user = userEvent.setup(); renderApp(); await enterManaged(user);
     const apply = await screen.findByRole('button', { name: 'Apply update' });
     expect(apply).toBeDisabled();
@@ -231,6 +253,33 @@ describe('desktop target lifecycle', () => {
     expect(screen.getByRole('button', { name: 'Repair VidXP' })).toBeEnabled();
   });
 
+  it('uses manifest defaults and submits a replacement for a corrupt runtime pointer', async () => {
+    mocks.runtimeManifest.mockResolvedValue({
+      package_version: '0.4.0',
+      capabilities: {
+        actor: { extra: 'actor', label: 'Actor recognition' },
+        scene: { extra: 'scene', label: 'Visual scene search' },
+      },
+      surfaces: { browser: { extra: 'frontend', label: 'Browser interface', description: 'Browser UI', default: true } },
+    });
+    mocks.runtimeStatus.mockResolvedValue({
+      state: 'broken', ready: false, runtime_profile: null, package_version: '0.4.0',
+      capabilities: [], surfaces: [], model_directory: 'C:\\Models', detail: 'The active runtime pointer is invalid.',
+    });
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+    expect(screen.getByRole('checkbox', { name: /Actor recognition/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Visual scene search/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Browser interface/i })).toBeChecked();
+    expect(screen.getByText(/cannot recover settings from the unreadable pointer/i)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Configure replacement' }));
+    await waitFor(() => expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      capabilities: expect.arrayContaining(['actor', 'scene']),
+      surfaces: ['browser'],
+      draft_id: 'draft-1',
+    })));
+    expect(screen.queryByText('Select at least one capability.')).not.toBeInTheDocument();
+  });
+
   it('passes the scoped draft through first-time installation and does not auto-open the browser', async () => {
     const user = userEvent.setup(); renderApp(); await enterManaged(user);
     await user.click(await screen.findByRole('button', { name: 'Configure VidXP' }));
@@ -254,7 +303,7 @@ describe('desktop target lifecycle', () => {
   });
 
   it('freezes managed controls and coalesces Apply while a replacement is running', async () => {
-    mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models', detail: 'Ready.' });
+    mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, runtime_profile: 'runtime-a', package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models', detail: 'Ready.' });
     const media = deferred<{ ready: boolean }>();
     mocks.installMediaRuntime.mockReturnValue(media.promise);
     const user = userEvent.setup(); renderApp(); await enterManaged(user);
@@ -274,7 +323,7 @@ describe('desktop target lifecycle', () => {
   });
 
   it('prepares models for an unchanged ready runtime without making the draft dirty', async () => {
-    mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models', detail: 'Ready.' });
+    mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, runtime_profile: 'runtime-a', package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models', detail: 'Ready.' });
     const user = userEvent.setup(); renderApp(); await enterManaged(user);
     expect(screen.getByRole('button', { name: 'Apply update' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Prepare / verify models' }));

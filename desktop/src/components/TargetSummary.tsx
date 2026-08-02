@@ -1,21 +1,21 @@
 import { Alert, Badge, Button, Code, Group, Text, Title } from '@mantine/core';
-import { IconAlertCircle, IconExternalLink, IconRefresh, IconSettings } from '@tabler/icons-react';
+import { IconExternalLink, IconRefresh, IconSettings } from '@tabler/icons-react';
 
-import { errorMessage, launchUi, type TargetError, type TargetProfile } from '../tauri';
-import { useAsyncAction } from '../useAsyncAction';
+import { type TargetError, type TargetProfile } from '../tauri';
 
 interface TargetSummaryProps {
   profile: TargetProfile;
   validationError?: TargetError | null;
   checking?: boolean;
   operationPending?: boolean;
+  opening?: boolean;
   onRecheck: () => Promise<void>;
   onManageManaged: () => void;
   onChooseAnother: () => void;
+  onOpen: () => Promise<void>;
 }
 
-export function TargetSummary({ profile, validationError, checking, operationPending, onRecheck, onManageManaged, onChooseAnother }: TargetSummaryProps) {
-  const opening = useAsyncAction('launching', launchUi);
+export function TargetSummary({ profile, validationError, checking, operationPending, opening, onRecheck, onManageManaged, onChooseAnother, onOpen }: TargetSummaryProps) {
   const executable = profile.display_executable;
   const desktopSurfaceUnavailable = !profile.frontend.launchable;
   const desktopAction = desktopSurfaceUnavailable
@@ -23,13 +23,6 @@ export function TargetSummary({ profile, validationError, checking, operationPen
       ? 'Unavailable · enable the browser surface in the externally managed installation'
       : 'Unavailable · return to managed setup to enable the browser surface'
     : 'Browser interface available';
-
-  async function open() {
-    try {
-      await opening.run();
-    } catch { /* The action hook exposes the settled failure below. */ }
-  }
-  const openError = opening.error ? errorMessage(opening.error, 'VidXP could not be opened.') : null;
 
   return (
     <section aria-labelledby="target-summary-title">
@@ -53,9 +46,9 @@ export function TargetSummary({ profile, validationError, checking, operationPen
           <Text size="sm" mt="xs"><strong>How to enable it:</strong> {profile.frontend?.remediation || (profile.lifecycle_ownership === 'external' ? "Use this installation's own package-management workflow to enable the VidXP browser interface, then return here and revalidate." : 'Return to managed setup and select the browser surface.')}</Text>
         </Alert>
       )}
-      {(validationError || openError) && (
-        <Alert icon={<IconAlertCircle aria-hidden="true" />} color="red" title={validationError?.code || 'Target unavailable'} role="alert" mb="md">
-          {validationError?.message || openError}
+      {validationError && (
+        <Alert color="red" title={validationError.code} role="alert" mb="md">
+          {validationError.message}
         </Alert>
       )}
 
@@ -74,7 +67,7 @@ export function TargetSummary({ profile, validationError, checking, operationPen
             <Button variant="subtle" leftSection={<IconRefresh aria-hidden="true" size={17} />} loading={checking} disabled={operationPending && !checking} onClick={() => void onRecheck()}>Recheck target</Button>
             {profile.kind === 'managed' && <Button variant="subtle" leftSection={<IconSettings aria-hidden="true" size={17} />} disabled={operationPending} onClick={onManageManaged}>Manage setup</Button>}
           </Group>
-          <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={opening.pending} disabled={Boolean(validationError) || desktopSurfaceUnavailable || operationPending} onClick={() => void open()}>Open VidXP</Button>
+          <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={opening} disabled={Boolean(validationError) || desktopSurfaceUnavailable || operationPending} onClick={() => void onOpen()}>Open VidXP</Button>
         </Group>
       </div>
     </section>
