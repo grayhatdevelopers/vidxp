@@ -47,6 +47,7 @@ from vidxp.job_service import JobService
 from vidxp.media_service import MediaService
 from vidxp.network_share import (
     is_loopback_host,
+    load_or_create_native_artifact_secret,
     load_or_create_native_upload_secret,
 )
 from vidxp.readiness_service import ReadinessService
@@ -461,8 +462,6 @@ def create_http_application(
     active_settings = settings or VidXPSettings()
     if (
         active_settings.mode == ApplicationMode.local
-        and active_settings.upload_handoff_public_url is None
-        and active_settings.upload_handoff_secret is None
         and is_loopback_host(active_settings.http_bind_host)
     ):
         host = active_settings.http_bind_host
@@ -471,17 +470,34 @@ def create_http_application(
         elif ":" in host and not host.startswith("["):
             host = f"[{host}]"
         payload = active_settings.model_dump(mode="python")
-        payload.update(
-            {
+        native_surfaces: dict[str, object] = {}
+        if (
+            active_settings.upload_handoff_public_url is None
+            and active_settings.upload_handoff_secret is None
+        ):
+            native_surfaces.update({
                 "upload_handoff_public_url": (
                     f"http://{host}:{active_settings.http_port}/upload-handoff"
                 ),
                 "upload_handoff_secret": load_or_create_native_upload_secret(
                     active_settings.data_dir
                 ),
-            }
-        )
-        active_settings = VidXPSettings.model_validate(payload)
+            })
+        if (
+            active_settings.artifact_download_public_url is None
+            and active_settings.artifact_download_secret is None
+        ):
+            native_surfaces.update({
+                "artifact_download_public_url": (
+                    f"http://{host}:{active_settings.http_port}/artifact-download"
+                ),
+                "artifact_download_secret": load_or_create_native_artifact_secret(
+                    active_settings.data_dir
+                ),
+            })
+        if native_surfaces:
+            payload.update(native_surfaces)
+            active_settings = VidXPSettings.model_validate(payload)
     active_settings.validate_http_server()
     control = create_control_plane_application(active_settings)
     authenticator = create_authenticator(active_settings)

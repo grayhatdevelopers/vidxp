@@ -323,9 +323,9 @@ The deployed resumable data plane is a four-stage protocol:
    transaction.
 2. tusd's blocking `pre-create` HTTP hook consumes a one-time grant, verifies the
    exact intent and declared size, and assigns an opaque upload ID.
-3. tusd returns an HTTPS upload URL. That URL is an unscoped bearer credential for
-   subsequent HEAD/PATCH requests because tusd cannot bind resumptions to the user
-   who created the upload.
+3. tusd returns an HTTPS upload URL (or secure loopback HTTP in local testing).
+   That URL is an unscoped bearer credential for subsequent HEAD/PATCH requests
+   because tusd cannot bind resumptions to the user who created the upload.
 4. The non-blocking `post-finish` hook idempotently upserts completion by upload ID
    and enqueues the durable ffprobe/import workflow.
 
@@ -348,8 +348,9 @@ login, OIDC token field, OAuth exchange, or identity-pairing step. The initiatin
 MCP subject and client ID are retained for audit and repository binding, not as a
 second browser-authentication requirement.
 
-One session accepts multiple files. Uppy reports each selected file's authoritative
-filename, byte size, and MIME type with a stable browser-generated client file key.
+One session accepts multiple files. Uppy reports each selected file's filename,
+byte size, and browser-declared MIME type with a stable browser-generated client
+file key. The MIME declaration is a display hint, not authoritative validation.
 VidXP then validates the metadata, per-file/session/repository limits and quota,
 creates the child intent, reserves its bytes, and binds the client key atomically.
 An exact repeated key is idempotent; conflicting reuse is rejected, while separate
@@ -403,17 +404,21 @@ workflow removes abandoned intents and quarantine objects.
 
 The hook endpoint is private to the Compose network. Client authorization is read
 from the hook request body and redacted; client tokens are never stored in tus
-metadata. Only the tus upload route is public. A completed upload is not a
-`MediaAsset` until durable probe/import succeeds.
+metadata. Only the tus upload route is public. Hooks remain enqueue-only; those
+recovery and retention sweeps run in the API's existing ingestion coordinator. A
+completed upload is not a `MediaAsset` until durable probe/import succeeds.
 
 The supported server topology uses tusd filestore on a named quarantine volume
 shared read-only with the hook service and worker. The API intentionally does not
 mount that volume: one centralized internal tusd `HEAD` probe supplies the
 authoritative upload length and offset for resume discovery, missed-finish
-recovery, and retention. The API binds that probe to the upload ID and expected
-length stored on the intent in Postgres; an existing incomplete resource is kept,
-a missing expired resource may expire, and an unavailable tusd is never treated
-as absence.
+recovery, and retention. The API durably stores each validated offset and the time
+it last advanced. After the session lifetime passes without observed progress,
+the coordinator performs a final `HEAD` and uses a compare-and-set over intent
+state, upload identity, and offset before expiring the intent. Completion recovers
+normally; a 404 may expire an already-stale intent; invalid, inconsistent, or
+unavailable responses never imply absence. Expiration releases reserved quota,
+and tus termination failures remain eligible for the next cleanup sweep.
 Managed media and artifacts use the stack's named content volume. The whole
 deployment is single-node and one deployed stack is one repository boundary.
 Deployed clients upload directly to tusd; FastAPI does not proxy large video
@@ -903,16 +908,17 @@ written to a temporary key, validated, and atomically published.
 Actor overlays and other rendered media use the same artifact workflow. Public
 rendering commands never accept output paths. The separate CLI artifact-download
 command may copy an already-authorized managed artifact to an explicit user
-destination. MCP always returns a lazy native resource link instead of embedding
-video bytes in JSON or text. Ordinary local stdio additionally returns the
-verified absolute artifact path and encoded `file://` URI because the agent and
-VidXP share a filesystem; `VIDXP_MCP_STDIO_FILESYSTEM_ACCESSIBLE=false` disables
-that hint for Docker, WSL, SSH-proxy, or other isolated stdio deployments. Remote
-Streamable HTTP never returns a server path: configured deployments return an
-expiring HTTPS capability URL, while deployments without a public artifact-download
-origin retain the native MCP resource fallback. Filesystem-isolated stdio can use
-that same HTTPS mode when a public artifact-download origin is configured;
-otherwise the MCP resource remains the portable fallback.
+destination. MCP returns a lazy native resource link instead of embedding video
+bytes in JSON or text when the artifact fits `VIDXP_MCP_MAX_RESOURCE_BYTES`.
+Ordinary local stdio additionally returns the verified absolute artifact path and
+encoded `file://` URI because the agent and VidXP share a filesystem;
+`VIDXP_MCP_STDIO_FILESYSTEM_ACCESSIBLE=false` disables that hint for Docker, WSL,
+SSH-proxy, or other isolated stdio deployments. Remote Streamable HTTP never
+returns a server path: configured deployments return an expiring HTTPS capability
+URL, and native loopback HTTP automatically serves the same range-capable route on
+its listener. Filesystem-isolated or remote deployments with an oversized artifact
+and no public download origin report delivery as unavailable with configuration
+guidance.
 
 Search and query jobs can request bounded evidence delivery. MCP defaults to the
 strongest three keyframes; callers may select `none`, `keyframes`, or
@@ -925,6 +931,8 @@ polling that same job. `create_evidence_clip` derives a fallback clip solely fro
 completed source job and its stable evidence ID; callers cannot supply authoritative
 timestamps. Keyframe-only retrieval keeps the existing read scope; requesting clip
 rendering requires repository write scope, matching the low-level clip operation.
+Evidence artifacts are best-effort and may fail independently, so completed result
+sets can contain partial frame or clip delivery.
 
 ## 18. FastAPI adapter
 
@@ -1181,10 +1189,11 @@ Supported Coolify/Compose server stack:
 ```text
 api-mcp
   ├── FastAPI routes
-  └── MCP Streamable HTTP mount
+  ├── MCP Streamable HTTP mount
+  └── ingestion recovery and bounded retention coordinator
 
 hooks
-  └── private tusd callback and recovery sweep
+  └── private tusd callback
 
 worker-cpu
   └── DBOS CPU queue, stable executor ID, concurrency 1

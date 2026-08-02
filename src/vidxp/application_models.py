@@ -642,6 +642,7 @@ class ArtifactDeliveryMode(StrEnum):
     local_file = "local_file"
     https_download = "https_download"
     mcp_resource = "mcp_resource"
+    unavailable = "unavailable"
 
 
 class ArtifactDownload(ApplicationModel):
@@ -652,7 +653,7 @@ class ArtifactDownload(ApplicationModel):
     sha256: Sha256
     etag: str = Field(pattern=r'^"[0-9a-f]{64}"$')
     state: ArtifactState
-    resource_uri: str = Field(min_length=1, max_length=2048)
+    resource_uri: str | None = Field(default=None, min_length=1, max_length=2048)
     delivery_mode: ArtifactDeliveryMode
     local_path: str | None = Field(default=None, max_length=4096)
     file_uri: str | None = Field(default=None, max_length=4096)

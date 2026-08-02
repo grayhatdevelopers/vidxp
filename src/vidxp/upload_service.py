@@ -1257,6 +1257,8 @@ class RemoteUploadService:
         if self.jobs is None:
             raise RuntimeError("Index job submission is not configured.")
 
+        persisted_command = command.model_dump(mode="json")
+
         def relink(connection: Connection) -> tuple[str, ...]:
             linked: list[str] = []
             for record in self.catalog.failed_index_uploads_for_media(
@@ -1268,6 +1270,7 @@ class RemoteUploadService:
                     state=UploadState.ready,
                     connection=connection,
                     index_job_id=job_id,
+                    index_command=persisted_command,
                     clear_failure=True,
                     expected_states={UploadState.ready},
                     expected_index_job_id=record.index_job_id,
@@ -1372,13 +1375,91 @@ class RemoteUploadService:
             request_key=request_key,
         )
 
+    def _observe_tus_progress(
+        self,
+        record: UploadIntentRecord,
+        probe: TusUploadProbe,
+        *,
+        observed_at: datetime,
+    ) -> UploadIntentRecord:
+        self._validate_tus_probe(record, probe)
+        previous_offset = record.last_tus_offset
+        if previous_offset is not None and probe.offset < previous_offset:
+            raise ApplicationError(
+                "remote_upload_probe_inconsistent",
+                ErrorCategory.unavailable,
+                "The resumable upload offset moved backwards.",
+            )
+        if previous_offset == probe.offset:
+            return record
+        progress_at = (
+            record.created_at
+            if previous_offset is None and probe.offset == 0
+            else observed_at
+        )
+
+        def observe(connection: Connection) -> bool:
+            return self.catalog.update_upload(
+                record.intent_id,
+                state=UploadState.accepted,
+                connection=connection,
+                last_tus_offset=probe.offset,
+                last_tus_progress_at=progress_at,
+                expected_states={UploadState.accepted},
+                expected_upload_id=record.upload_id,
+                expected_last_tus_offset=previous_offset,
+            )
+
+        self.catalog.with_upload_transaction(observe)
+        return self.catalog.get_upload_intent(record.intent_id) or record
+
+    def _tus_abandonment_due(
+        self,
+        record: UploadIntentRecord,
+        *,
+        now: datetime,
+    ) -> bool:
+        last_progress = record.last_tus_progress_at or record.created_at
+        return (
+            record.expires_at <= now
+            and last_progress
+            + timedelta(seconds=self.settings.upload_intent_ttl_seconds)
+            <= now
+        )
+
+    def _expire_tus_if_unchanged(
+        self,
+        record: UploadIntentRecord,
+        *,
+        now: datetime,
+    ) -> str | None:
+        if (
+            record.state != UploadState.accepted
+            or record.upload_id is None
+            or not self._tus_abandonment_due(record, now=now)
+        ):
+            return None
+
+        def expire(connection: Connection) -> bool:
+            return self.catalog.update_upload(
+                record.intent_id,
+                state=UploadState.expired,
+                connection=connection,
+                expected_states={UploadState.accepted},
+                expected_upload_id=record.upload_id,
+                expected_last_tus_offset=record.last_tus_offset,
+            )
+
+        expired = self.catalog.with_upload_transaction(expire)
+        return record.upload_id if expired else None
+
     def reconcile(self) -> dict[str, int]:
         recovered = 0
         coordinated = self.coordinator.run_once()
         errors = coordinated["errors"]
         advanced = coordinated["advanced"]
-        tus_probes: dict[str, TusUploadProbe | None] = {}
         failed_tus_probes: set[str] = set()
+        now = utc_now()
         for record in self.catalog.recoverable_uploads():
             try:
                 if (
@@ -1386,11 +1467,18 @@ class RemoteUploadService:
                     or record.transfer_backend != UploadTransferBackend.tus
                 ):
                     continue
+                if self._tus_abandonment_due(record, now=now):
+                    # Stale candidates are probed once at the expiration boundary
+                    # below so that HEAD is the final observation before the CAS.
+                    continue
                 probe = self._probe_tus_upload(record.upload_id)
-                tus_probes[record.upload_id] = probe
                 if probe is None:
                     continue
-                self._validate_tus_probe(record, probe)
+                record = self._observe_tus_progress(
+                    record,
+                    probe,
+                    observed_at=now,
+                )
                 if probe.offset == probe.length:
                     self.complete_tus_transfer(
                         intent_id=record.intent_id,
@@ -1408,7 +1496,6 @@ class RemoteUploadService:
                     record.intent_id,
                 )
         expired = 0
-        now = utc_now()
         for record in self.catalog.expired_uploads(now=now):
             try:
                 tus_upload_missing = False
@@ -1419,14 +1506,40 @@ class RemoteUploadService:
                     if record.transfer_backend == UploadTransferBackend.tus:
                         if record.upload_id in failed_tus_probes:
                             continue
-                        probe = tus_probes.get(record.upload_id)
-                        if record.upload_id not in tus_probes:
-                            probe = self._probe_tus_upload(record.upload_id)
-                            tus_probes[record.upload_id] = probe
-                        if probe is not None:
-                            self._validate_tus_probe(record, probe)
+                        record = (
+                            self.catalog.get_upload_intent(record.intent_id) or record
+                        )
+                        if not self._tus_abandonment_due(record, now=now):
                             continue
-                        tus_upload_missing = True
+                        final_probe = self._probe_tus_upload(record.upload_id)
+                        if final_probe is None:
+                            tus_upload_missing = True
+                        else:
+                            record = self._observe_tus_progress(
+                                record,
+                                final_probe,
+                                observed_at=now,
+                            )
+                            if final_probe.offset == final_probe.length:
+                                self.complete_tus_transfer(
+                                    intent_id=record.intent_id,
+                                    upload_id=record.upload_id or "",
+                                    byte_size=final_probe.length,
+                                    offset=final_probe.offset,
+                                )
+                                recovered += 1
+                                continue
+                            if not self._tus_abandonment_due(record, now=now):
+                                continue
+                        upload_id = self._expire_tus_if_unchanged(record, now=now)
+                        if upload_id is None:
+                            continue
+                        expired += 1
+                        if tus_upload_missing:
+                            self.record_terminated(upload_id)
+                        else:
+                            self._cleanup_upload(upload_id)
+                        continue
                     elif (
                         record.transfer_backend == UploadTransferBackend.multipart
                         and self._local_upload_is_active(record.upload_id, now=now)
@@ -1438,7 +1551,7 @@ class RemoteUploadService:
                         self.record_terminated(upload_id)
                     else:
                         self._cleanup_upload(upload_id)
-                expired += 1
+                    expired += 1
             except Exception:
                 errors += 1
                 LOGGER.exception(
@@ -1687,11 +1800,23 @@ class RemoteUploadService:
             state=UploadState.accepted,
             connection=connection,
             upload_id=upload_id,
+            last_tus_offset=(
+                0 if record.transfer_backend == UploadTransferBackend.tus else None
+            ),
+            last_tus_progress_at=(
+                now if record.transfer_backend == UploadTransferBackend.tus else None
+            ),
         )
         return record.model_copy(
             update={
                 "state": UploadState.accepted,
                 "upload_id": upload_id,
+                "last_tus_offset": (
+                    0 if record.transfer_backend == UploadTransferBackend.tus else None
+                ),
+                "last_tus_progress_at": (
+                    now if record.transfer_backend == UploadTransferBackend.tus else None
+                ),
             }
         )
 

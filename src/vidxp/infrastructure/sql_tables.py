@@ -88,12 +88,16 @@ upload_intents = Table(
     Column("transfer_backend", String(32), nullable=False, default="tus"),
     Column("index_after_import", Boolean, nullable=False, default=True),
     Column("index_modalities", JSON, nullable=False, default=list),
-    Column("index_job_id", String(36), nullable=True, unique=True),
+    Column("index_job_id", String(36), nullable=True),
+    Column("index_command", JSON, nullable=True),
+    Column("last_tus_offset", BigInteger, nullable=True),
+    Column("last_tus_progress_at", Text, nullable=True),
     Column("source_path", Text, nullable=True),
     Column("content_sha256", String(64), nullable=True),
     Column("failure_code", String(128), nullable=True),
     Column("failure_message", String(512), nullable=True),
 )
+Index("upload_intents_index_job_id", upload_intents.c.index_job_id)
 
 upload_sessions = Table(
     "upload_sessions",

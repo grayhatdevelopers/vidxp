@@ -1508,11 +1508,12 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                             ),
                             expect_inline,
                         )
-                        self.assertTrue(
+                        self.assertEqual(
                             any(
                                 isinstance(block, ResourceLink)
                                 for block in result.content
-                            )
+                            ),
+                            byte_size <= maximum,
                         )
                         projected = result.structured_content["result"]["result"][
                             "evidence_delivery"
@@ -1521,18 +1522,16 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                             projected["delivery"]["delivery_mode"],
                             "https_download",
                         )
+                        expected_resource_uri = (
+                            f"vidxp://artifacts/{ARTIFACT_ID}/content.png"
+                            if byte_size <= maximum
+                            else None
+                        )
                         self.assertEqual(
-                            projected["resource_uri"],
-                            f"vidxp://artifacts/{ARTIFACT_ID}/content.png",
+                            projected["resource_uri"], expected_resource_uri
                         )
                         if not expect_inline:
                             context.application.open_artifact_content.assert_not_called()
-                            with self.assertRaises(MCPError) as caught:
-                                await client.read_resource(projected["resource_uri"])
-                            self.assertEqual(
-                                caught.exception.data["code"],
-                                "artifact_resource_too_large",
-                            )
 
     async def test_create_evidence_clip_derives_range_from_source_job(self):
         with TemporaryDirectory() as directory:
@@ -2116,6 +2115,49 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             result.structured_content["delivery_error"]["code"],
             "public_download_origin_unavailable",
+        )
+
+    async def test_remote_oversize_artifact_reports_unavailable_without_link(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory), mcp_max_resource_bytes=8)
+            context.application.get_artifact.return_value = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                kind=ArtifactKind.snippet,
+                profile="compatible_mp4",
+                mime_type="video/mp4",
+                byte_size=12,
+                sha256="1" * 64,
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="remote-agent",
+                    scopes=frozenset({"*"}),
+                ),
+                artifact_delivery="streamable_http",
+            )
+            async with Client(server) as client:
+                result = await client.call_tool(
+                    "get_artifact_download",
+                    {"artifact_id": ARTIFACT_ID},
+                )
+
+        self.assertFalse(result.is_error)
+        self.assertFalse(
+            any(isinstance(block, ResourceLink) for block in result.content)
+        )
+        self.assertEqual(result.structured_content["delivery_mode"], "unavailable")
+        self.assertIsNone(result.structured_content["resource_uri"])
+        self.assertEqual(
+            result.structured_content["delivery_error"]["code"],
+            "artifact_delivery_unavailable",
+        )
+        self.assertIn(
+            "VIDXP_ARTIFACT_DOWNLOAD_PUBLIC_URL",
+            result.structured_content["delivery_error"]["message"],
         )
 
     async def test_application_errors_are_machine_readable_and_safe(self):

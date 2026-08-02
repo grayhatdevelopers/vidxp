@@ -110,13 +110,17 @@ jobs:
           else
             run_suite=false
           fi
-          if grep -Eq '^(\.dockerignore$|\.github/workflows/ci\.yml$|Dockerfile$|compose\.yaml$|pyproject\.toml$|uv\.lock$|src/vidxp/(requirements/.*\.txt|capabilities/[^/]+/requirements\.txt)$)' <<< "$changed_files"; then
+          if grep -Eq '^(\.dockerignore$|\.github/workflows/ci\.yml$|Dockerfile$|compose(\.coolify)?\.yaml$|pyproject\.toml$|uv\.lock$|src/vidxp/(requirements/.*\.txt|capabilities/[^/]+/requirements\.txt)$)' <<< "$changed_files"; then
             run_container=true
           else
             run_container=false
           fi
 
-          needs_python="$run_suite"
+          if [[ "$run_suite" == "true" || "$run_container" == "true" ]]; then
+            needs_python=true
+          else
+            needs_python=false
+          fi
           echo "run_suite=$run_suite" >> "$GITHUB_OUTPUT"
           echo "run_container=$run_container" >> "$GITHUB_OUTPUT"
           echo "needs_python=$needs_python" >> "$GITHUB_OUTPUT"
@@ -236,7 +240,20 @@ jobs:
 
       - name: Validate Compose configuration
         if: needs.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
-        run: docker compose config --quiet
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          VIDXP_ARTIFACT_DOWNLOAD_SECRET: ci-artifact-download-secret-000000
+          VIDXP_CONTROL_IMAGE: vidxp-control:ci
+          VIDXP_PUBLIC_API_HOST: api.example.test
+          VIDXP_UPLOAD_CLEANUP_TOKEN: ci-upload-cleanup-token-0000000000
+          VIDXP_UPLOAD_CORS_ORIGIN_REGEX: '^(https://api\.example\.test)$'
+          VIDXP_UPLOAD_HANDOFF_PUBLIC_URL: https://api.example.test/upload-handoff
+          VIDXP_UPLOAD_HANDOFF_SECRET: ci-upload-handoff-secret-000000000
+          VIDXP_UPLOAD_PUBLIC_ENDPOINT: https://uploads.example.test/uploads/
+          VIDXP_WORKER_IMAGE: vidxp-worker:ci
+        run: |
+          docker compose -f compose.yaml config --quiet
+          docker compose -f compose.coolify.yaml config --quiet
 
       - name: Build container
         if: needs.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'

@@ -69,6 +69,9 @@ def upgrade() -> None:
         batch.add_column(
             sa.Column("index_job_id", sa.String(length=36), nullable=True)
         )
+        batch.add_column(sa.Column("index_command", sa.JSON(), nullable=True))
+        batch.add_column(sa.Column("last_tus_offset", sa.BigInteger(), nullable=True))
+        batch.add_column(sa.Column("last_tus_progress_at", sa.Text(), nullable=True))
         batch.add_column(sa.Column("source_path", sa.Text(), nullable=True))
         batch.add_column(
             sa.Column("content_sha256", sa.String(length=64), nullable=True)
@@ -80,21 +83,24 @@ def upgrade() -> None:
             sa.Column("failure_message", sa.String(length=512), nullable=True)
         )
     op.create_index(
-        "uq_upload_intents_index_job_id",
+        "upload_intents_index_job_id",
         "upload_intents",
         ["index_job_id"],
-        unique=True,
+        unique=False,
     )
 
 
 def downgrade() -> None:
-    op.drop_index("uq_upload_intents_index_job_id", table_name="upload_intents")
+    op.drop_index("upload_intents_index_job_id", table_name="upload_intents")
     with op.batch_alter_table("upload_intents") as batch:
         for name in (
             "failure_message",
             "failure_code",
             "content_sha256",
             "source_path",
+            "last_tus_progress_at",
+            "last_tus_offset",
+            "index_command",
             "index_job_id",
             "index_modalities",
             "index_after_import",

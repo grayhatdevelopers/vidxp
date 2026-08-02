@@ -107,6 +107,7 @@ class _RestartingCoordinatorJobs:
         self.index_failure: ApplicationError | None = None
         self.import_submissions: list[str] = []
         self.index_submissions: list[str] = []
+        self.index_commands: list[CreateIndexCommand] = []
         self.import_submitted = Event()
         self.index_submitted = Event()
         self.start_calls = 0
@@ -132,12 +133,13 @@ class _RestartingCoordinatorJobs:
     def submit_completed_media_import(self, _upload_id: str, *, job_id: str):
         return self.submit_local_media_import(None, job_id=job_id)
 
-    def submit_index(self, _command, *, job_id: str):
+    def submit_index(self, command, *, job_id: str):
         if self.index_crashes:
             raise RuntimeError("simulated process interruption")
         if self.index_failure is not None:
             raise self.index_failure
         self.index_submissions.append(job_id)
+        self.index_commands.append(command)
         self.index_submitted.set()
         return self.jobs.setdefault(
             job_id,
@@ -1447,6 +1449,8 @@ def test_index_terminal_failure_preserves_registered_media_and_status(
 def _failed_index_upload(
     root: Path,
     jobs: _RestartingCoordinatorJobs,
+    *,
+    intent_count: int = 1,
 ) -> tuple[RemoteUploadService, SQLCatalog, Principal, str, str]:
     catalog = SQLCatalog(
         f"sqlite:///{(root / 'index-retry.sqlite3').resolve().as_posix()}",
@@ -1478,11 +1482,14 @@ def _failed_index_upload(
         session.status.session_id,
         capability=session.capability,
     )
-    authorization = service.authorize_session_file(
-        session.status.session_id,
-        _file("retry-index", size=20),
-        session_token=browser.session_token,
-    )
+    authorizations = [
+        service.authorize_session_file(
+            session.status.session_id,
+            _file(f"retry-index-{number}", size=20),
+            session_token=browser.session_token,
+        )
+        for number in range(intent_count)
+    ]
     media_id = uuid4().hex
     with catalog.engine.begin() as connection:
         connection.execute(
@@ -1493,28 +1500,25 @@ def _failed_index_upload(
                 payload={},
             )
         )
-    catalog.with_upload_transaction(
-        lambda connection: catalog.update_upload(
-            authorization.status.intent_id,
-            state=UploadState.ready,
-            connection=connection,
-            upload_id=authorization.status.intent_id,
-            job_id=derived_ingestion_job_id(
-                authorization.status.intent_id,
-                "import",
-            ),
-            media_id=media_id,
-            index_job_id=derived_ingestion_job_id(
-                authorization.status.intent_id,
-                "index",
-            ),
-            failure_code="media_index_failed",
-            failure_message="Automatic indexing failed.",
-            expected_states={UploadState.pending},
-            expected_job_id=None,
-            expected_index_job_id=None,
-        )
-    )
+    def fail_indexes(connection) -> None:
+        for authorization in authorizations:
+            intent_id = authorization.status.intent_id
+            catalog.update_upload(
+                intent_id,
+                state=UploadState.ready,
+                connection=connection,
+                upload_id=intent_id,
+                job_id=derived_ingestion_job_id(intent_id, "import"),
+                media_id=media_id,
+                index_job_id=derived_ingestion_job_id(intent_id, "index"),
+                failure_code="media_index_failed",
+                failure_message="Automatic indexing failed.",
+                expected_states={UploadState.pending},
+                expected_job_id=None,
+                expected_index_job_id=None,
+            )
+
+    catalog.with_upload_transaction(fail_indexes)
     return service, catalog, owner, session.status.session_id, media_id
 
 
@@ -1563,6 +1567,93 @@ def test_start_indexing_relinks_failed_upload_and_projects_success(
     assert status.items[0].searchable is True
     assert status.items[0].generation_id == "223456781234423481234567890abcde"
     assert status.items[0].snapshot_id == "323456781234423481234567890abcde"
+    catalog.close()
+
+
+@pytest.mark.parametrize(
+    ("job_state", "expected_phase"),
+    ((JobState.succeeded, "indexed"), (JobState.failed, "index_failed")),
+)
+def test_shared_media_index_retry_updates_every_upload_intent(
+    tmp_path: Path,
+    job_state: JobState,
+    expected_phase: str,
+) -> None:
+    jobs = _RestartingCoordinatorJobs()
+    jobs.index_crashes = False
+    service, catalog, owner, session_id, media_id = _failed_index_upload(
+        tmp_path,
+        jobs,
+        intent_count=2,
+    )
+    retry_job_id = uuid4().hex
+
+    service.start_indexing(
+        CreateIndexCommand(media_id=media_id, modalities=("scene",)),
+        job_id=retry_job_id,
+    )
+    jobs.jobs[retry_job_id] = SimpleNamespace(
+        job_id=retry_job_id,
+        state=job_state,
+        result=(
+            SimpleNamespace(
+                result=SimpleNamespace(
+                    generation_id="223456781234423481234567890abcde",
+                    snapshot_id="323456781234423481234567890abcde",
+                )
+            )
+            if job_state == JobState.succeeded
+            else None
+        ),
+        error=(
+            ErrorDetail(
+                code="shared_index_failed",
+                category=ErrorCategory.internal,
+                message="The shared retry failed.",
+            )
+            if job_state == JobState.failed
+            else None
+        ),
+    )
+
+    service.coordinator.run_once()
+    status = service.get_status(session_id, principal=owner)
+
+    assert len(status.items) == 2
+    assert {item.index_job_id for item in status.items} == {retry_job_id}
+    assert {item.phase for item in status.items} == {expected_phase}
+    catalog.close()
+
+
+def test_index_retry_recovery_resubmits_exact_persisted_command(
+    tmp_path: Path,
+) -> None:
+    jobs = _RestartingCoordinatorJobs()
+    service, catalog, _, session_id, media_id = _failed_index_upload(tmp_path, jobs)
+    retry_job_id = uuid4().hex
+    command = CreateIndexCommand(
+        media_id=media_id,
+        modalities=("dialogue", "scene"),
+        frame_stride=7,
+        scene_sample_fps=2.5,
+        capability_options={
+            "scene": {"batch_size": 3},
+            "dialogue": {"language": "ur"},
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="simulated process interruption"):
+        service.start_indexing(command, job_id=retry_job_id)
+
+    linked = catalog.list_upload_session_files(session_id)[0][1]
+    assert linked.index_job_id == retry_job_id
+    assert CreateIndexCommand.model_validate(linked.index_command) == command
+
+    jobs.index_crashes = False
+    service.coordinator.run_once()
+
+    assert jobs.index_submissions == [retry_job_id]
+    assert jobs.index_commands == [command]
     catalog.close()
 
 
@@ -1996,6 +2087,212 @@ def test_split_tus_probe_keeps_incomplete_upload_without_quarantine(
     assert not api_quarantine.exists()
     stored = catalog.get_upload_intent(record.intent_id)
     assert stored is not None and stored.state == UploadState.accepted
+    assert stored.last_tus_offset == 10
+    assert stored.last_tus_progress_at is not None
+    assert stored.last_tus_progress_at > record.created_at
+    catalog.close()
+
+
+def test_tus_progress_tracking_survives_restart_without_refreshing_idle_time(
+    tmp_path: Path,
+) -> None:
+    service, catalog, jobs = _service(tmp_path)
+    now = utc_now()
+    progress_at = now - timedelta(minutes=1)
+    record = UploadIntentRecord(
+        intent_id=uuid4().hex,
+        request_key="a" * 64,
+        original_filename="restart.mp4",
+        byte_size=60,
+        declared_mime_type="video/mp4",
+        state=UploadState.accepted,
+        created_at=now - timedelta(minutes=2),
+        expires_at=now + timedelta(minutes=1),
+        upload_id="r" * 32,
+        last_tus_offset=12,
+        last_tus_progress_at=progress_at,
+    )
+    database_url = str(catalog.engine.url)
+    catalog.create_upload_intent(record, quota_limit=100)
+    catalog.close()
+
+    restarted_catalog = SQLCatalog(database_url)
+    restarted = RemoteUploadService(
+        settings=service.settings,
+        catalog=restarted_catalog,
+        media=_Media(),
+        jobs=jobs,
+        tusd_upload_probe=lambda upload_id: TusUploadProbe(
+            upload_id=upload_id,
+            length=60,
+            offset=12,
+        ),
+    )
+
+    result = restarted.reconcile()
+
+    stored = restarted_catalog.get_upload_intent(record.intent_id)
+    assert result["expired"] == 0
+    assert stored is not None
+    assert stored.last_tus_offset == 12
+    assert stored.last_tus_progress_at == progress_at
+    restarted_catalog.close()
+
+
+def test_abandoned_tus_upload_uses_final_head_and_releases_quota(
+    tmp_path: Path,
+) -> None:
+    service, catalog, jobs = _service(tmp_path)
+    now = utc_now()
+    record = UploadIntentRecord(
+        intent_id=uuid4().hex,
+        request_key="a" * 64,
+        original_filename="abandoned.mp4",
+        byte_size=60,
+        declared_mime_type="video/mp4",
+        state=UploadState.accepted,
+        created_at=now - timedelta(days=2),
+        expires_at=now - timedelta(days=1),
+        upload_id="a" * 32,
+        last_tus_offset=10,
+        last_tus_progress_at=now - timedelta(days=1),
+    )
+    catalog.create_upload_intent(record, quota_limit=100)
+    probes: list[str] = []
+
+    def probe(upload_id: str) -> TusUploadProbe:
+        probes.append(upload_id)
+        return TusUploadProbe(upload_id=upload_id, length=60, offset=10)
+
+    service = RemoteUploadService(
+        settings=service.settings,
+        catalog=catalog,
+        media=_Media(),
+        jobs=jobs,
+        tusd_upload_probe=probe,
+    )
+
+    with patch.object(service, "_terminate_upload") as terminate:
+        result = service.reconcile()
+
+    stored = catalog.get_upload_intent(record.intent_id)
+    assert probes == [record.upload_id]
+    assert result["expired"] == 1
+    assert stored is not None and stored.state == UploadState.expired
+    assert stored.upload_id is None
+    terminate.assert_called_once_with(record.upload_id)
+    with catalog.engine.connect() as connection:
+        assert connection.scalar(select(upload_quota.c.reserved_bytes)) == 0
+    catalog.close()
+
+
+def test_tus_expiration_compare_and_set_preserves_racing_progress(
+    tmp_path: Path,
+) -> None:
+    service, catalog, jobs = _service(tmp_path)
+    now = utc_now()
+    record = UploadIntentRecord(
+        intent_id=uuid4().hex,
+        request_key="a" * 64,
+        original_filename="racing.mp4",
+        byte_size=60,
+        declared_mime_type="video/mp4",
+        state=UploadState.accepted,
+        created_at=now - timedelta(days=2),
+        expires_at=now - timedelta(days=1),
+        upload_id="c" * 32,
+        last_tus_offset=10,
+        last_tus_progress_at=now - timedelta(days=1),
+    )
+    catalog.create_upload_intent(record, quota_limit=100)
+    calls = 0
+
+    def probe(upload_id: str) -> TusUploadProbe:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            catalog.with_upload_transaction(
+                lambda connection: catalog.update_upload(
+                    record.intent_id,
+                    state=UploadState.accepted,
+                    connection=connection,
+                    last_tus_offset=20,
+                    last_tus_progress_at=utc_now(),
+                    expected_states={UploadState.accepted},
+                    expected_upload_id=upload_id,
+                    expected_last_tus_offset=10,
+                )
+            )
+        return TusUploadProbe(upload_id=upload_id, length=60, offset=10)
+
+    service = RemoteUploadService(
+        settings=service.settings,
+        catalog=catalog,
+        media=_Media(),
+        jobs=jobs,
+        tusd_upload_probe=probe,
+    )
+
+    result = service.reconcile()
+
+    stored = catalog.get_upload_intent(record.intent_id)
+    assert calls == 1
+    assert result["expired"] == 0
+    assert stored is not None and stored.state == UploadState.accepted
+    assert stored.last_tus_offset == 20
+    with catalog.engine.connect() as connection:
+        assert connection.scalar(select(upload_quota.c.reserved_bytes)) == 60
+    catalog.close()
+
+
+def test_expired_tus_cleanup_failure_remains_retryable(
+    tmp_path: Path,
+) -> None:
+    service, catalog, jobs = _service(tmp_path)
+    now = utc_now()
+    record = UploadIntentRecord(
+        intent_id=uuid4().hex,
+        request_key="a" * 64,
+        original_filename="cleanup.mp4",
+        byte_size=60,
+        declared_mime_type="video/mp4",
+        state=UploadState.accepted,
+        created_at=now - timedelta(days=2),
+        expires_at=now - timedelta(days=1),
+        upload_id="d" * 32,
+        last_tus_offset=10,
+        last_tus_progress_at=now - timedelta(days=1),
+    )
+    catalog.create_upload_intent(record, quota_limit=100)
+    service = RemoteUploadService(
+        settings=service.settings,
+        catalog=catalog,
+        media=_Media(),
+        jobs=jobs,
+        tusd_upload_probe=lambda upload_id: TusUploadProbe(
+            upload_id=upload_id,
+            length=60,
+            offset=10,
+        ),
+    )
+
+    with patch.object(
+        service,
+        "_terminate_upload",
+        side_effect=(RuntimeError("offline"), RuntimeError("offline"), None),
+    ) as terminate:
+        first = service.reconcile()
+        after_failure = catalog.get_upload_intent(record.intent_id)
+        second = service.reconcile()
+
+    recovered = catalog.get_upload_intent(record.intent_id)
+    assert first["expired"] == 1
+    assert first["errors"] == 2
+    assert after_failure is not None and after_failure.state == UploadState.expired
+    assert after_failure.upload_id == record.upload_id
+    assert second["cleaned"] == 1
+    assert recovered is not None and recovered.upload_id is None
+    assert terminate.call_count == 3
     catalog.close()
 
 
@@ -2092,6 +2389,51 @@ def test_missing_tus_upload_expires_but_unavailable_tusd_does_not(
     assert result["errors"] == 1
     assert missing is not None and missing.state == UploadState.expired
     assert unavailable is not None and unavailable.state == UploadState.accepted
+    catalog.close()
+
+
+@pytest.mark.parametrize(
+    "probe",
+    (
+        TusUploadProbe(upload_id="e" * 32, length=60, offset=9),
+        TusUploadProbe(upload_id="e" * 32, length=61, offset=10),
+    ),
+)
+def test_invalid_or_inconsistent_tus_head_never_expires_upload(
+    tmp_path: Path,
+    probe: TusUploadProbe,
+) -> None:
+    service, catalog, jobs = _service(tmp_path)
+    now = utc_now()
+    record = UploadIntentRecord(
+        intent_id=uuid4().hex,
+        request_key="a" * 64,
+        original_filename="invalid-head.mp4",
+        byte_size=60,
+        declared_mime_type="video/mp4",
+        state=UploadState.accepted,
+        created_at=now - timedelta(days=2),
+        expires_at=now - timedelta(days=1),
+        upload_id="e" * 32,
+        last_tus_offset=10,
+        last_tus_progress_at=now - timedelta(days=1),
+    )
+    catalog.create_upload_intent(record, quota_limit=100)
+    service = RemoteUploadService(
+        settings=service.settings,
+        catalog=catalog,
+        media=_Media(),
+        jobs=jobs,
+        tusd_upload_probe=lambda _upload_id: probe,
+    )
+
+    result = service.reconcile()
+
+    stored = catalog.get_upload_intent(record.intent_id)
+    assert result["errors"] == 1
+    assert result["expired"] == 0
+    assert stored is not None and stored.state == UploadState.accepted
+    assert stored.last_tus_offset == 10
     catalog.close()
 
 

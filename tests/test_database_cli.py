@@ -59,10 +59,13 @@ class DatabaseCliTests(unittest.TestCase):
                 }
                 self.assertIn("content_sha256", intent_columns)
                 self.assertIn("index_job_id", intent_columns)
+                self.assertIn("index_command", intent_columns)
+                self.assertIn("last_tus_offset", intent_columns)
+                self.assertIn("last_tus_progress_at", intent_columns)
                 self.assertTrue(
                     any(
-                        index["name"] == "uq_upload_intents_index_job_id"
-                        and index["unique"]
+                        index["name"] == "upload_intents_index_job_id"
+                        and not index["unique"]
                         for index in upgraded.get_indexes("upload_intents")
                     )
                 )

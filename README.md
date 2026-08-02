@@ -184,34 +184,16 @@ scenes, ask questions about a library, and create clips or actor overlays.
 Local agents can connect over stdio; remote agents can connect to a
 self-hosted VidXP server.
 
-For ordinary evidence retrieval, an MCP client submits `search_moments` or
-`query_video` and polls that same job. Completed results include stable evidence
-IDs plus up to three directly inspectable frames by default. Request
-`keyframes_and_clips` to render bounded clips in the original job as well; no
-timestamp arithmetic, second clip job, or separate artifact lookup is required.
-The lower-level clip and artifact tools remain available for advanced workflows.
+Search and question results can include directly inspectable frames and clips, so
+agents can show the evidence behind an answer without making users translate raw
+timestamps. Evidence rendering is best-effort: a result can still be useful when
+an individual frame or clip cannot be produced.
 
-Streamable HTTP agents call `create_media_upload` and give its short-lived
-multi-file session link to the user. The browser discovers authoritative filename,
-size, and MIME metadata after selection; video bytes never cross MCP. A native
-`vidxp-api` process receives bounded, non-resumable multipart transfers directly,
-while the deployed server retains resumable tus/tusd transfer for large files.
-The explicit session contract reports the backend and effective limits. Indexing
-starts automatically by default, so the agent polls only `get_media_upload` until
-each file is `indexed`, `failed`, `index_failed`, or (with the advanced
-`index_after_import=false` opt-out) `registered`. An `index_failed` file remains
-registered and can be retried with `start_indexing`; the upload status follows
-that retry through to searchable success or a new terminal failure. At a terminal
-state, `terminal=true` stops polling for the current files even while
-`session_state=open` lets the user add another file; accepting another file makes
-the status non-terminal again.
-
-Filesystem-accessible stdio agents use `ingest_local_media` for up to ten local
-paths. VidXP canonicalizes the paths and submits the existing durable import and
-index jobs without base64, JSON chunks, a browser, or an upload helper. Poll
-`get_media_ingestion`; successful and failed siblings are reported independently.
-Browser-upload tools are intentionally absent from stdio, and local-path tools are
-intentionally absent from remote or filesystem-isolated transports.
+Remote agents can hand users a short-lived page for selecting and uploading
+multiple videos. Local agents can ingest approved filesystem paths without moving
+video bytes through MCP. VidXP normally indexes successful imports automatically;
+registration-only ingestion stops at `registered`, and indexing failures can be
+retried without uploading the video again.
 
 Agents can call `get_workspace` before acting to inspect registered media,
 active-index coverage, model readiness, and the searchable, queryable,

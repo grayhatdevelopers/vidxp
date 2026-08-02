@@ -319,6 +319,10 @@ class IngestionCoordinator:
         if self.jobs is None:
             return intent
         job_id = derived_ingestion_job_id(intent.intent_id, "index")
+        command = CreateIndexCommand(
+            media_id=intent.media_id or "",
+            modalities=intent.index_modalities,
+        )
 
         def link(connection: Connection) -> bool:
             return self.catalog.update_upload(
@@ -326,6 +330,7 @@ class IngestionCoordinator:
                 state=UploadState.ready,
                 connection=connection,
                 index_job_id=job_id,
+                index_command=command.model_dump(mode="json"),
                 expected_states={UploadState.ready},
                 expected_index_job_id=None,
             )
@@ -366,7 +371,9 @@ class IngestionCoordinator:
         if self.jobs is None or intent.index_job_id is None:
             raise RuntimeError("Index job submission is not configured.")
         return self.jobs.submit_index(
-            CreateIndexCommand(
+            CreateIndexCommand.model_validate(intent.index_command)
+            if intent.index_command is not None
+            else CreateIndexCommand(
                 media_id=intent.media_id or "",
                 modalities=intent.index_modalities,
             ),

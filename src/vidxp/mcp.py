@@ -660,23 +660,26 @@ def create_mcp_server(
         *,
         title: str | None = None,
         description: str | None = None,
-    ) -> tuple[ArtifactDownload, ResourceLink]:
+    ) -> tuple[ArtifactDownload, ResourceLink | None]:
         binding = _translate_application_result(lambda: artifact_binding(artifact))
-        resource_uri = (
-            f"vidxp://artifacts/{artifact.artifact_id}/content.{binding.extension}"
-        )
-        link = ResourceLink(
-            name=binding.filename,
-            title=title or f"VidXP {artifact.kind.value.replace('_', ' ')}",
-            uri=resource_uri,
-            description=description
-            or (
-                f"Generated from media {artifact.media_id}; "
-                f"{artifact.byte_size:,} bytes."
-            ),
-            mimeType=artifact.mime_type,
-            size=artifact.byte_size,
-        )
+        resource_uri = None
+        link = None
+        if artifact.byte_size <= settings.mcp_max_resource_bytes:
+            resource_uri = (
+                f"vidxp://artifacts/{artifact.artifact_id}/content.{binding.extension}"
+            )
+            link = ResourceLink(
+                name=binding.filename,
+                title=title or f"VidXP {artifact.kind.value.replace('_', ' ')}",
+                uri=resource_uri,
+                description=description
+                or (
+                    f"Generated from media {artifact.media_id}; "
+                    f"{artifact.byte_size:,} bytes."
+                ),
+                mimeType=artifact.mime_type,
+                size=artifact.byte_size,
+            )
         local_path = None
         file_uri = None
         download_url = None
@@ -693,8 +696,20 @@ def create_mcp_server(
             download_url = issued.url
             download_expires_at = issued.expires_at
         elif artifact_delivery == "streamable_http":
-            delivery_mode = ArtifactDeliveryMode.mcp_resource
-            delivery_error = _public_download_unavailable()
+            if link is not None:
+                delivery_mode = ArtifactDeliveryMode.mcp_resource
+                delivery_error = _public_download_unavailable()
+            else:
+                delivery_mode = ArtifactDeliveryMode.unavailable
+                delivery_error = ErrorDetail(
+                    code="artifact_delivery_unavailable",
+                    category=ErrorCategory.unavailable,
+                    message=(
+                        "This artifact exceeds VIDXP_MCP_MAX_RESOURCE_BYTES. "
+                        "Configure VIDXP_ARTIFACT_DOWNLOAD_PUBLIC_URL and "
+                        "VIDXP_ARTIFACT_DOWNLOAD_SECRET on the HTTP listener."
+                    ),
+                )
         elif context.settings.mcp_stdio_filesystem_accessible:
             resource = await _invoke_async(
                 context,
@@ -721,15 +736,28 @@ def create_mcp_server(
             download_url = issued.url
             download_expires_at = issued.expires_at
         else:
-            delivery_mode = ArtifactDeliveryMode.mcp_resource
-            delivery_error = ErrorDetail(
-                code="local_path_unavailable",
-                category=ErrorCategory.unavailable,
-                message=(
-                    "The stdio client is configured as filesystem-isolated; "
-                    "read the MCP resource or configure a public download origin."
-                ),
-            )
+            if link is not None:
+                delivery_mode = ArtifactDeliveryMode.mcp_resource
+                delivery_error = ErrorDetail(
+                    code="local_path_unavailable",
+                    category=ErrorCategory.unavailable,
+                    message=(
+                        "The stdio client is configured as filesystem-isolated; "
+                        "read the MCP resource or configure a public download origin."
+                    ),
+                )
+            else:
+                delivery_mode = ArtifactDeliveryMode.unavailable
+                delivery_error = ErrorDetail(
+                    code="artifact_delivery_unavailable",
+                    category=ErrorCategory.unavailable,
+                    message=(
+                        "This artifact exceeds VIDXP_MCP_MAX_RESOURCE_BYTES and "
+                        "the client cannot access local files. Configure "
+                        "VIDXP_ARTIFACT_DOWNLOAD_PUBLIC_URL and "
+                        "VIDXP_ARTIFACT_DOWNLOAD_SECRET."
+                    ),
+                )
         return ArtifactDownload(
             artifact_id=artifact.artifact_id,
             filename=binding.filename,
@@ -1313,7 +1341,7 @@ def create_mcp_server(
         )
         result, link = await project_artifact_delivery(artifact)
         return CallToolResult(
-            content=[link],
+            content=[] if link is None else [link],
             structured_content=result.model_dump(mode="json"),
         )
 
@@ -1415,7 +1443,8 @@ def create_mcp_server(
                                     mimeType="image/png",
                                 )
                             )
-                        blocks.append(frame_link)
+                        if frame_link is not None:
+                            blocks.append(frame_link)
                     if clip is not None and item.range is not None:
                         clip_delivery, clip_link = await project_artifact_delivery(
                             clip.artifact,
@@ -1432,7 +1461,8 @@ def create_mcp_server(
                                 "delivery": clip_delivery,
                             }
                         )
-                        blocks.append(clip_link)
+                        if clip_link is not None:
+                            blocks.append(clip_link)
                     projected_items.append(
                         item.model_copy(update={"keyframe": keyframe, "clip": clip})
                     )

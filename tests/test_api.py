@@ -1080,6 +1080,7 @@ class ApiTests(unittest.TestCase):
     def test_http_composition_does_not_construct_model_runtime(self):
         with TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             settings = VidXPSettings(
+                data_dir=Path(directory) / "data",
                 repository_root=Path(directory),
                 runtime_backend="cpu",
             )
@@ -1093,6 +1094,11 @@ class ApiTests(unittest.TestCase):
                     context.application,
                     ControlPlaneApplication,
                 )
+                self.assertEqual(
+                    context.settings.artifact_download_public_url,
+                    "http://127.0.0.1:32191/artifact-download",
+                )
+                self.assertIsNotNone(context.settings.artifact_download_secret)
                 runtime.assert_not_called()
             finally:
                 context.close()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
@@ -65,6 +66,9 @@ class UploadIntentRecord(BaseModel):
     index_after_import: bool = True
     index_modalities: tuple[str, ...] = ()
     index_job_id: JobId | None = None
+    index_command: dict[str, Any] | None = None
+    last_tus_offset: int | None = Field(default=None, ge=0)
+    last_tus_progress_at: AwareDatetime | None = None
     source_path: str | None = Field(default=None, max_length=32767)
     content_sha256: Sha256 | None = None
     failure_code: str | None = Field(
@@ -120,6 +124,13 @@ class UploadIntentRecord(BaseModel):
             raise ValueError("index jobs require a registered media identifier")
         if not self.index_after_import and self.index_job_id is not None:
             raise ValueError("index opt-out cannot reference an index job")
+        if (self.last_tus_offset is None) != (self.last_tus_progress_at is None):
+            raise ValueError("tus offset and progress time must be stored together")
+        if (
+            self.last_tus_offset is not None
+            and self.transfer_backend != UploadTransferBackend.tus
+        ):
+            raise ValueError("only tus uploads may retain observed progress")
         if (self.failure_code is None) != (self.failure_message is None):
             raise ValueError("upload failure code and message must be stored together")
         return self
