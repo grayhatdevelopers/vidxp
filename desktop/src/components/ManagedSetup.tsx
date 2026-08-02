@@ -33,13 +33,14 @@ import { useExclusiveOperation } from '../useAsyncAction';
 
 interface ManagedSetupProps {
   draftId: string;
+  selectedManagedRuntimeProfile: string | null;
   onBack: () => Promise<void>;
   onCommitted: (setup: TargetSetupState) => void;
 }
 
 type ManagedOperation = 'load' | 'folder' | 'reset' | 'install' | 'prepare' | 'launch';
 
-export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps) {
+export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, onCommitted }: ManagedSetupProps) {
   const [manifest, setManifest] = useState<RuntimeManifest | null>(null);
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [capabilities, setCapabilities] = useState<string[]>([]);
@@ -220,6 +221,10 @@ export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps
     [...left].sort().join('\u0000') === [...right].sort().join('\u0000');
   const recoverableConfiguration = Boolean(status?.runtime_profile);
   const corruptPointer = status?.state === 'broken' && !recoverableConfiguration;
+  const displayedRuntimeSelected = Boolean(
+    status?.runtime_profile
+    && status.runtime_profile === selectedManagedRuntimeProfile,
+  );
   const dirty = recoverableConfiguration && (
     !sameValues(capabilities, status?.capabilities ?? [])
     || !sameValues(surfaces, status?.surfaces ?? [])
@@ -358,6 +363,7 @@ export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps
 
       {recoverableConfiguration && (dirty || status?.state === 'broken') && <Alert color="yellow" title={dirty ? 'Update creates a replacement runtime' : 'Repair keeps the current configuration'}>{dirty ? 'The installed runtime remains active while Desktop creates and validates this draft. It is replaced only after activation succeeds.' : 'Desktop will repair media tools first. It replaces the managed runtime only if the installed runtime is still damaged, preserving its capabilities, browser surface, and model folder.'}</Alert>}
       {corruptPointer && <Alert color="yellow" title="Replacement becomes authoritative only after activation">Desktop cannot recover settings from the unreadable pointer. Review the default capabilities, browser surface, and model folder above before configuring a replacement.</Alert>}
+      {status?.ready && !displayedRuntimeSelected && <Alert color="yellow" title="Select this managed target to use it">Prepare and Open are unavailable because another target is currently selected. Return to Manage targets and select this managed runtime first.</Alert>}
 
       <div className="managedFooter">
         <div className="statusRegion" role="status" aria-live="polite" aria-atomic="true">{isBusy && <Loader size="xs" />}{(isBusy || status?.ready) && message}</div>
@@ -365,8 +371,8 @@ export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps
           <Group>
             <Button variant="default" disabled={!dirty || isBusy} onClick={() => void resetDraft()}>Reset changes</Button>
             <Button loading={operation === 'install'} disabled={(!dirty && status?.state !== 'broken') || !manifest || isBusy} onClick={() => void install()}>{status?.state === 'broken' && !dirty ? 'Repair VidXP' : 'Apply update'}</Button>
-            <Button variant="light" loading={operation === 'prepare'} disabled={!status?.ready || dirty || isBusy} onClick={() => void prepareModels()}>Prepare / verify models</Button>
-            <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={operation === 'launch'} disabled={!status?.ready || dirty || isBusy} onClick={() => void launch()}>Open VidXP</Button>
+            <Button variant="light" loading={operation === 'prepare'} disabled={!status?.ready || dirty || !displayedRuntimeSelected || isBusy} onClick={() => void prepareModels()}>Prepare / verify models</Button>
+            <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={operation === 'launch'} disabled={!status?.ready || dirty || !displayedRuntimeSelected || isBusy} onClick={() => void launch()}>Open VidXP</Button>
           </Group>
         ) : (
           <Button loading={operation === 'install'} disabled={!manifest || isBusy} onClick={() => void install()}>{corruptPointer ? 'Configure replacement' : 'Configure VidXP'}</Button>

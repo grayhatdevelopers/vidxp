@@ -402,12 +402,17 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(version_file, manifest["desktop_version"])
         self.assertEqual(version_file, package["version"])
         self.assertEqual(version_file, cargo["package"]["version"])
-        self.assertIn(
-            f'version = "{version_file}" # x-release-please-version',
-            (
-                ROOT / "desktop" / "src-tauri" / "Cargo.toml"
-            ).read_text(encoding="utf-8"),
+        version_marker = (
+            f'version = "{version_file}" # x-release-please-version'
         )
+        for filename in ("Cargo.toml", "Cargo.lock"):
+            self.assertIn(
+                version_marker,
+                (
+                    ROOT / "desktop" / "src-tauri" / filename
+                ).read_text(encoding="utf-8"),
+                filename,
+            )
         self.assertNotIn(
             f"vidxp=={version_file}",
             (

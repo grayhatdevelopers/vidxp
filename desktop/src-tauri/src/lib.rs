@@ -661,11 +661,18 @@ impl OperationCancellationGuard {
     fn register(state: &DesktopState) -> Result<Self, String> {
         let token = background_process::CancellationToken::default();
         let active = state.active_operations.register()?;
-        *state
+        let mut slot = state
             .operation_cancellation
             .lock()
-            .map_err(|_| "The setup cancellation supervisor is unavailable.".to_string())? =
-            Some(token.clone());
+            .map_err(|_| "The setup cancellation supervisor is unavailable.".to_string())?;
+        if state.shutdown.is_cancelled() {
+            return Err("VidXP Desktop is shutting down.".into());
+        }
+        if slot.is_some() {
+            return Err("Another cancellable Desktop operation is already active.".into());
+        }
+        *slot = Some(token.clone());
+        drop(slot);
         Ok(Self {
             slot: state.operation_cancellation.clone(),
             token,
@@ -685,6 +692,14 @@ impl Drop for OperationCancellationGuard {
         {
             active.take();
         }
+    }
+}
+
+fn cancel_active_operation(state: &DesktopState) {
+    if let Ok(active) = state.operation_cancellation.lock()
+        && let Some(cancellation) = active.as_ref()
+    {
+        cancellation.cancel();
     }
 }
 
@@ -2396,16 +2411,10 @@ async fn prepare_managed_models(
     let (runtime, paths, capabilities) = tauri::async_runtime::spawn_blocking(move || {
         let profile = target_profiles::selected_profile(&preparation_app)
             .map_err(|error| error.to_string())?;
-        target_profiles::authorize_lifecycle(&profile, target_profiles::LifecycleAction::Install)
-            .map_err(|error| error.to_string())?;
         let mut paths = desktop_paths(&preparation_app)?;
         let active = active_runtime(&paths)?;
-        if profile.managed_runtime_profile.as_deref() != Some(active.profile.as_str()) {
-            return Err(
-                "The selected managed target no longer matches the active Desktop runtime."
-                    .to_string(),
-            );
-        }
+        target_profiles::authorize_managed_runtime_action(&profile, &active.profile)
+            .map_err(|error| error.to_string())?;
         paths.models = active.model_directory.clone();
         let runtime = runtime_directory(&paths, &active);
         Ok::<_, String>((runtime, paths, active.capabilities))
@@ -3015,11 +3024,7 @@ fn begin_shutdown(app: &AppHandle) {
         return;
     }
     state.shutdown.cancel();
-    if let Ok(active) = state.operation_cancellation.lock()
-        && let Some(cancellation) = active.as_ref()
-    {
-        cancellation.cancel();
-    }
+    cancel_active_operation(&state);
     log::info!("VidXP supervised shutdown requested");
     stop_ui_process(&state);
     let app = app.clone();
@@ -3096,11 +3101,7 @@ fn stop_worker_before(runtime: &Path, paths: &DesktopPaths, deadline: Instant) {
 fn shutdown(app: &AppHandle, deadline: Instant) {
     log::info!("Stopping active VidXP processes");
     let state = app.state::<DesktopState>();
-    if let Ok(active_operation) = state.operation_cancellation.lock()
-        && let Some(cancellation) = active_operation.as_ref()
-    {
-        cancellation.cancel();
-    }
+    cancel_active_operation(&state);
     stop_ui_process(&state);
     let Ok(mut paths) = desktop_paths(app) else {
         log::warn!("Could not resolve desktop paths during shutdown");
@@ -3386,21 +3387,36 @@ mod tests {
     }
 
     #[test]
-    fn shutdown_cancels_the_current_python_or_package_operation() {
+    fn concurrent_cancellation_registration_preserves_the_shutdown_owner() {
         let state = DesktopState::default();
-        let operation = super::OperationCancellationGuard::register(&state).expect("operation");
-        let token = operation.token();
+        let operation_a = super::OperationCancellationGuard::register(&state).expect("operation A");
+        let token_a = operation_a.token();
+        assert_eq!(
+            super::OperationCancellationGuard::register(&state)
+                .err()
+                .as_deref(),
+            Some("Another cancellable Desktop operation is already active.")
+        );
+        assert!(
+            state
+                .operation_cancellation
+                .lock()
+                .expect("cancellation slot")
+                .as_ref()
+                .is_some_and(|token| token.same(&token_a))
+        );
         state.shutdown.cancel();
-        state
-            .operation_cancellation
-            .lock()
-            .expect("cancellation slot")
-            .as_ref()
-            .expect("active cancellation")
-            .cancel();
+        super::cancel_active_operation(&state);
         assert!(state.shutdown.is_cancelled());
-        assert!(token.is_cancelled());
-        drop(operation);
+        assert!(token_a.is_cancelled());
+        drop(operation_a);
+        assert!(
+            state
+                .operation_cancellation
+                .lock()
+                .expect("cancellation slot")
+                .is_none()
+        );
         assert!(
             state
                 .active_operations

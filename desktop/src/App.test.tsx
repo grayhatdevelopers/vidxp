@@ -40,7 +40,7 @@ const localProfile = {
 };
 const managedProfile = {
   ...localProfile, id: 'managed-a', display_name: 'Managed VidXP', kind: 'managed',
-  lifecycle_ownership: 'desktop', managed_runtime_profile: 'a', capabilities: ['scene'], surfaces: [],
+  lifecycle_ownership: 'desktop', managed_runtime_profile: 'runtime-a', capabilities: ['scene'], surfaces: [],
   frontend: { ...frontend, available: false, launchable: false, code: 'frontend_unavailable', message: 'Browser interface is not installed.', remediation: 'Return to managed setup.' },
 };
 const emptyState = { profiles: [], selected_profile_id: null, issues: [] };
@@ -323,11 +323,36 @@ describe('desktop target lifecycle', () => {
   });
 
   it('prepares models for an unchanged ready runtime without making the draft dirty', async () => {
+    const setup = { profiles: [managedProfile], selected_profile_id: managedProfile.id, issues: [] };
+    mocks.targetSetupState.mockResolvedValue(setup);
+    mocks.recheckTargetState.mockResolvedValue(setup);
     mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, runtime_profile: 'runtime-a', package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models', detail: 'Ready.' });
-    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+    const user = userEvent.setup(); renderApp();
+    await user.click(await screen.findByRole('button', { name: 'Manage setup' }));
+    await user.click(screen.getByRole('button', { name: 'Continue to setup' }));
+    await screen.findByRole('heading', { name: 'Set up local processing' });
     expect(screen.getByRole('button', { name: 'Apply update' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Prepare / verify models' }));
     expect(mocks.prepareManagedModels).toHaveBeenCalledWith('draft-1');
+  });
+
+  it('disables managed runtime actions while an external target is selected', async () => {
+    const setup = {
+      profiles: [localProfile, managedProfile],
+      selected_profile_id: localProfile.id,
+      issues: [],
+    };
+    mocks.targetSetupState.mockResolvedValue(setup);
+    mocks.recheckTargetState.mockResolvedValue(setup);
+    mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, runtime_profile: 'runtime-a', package_version: '0.4.0', capabilities: ['scene'], surfaces: ['browser'], model_directory: 'C:\\Models', detail: 'Ready.' });
+    const user = userEvent.setup(); renderApp();
+    await user.click(await screen.findByRole('button', { name: 'Manage targets' }));
+    await enterManaged(user);
+    expect(screen.getByText(/another target is currently selected/i)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Prepare / verify models' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Open VidXP' })).toBeDisabled();
+    expect(mocks.prepareManagedModels).not.toHaveBeenCalled();
+    expect(mocks.launchUi).not.toHaveBeenCalled();
   });
 
   it('uses the committed install state without a fallible status refresh', async () => {

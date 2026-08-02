@@ -766,6 +766,22 @@ pub fn authorize_lifecycle(
     Ok(())
 }
 
+pub fn authorize_managed_runtime_action(
+    profile: &TargetProfile,
+    runtime_profile: &str,
+) -> Result<(), TargetError> {
+    authorize_lifecycle(profile, LifecycleAction::Install)?;
+    if profile.kind != TargetKind::Managed
+        || profile.managed_runtime_profile.as_deref() != Some(runtime_profile)
+    {
+        return Err(TargetError::new(
+            TargetErrorCode::ValidationRequired,
+            "The selected managed target no longer matches the active Desktop runtime.",
+        ));
+    }
+    Ok(())
+}
+
 fn stable_local_profile_id(executable: &Path) -> String {
     let digest = hex::encode(Sha256::digest(executable.to_string_lossy().as_bytes()));
     format!("local-{}", &digest[..24])
@@ -1495,6 +1511,21 @@ mod tests {
         let managed = profile(TargetKind::Managed, LifecycleOwnership::Desktop);
         authorize_lifecycle(&managed, LifecycleAction::Install).expect("managed install");
         authorize_lifecycle(&managed, LifecycleAction::BroadProcessStop).expect("managed stop");
+    }
+
+    #[test]
+    fn external_selection_cannot_act_on_an_installed_managed_runtime() {
+        let external = profile(TargetKind::ExistingLocal, LifecycleOwnership::External);
+        let error = authorize_managed_runtime_action(&external, "runtime-1")
+            .expect_err("external selection must not control the managed runtime");
+        assert_eq!(error.code, TargetErrorCode::LifecycleForbidden);
+
+        let managed = profile(TargetKind::Managed, LifecycleOwnership::Desktop);
+        authorize_managed_runtime_action(&managed, "runtime-1")
+            .expect("matching managed selection");
+        let mismatch = authorize_managed_runtime_action(&managed, "runtime-2")
+            .expect_err("a different managed runtime must not be controlled");
+        assert_eq!(mismatch.code, TargetErrorCode::ValidationRequired);
     }
 
     #[test]
