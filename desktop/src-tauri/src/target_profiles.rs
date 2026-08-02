@@ -45,13 +45,10 @@ pub enum LifecycleOwnership {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)] // Repair/removal commands are future-facing, but their ownership guard is contractual.
 pub enum LifecycleAction {
     Validate,
     Launch,
     Install,
-    Repair,
-    Remove,
     BroadProcessStop,
 }
 
@@ -758,10 +755,7 @@ pub fn authorize_lifecycle(
     if profile.lifecycle_ownership == LifecycleOwnership::External
         && matches!(
             action,
-            LifecycleAction::Install
-                | LifecycleAction::Repair
-                | LifecycleAction::Remove
-                | LifecycleAction::BroadProcessStop
+            LifecycleAction::Install | LifecycleAction::BroadProcessStop
         )
     {
         return Err(TargetError::new(
@@ -1485,14 +1479,9 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_guards_block_all_external_mutations_and_broad_stop() {
+    fn lifecycle_guards_block_actual_external_mutation_and_broad_stop() {
         let external = profile(TargetKind::ExistingLocal, LifecycleOwnership::External);
-        for action in [
-            LifecycleAction::Install,
-            LifecycleAction::Repair,
-            LifecycleAction::Remove,
-            LifecycleAction::BroadProcessStop,
-        ] {
+        for action in [LifecycleAction::Install, LifecycleAction::BroadProcessStop] {
             assert_eq!(
                 authorize_lifecycle(&external, action)
                     .expect_err("external mutation")

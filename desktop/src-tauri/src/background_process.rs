@@ -140,6 +140,7 @@ fn wrapped(command: Command) -> CommandWrap {
 pub struct OwnedChild(Box<dyn ChildWrapper>);
 
 impl OwnedChild {
+    #[cfg(test)]
     pub fn id(&self) -> u32 {
         self.0.id()
     }

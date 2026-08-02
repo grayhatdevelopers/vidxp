@@ -190,6 +190,7 @@ struct ActiveRuntime {
     model_directory: PathBuf,
 }
 
+#[derive(Clone)]
 struct DesktopPaths {
     private_data: PathBuf,
     data: PathBuf,
@@ -200,6 +201,137 @@ struct DesktopPaths {
     models: PathBuf,
     active_runtime: PathBuf,
     activation_journal: PathBuf,
+}
+
+type WorkerStopper = dyn Fn(&Path, &DesktopPaths, Instant) + Send + Sync;
+
+struct ActiveWorkerOperation {
+    id: u64,
+    runtime: PathBuf,
+    paths: DesktopPaths,
+    stop_claimed: bool,
+}
+
+#[derive(Default)]
+struct WorkerStopState {
+    next_id: u64,
+    active: Option<ActiveWorkerOperation>,
+    last_stopped_runtime: Option<PathBuf>,
+}
+
+struct WorkerStopSupervisor {
+    state: Mutex<WorkerStopState>,
+    stopper: Arc<WorkerStopper>,
+}
+
+impl Default for WorkerStopSupervisor {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(WorkerStopState::default()),
+            stopper: Arc::new(stop_worker_before),
+        }
+    }
+}
+
+impl WorkerStopSupervisor {
+    #[cfg(test)]
+    fn with_stopper(stopper: Arc<WorkerStopper>) -> Self {
+        Self {
+            state: Mutex::new(WorkerStopState::default()),
+            stopper,
+        }
+    }
+
+    fn register(
+        self: &Arc<Self>,
+        runtime: PathBuf,
+        paths: DesktopPaths,
+    ) -> Result<WorkerOperationGuard, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "The preparation worker supervisor is unavailable.".to_string())?;
+        if state.active.is_some() {
+            return Err("Another worker-backed managed operation is already active.".into());
+        }
+        state.next_id += 1;
+        let id = state.next_id;
+        state.last_stopped_runtime = None;
+        state.active = Some(ActiveWorkerOperation {
+            id,
+            runtime,
+            paths,
+            stop_claimed: false,
+        });
+        Ok(WorkerOperationGuard {
+            supervisor: self.clone(),
+            id,
+            settled: false,
+        })
+    }
+
+    fn claim(&self, id: u64) -> Option<(PathBuf, DesktopPaths)> {
+        let mut state = self.state.lock().ok()?;
+        let active = state.active.as_mut()?;
+        if active.id != id || active.stop_claimed {
+            return None;
+        }
+        active.stop_claimed = true;
+        Some((active.runtime.clone(), active.paths.clone()))
+    }
+
+    fn finish(&self, id: u64, runtime: PathBuf) {
+        if let Ok(mut state) = self.state.lock()
+            && state.active.as_ref().is_some_and(|active| active.id == id)
+        {
+            state.active = None;
+            state.last_stopped_runtime = Some(runtime);
+        }
+    }
+
+    fn stop_active_before(&self, deadline: Instant) -> Option<PathBuf> {
+        let claim = {
+            let mut state = self.state.lock().ok()?;
+            if let Some(active) = state.active.as_mut() {
+                if active.stop_claimed {
+                    return Some(active.runtime.clone());
+                }
+                active.stop_claimed = true;
+                Some((active.id, active.runtime.clone(), active.paths.clone()))
+            } else {
+                return state.last_stopped_runtime.clone();
+            }
+        };
+        let (id, runtime, paths) = claim?;
+        (self.stopper)(&runtime, &paths, deadline);
+        self.finish(id, runtime.clone());
+        Some(runtime)
+    }
+}
+
+struct WorkerOperationGuard {
+    supervisor: Arc<WorkerStopSupervisor>,
+    id: u64,
+    settled: bool,
+}
+
+impl WorkerOperationGuard {
+    fn stop_before(&mut self, deadline: Instant) {
+        if self.settled {
+            return;
+        }
+        if let Some((runtime, paths)) = self.supervisor.claim(self.id) {
+            (self.supervisor.stopper)(&runtime, &paths, deadline);
+            self.supervisor.finish(self.id, runtime);
+        }
+        self.settled = true;
+    }
+}
+
+impl Drop for WorkerOperationGuard {
+    fn drop(&mut self) {
+        self.stop_before(Instant::now() + Duration::from_secs(5));
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -227,7 +359,7 @@ struct ManagedUi {
 
 struct DesktopState {
     ui_process: Mutex<Option<ManagedUi>>,
-    operation_worker_runtime: Mutex<Option<PathBuf>>,
+    worker_stop: Arc<WorkerStopSupervisor>,
     operation_cancellation: Arc<Mutex<Option<background_process::CancellationToken>>>,
     transition: Arc<Mutex<TransitionState>>,
     browser_open_active: AtomicBool,
@@ -240,7 +372,7 @@ impl Default for DesktopState {
     fn default() -> Self {
         Self {
             ui_process: Mutex::new(None),
-            operation_worker_runtime: Mutex::new(None),
+            worker_stop: Arc::new(WorkerStopSupervisor::default()),
             operation_cancellation: Arc::new(Mutex::new(None)),
             transition: Arc::new(Mutex::new(TransitionState::default())),
             browser_open_active: AtomicBool::new(false),
@@ -1456,11 +1588,16 @@ fn directory_size(path: &Path) -> io::Result<u64> {
 fn reconcile_managed_runtime_storage(paths: &DesktopPaths) -> RuntimeReconciliation {
     let mut report = RuntimeReconciliation::default();
     let mut retained = BTreeSet::new();
-    if let Ok(contents) = fs::read(&paths.active_runtime)
-        && let Ok(active) = serde_json::from_slice::<ActiveRuntime>(&contents)
-    {
-        retained.insert(active.profile);
-    }
+    let preserve_unidentified_finalized = match fs::read(&paths.active_runtime) {
+        Ok(contents) => match serde_json::from_slice::<ActiveRuntime>(&contents) {
+            Ok(active) => {
+                retained.insert(active.profile);
+                false
+            }
+            Err(_) => true,
+        },
+        Err(error) => error.kind() != io::ErrorKind::NotFound,
+    };
     if let Ok(contents) = fs::read(&paths.activation_journal)
         && let Ok(journal) = serde_json::from_slice::<ActivationJournal>(&contents)
     {
@@ -1483,7 +1620,10 @@ fn reconcile_managed_runtime_storage(paths: &DesktopPaths) -> RuntimeReconciliat
         if !file_type.is_dir() || file_type.is_symlink() || retained.contains(&name) {
             continue;
         }
-        if !owned_runtime_directory_name(&name) && !owned_staging_directory_name(&name) {
+        let finalized = owned_runtime_directory_name(&name);
+        if (!finalized && !owned_staging_directory_name(&name))
+            || (finalized && preserve_unidentified_finalized)
+        {
             continue;
         }
         if !path_is_confined(&path, &paths.runtimes) {
@@ -1698,14 +1838,17 @@ async fn run_vidxp_supervised(
 }
 
 #[tauri::command]
-fn runtime_manifest() -> Result<RuntimeManifest, String> {
+fn runtime_manifest(state: tauri::State<'_, DesktopState>) -> Result<RuntimeManifest, String> {
+    let _active = state.active_operations.register()?;
     manifest()
 }
 
 #[tauri::command]
 fn target_state(
     app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
 ) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    let _active = track_target_operation(&state)?;
     target_profiles::current_state(&app)
 }
 
@@ -1779,14 +1922,21 @@ async fn refresh_target_state(
 }
 
 #[tauri::command]
-async fn discover_local_targets() -> Result<Vec<target_profiles::DiscoveredTarget>, String> {
+async fn discover_local_targets(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<Vec<target_profiles::DiscoveredTarget>, String> {
+    let _active = state.active_operations.register()?;
     tauri::async_runtime::spawn_blocking(target_profiles::discover_local_targets)
         .await
         .map_err(|error| format!("Target discovery stopped unexpectedly: {error}"))
 }
 
 #[tauri::command]
-fn choose_local_executable(app: AppHandle) -> Result<Option<String>, String> {
+fn choose_local_executable(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<Option<String>, String> {
+    let _active = state.active_operations.register()?;
     app.dialog()
         .file()
         .set_title("Choose an existing VidXP executable")
@@ -1960,7 +2110,12 @@ async fn delete_target_profile(
 }
 
 #[tauri::command]
-async fn confirm_forget_target(app: AppHandle, display_name: String) -> Result<bool, String> {
+async fn confirm_forget_target(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    display_name: String,
+) -> Result<bool, String> {
+    let _active = state.active_operations.register()?;
     tauri::async_runtime::spawn_blocking(move || {
         app.dialog()
             .message(format!(
@@ -1980,6 +2135,7 @@ async fn begin_managed_setup(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
 ) -> Result<ManagedSetupDraft, target_profiles::TargetError> {
+    let _active = track_target_operation(&state)?;
     let transition = state.transition.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<DesktopState>();
@@ -2001,6 +2157,7 @@ async fn cancel_managed_setup(
     state: tauri::State<'_, DesktopState>,
     draft_id: String,
 ) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    let _active = track_target_operation(&state)?;
     let transition = state.transition.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<DesktopState>();
@@ -2017,17 +2174,11 @@ async fn cancel_managed_setup(
 }
 
 #[tauri::command]
-async fn media_runtime_status(
+fn choose_model_directory(
+    app: AppHandle,
     state: tauri::State<'_, DesktopState>,
-) -> Result<MediaRuntimeStatus, String> {
+) -> Result<Option<String>, String> {
     let _active = state.active_operations.register()?;
-    tauri::async_runtime::spawn_blocking(inspect_media_runtime)
-        .await
-        .map_err(|error| format!("Media runtime inspection stopped unexpectedly: {error}"))
-}
-
-#[tauri::command]
-fn choose_model_directory(app: AppHandle) -> Result<Option<String>, String> {
     let selection = app
         .dialog()
         .file()
@@ -2048,10 +2199,10 @@ async fn install_media_runtime(
     state: tauri::State<'_, DesktopState>,
     draft_id: String,
 ) -> Result<MediaRuntimeStatus, String> {
+    let cancellation = OperationCancellationGuard::register(&state)?;
     let _transition =
         TargetTransitionCoordinator::begin_apply(&state, &draft_id, TransitionKind::InstallMedia)
             .map_err(|error| error.to_string())?;
-    let cancellation = OperationCancellationGuard::register(&state)?;
     let current = tauri::async_runtime::spawn_blocking(inspect_media_runtime)
         .await
         .map_err(|error| format!("Media runtime inspection stopped unexpectedly: {error}"))?;
@@ -2218,8 +2369,10 @@ fn configured_runtime_status(active: ActiveRuntime, problems: Vec<String>) -> Ru
 #[tauri::command]
 async fn model_directory_inventory(
     app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
     directory: Option<String>,
 ) -> Result<ModelDirectoryInventory, String> {
+    let _active = state.active_operations.register()?;
     tauri::async_runtime::spawn_blocking(move || {
         let paths = desktop_paths(&app)?;
         let selected = model_directory(&paths, directory.as_deref())?;
@@ -2235,10 +2388,10 @@ async fn prepare_managed_models(
     state: tauri::State<'_, DesktopState>,
     draft_id: String,
 ) -> Result<target_profiles::TargetState, String> {
+    let cancellation = OperationCancellationGuard::register(&state)?;
     let _transition =
         TargetTransitionCoordinator::begin_apply(&state, &draft_id, TransitionKind::PrepareModels)
             .map_err(|error| error.to_string())?;
-    let cancellation = OperationCancellationGuard::register(&state)?;
     let preparation_app = app.clone();
     let (runtime, paths, capabilities) = tauri::async_runtime::spawn_blocking(move || {
         let profile = target_profiles::selected_profile(&preparation_app)
@@ -2262,11 +2415,7 @@ async fn prepare_managed_models(
 
     let manifest = manifest()?;
     let arguments = capability_command_arguments(&manifest, "prepare", &capabilities);
-    *state
-        .operation_worker_runtime
-        .lock()
-        .map_err(|_| "The preparation worker supervisor is unavailable.".to_string())? =
-        Some(runtime.clone());
+    let mut worker = state.worker_stop.register(runtime.clone(), paths.clone())?;
     let preparation = run_vidxp_supervised(
         &runtime,
         &paths,
@@ -2275,15 +2424,7 @@ async fn prepare_managed_models(
         "VidXP model preparation",
     )
     .await;
-    let shutdown_runtime = runtime.clone();
-    let shutdown_paths = paths;
-    let _ = tauri::async_runtime::spawn_blocking(move || {
-        stop_worker(&shutdown_runtime, &shutdown_paths);
-    })
-    .await;
-    if let Ok(mut worker_runtime) = state.operation_worker_runtime.lock() {
-        worker_runtime.take();
-    }
+    worker.stop_before(Instant::now() + Duration::from_secs(5));
     preparation?;
     target_profiles::current_state(&app).map_err(|error| error.to_string())
 }
@@ -2294,13 +2435,13 @@ async fn install_runtime(
     state: tauri::State<'_, DesktopState>,
     request: InstallRequest,
 ) -> Result<InstallTransitionResult, String> {
+    let cancellation = OperationCancellationGuard::register(&state)?;
     let mut transition = TargetTransitionCoordinator::begin_apply(
         &state,
         &request.draft_id,
         TransitionKind::InstallRuntime,
     )
     .map_err(|error| error.to_string())?;
-    let cancellation = OperationCancellationGuard::register(&state)?;
     let manifest = manifest()?;
     let capabilities = selected_capabilities(&manifest, &request.capabilities)?;
     let surfaces = selected_surfaces(&manifest, &request.surfaces)?;
@@ -2422,11 +2563,7 @@ async fn install_runtime(
         if request.prepare_models {
             let prepare_arguments =
                 capability_command_arguments(&manifest, "prepare", &capabilities);
-            *state
-                .operation_worker_runtime
-                .lock()
-                .map_err(|_| "The preparation worker supervisor is unavailable.")? =
-                Some(staging.clone());
+            let mut worker = state.worker_stop.register(staging.clone(), paths.clone())?;
             let preparation = run_vidxp_supervised(
                 &staging,
                 &paths,
@@ -2435,15 +2572,7 @@ async fn install_runtime(
                 "VidXP model preparation",
             )
             .await;
-            let _ = run_vidxp(
-                &staging,
-                &paths,
-                &["jobs".into(), "stop-worker".into()],
-                "VidXP preparation worker shutdown",
-            );
-            if let Ok(mut worker_runtime) = state.operation_worker_runtime.lock() {
-                worker_runtime.take();
-            }
+            worker.stop_before(Instant::now() + Duration::from_secs(5));
             preparation?;
         }
 
@@ -2833,8 +2962,8 @@ async fn open_ui_in_browser(app: AppHandle) -> Result<(), String> {
     if !claim_browser_open(&state.browser_open_active) {
         return Ok(());
     }
-    let _active = state.active_operations.register()?;
     let _browser_guard = BrowserOpenGuard(app.clone());
+    let _active = state.active_operations.register()?;
     let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::OpenBrowser)
         .map_err(|error| error.to_string())?;
     let worker_app = app.clone();
@@ -2879,6 +3008,9 @@ fn perform_desktop_action(app: &AppHandle, action: DesktopAction) {
 
 fn begin_shutdown(app: &AppHandle) {
     let state = app.state::<DesktopState>();
+    if let Err(error) = state.active_operations.close() {
+        log::error!("Could not close operation registration during shutdown: {error}");
+    }
     if state.shutdown_started.swap(true, Ordering::AcqRel) {
         return;
     }
@@ -2940,10 +3072,6 @@ fn create_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
-fn stop_worker(runtime: &Path, paths: &DesktopPaths) {
-    stop_worker_before(runtime, paths, Instant::now() + Duration::from_secs(5));
-}
-
 fn stop_worker_before(runtime: &Path, paths: &DesktopPaths, deadline: Instant) {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
@@ -2978,11 +3106,7 @@ fn shutdown(app: &AppHandle, deadline: Instant) {
         log::warn!("Could not resolve desktop paths during shutdown");
         return;
     };
-    if let Ok(mut operation_worker) = state.operation_worker_runtime.lock()
-        && let Some(runtime) = operation_worker.take()
-    {
-        stop_worker_before(&runtime, &paths, deadline);
-    }
+    let operation_worker = state.worker_stop.stop_active_before(deadline);
     let Ok(profile) = target_profiles::selected_profile(app) else {
         log::info!("No selected VidXP target needs worker shutdown");
         return;
@@ -3006,7 +3130,12 @@ fn shutdown(app: &AppHandle, deadline: Instant) {
     }
     paths.models = active.model_directory.clone();
     let runtime = runtime_directory(&paths, &active);
-    stop_worker_before(&runtime, &paths, deadline);
+    if operation_worker
+        .as_ref()
+        .is_none_or(|stopped| !same_path(stopped, &runtime))
+    {
+        stop_worker_before(&runtime, &paths, deadline);
+    }
     log::info!("Active VidXP worker shutdown finished");
 }
 
@@ -3052,7 +3181,6 @@ pub fn run() {
             confirm_forget_target,
             begin_managed_setup,
             cancel_managed_setup,
-            media_runtime_status,
             choose_model_directory,
             install_media_runtime,
             runtime_status,
@@ -3097,21 +3225,26 @@ mod tests {
         ActivationJournal, ActivationRecovery, ActivationStage, ActiveRuntime, DesktopAction,
         DesktopActivation, DesktopCloseAction, DesktopState, DraftPhase, DraftRecord,
         ManagedSetupDraft, TargetTransitionCoordinator, TransitionKind, UiProcessAction,
-        action_for_activation, activation_recovery, base_package_specification,
-        capability_command_arguments, claim_browser_open, clean_environment_from, close_action,
-        configure_ui_service_command, configured_runtime_status, dependency_installation_arguments,
-        desktop_paths_from_roots, display_command, inventory_model_directory, manifest,
-        manifest_digest, normalize_line_endings, normalized_runtime_constraints,
-        package_acquisition_arguments, package_index, package_specification,
-        read_active_runtime_snapshot, reconcile_managed_runtime_storage, required_encoder_missing,
-        restore_active_runtime, selected_capabilities, selected_surfaces, ui_process_action,
-        write_activation_journal, write_active_runtime,
+        WorkerStopSupervisor, action_for_activation, activation_recovery,
+        base_package_specification, capability_command_arguments, claim_browser_open,
+        clean_environment_from, close_action, configure_ui_service_command,
+        configured_runtime_status, dependency_installation_arguments, desktop_paths_from_roots,
+        display_command, inventory_model_directory, manifest, manifest_digest,
+        normalize_line_endings, normalized_runtime_constraints, package_acquisition_arguments,
+        package_index, package_specification, read_active_runtime_snapshot,
+        reconcile_managed_runtime_storage, required_encoder_missing, restore_active_runtime,
+        selected_capabilities, selected_surfaces, ui_process_action, write_activation_journal,
+        write_active_runtime,
     };
     use std::{
         ffi::OsStr,
         fs,
         path::{Path, PathBuf},
         process::Command,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
     #[test]
@@ -3273,6 +3406,67 @@ mod tests {
                 .active_operations
                 .wait_until_idle(std::time::Instant::now() + std::time::Duration::from_secs(1))
         );
+    }
+
+    fn worker_supervisor_fixture() -> (
+        Arc<WorkerStopSupervisor>,
+        Arc<AtomicUsize>,
+        super::DesktopPaths,
+    ) {
+        let stops = Arc::new(AtomicUsize::new(0));
+        let observed = stops.clone();
+        let supervisor = Arc::new(WorkerStopSupervisor::with_stopper(Arc::new(
+            move |_runtime, _paths, _deadline| {
+                observed.fetch_add(1, Ordering::SeqCst);
+            },
+        )));
+        let paths =
+            desktop_paths_from_roots(Path::new("private"), Path::new("cache"), Path::new("local"));
+        (supervisor, stops, paths)
+    }
+
+    #[test]
+    fn worker_owner_stops_once_on_normal_completion() {
+        let (supervisor, stops, paths) = worker_supervisor_fixture();
+        let mut worker = supervisor
+            .register(PathBuf::from("runtime"), paths)
+            .expect("worker registration");
+        worker.stop_before(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        drop(worker);
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn worker_owner_stops_once_when_cancelled_or_failed() {
+        for _outcome in ["cancelled", "failed"] {
+            let (supervisor, stops, paths) = worker_supervisor_fixture();
+            let worker = supervisor
+                .register(PathBuf::from("runtime"), paths)
+                .expect("worker registration");
+            drop(worker);
+            assert_eq!(stops.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    fn shutdown_claims_an_active_worker_and_prevents_duplicate_stop() {
+        let (supervisor, stops, paths) = worker_supervisor_fixture();
+        let worker = supervisor
+            .register(PathBuf::from("runtime"), paths)
+            .expect("worker registration");
+        assert_eq!(
+            supervisor
+                .stop_active_before(std::time::Instant::now() + std::time::Duration::from_secs(1)),
+            Some(PathBuf::from("runtime"))
+        );
+        drop(worker);
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            supervisor
+                .stop_active_before(std::time::Instant::now() + std::time::Duration::from_secs(1)),
+            Some(PathBuf::from("runtime"))
+        );
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -3444,6 +3638,32 @@ mod tests {
         assert_eq!(report.removed_directories, 2);
         assert!(paths.runtimes.join(active_profile).exists());
         assert!(paths.runtimes.join("external-runtime").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn corrupt_active_pointer_preserves_unidentified_finalized_runtimes() {
+        let root = std::env::temp_dir().join(format!(
+            "vidxp-corrupt-pointer-reconcile-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let paths = desktop_paths_from_roots(
+            &root.join("private"),
+            &root.join("cache"),
+            &root.join("local"),
+        );
+        fs::create_dir_all(&paths.runtimes).expect("runtimes");
+        let finalized = format!("{}-1", "a".repeat(64));
+        fs::create_dir_all(paths.runtimes.join(&finalized)).expect("finalized runtime");
+        fs::write(&paths.active_runtime, b"not-json").expect("corrupt pointer");
+
+        let report = reconcile_managed_runtime_storage(&paths);
+        assert_eq!(report.removed_directories, 0);
+        assert!(paths.runtimes.join(finalized).exists());
         let _ = fs::remove_dir_all(root);
     }
 

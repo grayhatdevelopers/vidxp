@@ -20,16 +20,16 @@ struct ReadinessMarker {
     protocol_version: u32,
     nonce: String,
     port: u16,
-    pid: u32,
+    #[serde(rename = "pid")]
+    _pid: u32,
 }
 
-fn marker_matches(contents: &[u8], nonce: &str, port: u16, pid: u32) -> bool {
+fn marker_matches(contents: &[u8], nonce: &str, port: u16) -> bool {
     serde_json::from_slice::<ReadinessMarker>(contents).is_ok_and(|marker| {
         marker.product == READINESS_PRODUCT
             && marker.protocol_version == READINESS_PROTOCOL_VERSION
             && marker.nonce == nonce
             && marker.port == port
-            && marker.pid == pid
     })
 }
 
@@ -67,7 +67,6 @@ pub fn wait_for_browser_readiness(
     deadline: Instant,
     cancellation: &CancellationToken,
 ) -> Result<(), String> {
-    let expected_pid = process.id();
     let address = SocketAddr::from(([127, 0, 0, 1], port));
     while Instant::now() < deadline {
         if cancellation.is_cancelled() {
@@ -85,8 +84,7 @@ pub fn wait_for_browser_readiness(
             ));
         }
         if fs::read(marker_path).is_ok_and(|contents| {
-            marker_matches(&contents, nonce, port, expected_pid)
-                && streamlit_health_is_ready(address)
+            marker_matches(&contents, nonce, port) && streamlit_health_is_ready(address)
         }) {
             let _ = fs::remove_file(marker_path);
             return Ok(());
@@ -153,10 +151,10 @@ mod tests {
     #[test]
     fn readiness_marker_rejects_stale_service_and_wrong_nonce() {
         let correct = br#"{"product":"dev.grayhat.vidxp","protocol_version":1,"nonce":"new","port":43123,"pid":99}"#;
-        assert!(marker_matches(correct, "new", 43123, 99));
-        assert!(!marker_matches(correct, "old", 43123, 99));
-        assert!(!marker_matches(correct, "new", 43124, 99));
-        assert!(!marker_matches(correct, "new", 43123, 100));
+        assert!(marker_matches(correct, "new", 43123));
+        assert!(!marker_matches(correct, "old", 43123));
+        assert!(!marker_matches(correct, "new", 43124));
+        assert!(!marker_matches(b"not-json", "new", 43123));
     }
 
     #[test]
@@ -218,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn readiness_accepts_only_the_launch_bound_child_and_health_response() {
+    fn readiness_accepts_only_the_launch_bound_nonce_port_and_health_response() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
         let port = listener.local_addr().expect("address").port();
         let server = health_server(listener);
@@ -232,7 +230,7 @@ mod tests {
                 "protocol_version": READINESS_PROTOCOL_VERSION,
                 "nonce": "launch",
                 "port": port,
-                "pid": process.id(),
+                "pid": process.id() + 1,
             })
             .to_string(),
         )
@@ -248,6 +246,95 @@ mod tests {
         .expect("ready");
         assert!(!marker.exists());
         server.join().expect("server");
+    }
+
+    #[test]
+    fn launcher_child_with_a_different_pid_can_publish_readiness() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        drop(listener);
+        let marker = temporary_marker("child-marker");
+        let pid_file = temporary_marker("child-pid");
+        let script = temporary_marker("child-server").with_extension("py");
+        fs::write(
+            &script,
+            r#"import http.server
+import json
+import os
+import sys
+
+marker, pid_file, nonce, port = sys.argv[1:]
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"ok"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *_args):
+        pass
+
+with open(pid_file, "w", encoding="utf-8") as destination:
+    destination.write(str(os.getpid()))
+temporary = marker + ".tmp"
+with open(temporary, "w", encoding="utf-8") as destination:
+    json.dump({"product": "dev.grayhat.vidxp", "protocol_version": 1, "nonce": nonce, "port": int(port), "pid": os.getpid()}, destination)
+os.replace(temporary, marker)
+http.server.HTTPServer(("127.0.0.1", int(port)), Handler).handle_request()
+"#,
+        )
+        .expect("server script");
+        let command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args([
+                "/c",
+                "python",
+                &script.to_string_lossy(),
+                &marker.to_string_lossy(),
+                &pid_file.to_string_lossy(),
+                "launch-child",
+                &port.to_string(),
+            ]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args([
+                "-c",
+                "python3 \"$1\" \"$2\" \"$3\" \"$4\" \"$5\"; wait",
+                "_",
+                &script.to_string_lossy(),
+                &marker.to_string_lossy(),
+                &pid_file.to_string_lossy(),
+                "launch-child",
+                &port.to_string(),
+            ]);
+            command
+        };
+        let mut process =
+            crate::background_process::spawn_service(command).expect("launcher process");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let child_pid = loop {
+            if let Ok(pid) = fs::read_to_string(&pid_file)
+                && let Ok(pid) = pid.parse::<u32>()
+            {
+                break pid;
+            }
+            assert!(Instant::now() < deadline, "child did not publish its pid");
+            thread::sleep(Duration::from_millis(20));
+        };
+        assert_ne!(child_pid, process.id());
+        wait_for_browser_readiness(
+            &mut process,
+            &marker,
+            "launch-child",
+            port,
+            deadline,
+            &CancellationToken::default(),
+        )
+        .expect("child readiness");
+        let _ = fs::remove_file(pid_file);
+        let _ = fs::remove_file(script);
     }
 
     #[test]
