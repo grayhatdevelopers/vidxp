@@ -304,6 +304,8 @@ pydeck==0.9.3
     # via streamlit
 pygments==2.20.0
     # via rich
+pyjwt==2.13.0
+    # via vidxp
 pypika==0.51.1
     # via chromadb
 pyproject-hooks==1.2.0
