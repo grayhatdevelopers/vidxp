@@ -36,6 +36,23 @@ can deliver frames and clips itself.
    only for results worth presenting. Do not rerun retrieval or reconstruct
    timestamps in FFmpeg.
 
+## Current actor scope
+
+- Use `query_video`, not `search_moments`, when anonymous actor-cluster context
+  is useful. The actor capability has no text-search operation, so it cannot
+  search a person's name or accept a reference identity.
+- Treat actor evidence as video-scoped anonymous face clusters containing a
+  detection count and first-to-last sampled timestamp range. It does not prove
+  a name, continuous presence, speaking identity, or cross-video identity.
+- Actor evidence may fall outside the three items materialized automatically.
+  Select its evidence IDs from the completed job and use
+  `materialize_job_evidence` when a representative frame or clip is useful.
+- Label the returned actor image honestly: it is currently a representative
+  full frame near the middle of the cluster range, not an exact detection frame,
+  face crop, contact sheet, or identity verification.
+- Do not claim that MCP can list exact actor detections or create actor overlays.
+  Those operations exist in other VidXP interfaces but are not MCP tools yet.
+
 ## Polling and presentation
 
 - Explain that search and grounded queries are durable jobs and may take time,

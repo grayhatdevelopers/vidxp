@@ -17,21 +17,28 @@ changes.
    connected and stop instead of inventing a substitute.
 2. Call `get_workspace` to inspect existing media and index coverage. Avoid
    importing the same video again when it is already registered or indexed.
-3. Call `get_runtime_readiness` before automatic indexing. If required model
-   artifacts are missing, call `prepare_models` and poll that job with `get_job`
-   until it reaches a terminal state.
-4. Select ingestion from the tools actually exposed by the current transport:
+3. Select index modalities explicitly from the indexable capabilities returned
+   by `get_workspace`. For ordinary dialogue, scene, action, and named-person
+   retrieval, use `dialogue` and `scene` when available. Add `actor` only when
+   the user explicitly wants anonymous recurring-face cluster summaries; it
+   does not identify people by name or across videos, and exact detection or
+   overlay operations are not exposed through MCP yet. Do not omit `modalities`,
+   because omission indexes every installed capability.
+4. Call `get_runtime_readiness` before automatic indexing. If models required
+   by the selected modalities are missing, call `prepare_models` for those same
+   modalities and poll that job with `get_job` until it reaches a terminal state.
+5. Select ingestion from the tools actually exposed by the current transport:
    - When `ingest_local_media` is available and the video has a filesystem path
      accessible to VidXP, pass one to ten paths and poll only
      `get_media_ingestion`.
    - Otherwise call `create_media_upload`, give the returned upload link to the
      user, and poll only `get_media_upload` after files are selected.
-5. Keep `index_after_import` enabled unless the user explicitly asks to register
+6. Keep `index_after_import` enabled unless the user explicitly asks to register
    media without indexing. Reuse the same idempotency key when retrying the same
    request.
-6. Stop polling when the returned aggregate state is terminal. Treat each file
+7. Stop polling when the returned aggregate state is terminal. Treat each file
    independently so one failure does not hide successful siblings.
-7. If the same request also asks to find or explain video content, continue with
+8. If the same request also asks to find or explain video content, continue with
    the VidXP evidence workflow as soon as the successful media becomes indexed
    and searchable; do not stop after ingestion or make the user ask again.
 
