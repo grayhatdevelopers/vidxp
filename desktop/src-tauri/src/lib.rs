@@ -1,13 +1,13 @@
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     env, fs,
     io::{self, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
+    process::{Child, Command, Stdio},
     sync::{
-        Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -30,11 +30,14 @@ use tauri_plugin_shell::{
 };
 use wait_timeout::ChildExt;
 
+mod background_process;
 mod target_profiles;
 
 const RUNTIME_MANIFEST_BYTES: &[u8] = include_bytes!("../../runtime-manifest.json");
 const RUNTIME_CONSTRAINTS_BYTES: &[u8] = include_bytes!("../../runtime-constraints.txt");
+const MODEL_CACHE_CATALOG_BYTES: &[u8] = include_bytes!("../../model-cache-catalog.json");
 const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
+const MAX_SETUP_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Deserialize, Serialize)]
 struct CapabilitySpec {
@@ -79,6 +82,13 @@ struct InstallRequest {
     surfaces: Vec<String>,
     prepare_models: bool,
     model_directory: Option<String>,
+    draft_id: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct ManagedSetupDraft {
+    id: String,
+    previous_profile_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -109,10 +119,17 @@ enum RuntimeState {
     Broken,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct CachedModelEntry {
     id: String,
     label: String,
+}
+
+#[derive(Deserialize)]
+struct ModelCacheCatalogEntry {
+    id: String,
+    label: String,
+    relative_artifact: String,
 }
 
 #[derive(Serialize)]
@@ -152,7 +169,7 @@ struct SystemInstallPlan {
     automatic: bool,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct ActiveRuntime {
     schema_version: u32,
     manifest_sha256: String,
@@ -174,6 +191,39 @@ struct DesktopPaths {
     python: PathBuf,
     models: PathBuf,
     active_runtime: PathBuf,
+    activation_journal: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ActivationStage {
+    Prepared,
+    ProfileProjected,
+    ActiveWritten,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ActivationRecovery {
+    RollBack,
+    Complete,
+}
+
+fn activation_recovery(stage: &ActivationStage) -> ActivationRecovery {
+    match stage {
+        ActivationStage::ActiveWritten => ActivationRecovery::Complete,
+        ActivationStage::Prepared | ActivationStage::ProfileProjected => {
+            ActivationRecovery::RollBack
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ActivationJournal {
+    schema_version: u32,
+    stage: ActivationStage,
+    previous_active: Option<ActiveRuntime>,
+    previous_targets: target_profiles::TargetState,
+    candidate_active: ActiveRuntime,
 }
 
 struct ManagedUi {
@@ -214,8 +264,10 @@ struct DesktopState {
     operation_process: Mutex<Option<CommandChild>>,
     operation_worker_runtime: Mutex<Option<PathBuf>>,
     operation_active: AtomicBool,
-    managed_setup_authorized: AtomicBool,
-    shutdown_started: AtomicBool,
+    managed_setup_draft: Mutex<Option<ManagedSetupDraft>>,
+    inspected_targets: Mutex<HashMap<PathBuf, target_profiles::ValidatedTarget>>,
+    revalidation_active: Arc<AtomicBool>,
+    shutdown_started: Arc<AtomicBool>,
 }
 
 impl Default for DesktopState {
@@ -225,14 +277,81 @@ impl Default for DesktopState {
             operation_process: Mutex::new(None),
             operation_worker_runtime: Mutex::new(None),
             operation_active: AtomicBool::new(false),
-            managed_setup_authorized: AtomicBool::new(false),
-            shutdown_started: AtomicBool::new(false),
+            managed_setup_draft: Mutex::new(None),
+            inspected_targets: Mutex::new(HashMap::new()),
+            revalidation_active: Arc::new(AtomicBool::new(false)),
+            shutdown_started: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+struct TargetTransitionCoordinator<'a> {
+    app: &'a AppHandle,
+    state: &'a DesktopState,
+}
+
+impl<'a> TargetTransitionCoordinator<'a> {
+    fn new(app: &'a AppHandle, state: &'a DesktopState) -> Self {
+        Self { app, state }
+    }
+
+    fn stop_browser(&self) {
+        stop_ui_process(self.state);
+    }
+
+    fn finish_transition(&self) {
+        self.stop_browser();
+        if let Ok(mut draft) = self.state.managed_setup_draft.lock() {
+            draft.take();
+        }
+    }
+
+    fn begin_managed_draft(&self) -> Result<ManagedSetupDraft, target_profiles::TargetError> {
+        let current = target_profiles::current_state(self.app)?;
+        let seed = format!(
+            "{}:{}:{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| target_profiles::TargetError {
+                    code: target_profiles::TargetErrorCode::ValidationRequired,
+                    message: format!("The system clock is invalid: {error}"),
+                })?
+                .as_nanos(),
+            current.selected_profile_id.as_deref().unwrap_or_default()
+        );
+        let draft = ManagedSetupDraft {
+            id: hex::encode(Sha256::digest(seed.as_bytes())),
+            previous_profile_id: current.selected_profile_id,
+        };
+        *self
+            .state
+            .managed_setup_draft
+            .lock()
+            .map_err(|_| target_profiles::TargetError {
+                code: target_profiles::TargetErrorCode::StoreUnavailable,
+                message: "The managed setup draft could not be created.".into(),
+            })? = Some(draft.clone());
+        Ok(draft)
+    }
+
+    fn cancel_managed_draft(&self) {
+        if let Ok(mut draft) = self.state.managed_setup_draft.lock() {
+            draft.take();
         }
     }
 }
 
 struct OperationGuard<'a> {
     active: &'a AtomicBool,
+}
+
+struct OwnedOperationGuard(Arc<AtomicBool>);
+
+impl Drop for OwnedOperationGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl Drop for OperationGuard<'_> {
@@ -302,6 +421,7 @@ fn desktop_paths_from_roots(private_data: &Path, cache: &Path, local_data: &Path
         runtimes: private_data.join("runtimes"),
         python: private_data.join("python"),
         active_runtime: private_data.join("active-runtime.json"),
+        activation_journal: private_data.join("activation-journal.json"),
         models: data.join("models"),
         private_data: private_data.to_path_buf(),
         data,
@@ -378,30 +498,22 @@ fn model_directory(paths: &DesktopPaths, requested: Option<&str>) -> Result<Path
 const MAX_MODEL_INVENTORY_ENTRIES: u64 = 100_000;
 
 fn recognize_cached_model(relative: &Path) -> Option<CachedModelEntry> {
+    static CATALOG: OnceLock<Vec<ModelCacheCatalogEntry>> = OnceLock::new();
+    let catalog = CATALOG.get_or_init(|| {
+        serde_json::from_slice(MODEL_CACHE_CATALOG_BYTES)
+            .expect("the generated model cache catalog must be valid")
+    });
     let path = relative
         .to_string_lossy()
         .replace('\\', "/")
         .to_ascii_lowercase();
-    let (id, label) = if path.contains("models--dropbox-dash--faster-whisper-large-v3-turbo") {
-        (
-            "faster-whisper-large-v3-turbo",
-            "Faster Whisper large-v3-turbo",
-        )
-    } else if path.contains("models--google--siglip2-base-patch16-224") {
-        ("siglip2-base", "Google SigLIP2 base")
-    } else if path.contains("models--qwen--qwen3-embedding-0.6b") {
-        ("qwen3-embedding-0.6b", "Qwen3 Embedding 0.6B")
-    } else if path.ends_with("opencv-zoo/face_detection_yunet_2026may.onnx") {
-        ("yunet", "YuNet")
-    } else if path.ends_with("opencv-zoo/face_recognition_sface_2021dec.onnx") {
-        ("sface", "SFace")
-    } else {
-        return None;
-    };
-    Some(CachedModelEntry {
-        id: id.into(),
-        label: label.into(),
-    })
+    catalog
+        .iter()
+        .find(|entry| path.ends_with(&entry.relative_artifact.to_ascii_lowercase()))
+        .map(|entry| CachedModelEntry {
+            id: entry.id.clone(),
+            label: entry.label.clone(),
+        })
 }
 
 fn inventory_model_directory(directory: &Path) -> ModelDirectoryInventory {
@@ -683,7 +795,7 @@ fn resolve_system_executable(name: &str) -> Option<PathBuf> {
         .and_then(|candidate| fs::canonicalize(&candidate).ok().or(Some(candidate)))
 }
 
-fn combined_output(output: &Output) -> String {
+fn combined_output(output: &background_process::BackgroundOutput) -> String {
     format!(
         "{}\n{}",
         String::from_utf8_lossy(&output.stdout),
@@ -892,22 +1004,23 @@ fn configured_command(executable_path: &Path, paths: &DesktopPaths) -> Command {
     command
 }
 
-#[cfg(windows)]
 pub(crate) fn hide_child_console(command: &mut Command) {
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NO_WINDOW);
+    background_process::hidden(command);
 }
 
-#[cfg(not(windows))]
-pub(crate) fn hide_child_console(_command: &mut Command) {}
-
-fn checked_output(mut command: Command, operation: &str) -> Result<Output, String> {
-    hide_child_console(&mut command);
-    let output = command
-        .output()
-        .map_err(|error| format!("{operation} could not start: {error}"))?;
+fn checked_output(
+    mut command: Command,
+    operation: &str,
+) -> Result<background_process::BackgroundOutput, String> {
+    let output = background_process::run(
+        &mut command,
+        background_process::BackgroundPolicy {
+            timeout: Duration::from_secs(30),
+            max_output_bytes: 1024 * 1024,
+        },
+        None,
+    )
+    .map_err(|error| format!("{operation} failed: {}", error.detail))?;
     if output.status.success() {
         return Ok(output);
     }
@@ -951,6 +1064,62 @@ fn write_active_runtime(paths: &DesktopPaths, active: &ActiveRuntime) -> Result<
         .map_err(|error| format!("Could not activate the validated runtime: {error}"))
 }
 
+fn write_activation_journal(
+    paths: &DesktopPaths,
+    journal: &ActivationJournal,
+) -> Result<(), String> {
+    fs::create_dir_all(&paths.private_data)
+        .map_err(|error| format!("Could not create the activation journal directory: {error}"))?;
+    let mut destination = AtomicWriteFile::options()
+        .open(&paths.activation_journal)
+        .map_err(|error| format!("Could not stage the activation journal: {error}"))?;
+    serde_json::to_writer(&mut destination, journal)
+        .map_err(|error| format!("Could not serialize the activation journal: {error}"))?;
+    destination
+        .flush()
+        .and_then(|_| destination.commit())
+        .map_err(|error| format!("Could not persist the activation journal: {error}"))
+}
+
+fn restore_active_runtime(
+    paths: &DesktopPaths,
+    previous: Option<&ActiveRuntime>,
+) -> Result<(), String> {
+    match previous {
+        Some(active) => write_active_runtime(paths, active),
+        None if paths.active_runtime.exists() => fs::remove_file(&paths.active_runtime)
+            .map_err(|error| format!("Could not restore the empty runtime selection: {error}")),
+        None => Ok(()),
+    }
+}
+
+fn clear_activation_journal(paths: &DesktopPaths) -> Result<(), String> {
+    if paths.activation_journal.exists() {
+        fs::remove_file(&paths.activation_journal)
+            .map_err(|error| format!("Could not clear the activation journal: {error}"))?;
+    }
+    Ok(())
+}
+
+fn managed_runtime_projection_for(
+    paths: &DesktopPaths,
+    active: &ActiveRuntime,
+) -> target_profiles::ManagedRuntimeProjection {
+    let runtime = runtime_directory(paths, active);
+    let requested_executable = executable(&runtime, "vidxp");
+    let executable = fs::canonicalize(&requested_executable).unwrap_or(requested_executable);
+    target_profiles::ManagedRuntimeProjection {
+        runtime_profile: active.profile.clone(),
+        executable,
+        data_root: paths.data.clone(),
+        repository_root: paths.repository.clone(),
+        model_directory: active.model_directory.clone(),
+        package_version: active.package_version.clone(),
+        capabilities: active.capabilities.clone(),
+        surfaces: active.surfaces.clone(),
+    }
+}
+
 fn managed_runtime_projection(
     paths: &DesktopPaths,
 ) -> Option<target_profiles::ManagedRuntimeProjection> {
@@ -964,19 +1133,42 @@ fn managed_runtime_projection(
         log::warn!("Ignoring an active managed runtime with an invalid profile identity");
         return None;
     }
-    let runtime = runtime_directory(paths, &active);
-    let requested_executable = executable(&runtime, "vidxp");
-    let executable = fs::canonicalize(&requested_executable).unwrap_or(requested_executable);
-    Some(target_profiles::ManagedRuntimeProjection {
-        runtime_profile: active.profile,
-        executable,
-        data_root: paths.data.clone(),
-        repository_root: paths.repository.clone(),
-        model_directory: active.model_directory,
-        package_version: active.package_version,
-        capabilities: active.capabilities,
-        surfaces: active.surfaces,
-    })
+    Some(managed_runtime_projection_for(paths, &active))
+}
+
+fn recover_interrupted_activation(app: &AppHandle) -> Result<(), String> {
+    let paths = desktop_paths(app)?;
+    if !paths.activation_journal.exists() {
+        return Ok(());
+    }
+    let contents = fs::read(&paths.activation_journal)
+        .map_err(|error| format!("Could not read the activation journal: {error}"))?;
+    let journal: ActivationJournal = serde_json::from_slice(&contents)
+        .map_err(|error| format!("The activation journal is invalid: {error}"))?;
+    if journal.schema_version != 1 {
+        return Err(format!(
+            "The activation journal uses unsupported schema version {}.",
+            journal.schema_version
+        ));
+    }
+    match activation_recovery(&journal.stage) {
+        ActivationRecovery::Complete => {
+            write_active_runtime(&paths, &journal.candidate_active)?;
+            let manifest = manifest()?;
+            target_profiles::project_managed(
+                app,
+                managed_runtime_projection_for(&paths, &journal.candidate_active),
+                &manifest.desktop_version,
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        ActivationRecovery::RollBack => {
+            restore_active_runtime(&paths, journal.previous_active.as_ref())?;
+            target_profiles::replace_state(app, journal.previous_targets)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    clear_activation_journal(&paths)
 }
 
 fn initialize_target_profiles(app: &AppHandle) -> Result<target_profiles::TargetState, String> {
@@ -990,9 +1182,20 @@ fn initialize_target_profiles(app: &AppHandle) -> Result<target_profiles::Target
     .map_err(|error| error.to_string())
 }
 
-fn managed_mutation_allowed(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
-    if state.managed_setup_authorized.load(Ordering::Acquire) {
-        return Ok(());
+fn managed_mutation_allowed(
+    app: &AppHandle,
+    state: &DesktopState,
+    draft_id: Option<&str>,
+) -> Result<(), String> {
+    if let Some(draft_id) = draft_id {
+        let draft = state
+            .managed_setup_draft
+            .lock()
+            .map_err(|_| "The managed setup draft is unavailable.".to_string())?;
+        if draft.as_ref().is_some_and(|draft| draft.id == draft_id) {
+            return Ok(());
+        }
+        return Err("This managed setup draft has expired. Return to the target screen and start setup again.".into());
     }
     let profile = target_profiles::selected_profile(app).map_err(|error| error.to_string())?;
     target_profiles::authorize_lifecycle(&profile, target_profiles::LifecycleAction::Install)
@@ -1039,6 +1242,17 @@ async fn supervised_output(
             }
             _ => {}
         }
+        if stdout.len() > MAX_SETUP_OUTPUT_BYTES || stderr.len() > MAX_SETUP_OUTPUT_BYTES {
+            if let Ok(mut active_child) = state.operation_process.lock()
+                && let Some(child) = active_child.take()
+            {
+                let _ = child.kill();
+            }
+            return Err(format!(
+                "{operation} returned more than {} MiB per output stream and was stopped.",
+                MAX_SETUP_OUTPUT_BYTES / (1024 * 1024)
+            ));
+        }
     }
     if let Ok(mut active_child) = state.operation_process.lock() {
         active_child.take();
@@ -1083,7 +1297,7 @@ fn run_vidxp(
     paths: &DesktopPaths,
     arguments: &[String],
     operation: &str,
-) -> Result<Output, String> {
+) -> Result<background_process::BackgroundOutput, String> {
     let mut command = configured_command(&executable(runtime, "vidxp"), paths);
     command
         .arg("--index-dir")
@@ -1128,22 +1342,44 @@ fn target_state(
 }
 
 #[tauri::command]
-fn refresh_target_state(
+async fn refresh_target_state(
     app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
 ) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
     let manifest = manifest().map_err(|error| target_profiles::TargetError {
         code: target_profiles::TargetErrorCode::ValidationRequired,
         message: error,
     })?;
-    let paths = desktop_paths(&app).map_err(|error| target_profiles::TargetError {
+    let desktop_version = manifest.desktop_version;
+    let active = state.revalidation_active.clone();
+    let cancellation = state.shutdown_started.clone();
+    if active
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return target_profiles::current_state(&app);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = OwnedOperationGuard(active);
+        match target_profiles::selected_profile(&app) {
+            Ok(_) => {
+                let _ = target_profiles::validated_selected_profile_with_cancellation(
+                    &app,
+                    &desktop_version,
+                    Some(&cancellation),
+                );
+            }
+            Err(error)
+                if error.code == target_profiles::TargetErrorCode::SelectedProfileMissing => {}
+            Err(error) => return Err(error),
+        }
+        target_profiles::current_state(&app)
+    })
+    .await
+    .map_err(|error| target_profiles::TargetError {
         code: target_profiles::TargetErrorCode::ValidationRequired,
-        message: error,
-    })?;
-    target_profiles::initialize(
-        &app,
-        managed_runtime_projection(&paths),
-        &manifest.desktop_version,
-    )
+        message: format!("Target revalidation stopped unexpectedly: {error}"),
+    })?
 }
 
 #[tauri::command]
@@ -1166,25 +1402,27 @@ fn choose_local_executable(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn validate_local_target(
-    executable: String,
-) -> Result<target_profiles::ValidatedTarget, target_profiles::TargetError> {
-    let manifest = manifest().map_err(|error| target_profiles::TargetError {
-        code: target_profiles::TargetErrorCode::ValidationRequired,
-        message: error,
-    })?;
-    target_profiles::validate_executable(Path::new(&executable), &manifest.desktop_version)
-}
-
-#[tauri::command]
 fn inspect_local_target(
+    state: tauri::State<'_, DesktopState>,
     executable: String,
 ) -> Result<target_profiles::TargetInspection, target_profiles::TargetError> {
     let manifest = manifest().map_err(|error| target_profiles::TargetError {
         code: target_profiles::TargetErrorCode::ValidationRequired,
         message: error,
     })?;
-    target_profiles::inspect_executable(Path::new(&executable), &manifest.desktop_version)
+    let inspection =
+        target_profiles::inspect_executable(Path::new(&executable), &manifest.desktop_version)?;
+    if let Some(validated) = inspection.validated.clone() {
+        state
+            .inspected_targets
+            .lock()
+            .map_err(|_| target_profiles::TargetError {
+                code: target_profiles::TargetErrorCode::ValidationRequired,
+                message: "The inspected target cache is unavailable.".into(),
+            })?
+            .insert(validated.executable.clone(), validated);
+    }
+    Ok(inspection)
 }
 
 #[tauri::command]
@@ -1198,15 +1436,23 @@ fn adopt_local_target(
         code: target_profiles::TargetErrorCode::ValidationRequired,
         message: error,
     })?;
-    let profile = target_profiles::adopt_local(
-        &app,
-        Path::new(&executable),
-        display_name,
-        &manifest.desktop_version,
-    )?;
-    state
-        .managed_setup_authorized
-        .store(false, Ordering::Release);
+    let canonical =
+        fs::canonicalize(Path::new(&executable)).unwrap_or_else(|_| PathBuf::from(&executable));
+    let cached = state
+        .inspected_targets
+        .lock()
+        .map_err(|_| target_profiles::TargetError {
+            code: target_profiles::TargetErrorCode::ValidationRequired,
+            message: "The inspected target cache is unavailable.".into(),
+        })?
+        .remove(&canonical);
+    let profile = match cached {
+        Some(validated) => target_profiles::adopt_validated(&app, validated, display_name)?,
+        None => {
+            target_profiles::adopt_local(&app, &canonical, display_name, &manifest.desktop_version)?
+        }
+    };
+    TargetTransitionCoordinator::new(&app, &state).finish_transition();
     Ok(profile)
 }
 
@@ -1221,30 +1467,35 @@ fn select_target_profile(
         message: error,
     })?;
     let profile = target_profiles::select_profile(&app, &profile_id, &manifest.desktop_version)?;
-    state
-        .managed_setup_authorized
-        .store(false, Ordering::Release);
+    TargetTransitionCoordinator::new(&app, &state).finish_transition();
     Ok(profile)
 }
 
 #[tauri::command]
 fn delete_target_profile(
     app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
     profile_id: String,
 ) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
-    target_profiles::delete_profile(&app, &profile_id)
+    let selected = target_profiles::current_state(&app)?.selected_profile_id;
+    let result = target_profiles::delete_profile(&app, &profile_id)?;
+    if selected.as_deref() == Some(&profile_id) {
+        TargetTransitionCoordinator::new(&app, &state).stop_browser();
+    }
+    Ok(result)
 }
 
 #[tauri::command]
 fn begin_managed_setup(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
-) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
-    target_profiles::clear_selection(&app)?;
-    state
-        .managed_setup_authorized
-        .store(true, Ordering::Release);
-    target_profiles::current_state(&app)
+) -> Result<ManagedSetupDraft, target_profiles::TargetError> {
+    TargetTransitionCoordinator::new(&app, &state).begin_managed_draft()
+}
+
+#[tauri::command]
+fn cancel_managed_setup(app: AppHandle, state: tauri::State<'_, DesktopState>) {
+    TargetTransitionCoordinator::new(&app, &state).cancel_managed_draft();
 }
 
 #[tauri::command]
@@ -1272,8 +1523,9 @@ fn choose_model_directory(app: AppHandle) -> Result<Option<String>, String> {
 async fn install_media_runtime(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
+    draft_id: Option<String>,
 ) -> Result<MediaRuntimeStatus, String> {
-    managed_mutation_allowed(&app, &state)?;
+    managed_mutation_allowed(&app, &state, draft_id.as_deref())?;
     let current = inspect_media_runtime();
     if current.ready {
         return Ok(current);
@@ -1431,7 +1683,7 @@ async fn install_runtime(
     state: tauri::State<'_, DesktopState>,
     request: InstallRequest,
 ) -> Result<InstallResult, String> {
-    managed_mutation_allowed(&app, &state)?;
+    managed_mutation_allowed(&app, &state, request.draft_id.as_deref())?;
     if state
         .operation_active
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -1612,17 +1864,53 @@ async fn install_runtime(
         surfaces: surfaces.clone(),
         model_directory: paths.models.clone(),
     };
-    write_active_runtime(&paths, &active)?;
-    target_profiles::project_managed(
-        &app,
-        managed_runtime_projection(&paths)
-            .ok_or("The installed managed runtime could not be projected into a target profile.")?,
-        &manifest.desktop_version,
-    )
-    .map_err(|error| error.to_string())?;
-    state
-        .managed_setup_authorized
-        .store(false, Ordering::Release);
+    let previous_active = if paths.active_runtime.exists() {
+        Some(active_runtime(&paths)?)
+    } else {
+        None
+    };
+    let previous_targets =
+        target_profiles::current_state(&app).map_err(|error| error.to_string())?;
+    let mut journal = ActivationJournal {
+        schema_version: 1,
+        stage: ActivationStage::Prepared,
+        previous_active,
+        previous_targets,
+        candidate_active: active.clone(),
+    };
+    write_activation_journal(&paths, &journal)?;
+    let activation = (|| {
+        target_profiles::project_managed(
+            &app,
+            managed_runtime_projection_for(&paths, &active),
+            &manifest.desktop_version,
+        )
+        .map_err(|error| error.to_string())?;
+        journal.stage = ActivationStage::ProfileProjected;
+        write_activation_journal(&paths, &journal)?;
+        write_active_runtime(&paths, &active)?;
+        journal.stage = ActivationStage::ActiveWritten;
+        write_activation_journal(&paths, &journal)?;
+        clear_activation_journal(&paths)
+    })();
+    if let Err(error) = activation {
+        let target_rollback =
+            target_profiles::replace_state(&app, journal.previous_targets.clone())
+                .map_err(|rollback| rollback.to_string());
+        let runtime_rollback = restore_active_runtime(&paths, journal.previous_active.as_ref());
+        if target_rollback.is_ok() && runtime_rollback.is_ok() {
+            let _ = clear_activation_journal(&paths);
+            return Err(format!(
+                "{error}. The installed runtime was retained at {}, while the previous active runtime and target remain selected.",
+                runtime.display()
+            ));
+        }
+        return Err(format!(
+            "{error}. Automatic rollback was incomplete; VidXP Desktop will recover the activation journal on its next start. The installed runtime remains at {}.",
+            runtime.display()
+        ));
+    }
+    TargetTransitionCoordinator::new(&app, &state).finish_transition();
 
     Ok(InstallResult {
         package_version: manifest.package_version,
@@ -1729,6 +2017,17 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
     let _ = process.kill();
     let _ = process.wait();
     Err("The VidXP interface did not become ready in 30 seconds.".into())
+}
+
+fn stop_ui_process(state: &DesktopState) {
+    let Ok(mut active) = state.ui_process.lock() else {
+        return;
+    };
+    if let Some(mut ui) = active.take() {
+        let _ = ui.process.kill();
+        let _ = ui.process.wait_timeout(Duration::from_secs(5));
+        let _ = ui.process.wait();
+    }
 }
 
 fn ui_process_action(
@@ -1859,6 +2158,7 @@ fn begin_shutdown(app: &AppHandle) {
     {
         return;
     }
+    TargetTransitionCoordinator::new(app, &app.state::<DesktopState>()).cancel_managed_draft();
     log::info!("VidXP supervised shutdown requested");
     shutdown(app);
     log::info!("VidXP supervised shutdown completed");
@@ -1868,14 +2168,6 @@ fn begin_shutdown(app: &AppHandle) {
 #[tauri::command]
 fn launch_ui(app: AppHandle, state: tauri::State<'_, DesktopState>) -> Result<(), String> {
     open_ui_in_browser(&app, &state)
-}
-
-#[tauri::command]
-fn hide_to_tray(app: AppHandle) -> Result<(), String> {
-    if !configured_runtime(&app) {
-        return Err("Local video processing has not been configured yet.".into());
-    }
-    hide_main_window(&app)
 }
 
 fn create_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -1917,7 +2209,7 @@ fn stop_worker(runtime: &Path, paths: &DesktopPaths) {
         Ok(Some(_)) => {}
         _ => {
             let _ = process.kill();
-            let _ = process.wait_timeout(Duration::from_secs(1));
+            let _ = process.wait();
         }
     }
 }
@@ -1993,6 +2285,7 @@ pub fn run() {
         .manage(DesktopState::default())
         .setup(|app| {
             migrate_legacy_shared_data(app.handle()).map_err(io::Error::other)?;
+            recover_interrupted_activation(app.handle()).map_err(io::Error::other)?;
             if let Err(error) = initialize_target_profiles(app.handle()) {
                 log::error!("Target profile initialization failed: {error}");
             }
@@ -2008,20 +2301,19 @@ pub fn run() {
             refresh_target_state,
             discover_local_targets,
             choose_local_executable,
-            validate_local_target,
             inspect_local_target,
             adopt_local_target,
             select_target_profile,
             delete_target_profile,
             begin_managed_setup,
+            cancel_managed_setup,
             media_runtime_status,
             choose_model_directory,
             install_media_runtime,
             runtime_status,
             model_directory_inventory,
             install_runtime,
-            launch_ui,
-            hide_to_tray
+            launch_ui
         ]);
     let app = builder
         .build(tauri::generate_context!())
@@ -2063,13 +2355,14 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        DesktopAction, DesktopActivation, DesktopCloseAction, UiProcessAction,
-        action_for_activation, base_package_specification, capability_command_arguments,
-        close_action, configure_ui_service_command, dependency_installation_arguments,
-        desktop_paths_from_roots, display_command, inventory_model_directory, manifest,
-        normalize_line_endings, normalized_runtime_constraints, package_acquisition_arguments,
-        package_index, package_specification, required_encoder_missing, selected_capabilities,
-        selected_surfaces, ui_process_action,
+        ActivationRecovery, ActivationStage, DesktopAction, DesktopActivation, DesktopCloseAction,
+        UiProcessAction, action_for_activation, activation_recovery, base_package_specification,
+        capability_command_arguments, close_action, configure_ui_service_command,
+        dependency_installation_arguments, desktop_paths_from_roots, display_command,
+        inventory_model_directory, manifest, normalize_line_endings,
+        normalized_runtime_constraints, package_acquisition_arguments, package_index,
+        package_specification, required_encoder_missing, selected_capabilities, selected_surfaces,
+        ui_process_action,
     };
     use std::{
         ffi::OsStr,
@@ -2100,6 +2393,26 @@ mod tests {
         assert_eq!(
             paths.active_runtime,
             PathBuf::from("private").join("active-runtime.json")
+        );
+        assert_eq!(
+            paths.activation_journal,
+            PathBuf::from("private").join("activation-journal.json")
+        );
+    }
+
+    #[test]
+    fn interrupted_activation_recovers_only_after_both_authorities_were_written() {
+        assert_eq!(
+            activation_recovery(&ActivationStage::Prepared),
+            ActivationRecovery::RollBack
+        );
+        assert_eq!(
+            activation_recovery(&ActivationStage::ProfileProjected),
+            ActivationRecovery::RollBack
+        );
+        assert_eq!(
+            activation_recovery(&ActivationStage::ActiveWritten),
+            ActivationRecovery::Complete
         );
     }
 
@@ -2328,7 +2641,7 @@ mod tests {
         let siglip = root
             .join("models--google--siglip2-base-patch16-224")
             .join("snapshots")
-            .join("revision");
+            .join("75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2");
         let opencv = root.join("opencv-zoo");
         fs::create_dir_all(&siglip).expect("siglip directory");
         fs::create_dir_all(&opencv).expect("opencv directory");
@@ -2348,7 +2661,7 @@ mod tests {
                 .iter()
                 .map(|model| model.label.as_str())
                 .collect::<Vec<_>>(),
-            ["Google SigLIP2 base", "YuNet"]
+            ["google/siglip2-base-patch16-224", "yunet"]
         );
         assert!(inventory.verification_required);
         assert!(inventory.detail.contains("verification required"));

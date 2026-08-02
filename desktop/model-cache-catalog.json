@@ -1,0 +1,27 @@
+[
+  {
+    "id": "dropbox-dash/faster-whisper-large-v3-turbo",
+    "label": "dropbox-dash/faster-whisper-large-v3-turbo",
+    "relative_artifact": "models--dropbox-dash--faster-whisper-large-v3-turbo/snapshots/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/model.bin"
+  },
+  {
+    "id": "google/siglip2-base-patch16-224",
+    "label": "google/siglip2-base-patch16-224",
+    "relative_artifact": "models--google--siglip2-base-patch16-224/snapshots/75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2/model.safetensors"
+  },
+  {
+    "id": "Qwen/Qwen3-Embedding-0.6B",
+    "label": "Qwen/Qwen3-Embedding-0.6B",
+    "relative_artifact": "models--Qwen--Qwen3-Embedding-0.6B/snapshots/97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3/model.safetensors"
+  },
+  {
+    "id": "sface",
+    "label": "sface",
+    "relative_artifact": "opencv-zoo/face_recognition_sface_2021dec.onnx"
+  },
+  {
+    "id": "yunet",
+    "label": "yunet",
+    "relative_artifact": "opencv-zoo/face_detection_yunet_2026may.onnx"
+  }
+]

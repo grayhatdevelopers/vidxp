@@ -1,22 +1,18 @@
 use std::{
     collections::{BTreeSet, HashSet},
     fs,
-    io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::Arc,
-    thread,
+    process::Command,
+    sync::{Arc, atomic::AtomicBool},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::background_process::{self, BackgroundErrorKind, BackgroundOutput, BackgroundPolicy};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Wry};
 use tauri_plugin_store::{Store, StoreExt};
-use wait_timeout::ChildExt;
-
-use crate::hide_child_console;
 
 const STORE_FILE: &str = "target-profiles.json";
 const STORE_SCHEMA_KEY: &str = "schema_version";
@@ -30,7 +26,7 @@ const SUPPORTED_LAUNCH_PROTOCOL_VERSION: u32 = 1;
 const PRODUCT_ID: &str = "dev.grayhat.vidxp";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const VALIDATION_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
-const MAX_PROBE_STREAM_BYTES: u64 = 256 * 1024;
+const MAX_PROBE_STREAM_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -335,24 +331,6 @@ fn canonical_executable(path: &Path) -> Result<PathBuf, TargetError> {
     })
 }
 
-#[cfg(windows)]
-fn windows_executable_extensions() -> Vec<String> {
-    std::env::var("PATHEXT")
-        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
-        .split(';')
-        .filter_map(|value| {
-            let value = value.trim();
-            if value.is_empty() {
-                None
-            } else if value.starts_with('.') {
-                Some(value.to_ascii_lowercase())
-            } else {
-                Some(format!(".{}", value.to_ascii_lowercase()))
-            }
-        })
-        .collect()
-}
-
 fn canonical_reported_launcher(reported: &Path, selected: &Path) -> Result<PathBuf, TargetError> {
     if let Ok(canonical) = canonical_executable(reported) {
         return (canonical == selected).then_some(canonical).ok_or_else(|| {
@@ -364,14 +342,14 @@ fn canonical_reported_launcher(reported: &Path, selected: &Path) -> Result<PathB
     }
     #[cfg(windows)]
     if !reported.exists() && reported.extension().is_none() {
-        for extension in windows_executable_extensions() {
-            let mut candidate = reported.as_os_str().to_os_string();
-            candidate.push(extension);
-            if let Ok(canonical) = canonical_executable(Path::new(&candidate))
-                && canonical == selected
-            {
-                return Ok(canonical);
-            }
+        let reported_parent = reported
+            .parent()
+            .and_then(|parent| fs::canonicalize(parent).ok());
+        let selected_parent = selected
+            .parent()
+            .and_then(|parent| fs::canonicalize(parent).ok());
+        if reported_parent == selected_parent && reported.file_name() == selected.file_stem() {
+            return Ok(selected.to_path_buf());
         }
     }
     Err(TargetError::new(
@@ -394,20 +372,40 @@ fn challenge_for(executable: &Path) -> Result<String, TargetError> {
     Ok(hex::encode(Sha256::digest(seed.as_bytes())))
 }
 
-fn read_stream(stream: impl Read + Send + 'static) -> thread::JoinHandle<std::io::Result<Vec<u8>>> {
-    thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stream
-            .take(MAX_PROBE_STREAM_BYTES + 1)
-            .read_to_end(&mut bytes)?;
-        Ok(bytes)
-    })
-}
-
-fn background_command(executable: &Path) -> Command {
+fn collect_command_output(
+    executable: &Path,
+    arguments: &[&str],
+    operation: &str,
+    cancellation: Option<&AtomicBool>,
+) -> Result<ProbeOutput, TargetError> {
     let mut command = Command::new(executable);
-    hide_child_console(&mut command);
-    command
+    command.args(arguments);
+    let BackgroundOutput {
+        status,
+        stdout,
+        stderr,
+    } = background_process::run(
+        &mut command,
+        BackgroundPolicy {
+            timeout: PROBE_TIMEOUT,
+            max_output_bytes: MAX_PROBE_STREAM_BYTES,
+        },
+        cancellation,
+    )
+    .map_err(|error| {
+        let code = match error.kind {
+            BackgroundErrorKind::Start => TargetErrorCode::ProbeCouldNotStart,
+            BackgroundErrorKind::Timeout => TargetErrorCode::ProbeTimeout,
+            BackgroundErrorKind::OutputTooLarge => TargetErrorCode::ProbeOutputTooLarge,
+            _ => TargetErrorCode::ProbeFailed,
+        };
+        TargetError::new(code, format!("{operation} failed: {}.", error.detail))
+    })?;
+    Ok(ProbeOutput {
+        success: status.success(),
+        stdout,
+        stderr,
+    })
 }
 
 fn collect_probe_output(
@@ -415,160 +413,23 @@ fn collect_probe_output(
     desktop_version: &str,
     request_id: &str,
 ) -> Result<ProbeOutput, TargetError> {
-    let mut command = background_command(executable);
-    command
-        .args([
+    collect_command_output(
+        executable,
+        &[
             "desktop-probe",
             "--json",
             "--desktop-version",
             desktop_version,
             "--request-id",
             request_id,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command.spawn().map_err(|error| {
-        TargetError::new(
-            TargetErrorCode::ProbeCouldNotStart,
-            format!("The VidXP compatibility probe could not start: {error}"),
-        )
-    })?;
-    let stdout_reader = read_stream(child.stdout.take().expect("piped stdout is available"));
-    let stderr_reader = read_stream(child.stderr.take().expect("piped stderr is available"));
-    let status = match child.wait_timeout(PROBE_TIMEOUT).map_err(|error| {
-        TargetError::new(
-            TargetErrorCode::ProbeFailed,
-            format!("The VidXP compatibility probe could not be monitored: {error}"),
-        )
-    })? {
-        Some(status) => status,
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
-            return Err(TargetError::new(
-                TargetErrorCode::ProbeTimeout,
-                "The selected executable did not complete the VidXP compatibility probe within 10 seconds.",
-            ));
-        }
-    };
-    let stdout = stdout_reader
-        .join()
-        .map_err(|_| {
-            TargetError::new(
-                TargetErrorCode::ProbeFailed,
-                "The VidXP probe output reader stopped unexpectedly.",
-            )
-        })?
-        .map_err(|error| {
-            TargetError::new(
-                TargetErrorCode::ProbeFailed,
-                format!("The VidXP probe output could not be read: {error}"),
-            )
-        })?;
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| {
-            TargetError::new(
-                TargetErrorCode::ProbeFailed,
-                "The VidXP probe error reader stopped unexpectedly.",
-            )
-        })?
-        .map_err(|error| {
-            TargetError::new(
-                TargetErrorCode::ProbeFailed,
-                format!("The VidXP probe error output could not be read: {error}"),
-            )
-        })?;
-    if stdout.len() as u64 > MAX_PROBE_STREAM_BYTES || stderr.len() as u64 > MAX_PROBE_STREAM_BYTES
-    {
-        return Err(TargetError::new(
-            TargetErrorCode::ProbeOutputTooLarge,
-            "The selected executable returned more compatibility data than VidXP accepts.",
-        ));
-    }
-    Ok(ProbeOutput {
-        success: status.success(),
-        stdout,
-        stderr,
-    })
+        ],
+        "The VidXP compatibility probe",
+        None,
+    )
 }
 
 fn collect_version_output(executable: &Path) -> Result<ProbeOutput, TargetError> {
-    let mut command = background_command(executable);
-    command
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command.spawn().map_err(|error| {
-        TargetError::new(
-            TargetErrorCode::ProbeCouldNotStart,
-            format!("The selected executable could not start: {error}"),
-        )
-    })?;
-    let stdout_reader = read_stream(child.stdout.take().expect("piped stdout is available"));
-    let stderr_reader = read_stream(child.stderr.take().expect("piped stderr is available"));
-    let status = match child.wait_timeout(PROBE_TIMEOUT).map_err(|error| {
-        TargetError::new(
-            TargetErrorCode::ProbeFailed,
-            format!("The version check could not be monitored: {error}"),
-        )
-    })? {
-        Some(status) => status,
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
-            return Err(TargetError::new(
-                TargetErrorCode::ProbeTimeout,
-                "The selected executable did not complete the version check within 10 seconds.",
-            ));
-        }
-    };
-    let stdout = stdout_reader
-        .join()
-        .map_err(|_| {
-            TargetError::new(
-                TargetErrorCode::ProbeFailed,
-                "The version output reader stopped unexpectedly.",
-            )
-        })?
-        .map_err(|error| {
-            TargetError::new(
-                TargetErrorCode::ProbeFailed,
-                format!("The version output could not be read: {error}"),
-            )
-        })?;
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| {
-            TargetError::new(
-                TargetErrorCode::ProbeFailed,
-                "The version error reader stopped unexpectedly.",
-            )
-        })?
-        .map_err(|error| {
-            TargetError::new(
-                TargetErrorCode::ProbeFailed,
-                format!("The version error output could not be read: {error}"),
-            )
-        })?;
-    if stdout.len() as u64 > MAX_PROBE_STREAM_BYTES || stderr.len() as u64 > MAX_PROBE_STREAM_BYTES
-    {
-        return Err(TargetError::new(
-            TargetErrorCode::ProbeOutputTooLarge,
-            "The selected executable returned more version output than VidXP accepts.",
-        ));
-    }
-    Ok(ProbeOutput {
-        success: status.success(),
-        stdout,
-        stderr,
-    })
+    collect_command_output(executable, &["--version"], "The VidXP version check", None)
 }
 
 fn validate_probe_document(
@@ -912,6 +773,17 @@ fn managed_profile(managed: ManagedRuntimeProjection) -> TargetProfile {
     }
 }
 
+fn reconcile_managed_profile(
+    existing: Option<&TargetProfile>,
+    managed: ManagedRuntimeProjection,
+) -> TargetProfile {
+    let mut profile = managed_profile(managed);
+    if let Some(existing) = existing {
+        profile.display_name = existing.display_name.clone();
+    }
+    profile
+}
+
 fn validate_profile_structure(profile: &TargetProfile) -> Result<(), TargetError> {
     if profile.schema_version != CURRENT_PROFILE_SCHEMA_VERSION {
         return Err(TargetError::new(
@@ -1159,33 +1031,25 @@ fn upsert_profile(decoded: &mut DecodedState, profile: TargetProfile) {
 pub fn initialize(
     app: &AppHandle,
     managed_runtime: Option<ManagedRuntimeProjection>,
-    desktop_version: &str,
+    _desktop_version: &str,
 ) -> Result<TargetState, TargetError> {
     let (store, mut decoded) = load_state(app)?;
     if let Some(managed_runtime) = managed_runtime {
-        let profile = managed_profile(managed_runtime);
+        let expected_id = format!("managed-{}", managed_runtime.runtime_profile);
+        let profile = reconcile_managed_profile(
+            decoded
+                .profiles
+                .iter()
+                .find(|existing| existing.id == expected_id),
+            managed_runtime,
+        );
         let id = profile.id.clone();
         let was_empty = decoded.profiles.is_empty();
-        if !decoded.profiles.iter().any(|existing| existing.id == id) {
-            upsert_profile(&mut decoded, profile);
-        }
+        upsert_profile(&mut decoded, profile);
         if was_empty && decoded.selected_profile_id.is_none() {
             decoded.selected_profile_id = Some(id);
             decoded.changed = true;
         }
-    }
-    if let Some(selected) = decoded.selected_profile_id.clone()
-        && let Some(index) = decoded
-            .profiles
-            .iter()
-            .position(|profile| profile.id == selected)
-    {
-        let validation = validate_executable(&decoded.profiles[index].executable, desktop_version);
-        match validation {
-            Ok(validated) => apply_validation(&mut decoded.profiles[index], validated),
-            Err(error) => decoded.profiles[index].validation_error = Some(error),
-        }
-        decoded.changed = true;
     }
     if decoded.changed {
         persist_state(&store, &decoded)?;
@@ -1212,6 +1076,17 @@ pub fn current_state(app: &AppHandle) -> Result<TargetState, TargetError> {
     Ok(state_snapshot(decoded))
 }
 
+pub fn replace_state(app: &AppHandle, state: TargetState) -> Result<(), TargetError> {
+    let (store, _) = load_state(app)?;
+    let decoded = DecodedState {
+        profiles: state.profiles,
+        selected_profile_id: state.selected_profile_id,
+        issues: state.issues,
+        changed: true,
+    };
+    persist_state(&store, &decoded)
+}
+
 pub fn selected_profile(app: &AppHandle) -> Result<TargetProfile, TargetError> {
     let state = current_state(app)?;
     state.selected_profile().cloned().ok_or_else(|| {
@@ -1225,6 +1100,14 @@ pub fn selected_profile(app: &AppHandle) -> Result<TargetProfile, TargetError> {
 pub fn validated_selected_profile(
     app: &AppHandle,
     desktop_version: &str,
+) -> Result<TargetProfile, TargetError> {
+    validated_selected_profile_with_cancellation(app, desktop_version, None)
+}
+
+pub fn validated_selected_profile_with_cancellation(
+    app: &AppHandle,
+    desktop_version: &str,
+    cancellation: Option<&AtomicBool>,
 ) -> Result<TargetProfile, TargetError> {
     let (store, mut decoded) = load_state(app)?;
     let selected = decoded.selected_profile_id.clone().ok_or_else(|| {
@@ -1243,7 +1126,25 @@ pub fn validated_selected_profile(
                 "The selected VidXP target no longer exists.",
             )
         })?;
-    let validated = validate_executable(&profile.executable, desktop_version);
+    let validated = validate_executable_with(
+        &profile.executable,
+        desktop_version,
+        |path, version, request_id| {
+            collect_command_output(
+                path,
+                &[
+                    "desktop-probe",
+                    "--json",
+                    "--desktop-version",
+                    version,
+                    "--request-id",
+                    request_id,
+                ],
+                "The VidXP compatibility probe",
+                cancellation,
+            )
+        },
+    );
     match validated {
         Ok(validated) => {
             apply_validation(profile, validated);
@@ -1268,6 +1169,14 @@ pub fn adopt_local(
     desktop_version: &str,
 ) -> Result<TargetProfile, TargetError> {
     let validated = validate_executable(executable, desktop_version)?;
+    adopt_validated(app, validated, display_name)
+}
+
+pub fn adopt_validated(
+    app: &AppHandle,
+    validated: ValidatedTarget,
+    display_name: Option<String>,
+) -> Result<TargetProfile, TargetError> {
     let profile = local_profile(validated, display_name);
     let (store, mut decoded) = load_state(app)?;
     upsert_profile(&mut decoded, profile.clone());
@@ -1301,13 +1210,6 @@ pub fn select_profile(
     Ok(result)
 }
 
-pub fn clear_selection(app: &AppHandle) -> Result<(), TargetError> {
-    let (store, mut decoded) = load_state(app)?;
-    decoded.selected_profile_id = None;
-    decoded.changed = true;
-    persist_state(&store, &decoded)
-}
-
 pub fn delete_profile(app: &AppHandle, profile_id: &str) -> Result<TargetState, TargetError> {
     let (store, mut decoded) = load_state(app)?;
     let original_length = decoded.profiles.len();
@@ -1331,12 +1233,19 @@ pub fn project_managed(
     managed_runtime: ManagedRuntimeProjection,
     desktop_version: &str,
 ) -> Result<TargetProfile, TargetError> {
-    let mut profile = managed_profile(managed_runtime);
+    let expected_id = format!("managed-{}", managed_runtime.runtime_profile);
+    let (store, mut decoded) = load_state(app)?;
+    let mut profile = reconcile_managed_profile(
+        decoded
+            .profiles
+            .iter()
+            .find(|existing| existing.id == expected_id),
+        managed_runtime,
+    );
     match validate_executable(&profile.executable, desktop_version) {
         Ok(validated) => apply_validation(&mut profile, validated),
         Err(error) => profile.validation_error = Some(error),
     }
-    let (store, mut decoded) = load_state(app)?;
     upsert_profile(&mut decoded, profile.clone());
     decoded.selected_profile_id = Some(profile.id.clone());
     persist_state(&store, &decoded)?;
@@ -1681,8 +1590,10 @@ mod tests {
             std::env::temp_dir().join(format!("vidxp-launcher-identity-{}", std::process::id()));
         fs::create_dir_all(&root).expect("launcher test directory");
         let selected = root.join("vidxp.exe");
+        let colliding = root.join("vidxp.com");
         let similar = root.join("vidxp-helper.exe");
         fs::write(&selected, b"shim").expect("selected shim");
+        fs::write(&colliding, b"different PATHEXT sibling").expect("colliding shim");
         fs::write(&similar, b"other").expect("similar shim");
         let canonical = fs::canonicalize(&selected).expect("canonical selected shim");
 
@@ -1881,5 +1792,40 @@ mod tests {
             projected.validation_error.expect("validation error").code,
             TargetErrorCode::ValidationRequired
         );
+    }
+
+    #[test]
+    fn managed_reconciliation_refreshes_authoritative_fields_and_preserves_name() {
+        let mut existing = profile(TargetKind::Managed, LifecycleOwnership::Desktop);
+        existing.id = "managed-runtime-2".into();
+        existing.display_name = "Editing workstation".into();
+        existing.executable = PathBuf::from("/stale/vidxp");
+        existing.model_directory = Some(PathBuf::from("/legacy/models"));
+        existing.capabilities = vec!["dialogue".into()];
+
+        let reconciled = reconcile_managed_profile(
+            Some(&existing),
+            ManagedRuntimeProjection {
+                runtime_profile: "runtime-2".into(),
+                executable: PathBuf::from("/current/vidxp"),
+                data_root: PathBuf::from("/current/data"),
+                repository_root: PathBuf::from("/current/data/repositories/default"),
+                model_directory: PathBuf::from("/current/models"),
+                package_version: "0.5.0".into(),
+                capabilities: vec!["scene".into()],
+                surfaces: vec!["browser".into()],
+            },
+        );
+
+        assert_eq!(reconciled.display_name, "Editing workstation");
+        assert_eq!(reconciled.executable, PathBuf::from("/current/vidxp"));
+        assert_eq!(reconciled.data_root, PathBuf::from("/current/data"));
+        assert_eq!(
+            reconciled.model_directory,
+            Some(PathBuf::from("/current/models"))
+        );
+        assert_eq!(reconciled.capabilities, ["scene"]);
+        assert_eq!(reconciled.surfaces, ["browser"]);
+        assert_eq!(reconciled.observed_vidxp_version, "0.5.0");
     }
 }

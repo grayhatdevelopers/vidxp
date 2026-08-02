@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 import platform
 import sys
 from pathlib import Path
@@ -25,35 +24,32 @@ def _resolved_path(value: str | Path) -> str:
     return str(Path(value).expanduser().resolve(strict=False))
 
 
-def _windows_executable_extensions() -> tuple[str, ...]:
-    configured = os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD")
-    extensions: list[str] = []
-    for value in configured.split(";"):
-        extension = value.strip()
-        if not extension:
-            continue
-        if not extension.startswith("."):
-            extension = f".{extension}"
-        normalized = extension.lower()
-        if normalized not in extensions:
-            extensions.append(normalized)
-    return tuple(extensions)
-
-
 def _resolved_launcher_path(
     value: str | Path,
     *,
     windows: bool | None = None,
 ) -> str:
     launcher = Path(value).expanduser()
-    windows = os.name == "nt" if windows is None else windows
-    if windows and not launcher.exists() and launcher.suffix == "":
-        for extension in _windows_executable_extensions():
-            candidate = launcher.with_name(f"{launcher.name}{extension}")
-            if candidate.is_file():
-                launcher = candidate
-                break
+    del windows  # Desktop compares the raw extensionless identity to its exact selection.
     return str(launcher.resolve(strict=False))
+
+
+def desktop_model_cache_catalog() -> list[dict[str, str]]:
+    """Derive Desktop cache identities from the canonical capability registry."""
+
+    from vidxp.capabilities.registry import create_capability_registry
+    from vidxp.model_contracts import model_artifact_path
+
+    catalog = []
+    for spec in create_capability_registry().model_specs():
+        catalog.append(
+            {
+                "id": spec.model_id,
+                "label": spec.model_id,
+                "relative_artifact": model_artifact_path(Path(), spec).as_posix(),
+            }
+        )
+    return sorted(catalog, key=lambda item: item["id"].casefold())
 
 
 def _module_available(name: str) -> bool:

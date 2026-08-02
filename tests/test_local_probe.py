@@ -14,6 +14,7 @@ from vidxp.local_probe import (
     DESKTOP_LAUNCH_PROTOCOL_VERSION,
     PRODUCT_ID,
     build_desktop_probe,
+    desktop_model_cache_catalog,
     _resolved_launcher_path,
 )
 
@@ -171,16 +172,16 @@ class LocalProbeTests(unittest.TestCase):
             "desktop-development-build",
         )
 
-    def test_windows_extensionless_console_script_resolves_adjacent_exe(self):
+    def test_windows_extensionless_console_script_preserves_raw_identity(self):
         with TemporaryDirectory() as directory:
             launcher = Path(directory) / "vidxp"
             executable = launcher.with_suffix(".exe")
             executable.write_bytes(b"shim")
+            launcher.with_suffix(".com").write_bytes(b"different shim")
 
-            with patch.dict(os.environ, {"PATHEXT": ".COM;.EXE;.BAT;.CMD"}):
-                resolved = _resolved_launcher_path(launcher, windows=True)
+            resolved = _resolved_launcher_path(launcher, windows=True)
 
-        self.assertEqual(resolved, str(executable.resolve()))
+        self.assertEqual(resolved, str(launcher.resolve(strict=False)))
 
     def test_exact_launcher_and_symlink_keep_canonical_identity(self):
         with TemporaryDirectory() as directory:
@@ -218,6 +219,21 @@ class LocalProbeTests(unittest.TestCase):
             resolved = _resolved_launcher_path(launcher, windows=False)
 
         self.assertEqual(resolved, str(launcher.resolve(strict=False)))
+
+    def test_desktop_model_catalog_is_derived_from_canonical_specs(self):
+        catalog = desktop_model_cache_catalog()
+
+        self.assertEqual(len(catalog), 5)
+        self.assertEqual(
+            {item["id"] for item in catalog},
+            {
+                "google/siglip2-base-patch16-224",
+                "Qwen/Qwen3-Embedding-0.6B",
+                "dropbox-dash/faster-whisper-large-v3-turbo",
+                "yunet",
+                "sface",
+            },
+        )
 
 
 if __name__ == "__main__":
