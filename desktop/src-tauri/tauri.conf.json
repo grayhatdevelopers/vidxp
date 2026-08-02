@@ -34,6 +34,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "../THIRD_PARTY_NOTICES.txt"
+    ],
     "externalBin": [
       "binaries/uv"
     ],

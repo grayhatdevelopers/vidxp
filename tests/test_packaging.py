@@ -511,6 +511,32 @@ class PackagingTests(unittest.TestCase):
             main,
         )
 
+    def test_desktop_bundle_includes_generated_third_party_notices(self):
+        tauri = json.loads(
+            (ROOT / "desktop" / "src-tauri" / "tauri.conf.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIn(
+            "../THIRD_PARTY_NOTICES.txt",
+            tauri["bundle"]["resources"],
+        )
+
+        notices = (
+            ROOT / "desktop" / "THIRD_PARTY_NOTICES.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("RUST DEPENDENCIES", notices)
+        self.assertIn("FRONTEND DEPENDENCIES", notices)
+        self.assertGreater(len(notices), 100_000)
+
+        package = json.loads(
+            (ROOT / "desktop" / "package.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            package["scripts"]["notices:check"],
+            "node scripts/generate-notices.mjs",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

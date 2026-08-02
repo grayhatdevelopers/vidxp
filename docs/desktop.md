@@ -31,16 +31,20 @@ VidXP/
   models/                    # default; a user-selected directory is also supported
 ```
 
-The identifier-scoped private desktop directory contains only the managed
-runtime and desktop state:
+The identifier-scoped private desktop directory contains the managed runtime
+and its activation journal/pointer:
 
 ```text
 dev.grayhat.vidxp/
   runtimes/
   python/
   active-runtime.json
-  target-profiles.json       # non-secret Tauri Store data
+  activation-journal.json    # present only during recoverable activation
 ```
+
+Target profiles are non-secret Tauri Store data. Their platform-specific store
+location is resolved by the Tauri Store plugin and must not be assumed to be
+the same directory as `active-runtime.json`.
 
 On Windows the per-user NSIS package installs program files under
 `%LOCALAPPDATA%\Programs\VidXP`, keeping them separate from both directories.
@@ -95,10 +99,12 @@ The target-first screen offers two paths:
 - **Existing local installation** discovers `vidxp` executables on `PATH` or
   accepts an executable selected with the native file picker. The desktop shows
   its canonical path and runs `vidxp desktop-probe --json` before activation.
-  The probe is side-effect free and reports product identity, normalized VidXP
-  compatibility, probe protocol/schema versions, Python identity, local data
-  roots, and browser-interface availability. Reopening the desktop restores the
-  selected profile and probes it again before use.
+  The probe is side-effect free and reports its raw launcher identity, package
+  version, probe and launch contract metadata, Python identity, local data
+  roots, and browser-interface availability. Desktop compares that report with
+  the exact executable the user selected and decides compatibility. Reopening
+  Desktop restores the selected profile immediately and rechecks it once in the
+  background.
 - **Desktop-managed runtime** reveals the existing capability, model, and media
   setup only after explicit confirmation. The staged installation and activation
   boundary is unchanged.
@@ -131,12 +137,35 @@ the selected modalities. Setup subprocesses are owned by the Tauri supervisor;
 closing the app cancels the active process and stops a preparation worker before
 exit. No model is bundled in the installer.
 
-After a runtime is configured, the Tauri supervisor starts hidden in the system
-tray. A browser-enabled profile opens the local interface in the operating
-system's default browser. **Open VidXP** reuses the already-running interface;
-**Quit VidXP** runs the full supervised shutdown for the interface and
-repository worker. Closing the configuration/status window hides it to the tray
-instead of terminating a configured runtime.
+Desktop startup and a second-instance activation show and focus the control
+panel; neither action opens the browser. For a browser-enabled profile, **Open
+VidXP** explicitly starts or reuses the supervised loopback service and opens
+one browser tab. Closing a configured control panel hides it to the tray.
+**Manage VidXP** shows the panel, **Open VidXP** performs the separate browser
+action, and **Quit VidXP** runs supervised shutdown for the interface and any
+Desktop-owned repository worker.
+
+## Implementation dependencies
+
+The process runner remains a small Rust boundary because Tauri's shell plugin
+does not provide the same bounded synchronous capture, timeout, kill/reap, and
+reader-completion contract required by executable probing; `wait-timeout`
+(MIT/Apache-2.0) supplies the portable wait primitive. Setup sidecars continue
+through Tauri Shell for its async event stream and cancellation handle.
+
+React's reducer plus the local async-action helper is sufficient for the finite
+setup lifecycle, so no state framework was added. Generated IPC was evaluated:
+`tauri-specta` would require replacing command macros and build integration
+while the transition service is still changing, and `ts-rs` generates DTOs but
+not the command calls. The current adapter is therefore limited to exact,
+consumed commands and one presentation normalizer.
+
+Distributable notices are generated from locked production graphs with
+`cargo-about` 0.9.1 (MIT/Apache-2.0) and
+`license-checker-rseidelsohn` 4.4.2 (BSD-3-Clause). Build-only and development
+Rust crates are excluded; frontend development packages are excluded with the
+tool's production graph. The generated `THIRD_PARTY_NOTICES.txt` is verified in
+CI and bundled as a resource in NSIS, DMG, and AppImage packages.
 
 The native NSIS, DMG, and AppImage packages themselves never install FFmpeg or
 run a package manager. That consented action belongs to first-run configuration,

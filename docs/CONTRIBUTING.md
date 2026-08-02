@@ -152,7 +152,7 @@ docker compose config --quiet
 Desktop validation requires the pinned uv sidecar before Rust tests:
 
 ```bash
-npm --prefix desktop install
+npm --prefix desktop ci
 npm --prefix desktop run check
 npm --prefix desktop run sidecar:windows
 cargo test --manifest-path desktop/src-tauri/Cargo.toml

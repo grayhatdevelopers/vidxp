@@ -77,6 +77,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@1.97.1
 
+      - name: Install locked license tooling
+        run: cargo install cargo-about --version 0.9.1 --locked --features cli
+
       - name: Restore Rust build cache
         uses: actions/cache@v5
         with:
@@ -94,6 +97,12 @@ jobs:
 
       - name: Check the desktop frontend
         run: npm run check
+        working-directory: desktop
+
+      - name: Verify generated desktop contracts and notices
+        run: |
+          npm run model-catalog:check
+          npm run notices:check
         working-directory: desktop
 
       - name: Verify the desktop runtime constraints

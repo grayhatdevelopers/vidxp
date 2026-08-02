@@ -1,0 +1,12 @@
+RUST DEPENDENCIES
+=================
+{{#each licenses}}
+-------------------------------------------------------------------------------
+License: {{name}} ({{id}})
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}} | {{crate.repository}} | {{crate.source}}
+{{/each}}
+
+{{{text}}}
+{{/each}}
