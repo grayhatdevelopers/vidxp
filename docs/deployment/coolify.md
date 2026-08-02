@@ -21,6 +21,7 @@ Use immutable VidXP release tags or digests for both first-party image variables
 VIDXP_CONTROL_IMAGE=ghcr.io/grayhatdevelopers/vidxp:<release>-control
 VIDXP_WORKER_IMAGE=ghcr.io/grayhatdevelopers/vidxp:<release>-worker
 POSTGRES_PASSWORD=<random-secret>
+VIDXP_HTTP_AUTH_MODE=static
 VIDXP_HTTP_STATIC_BEARER_TOKEN=<random-secret-at-least-32-characters>
 VIDXP_ARTIFACT_DOWNLOAD_SECRET=<artifact-download-secret-at-least-32-characters>
 VIDXP_UPLOAD_CLEANUP_TOKEN=<different-random-secret-at-least-32-characters>
@@ -29,13 +30,38 @@ VIDXP_UPLOAD_PUBLIC_ENDPOINT=https://uploads.example.com/uploads/
 VIDXP_UPLOAD_HANDOFF_PUBLIC_URL=https://api.example.com/upload-handoff
 VIDXP_UPLOAD_HANDOFF_SECRET=<third-random-secret-at-least-32-characters>
 VIDXP_UPLOAD_CORS_ORIGIN_REGEX=^(https://api\.example\.com|https://app\.example\.com)$
+VIDXP_MCP_MAX_RESOURCE_BYTES=16777216
 ```
+
+The values above select private, single-tenant static bearer authentication.
+For hosted ChatGPT or Claude connectors, configure the existing OIDC resource
+server instead:
+
+```dotenv
+VIDXP_HTTP_AUTH_MODE=oidc
+VIDXP_HTTP_STATIC_BEARER_TOKEN=
+VIDXP_HTTP_OIDC_ISSUER=https://identity.example.com/
+VIDXP_HTTP_OIDC_AUDIENCE=vidxp-api
+VIDXP_HTTP_OIDC_JWKS_URL=https://identity.example.com/.well-known/jwks.json
+VIDXP_HTTP_REQUIRED_SCOPES=["vidxp.read","vidxp.write"]
+VIDXP_MCP_PUBLIC_URL=https://api.example.com/mcp
+```
+
+The OIDC provider must issue access tokens and scopes accepted by the intended
+host. VidXP validates issuer, audience/resource, signature, expiry, and scopes;
+it does not implement an identity provider. Leave every `VIDXP_HTTP_OIDC_*`
+value and `VIDXP_MCP_PUBLIC_URL` unset in static mode.
 
 Compose derives `VIDXP_ARTIFACT_DOWNLOAD_PUBLIC_URL` as
 `https://${VIDXP_PUBLIC_API_HOST}/artifact-download`. The API issues 15-minute
 links by default (`VIDXP_ARTIFACT_DOWNLOAD_TTL_SECONDS=900`); deployments may
 set a value from 60 seconds through 24 hours. Keep the artifact-download secret
 distinct from API, upload, and cleanup credentials.
+
+`VIDXP_MCP_MAX_RESOURCE_BYTES` bounds every in-memory MCP resource read. Keep
+video delivery on the range-capable HTTPS artifact route; local stdio callers
+can use the verified local path. If neither projection is available, oversized
+resources fail with structured remediation instead of being read into memory.
 
 After `create_clip` completes, `get_artifact_download` always returns the native
 MCP resource. Streamable HTTP callers also receive a short-lived HTTPS link on
@@ -92,8 +118,9 @@ Chroma, or the hook service.
 The same API origin exposes Streamable HTTP MCP at `/mcp`. Configure the proxy
 to preserve `Authorization`, `Accept`, `Content-Type`, `MCP-Protocol-Version`,
 `Mcp-Method`, `Mcp-Name`, and `Mcp-Param-*` headers and disable response buffering
-for `/mcp`. Static bearer mode intentionally publishes no OAuth metadata; configure
-the bearer header in the remote MCP client.
+for `/mcp`. Static bearer mode intentionally publishes no OAuth metadata and is
+only for clients that can set a private bearer header. OIDC mode publishes the
+MCP protected-resource metadata used by hosted connector authentication.
 
 Remote MCP request handling is stateless. Upload progress and child lifecycle are
 stored durably outside the transport, so this workflow needs neither an in-memory

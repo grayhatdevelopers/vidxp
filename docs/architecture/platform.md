@@ -986,6 +986,12 @@ principal from subject/client ID, scopes, and allowlisted claims.
 Reverse-proxy authentication may be an additional gate but does not replace MCP
 resource-server behavior.
 
+The supported Compose surface selects this profile with
+`VIDXP_HTTP_AUTH_MODE=oidc` plus issuer, audience, JWKS, scopes, and the
+canonical `VIDXP_MCP_PUBLIC_URL`. Static bearer remains the default only for
+private single-tenant deployments; it is not presented as a compatible
+authentication mechanism for hosted ChatGPT or Claude connectors.
+
 ## 20. MCP adapter
 
 Use the official MCP Python SDK v2 high-level server.

@@ -78,6 +78,12 @@ vidxp doctor
 vidxp mcp-config
 ```
 
+`vidxp mcp-config` emits the `mcpServers` JSON used by Claude Desktop and
+compatible local stdio clients. For Codex, use
+`codex mcp add vidxp -- vidxp-mcp --repository default` (or configure
+`[mcp_servers.vidxp]` in `~/.codex/config.toml`). ChatGPT web connects only to a
+hosted remote MCP endpoint; deploy VidXP behind HTTPS with OIDC for that surface.
+
 The CLI works without MCP. Add the browser app with:
 
 ```bash
@@ -90,6 +96,11 @@ vidxp ui
 intend to expose the unauthenticated browser interface on the local network.
 Streamlit prints its Local and Network URLs when it starts. VidXP disables
 Streamlit's first-run email prompt and usage-statistics collection.
+
+`vidxp-api --share` exposes a bearer-protected HTTP API/MCP endpoint on a
+trusted LAN. Browser upload tools are omitted unless an explicit HTTPS upload
+handoff origin is configured, because a LAN listener alone cannot advertise a
+safe browser capability page.
 
 If the `vidxp` command is not found, run `uv tool update-shell` once and reopen
 the terminal.

@@ -46,6 +46,12 @@ class PackagingTests(unittest.TestCase):
             "-cors-allow-origin=${VIDXP_UPLOAD_CORS_ORIGIN_REGEX:",
             compose,
         )
+        self.assertIn(
+            "VIDXP_HTTP_AUTH_MODE: ${VIDXP_HTTP_AUTH_MODE:-static}",
+            compose,
+        )
+        self.assertIn("VIDXP_HTTP_OIDC_ISSUER:", compose)
+        self.assertIn("VIDXP_MCP_PUBLIC_URL:", compose)
 
     def test_upload_page_assets_are_pinned_self_hosted_and_packaged(self):
         package = json.loads(
@@ -109,8 +115,22 @@ class PackagingTests(unittest.TestCase):
             "maxTotalFileSize: sessionStatus.maximum_aggregate_bytes",
             "maxNumberOfFiles: sessionStatus.maximum_files",
             "client_file_key",
+            "needsFileAuthorization(current, childByKey(key))",
+            "indexedDB: { maxFileSize: 0, maxTotalSize: 0 }",
+            "if (sessionStatus?.terminal) return",
+            "poll_after_seconds",
+            "document.hidden",
+            "visibilitychange",
         ):
             self.assertIn(contract, source)
+        self.assertNotIn("if (current?.meta?.intent_id) return", source)
+        self.assertIn(
+            '"check:bundle": "npm run build && git diff --exit-code -- '
+            '../../src/vidxp/assets/upload_page"',
+            (ROOT / "web" / "upload-page" / "package.json").read_text(
+                encoding="utf-8"
+            ),
+        )
         self.assertGreater(
             source.index("if (capability) clearFragment()"),
             source.index("await requestJson(apiUrl('./bootstrap')"),

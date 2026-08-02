@@ -7,7 +7,9 @@
     "node": ">=22 <23"
   },
   "scripts": {
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "check:bundle": "npm run build && git diff --exit-code -- ../../src/vidxp/assets/upload_page",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@uppy/core": "5.2.0",

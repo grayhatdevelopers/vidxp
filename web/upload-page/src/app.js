@@ -7,6 +7,7 @@ import XHRUpload from '@uppy/xhr-upload'
 import '@uppy/core/css/style.min.css'
 import '@uppy/dashboard/css/style.min.css'
 import './app.css'
+import { isServerTransferComplete, needsFileAuthorization } from './recovery.js'
 
 const elements = {
   summary: document.querySelector('#summary'),
@@ -230,6 +231,17 @@ function syncUppyFiles(resumeUrls = {}) {
     if (child && file.meta.intent_id !== child.intent_id) {
       uppy.setFileMeta(file.id, { intent_id: child.intent_id })
     }
+    if (isServerTransferComplete(child) && !file.progress?.uploadComplete) {
+      uppy.setFileState(file.id, {
+        progress: {
+          ...file.progress,
+          uploadComplete: true,
+          percentage: 100,
+          bytesUploaded: file.size,
+          bytesTotal: file.size,
+        },
+      })
+    }
     const resumeUrl = resumeUrls[key]
     if (resumeUrl && file.tus?.uploadUrl !== resumeUrl) {
       uppy.setFileState(file.id, {
@@ -286,7 +298,7 @@ async function authorizeFile(file) {
   const current = uppy.getFile(file.id)
   const key = current?.meta?.client_file_key
   if (!current || !key) throw new Error('VidXP could not identify the selected file.')
-  if (current.meta?.intent_id || current.tus?.uploadUrl) return
+  if (!needsFileAuthorization(current, childByKey(key))) return
   const payload = await requestJson(apiUrl('./files'), {
     method: 'POST',
     body: JSON.stringify({
@@ -448,6 +460,10 @@ function configureUppy() {
     id: `GoldenRetriever:${scopedId}`,
     expires: recoveryLifetime(),
     serviceWorker: false,
+    // Persist recovery metadata and tus URLs, never local video blobs. A user
+    // reselects the source file after reload so multi-GiB media is not copied
+    // into browser storage.
+    indexedDB: { maxFileSize: 0, maxTotalSize: 0 },
   })
 }
 
@@ -482,7 +498,7 @@ async function closeSession() {
 }
 
 async function pollStatus() {
-  if (pollInFlight) return
+  if (pollInFlight || sessionStatus?.terminal) return
   pollInFlight = true
   try {
     const payload = await requestJson(apiUrl('./status'))
@@ -498,7 +514,15 @@ async function pollStatus() {
 
 function scheduleStatusPoll(delay = POLL_INTERVAL_MS) {
   window.clearTimeout(pollTimer)
-  pollTimer = window.setTimeout(pollStatus, delay)
+  if (sessionStatus?.terminal) return
+  const serverDelay = Number(sessionStatus?.poll_after_seconds) * 1000
+  const requestedDelay = Number.isFinite(serverDelay) && serverDelay > 0
+    ? serverDelay
+    : delay
+  const effectiveDelay = document.hidden
+    ? Math.max(requestedDelay, 15_000)
+    : requestedDelay
+  pollTimer = window.setTimeout(pollStatus, effectiveDelay)
 }
 
 async function bootstrap() {
@@ -518,6 +542,9 @@ async function bootstrap() {
   configureUppy()
   syncUppyFiles(payload.resume_urls ?? {})
   elements.closeSession.addEventListener('click', closeSession)
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && !sessionStatus?.terminal) scheduleStatusPoll(0)
+  })
   setUploadMessage(
     sessionStatus.resumable
       ? 'Choose one or more videos. Transfers use resumable tus.'
