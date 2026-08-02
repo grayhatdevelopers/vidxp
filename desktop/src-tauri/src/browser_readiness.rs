@@ -216,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn readiness_accepts_only_the_launch_bound_nonce_port_and_health_response() {
+    fn readiness_accepts_a_marker_pid_different_from_the_supervised_launcher() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
         let port = listener.local_addr().expect("address").port();
         let server = health_server(listener);
@@ -246,98 +246,6 @@ mod tests {
         .expect("ready");
         assert!(!marker.exists());
         server.join().expect("server");
-    }
-
-    #[test]
-    fn launcher_child_with_a_different_pid_can_publish_readiness() {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
-        let port = listener.local_addr().expect("address").port();
-        drop(listener);
-        let marker = temporary_marker("child-marker");
-        let pid_file = temporary_marker("child-pid");
-        let script = temporary_marker("child-server").with_extension("py");
-        fs::write(
-            &script,
-            r#"import http.server
-import json
-import os
-import sys
-
-marker, pid_file, nonce, port = sys.argv[1:]
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        body = b"ok"
-        self.send_response(200)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-    def log_message(self, *_args):
-        pass
-
-with open(pid_file, "w", encoding="utf-8") as destination:
-    destination.write(str(os.getpid()))
-temporary = marker + ".tmp"
-with open(temporary, "w", encoding="utf-8") as destination:
-    json.dump({"product": "dev.grayhat.vidxp", "protocol_version": 1, "nonce": nonce, "port": int(port), "pid": os.getpid()}, destination)
-os.replace(temporary, marker)
-http.server.HTTPServer(("127.0.0.1", int(port)), Handler).handle_request()
-"#,
-        )
-        .expect("server script");
-        let command = if cfg!(windows) {
-            let mut command = Command::new("cmd");
-            command.args([
-                "/c",
-                "python",
-                &script.to_string_lossy(),
-                &marker.to_string_lossy(),
-                &pid_file.to_string_lossy(),
-                "launch-child",
-                &port.to_string(),
-            ]);
-            command
-        } else {
-            let mut command = Command::new("sh");
-            command.args([
-                "-c",
-                "python3 \"$1\" \"$2\" \"$3\" \"$4\" \"$5\"; wait",
-                "_",
-                &script.to_string_lossy(),
-                &marker.to_string_lossy(),
-                &pid_file.to_string_lossy(),
-                "launch-child",
-                &port.to_string(),
-            ]);
-            command
-        };
-        let mut process =
-            crate::background_process::spawn_service(command).expect("launcher process");
-        let pid_deadline = Instant::now() + Duration::from_secs(10);
-        let child_pid = loop {
-            if let Ok(pid) = fs::read_to_string(&pid_file)
-                && let Ok(pid) = pid.parse::<u32>()
-            {
-                break pid;
-            }
-            assert!(
-                Instant::now() < pid_deadline,
-                "child did not publish its pid"
-            );
-            thread::sleep(Duration::from_millis(20));
-        };
-        assert_ne!(child_pid, process.id());
-        wait_for_browser_readiness(
-            &mut process,
-            &marker,
-            "launch-child",
-            port,
-            Instant::now() + Duration::from_secs(10),
-            &CancellationToken::default(),
-        )
-        .expect("child readiness");
-        let _ = fs::remove_file(pid_file);
-        let _ = fs::remove_file(script);
     }
 
     #[test]
