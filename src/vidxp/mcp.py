@@ -1297,7 +1297,8 @@ def create_mcp_server(
             "Submit a durable ranked moment search. Set command.media_id to "
             "search one registered video; omit it to search across every media "
             "item in the active index snapshot. MCP defaults to the strongest "
-            "three keyframes. Request keyframes_and_clips for same-job clips, "
+            "three keyframes. Set command.evidence_delivery.mode to "
+            "keyframes_and_clips for same-job clips, "
             "then poll only this job for results and evidence."
         ),
         annotations=_SUBMIT,
@@ -1346,8 +1347,9 @@ def create_mcp_server(
             "Submit a durable grounded natural-language query over indexed "
             "moments and actor evidence. Set command.media_id for one video, "
             "or omit it to query across every media item in the active index "
-            "snapshot. MCP defaults to the strongest three keyframes. Request "
-            "keyframes_and_clips for same-job clips, then poll only this job "
+            "snapshot. MCP defaults to the strongest three keyframes. Set "
+            "command.evidence_delivery.mode to keyframes_and_clips for "
+            "same-job clips, then poll only this job "
             "for the grounded answer and inspectable evidence."
         ),
         annotations=_SUBMIT,

@@ -22,9 +22,13 @@ can deliver frames and clips itself.
 3. Choose the operation by the requested outcome:
    - Use `search_moments` to locate or list matching moments.
    - Use `query_video` for a grounded answer that combines retrieved evidence.
-4. Request `keyframes_and_clips` when the user asks where something occurs,
-   wants verification, or is likely to share/download the result. Use keyframes
-   alone only when clips add no value.
+4. Set `command.evidence_delivery.mode` to `keyframes_and_clips` when the user
+   asks where something occurs, wants verification, or is likely to
+   share/download the result. For example:
+   `"evidence_delivery": {"mode": "keyframes_and_clips", "max_items": 3}`.
+   This object belongs inside `command`; never send `command.materialize`,
+   which is not a `search_moments` or `query_video` input. Use `keyframes` when
+   clips add no value.
 5. Poll only the submitted job with `get_job`. The completed job is the
    authoritative source for ranked results, evidence, frames, clips, and
    ResourceLinks.
