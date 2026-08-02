@@ -637,7 +637,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     "poll_after_seconds": 0,
                 }
             )
-            context.jobs.submit_index.return_value = queued_job()
+            uploads.start_indexing.return_value = queued_job()
             server = create_mcp_server(
                 context,
                 default_principal=Principal(
@@ -665,8 +665,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertFalse(retried.is_error)
-        command = context.jobs.submit_index.call_args.args[0]
+        command = uploads.start_indexing.call_args.args[0]
         self.assertEqual(command.media_id, MEDIA_ID)
+        context.jobs.submit_index.assert_not_called()
 
     async def test_oidc_upload_returns_capability_without_url_elicitation(self):
         seen = []
@@ -1168,6 +1169,31 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(calls[0].args[0].modalities, ("scene",))
 
+    async def test_index_retry_routes_through_upload_relink_boundary(self):
+        with TemporaryDirectory() as directory:
+            context, uploads = self.upload_context(Path(directory))
+            uploads.start_indexing.return_value = queued_job()
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.write"}),
+                ),
+            )
+            arguments = {
+                "command": {
+                    "media_id": MEDIA_ID,
+                    "modalities": ["scene"],
+                },
+                "idempotency_key": "agent-index-retry-0001",
+            }
+            async with Client(server) as client:
+                result = await client.call_tool("start_indexing", arguments)
+
+        self.assertFalse(result.is_error)
+        uploads.start_indexing.assert_called_once()
+        context.jobs.submit_index.assert_not_called()
+
     async def test_missing_models_fail_before_index_submission(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
@@ -1387,7 +1413,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         artifact_delivery=transport,
                     )
                     async with Client(server) as client:
-                        result = await client.call_tool("get_job", {"job_id": JOB_ID})
+                        result = await client.call_tool(
+                            "get_job", {"job_id": JOB_ID}
+                        )
                         uri = f"vidxp://artifacts/{ARTIFACT_ID}/content.png"
                         resource = await client.read_resource(uri)
 
@@ -1471,9 +1499,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         artifact_delivery="streamable_http",
                     )
                     async with Client(server) as client:
-                        result = await client.call_tool(
-                            "get_job", {"job_id": JOB_ID}
-                        )
+                        result = await client.call_tool("get_job", {"job_id": JOB_ID})
                         self.assertFalse(result.is_error)
                         self.assertEqual(
                             any(

@@ -198,10 +198,13 @@ size, and MIME metadata after selection; video bytes never cross MCP. A native
 while the deployed server retains resumable tus/tusd transfer for large files.
 The explicit session contract reports the backend and effective limits. Indexing
 starts automatically by default, so the agent polls only `get_media_upload` until
-each file is `indexed`, `failed`, or (with the advanced
-`index_after_import=false` opt-out) `registered`. At that point `terminal=true`
-stops polling for the current files even while `session_state=open` lets the user
-add another file; accepting another file makes the status non-terminal again.
+each file is `indexed`, `failed`, `index_failed`, or (with the advanced
+`index_after_import=false` opt-out) `registered`. An `index_failed` file remains
+registered and can be retried with `start_indexing`; the upload status follows
+that retry through to searchable success or a new terminal failure. At a terminal
+state, `terminal=true` stops polling for the current files even while
+`session_state=open` lets the user add another file; accepting another file makes
+the status non-terminal again.
 
 Filesystem-accessible stdio agents use `ingest_local_media` for up to ten local
 paths. VidXP canonicalizes the paths and submits the existing durable import and

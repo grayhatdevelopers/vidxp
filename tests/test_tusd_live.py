@@ -6,15 +6,19 @@ import socket
 import subprocess
 import threading
 import time
+from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urljoin
 
 import httpx
 import pytest
 import uvicorn
+from sqlalchemy import update
 
 from vidxp.application_models import (
     CreateUploadFileCommand,
+    JobState,
     Principal,
 )
 from vidxp.authentication import StaticBearerAuthenticator
@@ -23,6 +27,7 @@ from vidxp.composition import UploadHookContext
 from vidxp.core.uploads import UploadState
 from vidxp.hook_app import create_hook_app
 from vidxp.infrastructure.sql_catalog import SQLCatalog
+from vidxp.infrastructure.sql_tables import upload_intents
 from vidxp.settings import VidXPSettings
 from vidxp.upload_service import RemoteUploadService
 
@@ -40,6 +45,14 @@ class _Jobs:
     ) -> str:
         del upload_id, connection
         return job_id
+
+    def get(self, job_id: str):
+        return SimpleNamespace(
+            job_id=job_id,
+            state=JobState.queued,
+            result=None,
+            error=None,
+        )
 
     def close(self) -> None:
         pass
@@ -93,9 +106,7 @@ def test_live_tusd_split_topology_resumes_ten_mib(tmp_path: Path) -> None:
         upload_recovery_interval_seconds=3600,
     )
     api_settings = hook_settings.model_copy(
-        update={
-            "upload_quarantine_root": tmp_path / "api-has-no-quarantine-volume"
-        }
+        update={"upload_quarantine_root": tmp_path / "api-has-no-quarantine-volume"}
     )
     database_url = f"sqlite:///{(tmp_path / 'server.sqlite3').resolve().as_posix()}"
     hook_catalog = SQLCatalog(
@@ -114,6 +125,7 @@ def test_live_tusd_split_topology_resumes_ten_mib(tmp_path: Path) -> None:
         settings=api_settings,
         catalog=api_catalog,
         media=None,
+        jobs=jobs,
     )
     authenticator = StaticBearerAuthenticator("t" * 32)
     authorization = AuthorizationPolicy()
@@ -136,6 +148,7 @@ def test_live_tusd_split_topology_resumes_ten_mib(tmp_path: Path) -> None:
     hook_thread = threading.Thread(target=hook_server.run, daemon=True)
     hook_thread.start()
     _wait_for_http(f"http://127.0.0.1:{hook_port}/health")
+    assert hook_uploads.coordinator._thread is None
 
     hook_settings.quarantine_root.mkdir(parents=True, exist_ok=True)
     tusd = subprocess.Popen(
@@ -149,7 +162,7 @@ def test_live_tusd_split_topology_resumes_ten_mib(tmp_path: Path) -> None:
             "-disable-download",
             "-disable-concatenation",
             f"-hooks-http=http://127.0.0.1:{hook_port}/hooks",
-            "-hooks-enabled-events=pre-create,post-finish",
+            "-hooks-enabled-events=pre-create",
             "-hooks-http-timeout=5s",
             "-show-startup-logs=false",
         ],
@@ -222,6 +235,50 @@ def test_live_tusd_split_topology_resumes_ten_mib(tmp_path: Path) -> None:
             )
             assert browser_session.resume_urls["ten-mib-file"] == upload_url
 
+            accepted_record = api_catalog.get_upload_intent(
+                authorization.status.intent_id
+            )
+            assert accepted_record is not None
+            with api_catalog.engine.begin() as connection:
+                connection.execute(
+                    update(upload_intents)
+                    .where(upload_intents.c.intent_id == authorization.status.intent_id)
+                    .values(
+                        expires_at=(
+                            accepted_record.created_at + timedelta(microseconds=1)
+                        ).isoformat()
+                    )
+                )
+            incomplete = api_uploads.reconcile()
+            incomplete_record = api_catalog.get_upload_intent(
+                authorization.status.intent_id
+            )
+            assert incomplete["expired"] == 0
+            assert incomplete_record is not None
+            assert incomplete_record.state == UploadState.accepted
+
+            unavailable_settings = api_settings.model_copy(
+                update={
+                    "upload_internal_endpoint": (
+                        f"http://127.0.0.1:{_free_port()}/uploads/"
+                    )
+                }
+            )
+            unavailable_uploads = RemoteUploadService(
+                settings=unavailable_settings,
+                catalog=api_catalog,
+                media=None,
+                jobs=jobs,
+            )
+            unavailable = unavailable_uploads.reconcile()
+            unavailable_record = api_catalog.get_upload_intent(
+                authorization.status.intent_id
+            )
+            assert unavailable["errors"] == 1
+            assert unavailable["expired"] == 0
+            assert unavailable_record is not None
+            assert unavailable_record.state == UploadState.accepted
+
             resumed = client.patch(
                 upload_url,
                 headers={
@@ -240,24 +297,68 @@ def test_live_tusd_split_topology_resumes_ten_mib(tmp_path: Path) -> None:
             assert completed.status_code == 200
             assert completed.headers["Upload-Offset"] == str(size)
 
-        deadline = time.monotonic() + 5
+            before_recovery = api_catalog.get_upload_intent(
+                authorization.status.intent_id
+            )
+            assert before_recovery is not None
+            assert before_recovery.state == UploadState.accepted
+            recovered = api_uploads.reconcile()
+            assert recovered["recovered"] == 1
+
+            missing_authorization = api_uploads.authorize_session_file(
+                upload_session.status.session_id,
+                CreateUploadFileCommand(
+                    client_file_key="missing-file",
+                    original_filename="missing.mp4",
+                    byte_size=1024,
+                    declared_mime_type="video/mp4",
+                ),
+                session_token=browser.session_token,
+            )
+            assert missing_authorization.grant is not None
+            accepted_missing = api_uploads.accept_session_creation(
+                missing_authorization.status.intent_id,
+                grant=missing_authorization.grant,
+                byte_size=1024,
+            )
+            assert accepted_missing.upload_id is not None
+            accepted_missing_record = api_catalog.get_upload_intent(
+                missing_authorization.status.intent_id
+            )
+            assert accepted_missing_record is not None
+            with api_catalog.engine.begin() as connection:
+                connection.execute(
+                    update(upload_intents)
+                    .where(
+                        upload_intents.c.intent_id
+                        == missing_authorization.status.intent_id
+                    )
+                    .values(
+                        expires_at=(
+                            accepted_missing_record.created_at
+                            + timedelta(microseconds=1)
+                        ).isoformat()
+                    )
+                )
+            missing = api_uploads.reconcile()
+            missing_record = api_catalog.get_upload_intent(
+                missing_authorization.status.intent_id
+            )
+            assert missing["expired"] == 1
+            assert missing_record is not None
+            assert missing_record.state == UploadState.expired
+            assert missing_record.upload_id is None
+
         record = api_catalog.get_upload_intent(authorization.status.intent_id)
-        while record is not None and record.state != UploadState.processing:
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.05)
-            record = api_catalog.get_upload_intent(authorization.status.intent_id)
 
         assert record is not None
         assert record.state == UploadState.processing
         assert record.job_id == record.upload_id
         assert record.upload_id is not None
-        assert (
-            hook_settings.quarantine_root / record.upload_id
-        ).stat().st_size == size
-        info = (
-            hook_settings.quarantine_root / f"{record.upload_id}.info"
-        ).read_text(encoding="utf-8")
+        assert (hook_settings.quarantine_root / record.upload_id).stat().st_size == size
+        info = (hook_settings.quarantine_root / f"{record.upload_id}.info").read_text(
+            encoding="utf-8"
+        )
         assert authorization.grant not in info
         assert browser.session_token not in info
         assert "Authorization" not in info

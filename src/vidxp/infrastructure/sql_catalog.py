@@ -931,6 +931,25 @@ class SQLCatalog:
                 row = active.execute(statement).one_or_none()
         return None if row is None else _upload_record(row)
 
+    def failed_index_uploads_for_media(
+        self,
+        media_id: str,
+        *,
+        connection: Connection,
+    ) -> tuple[UploadIntentRecord, ...]:
+        rows = connection.execute(
+            select(upload_intents)
+            .where(
+                upload_intents.c.media_id == media_id,
+                upload_intents.c.state == UploadState.ready.value,
+                upload_intents.c.index_after_import.is_(True),
+                upload_intents.c.index_job_id.is_not(None),
+                upload_intents.c.failure_code.is_not(None),
+            )
+            .with_for_update()
+        )
+        return tuple(_upload_record(row) for row in rows)
+
     def update_upload(
         self,
         intent_id: str,
@@ -945,6 +964,7 @@ class SQLCatalog:
         failure_message: str | None = None,
         content_sha256: str | None = None,
         clear_upload_id: bool = False,
+        clear_failure: bool = False,
         expected_states: set[UploadState] | None = None,
         expected_job_id: str | None | object = _EXPECTED_VALUE_UNSET,
         expected_index_job_id: str | None | object = _EXPECTED_VALUE_UNSET,
@@ -987,7 +1007,10 @@ class SQLCatalog:
             values["media_id"] = media_id
         if index_job_id is not None:
             values["index_job_id"] = index_job_id
-        if failure_code is not None:
+        if clear_failure:
+            values["failure_code"] = None
+            values["failure_message"] = None
+        elif failure_code is not None:
             values["failure_code"] = failure_code
         if failure_message is not None:
             values["failure_message"] = failure_message

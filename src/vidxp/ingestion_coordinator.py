@@ -143,13 +143,13 @@ class IngestionCoordinator:
                 job = self.jobs.get(intent.job_id)
             except ApplicationError as exc:
                 if exc.detail.code != "resource_not_found":
-                    if self._is_retryable(exc.detail):
+                    if self.is_retryable(exc.detail):
                         return intent
                     return self._fail_import(intent, exc.detail)
                 try:
                     job = self._submit_import_job(intent)
                 except ApplicationError as submit_exc:
-                    if self._is_retryable(submit_exc.detail):
+                    if self.is_retryable(submit_exc.detail):
                         return intent
                     return self._fail_import(intent, submit_exc.detail)
             if job.state == JobState.succeeded and job.result is not None:
@@ -196,10 +196,10 @@ class IngestionCoordinator:
                     try:
                         job = self._submit_index_job(intent)
                     except ApplicationError as submit_exc:
-                        if self._is_retryable(submit_exc.detail):
+                        if self.is_retryable(submit_exc.detail):
                             return intent
                         return self._fail_index(intent, submit_exc.detail)
-                elif self._is_retryable(exc.detail):
+                elif self.is_retryable(exc.detail):
                     return intent
                 else:
                     return self._fail_index(intent, exc.detail)
@@ -311,7 +311,7 @@ class IngestionCoordinator:
         try:
             self._submit_import_job(linked)
         except ApplicationError as exc:
-            if not self._is_retryable(exc.detail):
+            if not self.is_retryable(exc.detail):
                 return self._fail_import(linked, exc.detail)
         return linked
 
@@ -337,7 +337,7 @@ class IngestionCoordinator:
         try:
             self._submit_index_job(linked)
         except ApplicationError as exc:
-            if not self._is_retryable(exc.detail):
+            if not self.is_retryable(exc.detail):
                 return self._fail_index(linked, exc.detail)
         return linked
 
@@ -374,7 +374,7 @@ class IngestionCoordinator:
         )
 
     @staticmethod
-    def _is_retryable(detail: ErrorDetail) -> bool:
+    def is_retryable(detail: ErrorDetail) -> bool:
         return (
             detail.retryable
             or detail.category == ErrorCategory.unavailable

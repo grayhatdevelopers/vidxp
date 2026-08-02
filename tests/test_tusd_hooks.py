@@ -13,7 +13,7 @@ from vidxp.infrastructure.sql_catalog import SQLCatalog
 from vidxp.infrastructure.tusd_contracts import TusdHookRequest
 from vidxp.settings import VidXPSettings
 from vidxp.tusd_hooks import TusdHookService
-from vidxp.upload_service import RemoteUploadService
+from vidxp.upload_service import RemoteUploadService, TusUploadProbe
 
 
 class _Jobs:
@@ -52,6 +52,11 @@ def _hooks(tmp_path: Path):
         catalog=catalog,
         media=object(),
         jobs=_Jobs(),
+        tusd_upload_probe=lambda upload_id: (
+            TusUploadProbe(upload_id=upload_id, length=20, offset=0)
+            if (settings.quarantine_root / f"{upload_id}.info").exists()
+            else None
+        ),
     )
     intent = uploads.create_intent(
         CreateUploadIntentCommand(

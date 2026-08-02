@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 
 from vidxp.application_models import (
     ApplicationError,
+    CreateIndexCommand,
     CreateUploadFileCommand,
     CreateUploadIntentCommand,
     ErrorCategory,
@@ -33,7 +34,7 @@ from vidxp.infrastructure.sql_tables import media as media_table
 from vidxp.infrastructure.sql_tables import upload_intents, upload_quota
 from vidxp.ingestion_coordinator import IngestionCoordinator, derived_ingestion_job_id
 from vidxp.settings import VidXPSettings
-from vidxp.upload_service import RemoteUploadService
+from vidxp.upload_service import RemoteUploadService, TusUploadProbe
 from vidxp import upload_service as upload_service_module
 
 
@@ -435,9 +436,11 @@ def _service(
             catalog=catalog,
             media=_Media(),
             jobs=jobs,
-            tusd_upload_exists=lambda upload_id: (
-                settings.quarantine_root / f"{upload_id}.info"
-            ).exists(),
+            tusd_upload_probe=lambda upload_id: (
+                TusUploadProbe(upload_id=upload_id, length=60, offset=0)
+                if (settings.quarantine_root / f"{upload_id}.info").exists()
+                else None
+            ),
         ),
         catalog,
         jobs,
@@ -1441,6 +1444,189 @@ def test_index_terminal_failure_preserves_registered_media_and_status(
     catalog.close()
 
 
+def _failed_index_upload(
+    root: Path,
+    jobs: _RestartingCoordinatorJobs,
+) -> tuple[RemoteUploadService, SQLCatalog, Principal, str, str]:
+    catalog = SQLCatalog(
+        f"sqlite:///{(root / 'index-retry.sqlite3').resolve().as_posix()}",
+        initialize=True,
+    )
+    service = RemoteUploadService(
+        settings=VidXPSettings(
+            repository_root=root,
+            upload_handoff_public_url="https://upload.example/upload-handoff",
+            upload_handoff_secret="h" * 32,
+            upload_max_bytes=100,
+            upload_quota_bytes=100,
+            upload_session_max_bytes=100,
+            max_local_import_bytes=100,
+            http_max_small_upload_bytes=100,
+        ),
+        catalog=catalog,
+        media=_Media(),
+        jobs=jobs,
+    )
+    owner = Principal(subject="owner", client_id="mcp-client")
+    session = service.create_upload_session(
+        principal=owner,
+        request_key="d" * 64,
+        index_after_import=True,
+        index_modalities=("scene",),
+    )
+    browser = service.exchange_upload_session(
+        session.status.session_id,
+        capability=session.capability,
+    )
+    authorization = service.authorize_session_file(
+        session.status.session_id,
+        _file("retry-index", size=20),
+        session_token=browser.session_token,
+    )
+    media_id = uuid4().hex
+    with catalog.engine.begin() as connection:
+        connection.execute(
+            insert(media_table).values(
+                media_id=media_id,
+                sha256="4" * 64,
+                created_at=utc_now().isoformat(),
+                payload={},
+            )
+        )
+    catalog.with_upload_transaction(
+        lambda connection: catalog.update_upload(
+            authorization.status.intent_id,
+            state=UploadState.ready,
+            connection=connection,
+            upload_id=authorization.status.intent_id,
+            job_id=derived_ingestion_job_id(
+                authorization.status.intent_id,
+                "import",
+            ),
+            media_id=media_id,
+            index_job_id=derived_ingestion_job_id(
+                authorization.status.intent_id,
+                "index",
+            ),
+            failure_code="media_index_failed",
+            failure_message="Automatic indexing failed.",
+            expected_states={UploadState.pending},
+            expected_job_id=None,
+            expected_index_job_id=None,
+        )
+    )
+    return service, catalog, owner, session.status.session_id, media_id
+
+
+def test_start_indexing_relinks_failed_upload_and_projects_success(
+    tmp_path: Path,
+) -> None:
+    jobs = _RestartingCoordinatorJobs()
+    jobs.index_crashes = False
+    service, catalog, owner, session_id, media_id = _failed_index_upload(
+        tmp_path,
+        jobs,
+    )
+    retry_job_id = uuid4().hex
+
+    service.start_indexing(
+        CreateIndexCommand(media_id=media_id, modalities=("scene",)),
+        job_id=retry_job_id,
+    )
+
+    with catalog.engine.connect() as connection:
+        linked = catalog.failed_index_uploads_for_media(
+            media_id,
+            connection=connection,
+        )
+    assert linked == ()
+    retrying = next(
+        intent for _, intent in catalog.list_upload_session_files(session_id)
+    )
+    assert retrying.index_job_id == retry_job_id
+    assert retrying.failure_code is None
+    jobs.jobs[retry_job_id] = SimpleNamespace(
+        job_id=retry_job_id,
+        state=JobState.succeeded,
+        result=SimpleNamespace(
+            result=SimpleNamespace(
+                generation_id="223456781234423481234567890abcde",
+                snapshot_id="323456781234423481234567890abcde",
+            )
+        ),
+    )
+
+    service.coordinator.run_once()
+    status = service.get_status(session_id, principal=owner)
+
+    assert status.items[0].phase == "indexed"
+    assert status.items[0].searchable is True
+    assert status.items[0].generation_id == "223456781234423481234567890abcde"
+    assert status.items[0].snapshot_id == "323456781234423481234567890abcde"
+    catalog.close()
+
+
+def test_start_indexing_submission_failure_replaces_stale_index_error(
+    tmp_path: Path,
+) -> None:
+    jobs = _RestartingCoordinatorJobs()
+    jobs.index_crashes = False
+    jobs.index_failure = ApplicationError(
+        "index_retry_invalid",
+        ErrorCategory.validation,
+        "The retry request is invalid.",
+    )
+    service, catalog, owner, session_id, media_id = _failed_index_upload(
+        tmp_path,
+        jobs,
+    )
+    retry_job_id = uuid4().hex
+
+    with pytest.raises(ApplicationError) as failed:
+        service.start_indexing(
+            CreateIndexCommand(media_id=media_id, modalities=("scene",)),
+            job_id=retry_job_id,
+        )
+
+    assert failed.value.detail.code == "index_retry_invalid"
+    status = service.get_status(session_id, principal=owner)
+    assert status.items[0].phase == "index_failed"
+    assert status.items[0].index_job_id == retry_job_id
+    assert status.items[0].error is not None
+    assert status.items[0].error.code == "index_retry_invalid"
+    assert status.items[0].searchable is False
+    catalog.close()
+
+
+def test_start_indexing_keeps_ordinary_non_upload_media_supported(
+    tmp_path: Path,
+) -> None:
+    jobs = _RestartingCoordinatorJobs()
+    jobs.index_crashes = False
+    catalog = SQLCatalog(
+        f"sqlite:///{(tmp_path / 'ordinary-index.sqlite3').resolve().as_posix()}",
+        initialize=True,
+    )
+    service = RemoteUploadService(
+        settings=VidXPSettings(repository_root=tmp_path),
+        catalog=catalog,
+        media=_Media(),
+        jobs=jobs,
+    )
+    job_id = uuid4().hex
+    media_id = uuid4().hex
+
+    job = service.start_indexing(
+        CreateIndexCommand(media_id=media_id, modalities=("scene",)),
+        job_id=job_id,
+    )
+
+    assert job.job_id == job_id
+    assert jobs.index_submissions == [job_id]
+    assert catalog.active_ingestions() == ()
+    catalog.close()
+
+
 def test_sibling_success_failure_and_cancellation_are_independent(
     tmp_path: Path,
 ) -> None:
@@ -1772,8 +1958,10 @@ def test_expired_creation_persists_state_and_releases_quota(
     catalog.close()
 
 
-def test_active_resumable_upload_is_not_expired(tmp_path: Path) -> None:
-    service, catalog, _ = _service(tmp_path)
+def test_split_tus_probe_keeps_incomplete_upload_without_quarantine(
+    tmp_path: Path,
+) -> None:
+    service, catalog, jobs = _service(tmp_path)
     now = utc_now()
     upload_id = "2" * 32
     record = UploadIntentRecord(
@@ -1788,16 +1976,122 @@ def test_active_resumable_upload_is_not_expired(tmp_path: Path) -> None:
         upload_id=upload_id,
     )
     catalog.create_upload_intent(record, quota_limit=100)
-    service.settings.quarantine_root.mkdir(parents=True, exist_ok=True)
-    (service.settings.quarantine_root / f"{upload_id}.info").write_text(
-        '{"MetaData":{"intent_id":"' + record.intent_id + '"},"Size":60,"Offset":10}',
-        encoding="utf-8",
+    api_quarantine = tmp_path / "api-has-no-quarantine"
+    service = RemoteUploadService(
+        settings=service.settings.model_copy(
+            update={"upload_quarantine_root": api_quarantine}
+        ),
+        catalog=catalog,
+        media=_Media(),
+        jobs=jobs,
+        tusd_upload_probe=lambda probed_id: TusUploadProbe(
+            upload_id=probed_id,
+            length=60,
+            offset=10,
+        ),
     )
     result = service.reconcile()
 
     assert result["expired"] == 0
+    assert not api_quarantine.exists()
     stored = catalog.get_upload_intent(record.intent_id)
     assert stored is not None and stored.state == UploadState.accepted
+    catalog.close()
+
+
+def test_split_tus_probe_recovers_missed_finish_without_quarantine(
+    tmp_path: Path,
+) -> None:
+    service, catalog, jobs = _service(tmp_path)
+    owner = Principal(subject="owner")
+    intent = service.create_intent(
+        _command(),
+        principal=owner,
+        request_key="a" * 64,
+    )
+    accepted = service.accept_creation(
+        intent.intent_id,
+        principal=owner,
+        byte_size=60,
+    )
+    assert accepted.upload_id is not None
+    api_quarantine = tmp_path / "api-has-no-quarantine"
+    service = RemoteUploadService(
+        settings=service.settings.model_copy(
+            update={"upload_quarantine_root": api_quarantine}
+        ),
+        catalog=catalog,
+        media=_Media(),
+        jobs=jobs,
+        tusd_upload_probe=lambda upload_id: TusUploadProbe(
+            upload_id=upload_id,
+            length=60,
+            offset=60,
+        ),
+    )
+
+    result = service.reconcile()
+
+    assert result["recovered"] == 1
+    assert not api_quarantine.exists()
+    stored = catalog.get_upload_intent(intent.intent_id)
+    assert stored is not None and stored.state == UploadState.processing
+    assert stored.job_id == accepted.upload_id
+    catalog.close()
+
+
+def test_missing_tus_upload_expires_but_unavailable_tusd_does_not(
+    tmp_path: Path,
+) -> None:
+    service, catalog, jobs = _service(tmp_path, quota=200)
+    now = utc_now()
+    records = tuple(
+        UploadIntentRecord(
+            intent_id=uuid4().hex,
+            request_key=key * 64,
+            original_filename=f"{key}.mp4",
+            byte_size=60,
+            declared_mime_type="video/mp4",
+            state=UploadState.accepted,
+            created_at=now - timedelta(days=2),
+            expires_at=now - timedelta(days=1),
+            upload_id=key * 32,
+        )
+        for key in ("a", "b")
+    )
+    for record in records:
+        catalog.create_upload_intent(record, quota_limit=200)
+
+    def probe(upload_id: str) -> TusUploadProbe | None:
+        if upload_id == records[1].upload_id:
+            raise ApplicationError(
+                "remote_upload_unavailable",
+                ErrorCategory.unavailable,
+                "The upload service is temporarily unavailable.",
+            )
+        return None
+
+    service = RemoteUploadService(
+        settings=service.settings.model_copy(
+            update={
+                "upload_quarantine_root": tmp_path / "not-mounted",
+                "upload_internal_endpoint": None,
+            }
+        ),
+        catalog=catalog,
+        media=_Media(),
+        jobs=jobs,
+        tusd_upload_probe=probe,
+    )
+
+    result = service.reconcile()
+
+    missing = catalog.get_upload_intent(records[0].intent_id)
+    unavailable = catalog.get_upload_intent(records[1].intent_id)
+    assert result["expired"] == 1
+    assert result["errors"] == 1
+    assert missing is not None and missing.state == UploadState.expired
+    assert unavailable is not None and unavailable.state == UploadState.accepted
     catalog.close()
 
 
@@ -1860,6 +2154,60 @@ def test_terminal_import_job_releases_processing_upload(
     assert stored is not None and stored.state == UploadState.failed
     assert stored.media_id is None
     assert stored.failure_code == "media_import_failed"
+    catalog.close()
+
+
+def test_late_import_callback_cannot_import_terminal_failed_upload(
+    tmp_path: Path,
+) -> None:
+    service, catalog, jobs = _service(tmp_path)
+    owner = Principal(subject="owner")
+    intent = service.create_intent(
+        _command(),
+        principal=owner,
+        request_key="a" * 64,
+    )
+    accepted = service.accept_creation(
+        intent.intent_id,
+        principal=owner,
+        byte_size=60,
+    )
+    assert accepted.upload_id is not None
+    job_id = service.complete_tus_transfer(
+        intent_id=intent.intent_id,
+        upload_id=accepted.upload_id,
+        byte_size=60,
+        offset=60,
+    )
+    catalog.with_upload_transaction(
+        lambda connection: catalog.update_upload(
+            intent.intent_id,
+            state=UploadState.failed,
+            connection=connection,
+            failure_code="media_import_failed",
+            failure_message="The durable media import failed.",
+            expected_states={UploadState.processing},
+            expected_job_id=job_id,
+        )
+    )
+    service.settings.quarantine_root.mkdir(parents=True, exist_ok=True)
+    (service.settings.quarantine_root / accepted.upload_id).write_bytes(b"x" * 60)
+    importer = Mock()
+    service.media = SimpleNamespace(import_quarantined=importer)
+
+    with pytest.raises(ApplicationError) as rejected:
+        service.import_completed(accepted.upload_id)
+
+    assert rejected.value.detail.code == "upload_not_ready"
+    importer.assert_not_called()
+    with catalog.engine.connect() as connection:
+        assert (
+            connection.execute(
+                select(func.count()).select_from(media_table)
+            ).scalar_one()
+            == 0
+        )
+    assert jobs.calls == [(accepted.upload_id, accepted.upload_id)]
     catalog.close()
 
 

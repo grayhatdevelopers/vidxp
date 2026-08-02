@@ -929,8 +929,9 @@ def create_mcp_server(
         description=(
             "Get durable aggregate and per-file state for an upload session. "
             "Poll this single operation through uploaded, importing, "
-            "registered, indexing, indexed, or failed. Each item reports the "
-            "import job, index job, media, generation, snapshot, and structured "
+            "registered, indexing, indexed, index_failed, or failed. Each item "
+            "reports the import job, index job, media, generation, snapshot, "
+            "and structured "
             "failure without losing successful siblings. terminal=true means "
             "the currently accepted files are complete and polling should stop; "
             "session_state=open may still allow the user to add another file, "
@@ -1044,15 +1045,15 @@ def create_mcp_server(
         idempotency_key: IdempotencyKey,
     ) -> Job:
         def submit(actor: Principal) -> Job:
-            return context.jobs.submit_index(
-                command,
-                job_id=scoped_job_id(
-                    principal=actor,
-                    transport="mcp",
-                    operation="index",
-                    idempotency_key=idempotency_key,
-                ),
+            job_id = scoped_job_id(
+                principal=actor,
+                transport="mcp",
+                operation="index",
+                idempotency_key=idempotency_key,
             )
+            if context.uploads is not None:
+                return context.uploads.start_indexing(command, job_id=job_id)
+            return context.jobs.submit_index(command, job_id=job_id)
 
         return await _invoke_async(
             context,

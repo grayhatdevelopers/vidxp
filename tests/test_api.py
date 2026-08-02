@@ -501,6 +501,25 @@ class ApiTests(unittest.TestCase):
             ),
         )
 
+    def test_http_index_retry_routes_through_upload_relink_boundary(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory), remote_uploads=True)
+            assert context.uploads is not None
+            context.uploads.start_indexing.return_value = queued_job()
+            with TestClient(create_app(context=context)) as client:
+                response = client.post(
+                    "/api/v1/jobs/index",
+                    headers={"Idempotency-Key": IDEMPOTENCY_KEY},
+                    json={
+                        "media_id": MEDIA_ID,
+                        "modalities": ["scene"],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 202)
+        context.uploads.start_indexing.assert_called_once()
+        context.jobs.submit_index.assert_not_called()
+
     def test_failed_model_preparation_job_is_structured_over_http(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))

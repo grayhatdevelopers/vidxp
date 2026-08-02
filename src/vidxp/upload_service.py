@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import secrets
 from dataclasses import dataclass
@@ -20,10 +19,12 @@ from sqlalchemy.exc import IntegrityError
 
 from vidxp.application_models import (
     ApplicationError,
+    CreateIndexCommand,
     CreateUploadFileCommand,
     CreateUploadIntentCommand,
     ErrorCategory,
     ErrorDetail,
+    Job,
     MediaUploadSessionStatus,
     MediaUploadStatus,
     Principal,
@@ -79,6 +80,15 @@ class UploadFileAuthorization:
     resume_url: str | None
 
 
+@dataclass(frozen=True)
+class TusUploadProbe:
+    """Authoritative resumable-upload state returned by tusd HEAD."""
+
+    upload_id: str
+    length: int
+    offset: int
+
+
 def _token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("ascii")).hexdigest()
 
@@ -115,14 +125,14 @@ class RemoteUploadService:
         catalog: SQLCatalog,
         media: MediaService | None,
         jobs: Any | None = None,
-        tusd_upload_exists: Callable[[str], bool] | None = None,
+        tusd_upload_probe: Callable[[str], TusUploadProbe | None] | None = None,
         default_index_modalities: tuple[str, ...] = (),
     ) -> None:
         self.settings = settings
         self.catalog = catalog
         self.media = media
         self.jobs = jobs
-        self._tusd_upload_exists = tusd_upload_exists
+        self._tusd_upload_probe = tusd_upload_probe
         self.default_index_modalities = default_index_modalities
         self.status = UploadStatusProjector(catalog=catalog, jobs=jobs)
         self.coordinator = IngestionCoordinator(
@@ -1026,20 +1036,40 @@ class RemoteUploadService:
             return False
         if intent.transfer_backend != UploadTransferBackend.tus:
             return self._quarantine_path(intent.upload_id).is_file()
-        if self._tusd_upload_exists is not None:
-            return self._tusd_upload_exists(intent.upload_id)
+        return self._probe_tus_upload(intent.upload_id) is not None
 
+    def _probe_tus_upload(self, upload_id: str) -> TusUploadProbe | None:
+        if self._tusd_upload_probe is not None:
+            return self._tusd_upload_probe(upload_id)
         endpoint = self.settings.upload_internal_endpoint
         if endpoint is None:
             raise RuntimeError("Remote upload probing is not configured.")
-        request = Request(endpoint + intent.upload_id, method="HEAD")
+        request = Request(endpoint + upload_id, method="HEAD")
         request.add_header("Tus-Resumable", "1.0.0")
         try:
             with urlopen(request, timeout=5) as response:
-                return response.status == 200
+                if response.status != 200:
+                    raise ApplicationError(
+                        "remote_upload_unavailable",
+                        ErrorCategory.unavailable,
+                        "The upload service returned an unexpected probe response.",
+                    )
+                length = self._parse_tus_position(response.headers.get("Upload-Length"))
+                offset = self._parse_tus_position(response.headers.get("Upload-Offset"))
+                if length is None or offset is None or offset > length:
+                    raise ApplicationError(
+                        "remote_upload_probe_invalid",
+                        ErrorCategory.unavailable,
+                        "The upload service returned invalid resumable-upload state.",
+                    )
+                return TusUploadProbe(
+                    upload_id=upload_id,
+                    length=length,
+                    offset=offset,
+                )
         except HTTPError as exc:
             if exc.code == 404:
-                return False
+                return None
             raise ApplicationError(
                 "remote_upload_unavailable",
                 ErrorCategory.unavailable,
@@ -1051,6 +1081,29 @@ class RemoteUploadService:
                 ErrorCategory.unavailable,
                 "The upload service is temporarily unavailable.",
             ) from exc
+
+    @staticmethod
+    def _parse_tus_position(value: str | None) -> int | None:
+        if (
+            value is None
+            or len(value) > 20
+            or not value.isascii()
+            or not value.isdigit()
+        ):
+            return None
+        return int(value)
+
+    @staticmethod
+    def _validate_tus_probe(
+        intent: UploadIntentRecord,
+        probe: TusUploadProbe,
+    ) -> None:
+        if probe.upload_id != intent.upload_id or probe.length != intent.byte_size:
+            raise ApplicationError(
+                "remote_upload_probe_mismatch",
+                ErrorCategory.unavailable,
+                "The resumable upload does not match its durable upload intent.",
+            )
 
     def complete_multipart_file(
         self,
@@ -1193,6 +1246,72 @@ class RemoteUploadService:
             offset=offset,
         )
 
+    def start_indexing(
+        self,
+        command: CreateIndexCommand,
+        *,
+        job_id: str,
+    ) -> Job:
+        """Submit indexing and relink any failed upload projection atomically."""
+
+        if self.jobs is None:
+            raise RuntimeError("Index job submission is not configured.")
+
+        def relink(connection: Connection) -> tuple[str, ...]:
+            linked: list[str] = []
+            for record in self.catalog.failed_index_uploads_for_media(
+                command.media_id,
+                connection=connection,
+            ):
+                if self.catalog.update_upload(
+                    record.intent_id,
+                    state=UploadState.ready,
+                    connection=connection,
+                    index_job_id=job_id,
+                    clear_failure=True,
+                    expected_states={UploadState.ready},
+                    expected_index_job_id=record.index_job_id,
+                ):
+                    linked.append(record.intent_id)
+            return tuple(linked)
+
+        linked_intents = self.catalog.with_upload_transaction(relink)
+        try:
+            job = self.jobs.submit_index(command, job_id=job_id)
+        except ApplicationError as exc:
+            if linked_intents and not IngestionCoordinator.is_retryable(exc.detail):
+                self._record_index_retry_failure(
+                    linked_intents,
+                    job_id=job_id,
+                    detail=exc.detail,
+                )
+            raise
+        finally:
+            if linked_intents:
+                self.coordinator.wake()
+        return job
+
+    def _record_index_retry_failure(
+        self,
+        intent_ids: tuple[str, ...],
+        *,
+        job_id: str,
+        detail: ErrorDetail,
+    ) -> None:
+        def fail(connection: Connection) -> None:
+            for intent_id in intent_ids:
+                self.catalog.update_upload(
+                    intent_id,
+                    state=UploadState.ready,
+                    connection=connection,
+                    failure_code=detail.code,
+                    failure_message=detail.message,
+                    expected_states={UploadState.ready},
+                    expected_index_job_id=job_id,
+                )
+
+        self.catalog.with_upload_transaction(fail)
+
     def import_completed(
         self,
         upload_id: str,
@@ -1211,10 +1330,7 @@ class RemoteUploadService:
             and record.media_id is not None
         ):
             return self.media.get(record.media_id)
-        if record.state not in {
-            UploadState.processing,
-            UploadState.failed,
-        }:
+        if record.state != UploadState.processing:
             raise ApplicationError(
                 "upload_not_ready",
                 ErrorCategory.conflict,
@@ -1261,34 +1377,32 @@ class RemoteUploadService:
         coordinated = self.coordinator.run_once()
         errors = coordinated["errors"]
         advanced = coordinated["advanced"]
+        tus_probes: dict[str, TusUploadProbe | None] = {}
+        failed_tus_probes: set[str] = set()
         for record in self.catalog.recoverable_uploads():
             try:
-                if record.upload_id is None:
-                    continue
-                info = self._read_upload_info(record.upload_id)
-                if info is None:
-                    continue
-                metadata = info.get("MetaData")
-                if not isinstance(metadata, dict):
-                    continue
-                if metadata.get("intent_id") != record.intent_id:
-                    continue
-                size = info.get("Size")
-                offset = info.get("Offset")
                 if (
-                    isinstance(size, int)
-                    and isinstance(offset, int)
-                    and size == offset == record.byte_size
+                    record.upload_id is None
+                    or record.transfer_backend != UploadTransferBackend.tus
                 ):
+                    continue
+                probe = self._probe_tus_upload(record.upload_id)
+                tus_probes[record.upload_id] = probe
+                if probe is None:
+                    continue
+                self._validate_tus_probe(record, probe)
+                if probe.offset == probe.length:
                     self.complete_tus_transfer(
                         intent_id=record.intent_id,
                         upload_id=record.upload_id,
-                        byte_size=size,
-                        offset=offset,
+                        byte_size=probe.length,
+                        offset=probe.offset,
                     )
                     recovered += 1
             except Exception:
                 errors += 1
+                if record.upload_id is not None:
+                    failed_tus_probes.add(record.upload_id)
                 LOGGER.exception(
                     "Upload recovery failed for intent %s.",
                     record.intent_id,
@@ -1297,15 +1411,33 @@ class RemoteUploadService:
         now = utc_now()
         for record in self.catalog.expired_uploads(now=now):
             try:
+                tus_upload_missing = False
                 if (
                     record.state == UploadState.accepted
                     and record.upload_id is not None
-                    and self._upload_is_active(record.upload_id, now=now)
                 ):
-                    continue
+                    if record.transfer_backend == UploadTransferBackend.tus:
+                        if record.upload_id in failed_tus_probes:
+                            continue
+                        probe = tus_probes.get(record.upload_id)
+                        if record.upload_id not in tus_probes:
+                            probe = self._probe_tus_upload(record.upload_id)
+                            tus_probes[record.upload_id] = probe
+                        if probe is not None:
+                            self._validate_tus_probe(record, probe)
+                            continue
+                        tus_upload_missing = True
+                    elif (
+                        record.transfer_backend == UploadTransferBackend.multipart
+                        and self._local_upload_is_active(record.upload_id, now=now)
+                    ):
+                        continue
                 upload_id = self._expire_intent(record.intent_id)
                 if upload_id is not None:
-                    self._cleanup_upload(upload_id)
+                    if tus_upload_missing:
+                        self.record_terminated(upload_id)
+                    else:
+                        self._cleanup_upload(upload_id)
                 expired += 1
             except Exception:
                 errors += 1
@@ -1439,34 +1571,17 @@ class RemoteUploadService:
 
         return self.catalog.with_upload_transaction(expire)
 
-    def _upload_is_active(self, upload_id: str, *, now) -> bool:
+    def _local_upload_is_active(self, upload_id: str, *, now) -> bool:
         cutoff = now.timestamp() - self.settings.upload_intent_ttl_seconds
-        for suffix in ("", ".info"):
-            path = self._quarantine_path(f"{upload_id}{suffix}")
-            try:
-                if (
-                    path.is_file()
-                    and not path.is_symlink()
-                    and path.stat().st_mtime > cutoff
-                ):
-                    return True
-            except OSError:
-                continue
-        return False
-
-    def _read_upload_info(self, upload_id: str) -> dict[str, Any] | None:
-        path = self._quarantine_path(f"{upload_id}.info")
-        if not path.is_file() or path.is_symlink():
-            return None
         try:
-            with path.open("rb") as handle:
-                payload = handle.read(65_537)
-            if len(payload) > 65_536:
-                return None
-            result = json.loads(payload)
-        except (OSError, json.JSONDecodeError):
-            return None
-        return result if isinstance(result, dict) else None
+            path = self._quarantine_path(upload_id)
+            return (
+                path.is_file()
+                and not path.is_symlink()
+                and path.stat().st_mtime > cutoff
+            )
+        except OSError:
+            return False
 
     def _quarantine_path(self, name: str) -> Path:
         if (
@@ -1553,7 +1668,7 @@ class RemoteUploadService:
             )
         if record.state == UploadState.accepted:
             assert record.upload_id is not None
-            if self._quarantine_path(f"{record.upload_id}.info").exists():
+            if self._tusd_creation_exists(record):
                 raise ApplicationError(
                     "upload_already_created",
                     ErrorCategory.conflict,

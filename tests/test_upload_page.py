@@ -14,7 +14,7 @@ from vidxp.control_plane import ControlPlaneApplication
 from vidxp.infrastructure.sql_catalog import SQLCatalog
 from vidxp.job_service import JobService
 from vidxp.settings import VidXPSettings
-from vidxp.upload_service import RemoteUploadService
+from vidxp.upload_service import RemoteUploadService, TusUploadProbe
 
 
 def _fixture(root: Path):
@@ -46,9 +46,11 @@ def _fixture(root: Path):
         catalog=catalog,
         media=object(),
         jobs=jobs,
-        tusd_upload_exists=lambda upload_id: (
-            settings.quarantine_root / f"{upload_id}.info"
-        ).exists(),
+        tusd_upload_probe=lambda upload_id: (
+            TusUploadProbe(upload_id=upload_id, length=20, offset=0)
+            if (settings.quarantine_root / f"{upload_id}.info").exists()
+            else None
+        ),
     )
     application = Mock(spec=ControlPlaneApplication)
     readiness = Mock()

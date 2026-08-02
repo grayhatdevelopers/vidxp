@@ -67,19 +67,20 @@ def submit_index(
     actor: Annotated[Principal, Depends(write_principal)],
     idempotency_key: HttpIdempotencyKey,
 ) -> Job:
+    job_id = scoped_job_id(
+        service,
+        actor,
+        operation="index",
+        idempotency_key=idempotency_key,
+    )
+    job = (
+        service.uploads.start_indexing(command, job_id=job_id)
+        if service.uploads is not None
+        else service.jobs.submit_index(command, job_id=job_id)
+    )
     return accepted(
         response,
-        _http_job(
-            service.jobs.submit_index(
-                command,
-                job_id=scoped_job_id(
-                    service,
-                    actor,
-                    operation="index",
-                    idempotency_key=idempotency_key,
-                ),
-            ),
-        ),
+        _http_job(job),
     )
 
 

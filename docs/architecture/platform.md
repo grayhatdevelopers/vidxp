@@ -389,6 +389,9 @@ if `session_state` remains `open`; accepting another file resumes the polling
 contract. Import failures remain failed ingestions. An automatic-index failure is
 instead terminal `index_failed`: the upload remains `ready`, retains its `media_id`,
 and can be submitted through `start_indexing` after the index error is corrected.
+That submission atomically relinks the upload to the durable retry job, clears the
+old failure, and lets the sole control-plane coordinator project either searchable
+success or the retry's terminal failure.
 
 Application responses carrying upload URLs use `private, no-store` and
 `no-referrer`; hook payloads and MCP results do not persist them. The opaque path is
@@ -405,8 +408,12 @@ metadata. Only the tus upload route is public. A completed upload is not a
 
 The supported server topology uses tusd filestore on a named quarantine volume
 shared read-only with the hook service and worker. The API intentionally does not
-mount that volume: it discovers created resumable resources with an internal tusd
-`HEAD` and combines that result with the authoritative intent state in Postgres.
+mount that volume: one centralized internal tusd `HEAD` probe supplies the
+authoritative upload length and offset for resume discovery, missed-finish
+recovery, and retention. The API binds that probe to the upload ID and expected
+length stored on the intent in Postgres; an existing incomplete resource is kept,
+a missing expired resource may expire, and an unavailable tusd is never treated
+as absence.
 Managed media and artifacts use the stack's named content volume. The whole
 deployment is single-node and one deployed stack is one repository boundary.
 Deployed clients upload directly to tusd; FastAPI does not proxy large video
