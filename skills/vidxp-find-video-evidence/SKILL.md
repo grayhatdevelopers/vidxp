@@ -31,14 +31,35 @@ can deliver frames and clips itself.
 6. Inspect returned keyframes before asserting that a person or action is
    visibly present. Distinguish visual appearances from dialogue mentions.
 
+## Polling and presentation
+
+- Explain that search and grounded queries are durable jobs and may take time,
+  especially when clips must be rendered.
+- Honor a server-provided polling interval when present. Otherwise poll after
+  about 5 seconds initially and back off to about 15 seconds for sustained work.
+  Never busy-loop or create a shell script merely to wait.
+- Reuse the submitted job ID and idempotency key. Give a concise update when the
+  job stage changes and approximately once per minute during long unchanged
+  work; do not narrate every poll or invent an ETA.
+- Evidence is not progressive while the job is running. As soon as the completed
+  `get_job` response supplies keyframes, clips, or ResourceLinks, present them to
+  the user directly instead of returning only timestamps or waiting for another
+  request.
+- Stop polling on success, failure, or cancellation. Preserve the job ID and
+  report structured remediation when the job does not succeed.
+
 ## Evidence rules
 
 - Report the source video, resolved interval, modalities, evidence ID, and
   available frame or clip for each useful result.
 - Describe ranking scores as retrieval scores, not calibrated probabilities.
-- Do not assign a real identity to an anonymous actor cluster without grounded
-  identity evidence. Do not claim an exhaustive list of a named person's
-  appearances when the available capability cannot establish that identity.
+- Treat actor detections and clusters as anonymous until a trusted reference or
+  identity registry grounds them. A person's name in the query, dialogue, or
+  scene description is not identity proof.
+- For named-person searches, verify candidate appearances against each returned
+  frame and label uncertain results as candidates. Do not claim an exhaustive
+  list of appearances when the available capability cannot establish identity
+  across the whole video.
 - A failed or empty search means no matching indexed evidence was found; it does
   not prove that the event is absent from the original video.
 - If a result has authoritative evidence but no requested clip, prefer

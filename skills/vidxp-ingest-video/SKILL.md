@@ -32,6 +32,23 @@ changes.
 6. Stop polling when the returned aggregate state is terminal. Treat each file
    independently so one failure does not hide successful siblings.
 
+## Long-running operations
+
+- Tell the user before polling that model preparation and indexing can take
+  several minutes, depending on video length, selected capabilities, hardware,
+  and whether models are already cached.
+- Honor a server-provided polling interval when present. Otherwise poll after
+  about 5 seconds initially and back off to about 15 seconds for sustained work.
+  Never busy-loop or create a shell script merely to wait.
+- Keep using the original job, ingestion, and idempotency identifiers. Do not
+  submit duplicate work because a state remains unchanged.
+- Give a concise update when the lifecycle stage or measured progress changes,
+  and approximately once per minute during a long unchanged stage. Do not emit
+  every poll result.
+- Report only progress and timing returned or directly measured by VidXP. Do not
+  invent an ETA. If the interaction must stop before completion, provide the
+  recovery identifier needed to resume polling later.
+
 ## Recovery and output
 
 - If import fails, report its structured error and remediation.
