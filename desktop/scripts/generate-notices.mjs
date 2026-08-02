@@ -134,7 +134,7 @@ try {
     '',
     frontend.join('\n').trim(),
     '',
-  ].join('\n').replace(/[ \t]+$/gm, '');
+  ].join('\n').replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '');
   if (process.argv.includes('--write')) {
     writeFileSync(destination, artifact, 'utf8');
   } else if (readFileSync(destination, 'utf8') !== artifact) {
