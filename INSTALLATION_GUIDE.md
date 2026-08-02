@@ -11,7 +11,7 @@ shape needs.
 | Local agent integration | `vidxp[local-worker,mcp]` | Local worker and stdio MCP |
 | Native browser UI | `vidxp[local-worker,frontend]` | CLI, local worker, Streamlit |
 | Local application server | `vidxp[local-worker,server]` | Loopback HTTP API, remote MCP, local worker |
-| Desktop app | Install the native package | Guided app-owned Python and worker runtime with an optional browser interface |
+| Desktop app | Install the native package | Adopt a compatible local installation or create a private Desktop-managed runtime |
 | Browser UI in Docker | Published `vidxp` image | One CPU worker/UI container |
 | Public/self-hosted service | `compose.coolify.yaml` | API/MCP control plane, CPU worker, PostgreSQL, Chroma, tusd |
 | Embed one capability | `dialogue`, `scene`, or `actor` extra | Python indexing/retrieval code |
@@ -25,7 +25,8 @@ Local model work requires a capability or worker extra.
 | Installation | Install first | Managed by VidXP |
 |---|---|---|
 | CLI or MCP | [uv 0.12+](https://docs.astral.sh/uv/getting-started/installation/) | Python and the isolated VidXP environment |
-| Desktop | A supported OS and internet access for first setup | uv, Python, VidXP, and selected model files |
+| Desktop-managed target | A supported OS and internet access for first setup | uv, Python, VidXP, and selected model files |
+| Desktop with existing target | A compatible local `vidxp` executable | Target discovery and launch coordination only |
 | Docker | Docker Engine or Docker Desktop | Python, VidXP, and FFmpeg inside the image |
 
 Native CLI and desktop processing require FFmpeg, ffprobe, `libx264`, and
@@ -307,18 +308,37 @@ supported server Compose topology.
 Download the Windows, Apple Silicon macOS, or Linux package from
 [GitHub Releases](https://github.com/grayhatdevelopers/vidxp/releases).
 
-On first launch, the application checks FFmpeg, provisions its own Python and
-VidXP runtime, lets you choose capabilities and model storage, and optionally
-downloads the selected models. Python and uv do not need to be installed
-separately.
+Desktop opens its control panel first and asks which local target to use. It
+does not install anything before that choice:
 
-Capability code is selected independently from the optional browser interface.
-After configuration, the Tauri supervisor stays in the system tray. Closing
-the window hides it; **Quit VidXP** from the tray shuts down the interface and
-worker.
+- **Use an existing installation** discovers compatible `vidxp` executables or
+  lets you browse to one. Desktop validates the versioned probe and launch
+  contracts, but the installation stays externally owned. Desktop never
+  installs, repairs, updates, removes, or broadly stops it. If its browser
+  surface is missing, enable the `frontend` extra with that installation's own
+  package-management workflow before Desktop can open it.
+- **Set up VidXP for me** creates a private Python and VidXP runtime owned by
+  Desktop. Python and uv do not need to be installed separately. Capability
+  code, the optional browser interface, model storage, and initial model
+  preparation are selected before applying the draft.
 
-The NSIS, DMG, and AppImage packages do not bundle FFmpeg. The application uses
-a native confirmation dialog before running a supported package manager.
+A managed setup or update remains a draft until its candidate runtime passes
+the Desktop probe and launch contracts. Activation then replaces the previous
+managed target atomically; failed or cancelled work leaves the previous target
+authoritative. For an unchanged ready runtime, **Prepare / verify models**
+checks cached files and downloads only missing selected model material without
+requiring a configuration change.
+
+Starting Desktop, or starting it a second time, shows and focuses the control
+panel without opening a browser. **Open VidXP** explicitly starts or reuses the
+loopback browser service and opens one tab. Closing a configured window hides
+it to the tray. Tray actions are **Manage VidXP**, **Open VidXP**, and **Quit
+VidXP**. Quit stops the exact browser service Desktop launched; broad worker
+shutdown is limited to a Desktop-owned runtime.
+
+The NSIS, DMG, and AppImage packages do not bundle FFmpeg. Managed setup uses a
+native confirmation dialog before running a supported package manager. An
+adopted installation keeps responsibility for its own FFmpeg setup.
 Windows SmartScreen and macOS Gatekeeper may require explicit confirmation
 until signing is added. See [Desktop application](docs/desktop.md) for runtime,
 storage, and build details.

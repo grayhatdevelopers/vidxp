@@ -133,9 +133,13 @@ selection controls which packages are installed; the constraints prevent those
 packages from drifting independently after the desktop binary is published.
 
 Optional model preparation invokes the shared `vidxp prepare` command for only
-the selected modalities. Setup subprocesses are owned by the Tauri supervisor;
-closing the app cancels the active process and stops a preparation worker before
-exit. No model is bundled in the installer.
+the selected modalities. A ready managed runtime also exposes a separate
+**Prepare / verify models** action, so verification does not require a fake
+configuration change. Setup, probe, worker-stop, and browser-service children
+share one process ownership policy: null stdin, bounded captured output where
+applicable, cancellation and timeouts, and whole-tree termination/reaping.
+Closing the app cancels an active managed operation and stops the exact browser
+service it owns. No model is bundled in the installer.
 
 Desktop startup and a second-instance activation show and focus the control
 panel; neither action opens the browser. For a browser-enabled profile, **Open
@@ -147,11 +151,14 @@ Desktop-owned repository worker.
 
 ## Implementation dependencies
 
-The process runner remains a small Rust boundary because Tauri's shell plugin
-does not provide the same bounded synchronous capture, timeout, kill/reap, and
-reader-completion contract required by executable probing; `wait-timeout`
-(MIT/Apache-2.0) supplies the portable wait primitive. Setup sidecars continue
-through Tauri Shell for its async event stream and cancellation handle.
+Tauri Shell commands are converted to standard commands and passed through one
+shared runner. `process-wrap` 9.1.0 (MIT/Apache-2.0) supplies Windows Job Object
+and POSIX process-group ownership while preserving Tauri sidecar resolution;
+`wait-timeout` supplies the bounded wait primitive. The runner hides Windows
+consoles, closes stdin, bounds captured output, applies operation-specific
+timeouts and cancellation, and kills and reaps the owned process tree on every
+post-spawn failure path. The loopback UI uses the same ownership abstraction as
+a long-lived service.
 
 React's reducer plus the local async-action helper is sufficient for the finite
 setup lifecycle, so no state framework was added. Generated IPC was evaluated:
@@ -161,11 +168,13 @@ not the command calls. The current adapter is therefore limited to exact,
 consumed commands and one presentation normalizer.
 
 Distributable notices are generated from locked production graphs with
-`cargo-about` 0.9.1 (MIT/Apache-2.0) and
+`cargo-about` 0.9.1 (MIT/Apache-2.0) under `--locked --frozen` and
 `license-checker-rseidelsohn` 4.4.2 (BSD-3-Clause). Build-only and development
 Rust crates are excluded; frontend development packages are excluded with the
-tool's production graph. The generated `THIRD_PARTY_NOTICES.txt` is verified in
-CI and bundled as a resource in NSIS, DMG, and AppImage packages.
+tool's production graph. The generated inventory includes the bundled uv
+0.12.0 executable and its upstream license, and the bundle separately contains
+VidXP's root MIT `LICENSE`. Both `THIRD_PARTY_NOTICES.txt` and the project
+license are packaged in NSIS, DMG, and AppImage resources.
 
 The native NSIS, DMG, and AppImage packages themselves never install FFmpeg or
 run a package manager. That consented action belongs to first-run configuration,
