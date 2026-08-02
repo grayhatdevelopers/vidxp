@@ -14,3 +14,12 @@ export function needsFileAuthorization(file, child) {
   if (isServerTransferComplete(child)) return false
   return !file?.tus?.uploadUrl
 }
+
+export function resumePollingForNewFile(sessionStatus, pollAfterSeconds = 2) {
+  if (!sessionStatus?.terminal) return sessionStatus
+  return {
+    ...sessionStatus,
+    terminal: false,
+    poll_after_seconds: pollAfterSeconds,
+  }
+}

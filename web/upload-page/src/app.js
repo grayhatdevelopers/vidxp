@@ -7,7 +7,11 @@ import XHRUpload from '@uppy/xhr-upload'
 import '@uppy/core/css/style.min.css'
 import '@uppy/dashboard/css/style.min.css'
 import './app.css'
-import { isServerTransferComplete, needsFileAuthorization } from './recovery.js'
+import {
+  isServerTransferComplete,
+  needsFileAuthorization,
+  resumePollingForNewFile,
+} from './recovery.js'
 
 const elements = {
   summary: document.querySelector('#summary'),
@@ -384,7 +388,16 @@ function configureUppy() {
   })
 
   uppy.addPreProcessor(authorizeFiles)
-  uppy.on('file-added', () => setUploadMessage('Files are ready to upload.'))
+  uppy.on('file-added', () => {
+    if (sessionStatus?.terminal) {
+      sessionStatus = resumePollingForNewFile(
+        sessionStatus,
+        POLL_INTERVAL_MS / 1000,
+      )
+      scheduleStatusPoll(0)
+    }
+    setUploadMessage('Files are ready to upload.')
+  })
   uppy.on('file-removed', (file) => {
     const intentID = file.meta?.intent_id
     if (intentID) cancelFile(intentID).catch(() => {})

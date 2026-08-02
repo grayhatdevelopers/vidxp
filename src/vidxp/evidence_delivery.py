@@ -28,15 +28,6 @@ from vidxp.execution import ExecutionContext, execution_context
 from vidxp.media_service import MediaService
 
 
-def artifact_resource_uri(artifact_id: str, mime_type: str) -> str:
-    extension = {
-        "image/png": "png",
-        "video/mp4": "mp4",
-        "video/x-matroska": "mkv",
-    }[mime_type]
-    return f"vidxp://artifacts/{artifact_id}/content.{extension}"
-
-
 def resolve_evidence_range(
     *,
     source_start: float,
@@ -374,9 +365,6 @@ class EvidenceDeliveryService:
                     height=height,
                     artifact=EvidenceArtifact(
                         artifact=frame,
-                        resource_uri=artifact_resource_uri(
-                            frame.artifact_id, frame.mime_type
-                        ),
                     ),
                 )
             except IndexCancelledError:
@@ -408,9 +396,6 @@ class EvidenceDeliveryService:
                     )
                     clip = EvidenceArtifact(
                         artifact=rendered,
-                        resource_uri=artifact_resource_uri(
-                            rendered.artifact_id, rendered.mime_type
-                        ),
                     )
                 except IndexCancelledError:
                     raise

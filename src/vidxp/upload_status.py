@@ -192,10 +192,21 @@ class UploadStatusProjector:
         )
         reserved = [intent for _, intent in children if intent.state in reserved_states]
         uploaded = [intent for _, intent in children if intent.state in uploaded_states]
-        terminal = session_state != UploadSessionState.open and all(
-            item.terminal for item in items
+        current_work_complete = bool(items) and all(item.terminal for item in items)
+        terminal = current_work_complete or (
+            session_state != UploadSessionState.open
+            and all(item.terminal for item in items)
         )
-        if session_state == UploadSessionState.open:
+        if session_state == UploadSessionState.open and current_work_complete:
+            status = (
+                "Current ingestion work is complete; the upload session remains "
+                "open for more files."
+            )
+            next_action = (
+                "Stop polling. The user may add more files through the existing "
+                "session; poll again after another file is accepted."
+            )
+        elif session_state == UploadSessionState.open:
             status = "The upload session is open for file selection."
             next_action = (
                 "Give the capability link to the user, then poll "

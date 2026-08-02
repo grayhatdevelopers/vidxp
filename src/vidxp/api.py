@@ -66,16 +66,11 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         try:
-            active_context.start()
             async with remote_mcp.server.session_manager.run():
                 yield
         finally:
             if owns_context:
                 active_context.close()
-            elif active_context.uploads is not None:
-                coordinator = getattr(active_context.uploads, "coordinator", None)
-                if coordinator is not None:
-                    coordinator.stop()
 
     publish_docs = active_settings.http_auth_mode.value == "none"
     app = FastAPI(

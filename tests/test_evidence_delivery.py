@@ -263,7 +263,9 @@ class EvidenceDeliveryTests(unittest.TestCase):
         self.assertEqual(item.keyframe.timestamp_seconds, 1.4)
         self.assertEqual(item.keyframe.width, 64)
         self.assertEqual(item.keyframe.artifact.artifact.mime_type, "image/png")
+        self.assertIsNone(item.keyframe.artifact.resource_uri)
         self.assertIsNotNone(item.clip)
+        self.assertIsNone(item.clip.resource_uri)
         frame_call = artifacts.create_evidence_frame.call_args.kwargs
         self.assertEqual(frame_call["frame_index"], 7)
         self.assertEqual(frame_call["timestamp_seconds"], 1.4)

@@ -1,6 +1,10 @@
 import json
+import subprocess
+import sys
+import tarfile
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import tomllib
 from urllib.parse import urlsplit
 
@@ -15,6 +19,42 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PackagingTests(unittest.TestCase):
+    def test_sdist_contains_every_upload_page_build_input(self):
+        with TemporaryDirectory() as directory:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "setup.py",
+                    "sdist",
+                    "--dist-dir",
+                    directory,
+                ],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            archives = tuple(Path(directory).glob("*.tar.gz"))
+            self.assertEqual(len(archives), 1)
+            with tarfile.open(archives[0], "r:gz") as archive:
+                members = {
+                    name.split("/", 1)[1]
+                    for name in archive.getnames()
+                    if "/" in name
+                }
+
+        required_sources = {
+            "web/upload-page/package.json",
+            "web/upload-page/package-lock.json",
+            "web/upload-page/scripts/build.mjs",
+            "web/upload-page/src/app.js",
+            "web/upload-page/src/app.css",
+            "web/upload-page/src/index.html",
+            "web/upload-page/src/recovery.js",
+        }
+        self.assertLessEqual(required_sources, members)
+        self.assertFalse(any("/node_modules/" in f"/{name}/" for name in members))
+
     def test_coolify_handoff_origin_matches_tusd_cors_policy(self):
         documentation = (
             ROOT / "docs" / "deployment" / "coolify.md"

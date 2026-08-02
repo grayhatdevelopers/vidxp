@@ -37,7 +37,7 @@ def create_hook_app(
             if owns_context:
                 active_context.close()
             else:
-                active_context.uploads.coordinator.stop()
+                active_context.stop()
 
     app = FastAPI(
         title="VidXP tusd hooks",

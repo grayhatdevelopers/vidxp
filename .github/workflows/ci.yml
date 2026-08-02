@@ -105,7 +105,7 @@ jobs:
           fi
 
           changed_files="$(git diff --name-only "$BASE_SHA" HEAD)"
-          if grep -Eq '^(\.github/workflows/ci\.yml$|src/|tests/|utils/|LICENSE$|MANIFEST\.in$|pyproject\.toml$|uv\.lock$)' <<< "$changed_files"; then
+          if grep -Eq '^(\.github/workflows/ci\.yml$|src/|tests/|utils/|web/upload-page/|LICENSE$|MANIFEST\.in$|pyproject\.toml$|setup\.py$|uv\.lock$)' <<< "$changed_files"; then
             run_suite=true
           else
             run_suite=false
@@ -139,6 +139,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      - uses: actions/setup-node@v7
+        if: needs.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/upload-page/package-lock.json
+
       - name: Install repository tooling
         run: |
           python -m pip install --upgrade pip
@@ -161,6 +168,21 @@ jobs:
       - name: Lint
         if: needs.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
         run: ruff check src tests
+
+      - name: Install locked upload-page tooling
+        if: needs.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
+        run: npm ci
+        working-directory: web/upload-page
+
+      - name: Test upload page
+        if: needs.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
+        run: npm test
+        working-directory: web/upload-page
+
+      - name: Build upload page and verify committed bundle
+        if: needs.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
+        run: npm run check:bundle
+        working-directory: web/upload-page
 
       - name: Test
         if: needs.scope.outputs.run_suite == 'true'

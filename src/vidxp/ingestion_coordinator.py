@@ -44,10 +44,16 @@ class IngestionCoordinator:
         catalog: SQLCatalog,
         jobs: Any | None,
         interval_seconds: float,
+        shutdown_timeout_seconds: float | None = None,
     ) -> None:
         self.catalog = catalog
         self.jobs = jobs
         self.interval_seconds = interval_seconds
+        self.shutdown_timeout_seconds = (
+            max(5.0, interval_seconds + 1.0)
+            if shutdown_timeout_seconds is None
+            else shutdown_timeout_seconds
+        )
         self._wake = Event()
         self._stop = Event()
         self._lifecycle_lock = Lock()
@@ -56,8 +62,10 @@ class IngestionCoordinator:
 
     def start(self, sweep: Callable[[], Any]) -> None:
         with self._lifecycle_lock:
-            if self._thread is not None and self._thread.is_alive():
-                return
+            if self._thread is not None:
+                if self._thread.is_alive():
+                    return
+                self._thread = None
             self._sweep = sweep
             self._stop.clear()
             self._wake.set()
@@ -71,11 +79,20 @@ class IngestionCoordinator:
     def stop(self) -> None:
         with self._lifecycle_lock:
             thread = self._thread
-            self._thread = None
+            if thread is None:
+                return
             self._stop.set()
             self._wake.set()
-        if thread is not None:
-            thread.join(timeout=max(5.0, self.interval_seconds + 1.0))
+        thread.join(timeout=self.shutdown_timeout_seconds)
+        with self._lifecycle_lock:
+            if thread.is_alive():
+                raise RuntimeError(
+                    "The media-ingestion coordinator did not stop before the "
+                    "shutdown timeout."
+                )
+            if self._thread is thread:
+                self._thread = None
+                self._sweep = None
 
     def wake(self) -> None:
         self._wake.set()
@@ -126,11 +143,15 @@ class IngestionCoordinator:
                 job = self.jobs.get(intent.job_id)
             except ApplicationError as exc:
                 if exc.detail.code != "resource_not_found":
-                    raise
+                    if self._is_retryable(exc.detail):
+                        return intent
+                    return self._fail(intent, exc.detail)
                 try:
                     job = self._submit_import_job(intent)
-                except ApplicationError:
-                    return intent
+                except ApplicationError as submit_exc:
+                    if self._is_retryable(submit_exc.detail):
+                        return intent
+                    return self._fail(intent, submit_exc.detail)
             if job.state == JobState.succeeded and job.result is not None:
                 media_id = job.result.result.media_id
 
@@ -161,30 +182,22 @@ class IngestionCoordinator:
             and intent.index_after_import
             and intent.index_job_id is None
         ):
-            try:
-                job = self.jobs.submit_index(
-                    CreateIndexCommand(
-                        media_id=intent.media_id or "",
-                        modalities=intent.index_modalities,
-                    ),
-                    job_id=derived_ingestion_job_id(intent.intent_id, "index"),
-                )
-            except ApplicationError as exc:
-                return self._fail(intent, exc.detail)
-
-            def link_index(connection: Connection) -> None:
-                self.catalog.update_upload(
-                    intent.intent_id,
-                    state=UploadState.ready,
-                    connection=connection,
-                    index_job_id=job.job_id,
-                    expected_states={UploadState.ready},
-                )
-
-            self.catalog.with_upload_transaction(link_index)
-            intent = self.catalog.get_upload_intent(intent.intent_id) or intent
+            return self._start_index(intent)
         if intent.index_job_id is not None:
-            job = self.jobs.get(intent.index_job_id)
+            try:
+                job = self.jobs.get(intent.index_job_id)
+            except ApplicationError as exc:
+                if exc.detail.code == "resource_not_found":
+                    try:
+                        job = self._submit_index_job(intent)
+                    except ApplicationError as submit_exc:
+                        if self._is_retryable(submit_exc.detail):
+                            return intent
+                        return self._fail(intent, submit_exc.detail)
+                elif self._is_retryable(exc.detail):
+                    return intent
+                else:
+                    return self._fail(intent, exc.detail)
             if job.state == JobState.succeeded:
                 self.catalog.with_upload_transaction(
                     lambda connection: self.catalog.update_upload(
@@ -230,6 +243,12 @@ class IngestionCoordinator:
                     "upload_completion_invalid",
                     ErrorCategory.validation,
                     "The completed upload does not match its intent.",
+                )
+            if record.transfer_backend != UploadTransferBackend.tus:
+                raise ApplicationError(
+                    "upload_completion_invalid",
+                    ErrorCategory.conflict,
+                    "Only a tus transfer can be completed through the tus hook.",
                 )
             if byte_size != record.byte_size or offset != record.byte_size:
                 raise ApplicationError(
@@ -286,8 +305,32 @@ class IngestionCoordinator:
         linked = self.catalog.get_upload_intent(intent.intent_id) or intent
         try:
             self._submit_import_job(linked)
-        except ApplicationError:
-            pass
+        except ApplicationError as exc:
+            if not self._is_retryable(exc.detail):
+                return self._fail(linked, exc.detail)
+        return linked
+
+    def _start_index(self, intent: UploadIntentRecord) -> UploadIntentRecord:
+        if self.jobs is None:
+            return intent
+        job_id = derived_ingestion_job_id(intent.intent_id, "index")
+
+        def link(connection: Connection) -> None:
+            self.catalog.update_upload(
+                intent.intent_id,
+                state=UploadState.ready,
+                connection=connection,
+                index_job_id=job_id,
+                expected_states={UploadState.ready},
+            )
+
+        self.catalog.with_upload_transaction(link)
+        linked = self.catalog.get_upload_intent(intent.intent_id) or intent
+        try:
+            self._submit_index_job(linked)
+        except ApplicationError as exc:
+            if not self._is_retryable(exc.detail):
+                return self._fail(linked, exc.detail)
         return linked
 
     def _submit_import_job(self, intent: UploadIntentRecord):
@@ -309,6 +352,25 @@ class IngestionCoordinator:
         return self.jobs.submit_completed_media_import(
             intent.upload_id,
             job_id=intent.job_id,
+        )
+
+    def _submit_index_job(self, intent: UploadIntentRecord):
+        if self.jobs is None or intent.index_job_id is None:
+            raise RuntimeError("Index job submission is not configured.")
+        return self.jobs.submit_index(
+            CreateIndexCommand(
+                media_id=intent.media_id or "",
+                modalities=intent.index_modalities,
+            ),
+            job_id=intent.index_job_id,
+        )
+
+    @staticmethod
+    def _is_retryable(detail: ErrorDetail) -> bool:
+        return (
+            detail.retryable
+            or detail.category == ErrorCategory.unavailable
+            or detail.code == "resource_not_found"
         )
 
     def _fail(

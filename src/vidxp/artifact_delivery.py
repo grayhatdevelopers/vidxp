@@ -5,12 +5,18 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
+from jwt import ExpiredSignatureError, PyJWTError
+
 from vidxp.application_models import (
     ApplicationError,
     Artifact,
     ErrorCategory,
 )
-from vidxp.capability_security import repository_binding
+from vidxp.capability_security import (
+    decode_capability,
+    encode_capability,
+    repository_binding,
+)
 from vidxp.core.media import utc_now
 from vidxp.ports import LocalFileResource
 from vidxp.settings import VidXPSettings
@@ -156,11 +162,8 @@ class ArtifactDownloadCapabilities:
         issued_at: datetime,
         expires_at: datetime,
     ) -> str:
-        import jwt
-
-        return jwt.encode(
+        return encode_capability(
             {
-                "iss": "vidxp",
                 "aud": audience,
                 "sub": binding.artifact_id,
                 "purpose": purpose,
@@ -172,8 +175,7 @@ class ArtifactDownloadCapabilities:
                 "iat": int(issued_at.timestamp()),
                 "exp": int(expires_at.timestamp()),
             },
-            self._secret(),
-            algorithm="HS256",
+            secret=self._secret(),
         )
 
     def _decode(
@@ -183,36 +185,27 @@ class ArtifactDownloadCapabilities:
         audience: str,
         purpose: str,
     ) -> dict:
-        import jwt
-
         try:
-            claims = jwt.decode(
+            claims = decode_capability(
                 token,
-                self._secret(),
-                algorithms=["HS256"],
+                secret=self._secret(),
                 audience=audience,
-                issuer="vidxp",
-                options={
-                    "require": [
-                        "sub",
-                        "purpose",
-                        "version",
-                        "repository",
-                        "mime_type",
-                        "extension",
-                        "sha256",
-                        "iat",
-                        "exp",
-                    ]
-                },
+                required_claims=(
+                    "purpose",
+                    "version",
+                    "repository",
+                    "mime_type",
+                    "extension",
+                    "sha256",
+                ),
             )
-        except jwt.ExpiredSignatureError as exc:
+        except ExpiredSignatureError as exc:
             raise ApplicationError(
                 "artifact_download_capability_expired",
                 ErrorCategory.authentication,
                 "The artifact download capability expired.",
             ) from exc
-        except jwt.PyJWTError as exc:
+        except PyJWTError as exc:
             raise self._invalid_capability() from exc
         if claims.get("purpose") != purpose or claims.get("version") != 1:
             raise self._invalid_capability()

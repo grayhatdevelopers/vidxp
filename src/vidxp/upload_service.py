@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
+from jwt import PyJWTError
+
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 
@@ -22,7 +24,6 @@ from vidxp.application_models import (
     CreateUploadIntentCommand,
     ErrorCategory,
     ErrorDetail,
-    JobState,
     MediaUploadSessionStatus,
     MediaUploadStatus,
     Principal,
@@ -37,7 +38,11 @@ from vidxp.core.uploads import (
     UploadState,
     UploadTransferBackend,
 )
-from vidxp.capability_security import repository_binding
+from vidxp.capability_security import (
+    decode_capability,
+    encode_capability,
+    repository_binding,
+)
 from vidxp.infrastructure.sql_catalog import (
     SQLCatalog,
     UploadQuotaExceededError,
@@ -1181,28 +1186,6 @@ class RemoteUploadService:
         if self.jobs is None:
             raise RuntimeError("Upload job submission is not configured.")
 
-        current = self.catalog.get_upload_intent(intent_id)
-        if (
-            current is not None
-            and current.transfer_backend != UploadTransferBackend.tus
-        ):
-            if (
-                current.upload_id != upload_id
-                or byte_size != current.byte_size
-                or offset != current.byte_size
-            ):
-                raise ApplicationError(
-                    "upload_completion_invalid",
-                    ErrorCategory.validation,
-                    "The completed multipart upload does not match its intent.",
-                )
-            if current.job_id is not None:
-                return current.job_id
-            advanced = self.coordinator.advance(current)
-            if advanced.job_id is None:
-                raise RuntimeError("The multipart import job was not linked.")
-            return advanced.job_id
-
         return self.coordinator.complete_tus_transfer(
             intent_id=intent_id,
             upload_id=upload_id,
@@ -1227,9 +1210,7 @@ class RemoteUploadService:
             record.state in {UploadState.ready, UploadState.indexed}
             and record.media_id is not None
         ):
-            asset = self.media.get(record.media_id)
-            self._cleanup_after_import(upload_id)
-            return asset
+            return self.media.get(record.media_id)
         if record.state not in {
             UploadState.processing,
             UploadState.failed,
@@ -1266,34 +1247,14 @@ class RemoteUploadService:
         request_key = hashlib.sha256(
             f"vidxp-upload-import-v1\0{record.intent_id}".encode()
         ).hexdigest()
-        try:
-            asset = self.media.import_quarantined(
-                QuarantinedMedia(
-                    path=path,
-                    original_filename=record.original_filename,
-                    declared_mime_type=record.declared_mime_type,
-                ),
-                request_key=request_key,
-            )
-        except Exception:
-            self.catalog.with_upload_transaction(
-                lambda connection: self.catalog.update_upload(
-                    record.intent_id,
-                    state=UploadState.failed,
-                    connection=connection,
-                )
-            )
-            raise
-        self.catalog.with_upload_transaction(
-            lambda connection: self.catalog.update_upload(
-                record.intent_id,
-                state=UploadState.ready,
-                connection=connection,
-                media_id=asset.media_id,
-            )
+        return self.media.import_quarantined(
+            QuarantinedMedia(
+                path=path,
+                original_filename=record.original_filename,
+                declared_mime_type=record.declared_mime_type,
+            ),
+            request_key=request_key,
         )
-        self._cleanup_after_import(upload_id)
-        return asset
 
     def reconcile(self) -> dict[str, int]:
         recovered = 0
@@ -1332,36 +1293,6 @@ class RemoteUploadService:
                     "Upload recovery failed for intent %s.",
                     record.intent_id,
                 )
-        failed = 0
-        if self.jobs is not None:
-            for record in self.catalog.processing_uploads():
-                try:
-                    assert record.job_id is not None
-                    job = self.jobs.get(record.job_id)
-                    if job.state in {
-                        JobState.failed,
-                        JobState.cancelled,
-                        JobState.recovery_exhausted,
-                    }:
-                        changed = self.catalog.with_upload_transaction(
-                            lambda connection, item=record: (
-                                self.catalog.update_upload(
-                                    item.intent_id,
-                                    state=UploadState.failed,
-                                    connection=connection,
-                                    expected_states={
-                                        UploadState.processing,
-                                    },
-                                )
-                            )
-                        )
-                        failed += int(changed)
-                except Exception:
-                    errors += 1
-                    LOGGER.exception(
-                        "Upload job reconciliation failed for intent %s.",
-                        record.intent_id,
-                    )
         expired = 0
         now = utc_now()
         for record in self.catalog.expired_uploads(now=now):
@@ -1399,7 +1330,6 @@ class RemoteUploadService:
             "recovered": recovered,
             "expired": expired,
             "cleaned": cleaned,
-            "failed": failed,
             "errors": errors,
         }
 
@@ -1581,18 +1511,13 @@ class RemoteUploadService:
             raise RuntimeError("tusd upload cleanup is unavailable.") from exc
 
     def _cleanup_upload(self, upload_id: str) -> None:
-        self._terminate_upload(upload_id)
+        record = self.catalog.get_upload_intent_by_upload_id(upload_id)
+        if record is not None:
+            if record.transfer_backend == UploadTransferBackend.tus:
+                self._terminate_upload(upload_id)
+            elif record.transfer_backend == UploadTransferBackend.multipart:
+                self._quarantine_path(upload_id).unlink(missing_ok=True)
         self.record_terminated(upload_id)
-
-    def _cleanup_after_import(self, upload_id: str) -> None:
-        try:
-            self._cleanup_upload(upload_id)
-        except Exception:
-            LOGGER.warning(
-                "Imported upload %s is awaiting quarantine cleanup.",
-                upload_id,
-                exc_info=True,
-            )
 
     def _accept_creation_in_transaction(
         self,
@@ -1669,11 +1594,8 @@ class RemoteUploadService:
         return repository_binding(self.settings.repository_root)
 
     def _session_capability(self, record: UploadSessionRecord) -> str:
-        import jwt
-
-        return jwt.encode(
+        return encode_capability(
             {
-                "iss": "vidxp",
                 "aud": "vidxp-upload-session",
                 "sub": record.session_id,
                 "jti": record.selector,
@@ -1682,8 +1604,7 @@ class RemoteUploadService:
                 "iat": int(record.created_at.timestamp()),
                 "exp": int(record.expires_at.timestamp()),
             },
-            self._secret(),
-            algorithm="HS256",
+            secret=self._secret(),
         )
 
     def _session_from_capability(
@@ -1693,28 +1614,15 @@ class RemoteUploadService:
         connection: Connection,
         for_update: bool,
     ) -> UploadSessionRecord | None:
-        import jwt
-
         try:
-            claims = jwt.decode(
+            claims = decode_capability(
                 capability,
-                self._secret(),
-                algorithms=["HS256"],
+                secret=self._secret(),
                 audience="vidxp-upload-session",
-                issuer="vidxp",
-                options={
-                    "verify_exp": False,
-                    "require": [
-                        "sub",
-                        "jti",
-                        "purpose",
-                        "repository",
-                        "iat",
-                        "exp",
-                    ],
-                },
+                verify_exp=False,
+                required_claims=("jti", "purpose", "repository"),
             )
-        except jwt.PyJWTError as exc:
+        except PyJWTError as exc:
             raise self._invalid_handoff() from exc
         selector = claims.get("jti")
         if (

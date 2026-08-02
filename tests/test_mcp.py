@@ -189,17 +189,11 @@ def search_evidence_job(frame: Artifact, clip: Artifact | None = None) -> Job:
                     height=1,
                     artifact=EvidenceArtifact(
                         artifact=frame,
-                        resource_uri=(
-                            f"vidxp://artifacts/{frame.artifact_id}/content.png"
-                        ),
                     ),
                 ),
                 clip=(
                     EvidenceArtifact(
                         artifact=clip,
-                        resource_uri=(
-                            f"vidxp://artifacts/{clip.artifact_id}/content.mp4"
-                        ),
                     )
                     if clip is not None
                     else None
@@ -1283,10 +1277,29 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 state=ArtifactState.ready,
                 created_at=datetime.now(timezone.utc),
             )
-            for transport in ("local_stdio", "streamable_http"):
-                with self.subTest(transport=transport):
-                    context = self.context(root)
-                    context.jobs.get.return_value = search_evidence_job(frame)
+            cases = (
+                ("local_stdio", False, "local_file"),
+                ("streamable_http", False, "mcp_resource"),
+                ("streamable_http", True, "https_download"),
+            )
+            for transport, configured, expected_mode in cases:
+                with self.subTest(transport=transport, configured=configured):
+                    context = self.context(
+                        root,
+                        artifact_download_public_url=(
+                            "https://public.example/artifact-download"
+                            if configured
+                            else None
+                        ),
+                        artifact_download_secret="d" * 32 if configured else None,
+                    )
+                    durable = search_evidence_job(frame)
+                    self.assertIsNone(
+                        durable.result.result.evidence_delivery.items[
+                            0
+                        ].keyframe.artifact.resource_uri
+                    )
+                    context.jobs.get.return_value = durable
                     context.application.open_artifact_content.return_value = (
                         LocalFileResource(
                             path=frame_path,
@@ -1318,17 +1331,25 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     )
                     projected = result.structured_content["result"]["result"][
                         "evidence_delivery"
-                    ]["items"][0]["keyframe"]["artifact"]["delivery"]
+                    ]["items"][0]["keyframe"]["artifact"]
                     self.assertEqual(projected["resource_uri"], uri)
+                    delivery = projected["delivery"]
+                    self.assertEqual(delivery["resource_uri"], uri)
                     self.assertEqual(len(resource.contents), 1)
-                    if transport == "local_stdio":
-                        self.assertEqual(projected["delivery_mode"], "local_file")
-                        self.assertEqual(Path(projected["local_path"]), frame_path)
+                    self.assertEqual(delivery["delivery_mode"], expected_mode)
+                    if expected_mode == "local_file":
+                        self.assertEqual(Path(delivery["local_path"]), frame_path)
+                    elif expected_mode == "https_download":
+                        self.assertTrue(
+                            delivery["download_url"].startswith(
+                                "https://public.example/artifact-download/"
+                            )
+                        )
+                        self.assertIsNone(delivery["local_path"])
                     else:
-                        self.assertEqual(projected["delivery_mode"], "mcp_resource")
-                        self.assertIsNone(projected["local_path"])
+                        self.assertIsNone(delivery["local_path"])
                         self.assertEqual(
-                            projected["delivery_error"]["code"],
+                            delivery["delivery_error"]["code"],
                             "public_download_origin_unavailable",
                         )
 

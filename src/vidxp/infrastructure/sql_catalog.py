@@ -1052,15 +1052,6 @@ class SQLCatalog:
             )
             return tuple(_upload_record(row) for row in rows)
 
-    def processing_uploads(self) -> tuple[UploadIntentRecord, ...]:
-        with self.engine.connect() as connection:
-            rows = connection.execute(
-                select(upload_intents).where(
-                    upload_intents.c.state == UploadState.processing.value
-                )
-            )
-            return tuple(_upload_record(row) for row in rows)
-
     def active_ingestions(self) -> tuple[UploadIntentRecord, ...]:
         with self.engine.connect() as connection:
             rows = connection.execute(

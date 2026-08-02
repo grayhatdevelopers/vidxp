@@ -18,8 +18,19 @@ from vidxp.api import create_app
 from vidxp.api_routes.dependencies import scoped_job_id
 from vidxp.application_models import (
     ApplicationError,
+    Artifact,
     ErrorCategory,
     ErrorDetail,
+    EvidenceArtifact,
+    EvidenceDeliveryItem,
+    EvidenceDeliveryMode,
+    EvidenceDeliveryPolicy,
+    EvidenceDeliveryResult,
+    EvidenceDeliveryState,
+    EvidenceFrameMatch,
+    EvidenceKeyframe,
+    FusedSearchResult,
+    FusionProvenance,
     ComponentReadiness,
     Job,
     JobKind,
@@ -29,6 +40,7 @@ from vidxp.application_models import (
     MediaAsset,
     Principal,
     SearchCommand,
+    SearchJobResult,
     QueryVideoCommand,
     UploadIntent,
     WorkspaceOverview,
@@ -41,6 +53,7 @@ from vidxp.control_plane import ControlPlaneApplication
 from vidxp.authentication import create_authenticator
 from vidxp.authorization import AuthorizationPolicy
 from vidxp.core.media import MediaState, MediaStream
+from vidxp.core.artifacts import ArtifactKind, ArtifactState
 from vidxp.core.uploads import UploadState
 from vidxp.job_service import JobService
 from vidxp.ports import LocalFileResource
@@ -86,6 +99,62 @@ def queued_job() -> Job:
         kind=JobKind.index,
         state=JobState.queued,
         queue=JobQueue.cpu,
+    )
+
+
+def evidence_job() -> Job:
+    artifact = Artifact(
+        artifact_id=ARTIFACT_ID,
+        media_id=MEDIA_ID,
+        generation_id="523456781234423481234567890abcde",
+        job_id=JOB_ID,
+        kind=ArtifactKind.evidence_frame,
+        profile="png",
+        mime_type="image/png",
+        byte_size=8,
+        sha256="1" * 64,
+        state=ArtifactState.ready,
+        created_at=datetime.now(timezone.utc),
+    )
+    return Job(
+        job_id=JOB_ID,
+        kind=JobKind.search,
+        state=JobState.succeeded,
+        queue=JobQueue.cpu,
+        result=SearchJobResult(
+            result=FusedSearchResult(
+                query_id="http-evidence",
+                query="frame",
+                modalities=("scene",),
+                fusion=FusionProvenance(
+                    requested_modalities=("scene",),
+                    searched_modalities=("scene",),
+                ),
+                evidence_delivery=EvidenceDeliveryResult(
+                    policy=EvidenceDeliveryPolicy(
+                        mode=EvidenceDeliveryMode.keyframes,
+                        max_items=1,
+                    ),
+                    items=(
+                        EvidenceDeliveryItem(
+                            evidence_id="e" * 64,
+                            rank=1,
+                            media_id=MEDIA_ID,
+                            generation_id=artifact.generation_id or "",
+                            modalities=("scene",),
+                            state=EvidenceDeliveryState.ready,
+                            keyframe=EvidenceKeyframe(
+                                match=EvidenceFrameMatch.representative,
+                                timestamp_seconds=1,
+                                width=1,
+                                height=1,
+                                artifact=EvidenceArtifact(artifact=artifact),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        ),
     )
 
 
@@ -460,6 +529,33 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(error["code"], "model_download_failed")
         self.assertTrue(error["retryable"])
         self.assertTrue(error["details"]["partial_files_preserved"])
+
+    def test_http_job_projects_durable_evidence_to_protected_artifact_route(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            durable = evidence_job()
+            evidence = durable.result.result.evidence_delivery.items[0]
+            self.assertIsNone(evidence.keyframe.artifact.resource_uri)
+            context.jobs.get.return_value = durable
+            context.jobs.result.return_value = durable.result
+            with TestClient(create_app(context=context)) as client:
+                response = client.get(f"/api/v1/jobs/{JOB_ID}")
+                result_response = client.get(f"/api/v1/jobs/{JOB_ID}/result")
+
+        expected = f"/api/v1/artifacts/{ARTIFACT_ID}/content"
+        self.assertEqual(response.status_code, 200)
+        projected = response.json()["result"]["result"]["evidence_delivery"]
+        self.assertEqual(
+            projected["items"][0]["keyframe"]["artifact"]["resource_uri"],
+            expected,
+        )
+        result_projected = result_response.json()["result"]["evidence_delivery"]
+        self.assertEqual(
+            result_projected["items"][0]["keyframe"]["artifact"]["resource_uri"],
+            expected,
+        )
+        self.assertNotIn("vidxp://", response.text)
+        self.assertNotIn(str(Path(directory)), response.text)
 
     def test_missing_models_fail_before_job_submission(self):
         with TemporaryDirectory() as directory:

@@ -379,7 +379,10 @@ resolved source and license.
 `get_media_upload` takes the stable session ID and returns a durable aggregate:
 session and aggregate state, configured limits, counts and bytes, and every child
 intent's state, identifiers, and next action. No secret capability, creation grant,
-or tus resume URL is exposed through MCP status.
+or tus resume URL is exposed through MCP status. Its `terminal` flag applies to the
+currently accepted children, so agents stop polling once those files finish even
+if `session_state` remains `open`; accepting another file resumes the polling
+contract.
 
 Application responses carrying upload URLs use `private, no-store` and
 `no-referrer`; hook payloads and MCP results do not persist them. The opaque path is

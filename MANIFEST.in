@@ -9,6 +9,7 @@ include web/upload-page/scripts/build.mjs
 include web/upload-page/src/app.js
 include web/upload-page/src/app.css
 include web/upload-page/src/index.html
+include web/upload-page/src/recovery.js
 prune web/upload-page/node_modules
 global-exclude *.whl
 global-exclude *.pyc

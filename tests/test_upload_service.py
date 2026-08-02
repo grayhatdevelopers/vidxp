@@ -6,7 +6,7 @@ from threading import Barrier, Event
 from pathlib import Path
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from uuid import uuid4
 
@@ -25,11 +25,12 @@ from vidxp.application_models import (
     ResourceNotFoundError,
 )
 from vidxp.core.media import utc_now
+from vidxp.composition import ControlPlaneContext
 from vidxp.core.uploads import UploadIntentRecord, UploadSessionState, UploadState
 from vidxp.infrastructure.sql_catalog import SQLCatalog
 from vidxp.infrastructure.sql_tables import media as media_table
 from vidxp.infrastructure.sql_tables import upload_intents, upload_quota
-from vidxp.ingestion_coordinator import IngestionCoordinator
+from vidxp.ingestion_coordinator import IngestionCoordinator, derived_ingestion_job_id
 from vidxp.settings import VidXPSettings
 from vidxp.upload_service import RemoteUploadService
 from vidxp import upload_service as upload_service_module
@@ -56,7 +57,12 @@ class _Jobs:
         return job_id
 
     def get(self, job_id: str):
-        return SimpleNamespace(state=self.states[job_id])
+        return SimpleNamespace(
+            job_id=job_id,
+            state=self.states[job_id],
+            result=None,
+            error=None,
+        )
 
 
 class _RecoveringNativeJobs:
@@ -96,6 +102,7 @@ class _RestartingCoordinatorJobs:
     def __init__(self) -> None:
         self.jobs: dict[str, SimpleNamespace] = {}
         self.index_crashes = True
+        self.index_failure: ApplicationError | None = None
         self.import_submissions: list[str] = []
         self.index_submissions: list[str] = []
 
@@ -109,6 +116,8 @@ class _RestartingCoordinatorJobs:
     def submit_index(self, _command, *, job_id: str):
         if self.index_crashes:
             raise RuntimeError("simulated process interruption")
+        if self.index_failure is not None:
+            raise self.index_failure
         self.index_submissions.append(job_id)
         return self.jobs.setdefault(
             job_id,
@@ -120,6 +129,65 @@ class _RestartingCoordinatorJobs:
             return self.jobs[job_id]
         except KeyError as exc:
             raise ResourceNotFoundError("job") from exc
+
+
+def test_coordinator_blocked_stop_cannot_overlap_restart(tmp_path: Path) -> None:
+    catalog = SQLCatalog(
+        f"sqlite:///{(tmp_path / 'blocked.sqlite3').resolve().as_posix()}",
+        initialize=True,
+    )
+    coordinator = IngestionCoordinator(
+        catalog=catalog,
+        jobs=None,
+        interval_seconds=0.01,
+        shutdown_timeout_seconds=0.05,
+    )
+    entered = Event()
+    release = Event()
+    restarted = Event()
+
+    def blocked_sweep() -> None:
+        entered.set()
+        release.wait()
+
+    coordinator.start(blocked_sweep)
+    assert entered.wait(1)
+    original_thread = coordinator._thread
+    jobs = Mock()
+    context = ControlPlaneContext(
+        application=Mock(),
+        jobs=jobs,
+        authorization=Mock(),
+        settings=VidXPSettings(repository_root=tmp_path),
+        catalog=catalog,
+        uploads=SimpleNamespace(coordinator=coordinator),
+    )
+
+    with patch.object(catalog, "close") as close_catalog:
+        with pytest.raises(RuntimeError, match="did not stop"):
+            context.close()
+        jobs.stop_worker.assert_not_called()
+        jobs.close.assert_not_called()
+        close_catalog.assert_not_called()
+    assert coordinator._thread is original_thread
+    assert original_thread is not None and original_thread.is_alive()
+
+    coordinator.start(restarted.set)
+    assert not restarted.wait(0.1)
+    assert coordinator._thread is original_thread
+
+    release.set()
+    coordinator.stop()
+    coordinator.start(restarted.set)
+    assert restarted.wait(1)
+    coordinator.stop()
+    with patch.object(catalog, "close") as close_catalog:
+        context.close()
+        jobs.stop_worker.assert_called_once_with()
+        jobs.close.assert_called_once_with()
+        close_catalog.assert_called_once_with()
+    catalog.close()
+
 
 def test_native_multipart_import_submission_recovers_after_linking(
     tmp_path: Path,
@@ -172,6 +240,20 @@ def test_native_multipart_import_submission_recovers_after_linking(
     assert stored.state == UploadState.processing
     assert stored.job_id is not None
     assert jobs.submissions == [(stored.upload_id, stored.job_id)]
+    assert (settings.quarantine_root / (stored.upload_id or "")).is_file()
+
+    imported_media_id = uuid4().hex
+    service.media = SimpleNamespace(
+        import_quarantined=Mock(
+            return_value=SimpleNamespace(media_id=imported_media_id)
+        )
+    )
+    imported = service.import_completed(stored.upload_id or "")
+    assert imported.media_id == imported_media_id
+    lifecycle_owned = catalog.get_upload_intent(authorization.status.intent_id)
+    assert lifecycle_owned is not None
+    assert lifecycle_owned.state == UploadState.processing
+    assert lifecycle_owned.media_id is None
     assert (settings.quarantine_root / (stored.upload_id or "")).is_file()
 
     jobs.available = True
@@ -480,6 +562,46 @@ def test_local_ingestion_batch_rolls_back_and_replays_after_database_failure(
     catalog.close()
 
 
+def test_open_session_stops_polling_for_current_work_and_resumes_for_new_file(
+    tmp_path: Path,
+) -> None:
+    service, catalog, _ = _service(tmp_path)
+    link, browser = _open_session(service)
+    assert link.status.session_state == UploadSessionState.open
+    assert link.status.terminal is False
+    assert link.status.poll_after_seconds == 2
+
+    first = service.authorize_session_file(
+        link.status.session_id,
+        _file("first"),
+        session_token=browser.session_token,
+    )
+    completed = service.cancel_browser_file(
+        link.status.session_id,
+        first.status.intent_id,
+        session_token=browser.session_token,
+    ).status
+    assert completed.session_state == UploadSessionState.open
+    assert completed.terminal is True
+    assert completed.poll_after_seconds == 0
+    assert "remains open" in completed.status
+    assert completed.next_action.startswith("Stop polling.")
+
+    service.authorize_session_file(
+        link.status.session_id,
+        _file("second"),
+        session_token=browser.session_token,
+    )
+    resumed = service.get_status(
+        link.status.session_id,
+        principal=Principal(subject="owner", client_id="mcp-client"),
+    )
+    assert resumed.session_state == UploadSessionState.open
+    assert resumed.terminal is False
+    assert resumed.poll_after_seconds == 2
+    catalog.close()
+
+
 def test_authenticated_status_and_close_require_initiating_principal(
     tmp_path: Path,
 ) -> None:
@@ -605,7 +727,7 @@ def test_coordinator_recovers_import_and_pre_index_restart_without_status_pollin
     registered = catalog.get_upload_intent(intent_id)
     assert registered is not None
     assert registered.state == UploadState.ready
-    assert registered.index_job_id is None
+    assert registered.index_job_id is not None
 
     jobs.index_crashes = False
     restarted_process = IngestionCoordinator(
@@ -617,6 +739,22 @@ def test_coordinator_recovers_import_and_pre_index_restart_without_status_pollin
     indexing = catalog.get_upload_intent(intent_id)
     assert indexing is not None and indexing.index_job_id is not None
     assert jobs.index_submissions == [indexing.index_job_id]
+
+    del jobs.jobs[indexing.index_job_id]
+    jobs.index_failure = ApplicationError(
+        "job_backend_unavailable",
+        ErrorCategory.unavailable,
+        "The durable job backend is unavailable.",
+        retryable=True,
+    )
+    restarted_process.run_once()
+    recoverable = catalog.get_upload_intent(intent_id)
+    assert recoverable is not None and recoverable.state == UploadState.ready
+    assert jobs.index_submissions == [indexing.index_job_id]
+
+    jobs.index_failure = None
+    restarted_process.run_once()
+    assert jobs.index_submissions == [indexing.index_job_id, indexing.index_job_id]
     jobs.jobs[indexing.index_job_id] = SimpleNamespace(
         job_id=indexing.index_job_id,
         state=JobState.succeeded,
@@ -630,6 +768,28 @@ def test_coordinator_recovers_import_and_pre_index_restart_without_status_pollin
     restarted_process.run_once()
     indexed = catalog.get_upload_intent(intent_id)
     assert indexed is not None and indexed.state == UploadState.indexed
+
+    terminal_id = uuid4().hex
+    terminal = indexed.model_copy(
+        update={
+            "intent_id": terminal_id,
+            "request_key": "9" * 64,
+            "upload_id": terminal_id,
+            "job_id": derived_ingestion_job_id(terminal_id, "import"),
+            "state": UploadState.ready,
+            "index_job_id": None,
+        }
+    )
+    catalog.create_upload_intent(terminal, quota_limit=1_000)
+    jobs.index_failure = ApplicationError(
+        "index_request_invalid",
+        ErrorCategory.validation,
+        "The indexing request is invalid.",
+    )
+    restarted_process.run_once()
+    failed = catalog.get_upload_intent(terminal.intent_id)
+    assert failed is not None and failed.state == UploadState.failed
+    assert failed.failure_code == "index_request_invalid"
     catalog.close()
 
 
@@ -1290,7 +1450,7 @@ def test_terminal_import_job_releases_processing_upload(
 
     result = service.reconcile()
 
-    assert result["failed"] == 1
+    assert result["advanced"] == 1
     stored = catalog.get_upload_intent(intent.intent_id)
     assert stored is not None and stored.state == UploadState.failed
     catalog.close()

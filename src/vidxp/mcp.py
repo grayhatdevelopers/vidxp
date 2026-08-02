@@ -472,20 +472,11 @@ def create_mcp_server(
 
     @asynccontextmanager
     async def lifecycle(_server):
-        coordinator = (
-            getattr(context.uploads, "coordinator", None)
-            if context.uploads is not None
-            else None
-        )
-        if coordinator is not None:
-            # Stdio workers remain lazy: the first durable submission starts
-            # one, while the coordinator itself is owned by the MCP lifespan.
-            coordinator.start(context.uploads.reconcile)
+        context.start(eager_jobs=not filesystem_accessible)
         try:
             yield None
         finally:
-            if coordinator is not None:
-                coordinator.stop()
+            context.stop()
 
     server = MCPServer(
         name="vidxp",
@@ -940,7 +931,10 @@ def create_mcp_server(
             "Poll this single operation through uploaded, importing, "
             "registered, indexing, indexed, or failed. Each item reports the "
             "import job, index job, media, generation, snapshot, and structured "
-            "failure without losing successful siblings."
+            "failure without losing successful siblings. terminal=true means "
+            "the currently accepted files are complete and polling should stop; "
+            "session_state=open may still allow the user to add another file, "
+            "which makes the status non-terminal again."
         ),
         annotations=_READ_ONLY,
         structured_output=True,
@@ -1297,10 +1291,12 @@ def create_mcp_server(
     @server.tool(
         title="Get artifact download",
         description=(
-            "Return a readable MCP resource link plus transport-appropriate "
-            "delivery metadata for a completed clip or video artifact. Local "
-            "stdio may expose its verified path; Streamable HTTP returns a "
-            "short-lived browser download without exposing server paths."
+            "Return a native lazy MCP ResourceLink plus transport-authoritative "
+            "delivery metadata for a completed clip or video artifact. Resource "
+            "bytes are available only when the artifact is within "
+            "VIDXP_MCP_MAX_RESOURCE_BYTES. Local stdio may expose its verified "
+            "path; Streamable HTTP uses the structured delivery mode and, when "
+            "configured, a short-lived HTTPS download without server paths."
         ),
         annotations=_READ_ONLY,
         structured_output=True,
@@ -1390,7 +1386,10 @@ def create_mcp_server(
                             description=label,
                         )
                         projected_frame_artifact = keyframe.artifact.model_copy(
-                            update={"delivery": frame_delivery}
+                            update={
+                                "resource_uri": frame_delivery.resource_uri,
+                                "delivery": frame_delivery,
+                            }
                         )
                         keyframe = keyframe.model_copy(
                             update={"artifact": projected_frame_artifact}
@@ -1421,7 +1420,12 @@ def create_mcp_server(
                                 f"{item.range.clip_end_seconds:.3f}s"
                             ),
                         )
-                        clip = clip.model_copy(update={"delivery": clip_delivery})
+                        clip = clip.model_copy(
+                            update={
+                                "resource_uri": clip_delivery.resource_uri,
+                                "delivery": clip_delivery,
+                            }
+                        )
                         blocks.append(clip_link)
                     projected_items.append(
                         item.model_copy(update={"keyframe": keyframe, "clip": clip})

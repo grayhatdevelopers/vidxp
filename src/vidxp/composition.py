@@ -124,8 +124,9 @@ class ControlPlaneContext:
     catalog: SQLCatalog | None = None
     uploads: RemoteUploadService | None = None
 
-    def start(self) -> None:
-        self.jobs.start()
+    def start(self, *, eager_jobs: bool = True) -> None:
+        if eager_jobs:
+            self.jobs.start()
         coordinator = (
             getattr(self.uploads, "coordinator", None)
             if self.uploads is not None
@@ -134,25 +135,26 @@ class ControlPlaneContext:
         if coordinator is not None:
             coordinator.start(self.uploads.reconcile)
 
+    def stop(self) -> None:
+        coordinator = (
+            getattr(self.uploads, "coordinator", None)
+            if self.uploads is not None
+            else None
+        )
+        if coordinator is not None:
+            coordinator.stop()
+
     def close(self) -> None:
+        self.stop()
         try:
-            coordinator = (
-                getattr(self.uploads, "coordinator", None)
-                if self.uploads is not None
-                else None
-            )
-            if coordinator is not None:
-                coordinator.stop()
+            if self.settings.mode != ApplicationMode.server:
+                self.jobs.stop_worker()
         finally:
             try:
-                if self.settings.mode != ApplicationMode.server:
-                    self.jobs.stop_worker()
+                self.jobs.close()
             finally:
-                try:
-                    self.jobs.close()
-                finally:
-                    if self.catalog is not None:
-                        self.catalog.close()
+                if self.catalog is not None:
+                    self.catalog.close()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -174,11 +176,14 @@ class UploadHookContext:
         self.jobs.start()
         self.uploads.coordinator.start(self.uploads.reconcile)
 
+    def stop(self) -> None:
+        self.uploads.coordinator.stop()
+
     def close(self) -> None:
+        self.stop()
         try:
-            self.uploads.coordinator.stop()
-        finally:
             self.jobs.close()
+        finally:
             self.catalog.close()
 
 

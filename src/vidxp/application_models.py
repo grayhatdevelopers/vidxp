@@ -1101,7 +1101,7 @@ class EvidenceRangeResolution(ApplicationModel):
 
 class EvidenceArtifact(ApplicationModel):
     artifact: Artifact
-    resource_uri: str = Field(min_length=1, max_length=2048)
+    resource_uri: str | None = Field(default=None, min_length=1, max_length=2048)
     delivery: ArtifactDownload | None = None
 
 
