@@ -132,6 +132,14 @@ lock for the complete local-worker and frontend dependency set. Capability
 selection controls which packages are installed; the constraints prevent those
 packages from drifting independently after the desktop binary is published.
 
+FFmpeg and ffprobe are host prerequisites. Windows can install the supported
+FFmpeg package with Windows Package Manager. On macOS, install
+[Homebrew](https://brew.sh/) and run `brew install ffmpeg`, or install FFmpeg
+and ffprobe manually and make both executables available on `PATH`; the
+Desktop reports this remediation explicitly when Homebrew is unavailable.
+Linux uses the detected APT or DNF workflow, with manual installation as the
+fallback.
+
 Optional model preparation invokes the shared `vidxp prepare` command for only
 the selected modalities. A ready managed runtime also exposes a separate
 **Prepare / verify models** action, so verification does not require a fake
@@ -154,8 +162,9 @@ Desktop-owned repository worker.
 Tauri Shell commands are converted to standard commands and passed through one
 shared runner. `process-wrap` 9.1.0 (MIT/Apache-2.0) supplies Windows Job Object
 and POSIX process-group ownership while preserving Tauri sidecar resolution;
-`wait-timeout` supplies the bounded wait primitive. The runner hides Windows
-consoles, closes stdin, bounds captured output, applies operation-specific
+the runner's deadline-aware monitor supplies bounded waits, including while
+descendants retain output pipes. The runner hides Windows consoles, closes
+stdin, bounds captured output, applies operation-specific
 timeouts and cancellation, and kills and reaps the owned process tree on every
 post-spawn failure path. The loopback UI uses the same ownership abstraction as
 a long-lived service.
