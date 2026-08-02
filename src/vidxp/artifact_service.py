@@ -14,6 +14,7 @@ from vidxp.application_models import (
     SnippetProfile,
 )
 from vidxp.core.artifacts import (
+    artifact_file_identity,
     ArtifactIntegrityError,
     ArtifactKind,
     ArtifactRecord,
@@ -115,17 +116,19 @@ class ArtifactQueryService:
     def content(self, artifact_id: str) -> LocalFileResource:
         record = self.require_record(artifact_id)
         path = self._verified_content(record)
-        suffixes = {
-            "video/mp4": ".mp4",
-            "video/x-matroska": ".mkv",
-            "image/png": ".png",
-        }
-        suffix = suffixes.get(record.mime_type)
-        if suffix is None:
-            raise ArtifactNotReadyError("The artifact media type cannot be delivered.")
+        try:
+            filename, _extension = artifact_file_identity(
+                kind=record.kind,
+                artifact_id=record.artifact_id,
+                mime_type=record.mime_type,
+            )
+        except ValueError as exc:
+            raise ArtifactNotReadyError(
+                "The artifact media type cannot be delivered."
+            ) from exc
         return LocalFileResource(
             path=path,
-            filename=f"{record.kind.value}-{record.artifact_id}{suffix}",
+            filename=filename,
             mime_type=record.mime_type,
             byte_size=record.byte_size,
             etag=record.sha256,

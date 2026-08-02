@@ -79,10 +79,12 @@ vidxp mcp-config
 ```
 
 `vidxp mcp-config` emits the `mcpServers` JSON used by Claude Desktop and
-compatible local stdio clients. For Codex, use
-`codex mcp add vidxp -- vidxp-mcp --repository default` (or configure
-`[mcp_servers.vidxp]` in `~/.codex/config.toml`). ChatGPT web connects only to a
-hosted remote MCP endpoint; deploy VidXP behind HTTPS with OIDC for that surface.
+compatible local stdio clients. Codex has separate configuration: use
+`codex mcp add vidxp -- vidxp-mcp --repository default` or configure
+`[mcp_servers.vidxp]` in `~/.codex/config.toml`. ChatGPT Desktop and ChatGPT web
+use ChatGPT's own connector configuration and do not read Codex's config; hosted
+ChatGPT connections use a remote MCP endpoint, with VidXP deployed behind HTTPS
+and OIDC.
 
 The CLI works without MCP. Add the browser app with:
 

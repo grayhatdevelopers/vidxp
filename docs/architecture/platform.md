@@ -399,26 +399,21 @@ Application responses carrying upload URLs use `private, no-store` and
 still a bearer credential and may appear in an upstream proxy's access log unless
 that deployment disables or redacts logging for `/uploads/`. Hook handlers assume
 duplicate and out-of-order delivery and never run ffprobe or encoding inline. A
-recovery sweep finds completed uploads whose finish hook was missed. A retention
-workflow removes abandoned intents and quarantine objects.
+recovery sweep finds completed uploads whose finish hook was missed. Operators
+retain explicit cancellation and manual cleanup for abandoned tus resources.
 
 The hook endpoint is private to the Compose network. Client authorization is read
 from the hook request body and redacted; client tokens are never stored in tus
-metadata. Only the tus upload route is public. Hooks remain enqueue-only; those
-recovery and retention sweeps run in the API's existing ingestion coordinator. A
-completed upload is not a `MediaAsset` until durable probe/import succeeds.
+metadata. Only the tus upload route is public. Hooks remain enqueue-only; recovery
+runs in the API's existing ingestion coordinator. A completed upload is not a
+`MediaAsset` until durable probe/import succeeds.
 
 The supported server topology uses tusd filestore on a named quarantine volume
 shared read-only with the hook service and worker. The API intentionally does not
 mount that volume: one centralized internal tusd `HEAD` probe supplies the
-authoritative upload length and offset for resume discovery, missed-finish
-recovery, and retention. The API durably stores each validated offset and the time
-it last advanced. After the session lifetime passes without observed progress,
-the coordinator performs a final `HEAD` and uses a compare-and-set over intent
-state, upload identity, and offset before expiring the intent. Completion recovers
-normally; a 404 may expire an already-stale intent; invalid, inconsistent, or
-unavailable responses never imply absence. Expiration releases reserved quota,
-and tus termination failures remain eligible for the next cleanup sweep.
+authoritative upload length and offset for resume discovery and missed-finish
+recovery. Existing incomplete resources are retained; a missing expired resource
+may expire, and an unavailable tusd is never treated as absence.
 Managed media and artifacts use the stack's named content volume. The whole
 deployment is single-node and one deployed stack is one repository boundary.
 Deployed clients upload directly to tusd; FastAPI does not proxy large video
@@ -1190,7 +1185,7 @@ Supported Coolify/Compose server stack:
 api-mcp
   ├── FastAPI routes
   ├── MCP Streamable HTTP mount
-  └── ingestion recovery and bounded retention coordinator
+  └── ingestion recovery coordinator
 
 hooks
   └── private tusd callback
@@ -1360,7 +1355,7 @@ Test:
 - interrupted and expired uploads
 - duplicate/out-of-order hook delivery
 - missed-finish-hook recovery sweep
-- abandoned intent/quarantine cleanup
+- explicit cancellation and operational quarantine cleanup
 - completion remaining unpublished until durable ffprobe succeeds
 - import-root escape
 - retained external source disappearance
@@ -1514,8 +1509,7 @@ Gate: API process performs no indexing/model work and owns no business persisten
 
 Gate: interrupted multi-part upload resumes and completed media can be indexed by ID.
 The gate also covers bearer upload-URL redaction, duplicate/out-of-order hooks,
-missed-finish recovery, abandoned-upload retention, and the ffprobe publication
-boundary.
+missed-finish recovery, and the ffprobe publication boundary.
 
 ### Phase 8: MCP
 

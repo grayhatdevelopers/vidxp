@@ -85,12 +85,6 @@ def _upload_record(row: Any) -> UploadIntentRecord:
         index_modalities=tuple(row.index_modalities or ()),
         index_job_id=row.index_job_id,
         index_command=row.index_command,
-        last_tus_offset=row.last_tus_offset,
-        last_tus_progress_at=(
-            datetime.fromisoformat(row.last_tus_progress_at)
-            if row.last_tus_progress_at is not None
-            else None
-        ),
         source_path=row.source_path,
         content_sha256=row.content_sha256,
         failure_code=row.failure_code,
@@ -579,12 +573,6 @@ class SQLCatalog:
                 index_modalities=list(record.index_modalities),
                 index_job_id=record.index_job_id,
                 index_command=record.index_command,
-                last_tus_offset=record.last_tus_offset,
-                last_tus_progress_at=(
-                    record.last_tus_progress_at.isoformat()
-                    if record.last_tus_progress_at is not None
-                    else None
-                ),
                 source_path=record.source_path,
                 content_sha256=record.content_sha256,
                 failure_code=record.failure_code,
@@ -975,8 +963,6 @@ class SQLCatalog:
         media_id: str | None = None,
         index_job_id: str | None = None,
         index_command: dict[str, Any] | None = None,
-        last_tus_offset: int | None = None,
-        last_tus_progress_at: datetime | None = None,
         failure_code: str | None = None,
         failure_message: str | None = None,
         content_sha256: str | None = None,
@@ -985,8 +971,6 @@ class SQLCatalog:
         expected_states: set[UploadState] | None = None,
         expected_job_id: str | None | object = _EXPECTED_VALUE_UNSET,
         expected_index_job_id: str | None | object = _EXPECTED_VALUE_UNSET,
-        expected_upload_id: str | None | object = _EXPECTED_VALUE_UNSET,
-        expected_last_tus_offset: int | None | object = _EXPECTED_VALUE_UNSET,
     ) -> bool:
         current = connection.execute(
             select(
@@ -994,8 +978,6 @@ class SQLCatalog:
                 upload_intents.c.state,
                 upload_intents.c.job_id,
                 upload_intents.c.index_job_id,
-                upload_intents.c.upload_id,
-                upload_intents.c.last_tus_offset,
             )
             .where(upload_intents.c.intent_id == intent_id)
             .with_for_update()
@@ -1017,16 +999,6 @@ class SQLCatalog:
             and current.index_job_id != expected_index_job_id
         ):
             return False
-        if (
-            expected_upload_id is not _EXPECTED_VALUE_UNSET
-            and current.upload_id != expected_upload_id
-        ):
-            return False
-        if (
-            expected_last_tus_offset is not _EXPECTED_VALUE_UNSET
-            and current.last_tus_offset != expected_last_tus_offset
-        ):
-            return False
         values: dict[str, Any] = {"state": state.value}
         if clear_upload_id:
             values["upload_id"] = None
@@ -1040,10 +1012,6 @@ class SQLCatalog:
             values["index_job_id"] = index_job_id
         if index_command is not None:
             values["index_command"] = index_command
-        if last_tus_offset is not None:
-            values["last_tus_offset"] = last_tus_offset
-        if last_tus_progress_at is not None:
-            values["last_tus_progress_at"] = last_tus_progress_at.isoformat()
         if clear_failure:
             values["failure_code"] = None
             values["failure_message"] = None

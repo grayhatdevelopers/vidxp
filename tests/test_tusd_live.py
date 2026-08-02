@@ -14,7 +14,7 @@ from urllib.parse import urljoin
 import httpx
 import pytest
 import uvicorn
-from sqlalchemy import select, update
+from sqlalchemy import update
 
 from vidxp.application_models import (
     CreateUploadFileCommand,
@@ -27,7 +27,7 @@ from vidxp.composition import UploadHookContext
 from vidxp.core.uploads import UploadState
 from vidxp.hook_app import create_hook_app
 from vidxp.infrastructure.sql_catalog import SQLCatalog
-from vidxp.infrastructure.sql_tables import upload_intents, upload_quota
+from vidxp.infrastructure.sql_tables import upload_intents
 from vidxp.settings import VidXPSettings
 from vidxp.upload_service import RemoteUploadService
 
@@ -167,8 +167,8 @@ def test_live_tusd_split_topology_resumes_ten_mib(tmp_path: Path) -> None:
             "-verbose=false",
             "-show-startup-logs=false",
         ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     )
     try:
@@ -257,9 +257,6 @@ def test_live_tusd_split_topology_resumes_ten_mib(tmp_path: Path) -> None:
             assert incomplete["expired"] == 0
             assert incomplete_record is not None
             assert incomplete_record.state == UploadState.accepted
-            assert incomplete_record.last_tus_offset == first_chunk
-            assert incomplete_record.last_tus_progress_at is not None
-            assert incomplete_record.last_tus_progress_at > accepted_record.created_at
 
             unavailable_settings = api_settings.model_copy(
                 update={
@@ -282,85 +279,6 @@ def test_live_tusd_split_topology_resumes_ten_mib(tmp_path: Path) -> None:
             assert unavailable["expired"] == 0
             assert unavailable_record is not None
             assert unavailable_record.state == UploadState.accepted
-
-            abandoned_authorization = api_uploads.authorize_session_file(
-                upload_session.status.session_id,
-                CreateUploadFileCommand(
-                    client_file_key="abandoned-file",
-                    original_filename="abandoned.mp4",
-                    byte_size=1024,
-                    declared_mime_type="video/mp4",
-                ),
-                session_token=browser.session_token,
-            )
-            assert abandoned_authorization.grant is not None
-            abandoned_metadata = base64.b64encode(
-                abandoned_authorization.status.intent_id.encode()
-            ).decode()
-            abandoned_created = client.post(
-                f"http://127.0.0.1:{tusd_port}/uploads/",
-                headers={
-                    "Tus-Resumable": "1.0.0",
-                    "Upload-Length": "1024",
-                    "Upload-Metadata": f"intent_id {abandoned_metadata}",
-                    "Authorization": (
-                        f"VidXP-Handoff {abandoned_authorization.grant}"
-                    ),
-                },
-            )
-            assert abandoned_created.status_code == 201, abandoned_created.text
-            abandoned_url = urljoin(
-                str(abandoned_created.url),
-                abandoned_created.headers["Location"],
-            )
-            abandoned_patch = client.patch(
-                abandoned_url,
-                headers={
-                    "Tus-Resumable": "1.0.0",
-                    "Upload-Offset": "0",
-                    "Content-Type": "application/offset+octet-stream",
-                },
-                content=b"z" * 128,
-            )
-            assert abandoned_patch.status_code == 204, abandoned_patch.text
-            observed = api_uploads.reconcile()
-            assert observed["expired"] == 0
-            observed_record = api_catalog.get_upload_intent(
-                abandoned_authorization.status.intent_id
-            )
-            assert observed_record is not None
-            assert observed_record.last_tus_offset == 128
-            assert observed_record.last_tus_progress_at is not None
-            stale_created_at = observed_record.created_at - timedelta(days=2)
-            stale_at = observed_record.created_at - timedelta(days=1)
-            with api_catalog.engine.begin() as connection:
-                connection.execute(
-                    update(upload_intents)
-                    .where(
-                        upload_intents.c.intent_id
-                        == abandoned_authorization.status.intent_id
-                    )
-                    .values(
-                        created_at=stale_created_at.isoformat(),
-                        expires_at=stale_at.isoformat(),
-                        last_tus_progress_at=stale_at.isoformat(),
-                    )
-                )
-
-            abandoned = api_uploads.reconcile()
-            abandoned_record = api_catalog.get_upload_intent(
-                abandoned_authorization.status.intent_id
-            )
-            assert abandoned["expired"] == 1, abandoned
-            assert abandoned_record is not None
-            assert abandoned_record.state == UploadState.expired
-            assert abandoned_record.upload_id is None
-            assert client.head(
-                abandoned_url,
-                headers={"Tus-Resumable": "1.0.0"},
-            ).status_code == 404
-            with api_catalog.engine.connect() as connection:
-                assert connection.scalar(select(upload_quota.c.reserved_bytes)) == size
 
             resumed = client.patch(
                 upload_url,
@@ -409,7 +327,6 @@ def test_live_tusd_split_topology_resumes_ten_mib(tmp_path: Path) -> None:
                 missing_authorization.status.intent_id
             )
             assert accepted_missing_record is not None
-            missing_stale_at = accepted_missing_record.created_at - timedelta(days=1)
             with api_catalog.engine.begin() as connection:
                 connection.execute(
                     update(upload_intents)
@@ -418,11 +335,10 @@ def test_live_tusd_split_topology_resumes_ten_mib(tmp_path: Path) -> None:
                         == missing_authorization.status.intent_id
                     )
                     .values(
-                        created_at=(
-                            accepted_missing_record.created_at - timedelta(days=2)
-                        ).isoformat(),
-                        expires_at=missing_stale_at.isoformat(),
-                        last_tus_progress_at=missing_stale_at.isoformat(),
+                        expires_at=(
+                            accepted_missing_record.created_at
+                            + timedelta(microseconds=1)
+                        ).isoformat()
                     )
                 )
             missing = api_uploads.reconcile()

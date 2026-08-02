@@ -43,6 +43,7 @@ from vidxp.application_models import (
     CreateIndexCommand,
     ErrorCategory,
     ErrorDetail,
+    EvidenceArtifact,
     EvidenceDeliveryMode,
     EvidenceDeliveryPolicy,
     Identifier,
@@ -94,6 +95,7 @@ from vidxp.idempotency import (
     scoped_request_key,
 )
 from vidxp.core.identifiers import ArtifactId
+from vidxp.evidence_projection import project_job_artifacts
 from vidxp.settings import HttpAuthMode
 from vidxp.upload_service import RemoteUploadService
 
@@ -1397,7 +1399,7 @@ def create_mcp_server(
             result = job.result.result
             delivery = result.evidence_delivery
             if delivery is not None:
-                projected_items = []
+                projected_artifacts: dict[str, EvidenceArtifact] = {}
                 for item in delivery.items:
                     keyframe = item.keyframe
                     clip = item.clip
@@ -1417,14 +1419,13 @@ def create_mcp_server(
                             title=f"VidXP evidence frame #{item.rank}",
                             description=label,
                         )
-                        projected_frame_artifact = keyframe.artifact.model_copy(
+                        projected_artifacts[
+                            keyframe.artifact.artifact.artifact_id
+                        ] = keyframe.artifact.model_copy(
                             update={
                                 "resource_uri": frame_delivery.resource_uri,
                                 "delivery": frame_delivery,
                             }
-                        )
-                        keyframe = keyframe.model_copy(
-                            update={"artifact": projected_frame_artifact}
                         )
                         if (
                             keyframe.artifact.artifact.byte_size <= 512_000
@@ -1455,7 +1456,7 @@ def create_mcp_server(
                                 f"{item.range.clip_end_seconds:.3f}s"
                             ),
                         )
-                        clip = clip.model_copy(
+                        projected_artifacts[clip.artifact.artifact_id] = clip.model_copy(
                             update={
                                 "resource_uri": clip_delivery.resource_uri,
                                 "delivery": clip_delivery,
@@ -1463,19 +1464,13 @@ def create_mcp_server(
                         )
                         if clip_link is not None:
                             blocks.append(clip_link)
-                    projected_items.append(
-                        item.model_copy(update={"keyframe": keyframe, "clip": clip})
-                    )
-                projected_delivery = delivery.model_copy(
-                    update={"items": tuple(projected_items)}
+                projected = project_job_artifacts(
+                    job,
+                    project_artifact=lambda evidence: projected_artifacts.get(
+                        evidence.artifact.artifact_id,
+                        evidence,
+                    ),
                 )
-                projected_result = result.model_copy(
-                    update={"evidence_delivery": projected_delivery}
-                )
-                projected_job_result = job.result.model_copy(
-                    update={"result": projected_result}
-                )
-                projected = job.model_copy(update={"result": projected_job_result})
         if not blocks:
             blocks.append(
                 TextContent(

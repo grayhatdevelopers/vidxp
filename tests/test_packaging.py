@@ -449,6 +449,29 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("httpx>=0.28.1,<0.29", test_requirements)
         self.assertNotIn("httpx2", test_requirements)
 
+    def test_local_profiles_include_unconditional_jwt_runtime_without_mcp(self):
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        base = {
+            Requirement(value).name.lower(): Requirement(value)
+            for value in project["project"]["dependencies"]
+        }
+        jwt = base["pyjwt"]
+        self.assertEqual(jwt.specifier, Requirement("pyjwt>=2.13,<3").specifier)
+        self.assertEqual(jwt.extras, set())
+
+        profiles = project["tool"]["setuptools"]["dynamic"][
+            "optional-dependencies"
+        ]
+        for selected in (("local-worker",), ("local-worker", "frontend")):
+            requirement_files = {
+                path
+                for profile in selected
+                for path in profiles[profile]["file"]
+            }
+            self.assertNotIn("src/vidxp/requirements/mcp.txt", requirement_files)
+            self.assertNotIn("src/vidxp/requirements/server.txt", requirement_files)
+            self.assertIn("pyjwt", base)
+
     def test_optional_ollama_profile_never_pulls_a_model_implicitly(self):
         compose = (ROOT / "compose.coolify.yaml").read_text(
             encoding="utf-8"

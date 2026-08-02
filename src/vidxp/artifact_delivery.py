@@ -17,6 +17,7 @@ from vidxp.capability_security import (
     encode_capability,
     repository_binding,
 )
+from vidxp.core.artifacts import artifact_file_identity
 from vidxp.core.media import utc_now
 from vidxp.ports import LocalFileResource
 from vidxp.settings import VidXPSettings
@@ -26,13 +27,6 @@ _LINK_AUDIENCE = "vidxp-artifact-download-link"
 _SESSION_AUDIENCE = "vidxp-artifact-download-session"
 _LINK_PURPOSE = "artifact-download-link-v1"
 _SESSION_PURPOSE = "artifact-download-session-v1"
-_SUPPORTED_MEDIA = {
-    "image/png": "png",
-    "video/mp4": "mp4",
-    "video/x-matroska": "mkv",
-}
-
-
 @dataclass(frozen=True)
 class ArtifactBinding:
     artifact_id: str
@@ -50,17 +44,22 @@ class IssuedArtifactDownload:
 
 
 def artifact_binding(artifact: Artifact) -> ArtifactBinding:
-    extension = _SUPPORTED_MEDIA.get(artifact.mime_type)
-    if extension is None:
+    try:
+        filename, extension = artifact_file_identity(
+            kind=artifact.kind,
+            artifact_id=artifact.artifact_id,
+            mime_type=artifact.mime_type,
+        )
+    except ValueError as exc:
         raise ApplicationError(
             "artifact_type_unsupported",
             ErrorCategory.validation,
             "Only completed PNG, MP4, and Matroska artifacts can be delivered.",
             details={"mime_type": artifact.mime_type},
-        )
+        ) from exc
     return ArtifactBinding(
         artifact_id=artifact.artifact_id,
-        filename=f"{artifact.kind.value}-{artifact.artifact_id}.{extension}",
+        filename=filename,
         mime_type=artifact.mime_type,
         extension=extension,
         byte_size=artifact.byte_size,

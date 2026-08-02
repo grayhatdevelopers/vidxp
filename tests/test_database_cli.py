@@ -60,8 +60,6 @@ class DatabaseCliTests(unittest.TestCase):
                 self.assertIn("content_sha256", intent_columns)
                 self.assertIn("index_job_id", intent_columns)
                 self.assertIn("index_command", intent_columns)
-                self.assertIn("last_tus_offset", intent_columns)
-                self.assertIn("last_tus_progress_at", intent_columns)
                 self.assertTrue(
                     any(
                         index["name"] == "upload_intents_index_job_id"

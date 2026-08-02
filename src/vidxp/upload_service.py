@@ -89,6 +89,17 @@ class TusUploadProbe:
     offset: int
 
 
+@dataclass(frozen=True)
+class _UploadSessionRequest:
+    purpose: str
+    inputs: tuple[str, ...] | None
+    index_after_import: bool
+    index_modalities: tuple[str, ...]
+    initiating_subject: str
+    initiating_client_id: str | None
+    repository_binding: str
+
+
 def _token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("ascii")).hexdigest()
 
@@ -216,17 +227,14 @@ class RemoteUploadService:
             else index_modalities
         )
         effective_index_after_import = index_after_import and bool(selected_modalities)
-        if existing := self.catalog.get_upload_session_by_request(request_key):
-            self._require_session_binding(existing)
-            if (
-                existing.index_after_import != effective_index_after_import
-                or existing.index_modalities != selected_modalities
-            ):
-                raise ApplicationError(
-                    "idempotency_key_reused",
-                    ErrorCategory.validation,
-                    "The idempotency key was reused with different ingestion options.",
-                )
+        expected = self._upload_session_request(
+            purpose="media-upload",
+            inputs=None,
+            principal=principal,
+            index_after_import=effective_index_after_import,
+            index_modalities=selected_modalities,
+        )
+        if existing := self._upload_session_replay(request_key, expected=expected):
             return self._session_link(existing)
         now = utc_now()
         transfer_backend = self.transfer_backend
@@ -267,12 +275,65 @@ class RemoteUploadService:
         try:
             self.catalog.create_upload_session(record)
         except IntegrityError:
-            replay = self.catalog.get_upload_session_by_request(request_key)
+            replay = self._upload_session_replay(request_key, expected=expected)
             if replay is None:
                 raise
             record = replay
-        self._require_session_binding(record)
         return self._session_link(record)
+
+    def _upload_session_request(
+        self,
+        *,
+        purpose: str,
+        inputs: tuple[str, ...] | None,
+        principal: Principal,
+        index_after_import: bool,
+        index_modalities: tuple[str, ...],
+    ) -> _UploadSessionRequest:
+        return _UploadSessionRequest(
+            purpose=purpose,
+            inputs=inputs,
+            index_after_import=index_after_import,
+            index_modalities=index_modalities,
+            initiating_subject=principal.subject,
+            initiating_client_id=principal.client_id,
+            repository_binding=self._repository_binding(),
+        )
+
+    def _upload_session_replay(
+        self,
+        request_key: str,
+        *,
+        expected: _UploadSessionRequest,
+    ) -> UploadSessionRecord | None:
+        existing = self.catalog.get_upload_session_by_request(request_key)
+        if existing is None:
+            return None
+        stored_inputs = (
+            tuple(
+                intent.source_path or ""
+                for _, intent in self.catalog.list_upload_session_files(
+                    existing.session_id
+                )
+            )
+            if expected.inputs is not None
+            else None
+        )
+        if (
+            existing.purpose != expected.purpose
+            or stored_inputs != expected.inputs
+            or existing.index_after_import != expected.index_after_import
+            or existing.index_modalities != expected.index_modalities
+            or existing.initiating_subject != expected.initiating_subject
+            or existing.initiating_client_id != expected.initiating_client_id
+            or existing.repository_binding != expected.repository_binding
+        ):
+            raise ApplicationError(
+                "idempotency_key_reused",
+                ErrorCategory.validation,
+                "The idempotency key was reused for a different upload session.",
+            )
+        return existing
 
     def _session_link(self, record: UploadSessionRecord) -> UploadSessionLink:
         capability = self._session_capability(record)
@@ -331,45 +392,21 @@ class RemoteUploadService:
                 ErrorCategory.unavailable,
                 "Local media ingestion is not configured.",
             )
-        if existing := self.catalog.get_upload_session_by_request(request_key):
-            if existing.purpose != "local-media-ingestion":
-                raise ApplicationError(
-                    "idempotency_key_reused",
-                    ErrorCategory.validation,
-                    "The idempotency key belongs to another operation.",
-                )
-            expected_paths = tuple(
-                str(Path(value).expanduser().resolve()) for value in paths
-            )
-            stored_paths = tuple(
-                intent.source_path or ""
-                for _, intent in self.catalog.list_upload_session_files(
-                    existing.session_id
-                )
-            )
-            selected = (
-                self.default_index_modalities
-                if index_modalities is None
-                else index_modalities
-            )
-            if (
-                stored_paths != expected_paths
-                or existing.index_after_import
-                != (index_after_import and bool(selected))
-                or existing.index_modalities != selected
-            ):
-                raise ApplicationError(
-                    "idempotency_key_reused",
-                    ErrorCategory.validation,
-                    "The idempotency key was reused with different local inputs.",
-                )
-            return self._session_status(existing)
-        now = utc_now()
         selected = (
             self.default_index_modalities
             if index_modalities is None
             else index_modalities
         )
+        expected = self._upload_session_request(
+            purpose="local-media-ingestion",
+            inputs=tuple(str(Path(value).expanduser().resolve()) for value in paths),
+            principal=principal,
+            index_after_import=index_after_import and bool(selected),
+            index_modalities=selected,
+        )
+        if existing := self._upload_session_replay(request_key, expected=expected):
+            return self._session_status(existing)
+        now = utc_now()
         session = UploadSessionRecord(
             session_id=uuid4().hex,
             request_key=request_key,
@@ -481,7 +518,13 @@ class RemoteUploadService:
                     connection=connection,
                 )
 
-        self.catalog.with_upload_transaction(persist_batch)
+        try:
+            self.catalog.with_upload_transaction(persist_batch)
+        except IntegrityError:
+            replay = self._upload_session_replay(request_key, expected=expected)
+            if replay is None:
+                raise
+            return self._session_status(replay)
         self.coordinator.wake()
         return self._session_status(session, children=tuple(children))
 
@@ -1375,91 +1418,13 @@ class RemoteUploadService:
             request_key=request_key,
         )
 
-    def _observe_tus_progress(
-        self,
-        record: UploadIntentRecord,
-        probe: TusUploadProbe,
-        *,
-        observed_at: datetime,
-    ) -> UploadIntentRecord:
-        self._validate_tus_probe(record, probe)
-        previous_offset = record.last_tus_offset
-        if previous_offset is not None and probe.offset < previous_offset:
-            raise ApplicationError(
-                "remote_upload_probe_inconsistent",
-                ErrorCategory.unavailable,
-                "The resumable upload offset moved backwards.",
-            )
-        if previous_offset == probe.offset:
-            return record
-        progress_at = (
-            record.created_at
-            if previous_offset is None and probe.offset == 0
-            else observed_at
-        )
-
-        def observe(connection: Connection) -> bool:
-            return self.catalog.update_upload(
-                record.intent_id,
-                state=UploadState.accepted,
-                connection=connection,
-                last_tus_offset=probe.offset,
-                last_tus_progress_at=progress_at,
-                expected_states={UploadState.accepted},
-                expected_upload_id=record.upload_id,
-                expected_last_tus_offset=previous_offset,
-            )
-
-        self.catalog.with_upload_transaction(observe)
-        return self.catalog.get_upload_intent(record.intent_id) or record
-
-    def _tus_abandonment_due(
-        self,
-        record: UploadIntentRecord,
-        *,
-        now: datetime,
-    ) -> bool:
-        last_progress = record.last_tus_progress_at or record.created_at
-        return (
-            record.expires_at <= now
-            and last_progress
-            + timedelta(seconds=self.settings.upload_intent_ttl_seconds)
-            <= now
-        )
-
-    def _expire_tus_if_unchanged(
-        self,
-        record: UploadIntentRecord,
-        *,
-        now: datetime,
-    ) -> str | None:
-        if (
-            record.state != UploadState.accepted
-            or record.upload_id is None
-            or not self._tus_abandonment_due(record, now=now)
-        ):
-            return None
-
-        def expire(connection: Connection) -> bool:
-            return self.catalog.update_upload(
-                record.intent_id,
-                state=UploadState.expired,
-                connection=connection,
-                expected_states={UploadState.accepted},
-                expected_upload_id=record.upload_id,
-                expected_last_tus_offset=record.last_tus_offset,
-            )
-
-        expired = self.catalog.with_upload_transaction(expire)
-        return record.upload_id if expired else None
-
     def reconcile(self) -> dict[str, int]:
         recovered = 0
         coordinated = self.coordinator.run_once()
         errors = coordinated["errors"]
         advanced = coordinated["advanced"]
+        tus_probes: dict[str, TusUploadProbe | None] = {}
         failed_tus_probes: set[str] = set()
-        now = utc_now()
         for record in self.catalog.recoverable_uploads():
             try:
                 if (
@@ -1467,18 +1432,11 @@ class RemoteUploadService:
                     or record.transfer_backend != UploadTransferBackend.tus
                 ):
                     continue
-                if self._tus_abandonment_due(record, now=now):
-                    # Stale candidates are probed once at the expiration boundary
-                    # below so that HEAD is the final observation before the CAS.
-                    continue
                 probe = self._probe_tus_upload(record.upload_id)
+                tus_probes[record.upload_id] = probe
                 if probe is None:
                     continue
-                record = self._observe_tus_progress(
-                    record,
-                    probe,
-                    observed_at=now,
-                )
+                self._validate_tus_probe(record, probe)
                 if probe.offset == probe.length:
                     self.complete_tus_transfer(
                         intent_id=record.intent_id,
@@ -1496,6 +1454,7 @@ class RemoteUploadService:
                     record.intent_id,
                 )
         expired = 0
+        now = utc_now()
         for record in self.catalog.expired_uploads(now=now):
             try:
                 tus_upload_missing = False
@@ -1506,40 +1465,14 @@ class RemoteUploadService:
                     if record.transfer_backend == UploadTransferBackend.tus:
                         if record.upload_id in failed_tus_probes:
                             continue
-                        record = (
-                            self.catalog.get_upload_intent(record.intent_id) or record
-                        )
-                        if not self._tus_abandonment_due(record, now=now):
+                        probe = tus_probes.get(record.upload_id)
+                        if record.upload_id not in tus_probes:
+                            probe = self._probe_tus_upload(record.upload_id)
+                            tus_probes[record.upload_id] = probe
+                        if probe is not None:
+                            self._validate_tus_probe(record, probe)
                             continue
-                        final_probe = self._probe_tus_upload(record.upload_id)
-                        if final_probe is None:
-                            tus_upload_missing = True
-                        else:
-                            record = self._observe_tus_progress(
-                                record,
-                                final_probe,
-                                observed_at=now,
-                            )
-                            if final_probe.offset == final_probe.length:
-                                self.complete_tus_transfer(
-                                    intent_id=record.intent_id,
-                                    upload_id=record.upload_id or "",
-                                    byte_size=final_probe.length,
-                                    offset=final_probe.offset,
-                                )
-                                recovered += 1
-                                continue
-                            if not self._tus_abandonment_due(record, now=now):
-                                continue
-                        upload_id = self._expire_tus_if_unchanged(record, now=now)
-                        if upload_id is None:
-                            continue
-                        expired += 1
-                        if tus_upload_missing:
-                            self.record_terminated(upload_id)
-                        else:
-                            self._cleanup_upload(upload_id)
-                        continue
+                        tus_upload_missing = True
                     elif (
                         record.transfer_backend == UploadTransferBackend.multipart
                         and self._local_upload_is_active(record.upload_id, now=now)
@@ -1551,7 +1484,7 @@ class RemoteUploadService:
                         self.record_terminated(upload_id)
                     else:
                         self._cleanup_upload(upload_id)
-                    expired += 1
+                expired += 1
             except Exception:
                 errors += 1
                 LOGGER.exception(
@@ -1800,23 +1733,11 @@ class RemoteUploadService:
             state=UploadState.accepted,
             connection=connection,
             upload_id=upload_id,
-            last_tus_offset=(
-                0 if record.transfer_backend == UploadTransferBackend.tus else None
-            ),
-            last_tus_progress_at=(
-                now if record.transfer_backend == UploadTransferBackend.tus else None
-            ),
         )
         return record.model_copy(
             update={
                 "state": UploadState.accepted,
                 "upload_id": upload_id,
-                "last_tus_offset": (
-                    0 if record.transfer_backend == UploadTransferBackend.tus else None
-                ),
-                "last_tus_progress_at": (
-                    now if record.transfer_backend == UploadTransferBackend.tus else None
-                ),
             }
         )
 
@@ -1908,13 +1829,6 @@ class RemoteUploadService:
                 ErrorCategory.authentication,
                 "The upload session expired. Create a new media upload session.",
             )
-
-    def _require_session_binding(self, record: UploadSessionRecord) -> None:
-        if (
-            record.repository_binding != self._repository_binding()
-            or record.purpose != "media-upload"
-        ):
-            raise RuntimeError("The stored upload session binding is invalid.")
 
     def _require_principal_ownership(
         self,

@@ -70,8 +70,6 @@ def upgrade() -> None:
             sa.Column("index_job_id", sa.String(length=36), nullable=True)
         )
         batch.add_column(sa.Column("index_command", sa.JSON(), nullable=True))
-        batch.add_column(sa.Column("last_tus_offset", sa.BigInteger(), nullable=True))
-        batch.add_column(sa.Column("last_tus_progress_at", sa.Text(), nullable=True))
         batch.add_column(sa.Column("source_path", sa.Text(), nullable=True))
         batch.add_column(
             sa.Column("content_sha256", sa.String(length=64), nullable=True)
@@ -98,8 +96,6 @@ def downgrade() -> None:
             "failure_code",
             "content_sha256",
             "source_path",
-            "last_tus_progress_at",
-            "last_tus_offset",
             "index_command",
             "index_job_id",
             "index_modalities",

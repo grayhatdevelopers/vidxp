@@ -63,9 +63,10 @@ video delivery on the range-capable HTTPS artifact route; local stdio callers
 can use the verified local path. If neither projection is available, oversized
 resources fail with structured remediation instead of being read into memory.
 
-After `create_clip` completes, `get_artifact_download` always returns the native
-MCP resource. Streamable HTTP callers also receive a short-lived HTTPS link on
-the API origin. Its bearer capability is carried in the URL fragment, exchanged
+After `create_clip` completes, `get_artifact_download` returns a native MCP
+resource when the artifact fits `VIDXP_MCP_MAX_RESOURCE_BYTES`; oversized
+artifacts use the configured HTTPS download projection. Its bearer capability is
+carried in the URL fragment, exchanged
 for a `Secure`, `HttpOnly`, `SameSite=Strict` cookie, and removed from browser
 history before the content request. The public route requires neither an API
 token nor browser login; possession of the complete unexpired link is authority

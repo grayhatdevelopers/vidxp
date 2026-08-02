@@ -603,6 +603,146 @@ def test_upload_session_is_idempotent_without_intent_or_quota(
     catalog.close()
 
 
+def test_upload_session_idempotency_validates_shared_request_contract(
+    tmp_path: Path,
+) -> None:
+    service, catalog, jobs = _service(tmp_path)
+    owner = Principal(subject="owner", client_id="client-a")
+    source = tmp_path / "source.mp4"
+    other = tmp_path / "other.mp4"
+    source.write_bytes(b"source")
+    other.write_bytes(b"other")
+    local = RemoteUploadService(
+        settings=service.settings.model_copy(update={"max_local_import_bytes": 100}),
+        catalog=catalog,
+        media=SimpleNamespace(resolve_local_source=lambda path: path.resolve()),
+        jobs=jobs,
+    )
+    service.create_upload_session(
+        principal=owner,
+        request_key="a" * 64,
+        index_modalities=("scene",),
+    )
+    local.create_local_ingestion(
+        (str(source),),
+        principal=owner,
+        request_key="b" * 64,
+        index_after_import=False,
+    )
+
+    conflicting_calls = (
+        lambda: service.create_upload_session(
+            principal=owner,
+            request_key="a" * 64,
+            index_modalities=("dialogue",),
+        ),
+        lambda: service.create_upload_session(
+            principal=Principal(subject="other", client_id="client-a"),
+            request_key="a" * 64,
+            index_modalities=("scene",),
+        ),
+        lambda: local.create_local_ingestion(
+            (str(source),),
+            principal=owner,
+            request_key="a" * 64,
+            index_after_import=False,
+        ),
+        lambda: local.create_local_ingestion(
+            (str(other),),
+            principal=owner,
+            request_key="b" * 64,
+            index_after_import=False,
+        ),
+        lambda: local.create_local_ingestion(
+            (str(source),),
+            principal=owner,
+            request_key="b" * 64,
+            index_modalities=("scene",),
+        ),
+    )
+    for call in conflicting_calls:
+        with pytest.raises(ApplicationError) as conflict:
+            call()
+        assert conflict.value.detail.code == "idempotency_key_reused"
+
+    other_root = tmp_path / "other-repository"
+    other_root.mkdir()
+    other_repository = RemoteUploadService(
+        settings=service.settings.model_copy(update={"repository_root": other_root}),
+        catalog=catalog,
+        media=_Media(),
+        jobs=jobs,
+    )
+    with pytest.raises(ApplicationError) as repository_conflict:
+        other_repository.create_upload_session(
+            principal=owner,
+            request_key="a" * 64,
+            index_modalities=("scene",),
+        )
+    assert repository_conflict.value.detail.code == "idempotency_key_reused"
+    catalog.close()
+
+
+def test_upload_session_concurrent_insert_winners_use_shared_validation(
+    tmp_path: Path,
+) -> None:
+    service, catalog, _jobs = _service(tmp_path)
+    original = catalog.create_upload_session
+
+    def committed_winner(record) -> None:
+        original(record)
+        raise IntegrityError("insert session", {}, RuntimeError("duplicate"))
+
+    with patch.object(catalog, "create_upload_session", side_effect=committed_winner):
+        replay = service.create_upload_session(
+            principal=Principal(subject="owner", client_id="client-a"),
+            request_key="c" * 64,
+            index_modalities=("scene",),
+        )
+
+    stored = catalog.get_upload_session_by_request("c" * 64)
+    assert stored is not None
+    assert replay.status.session_id == stored.session_id
+    catalog.close()
+
+
+def test_local_ingestion_concurrent_insert_winner_uses_shared_validation(
+    tmp_path: Path,
+) -> None:
+    service, catalog, jobs = _service(tmp_path)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    local = RemoteUploadService(
+        settings=service.settings.model_copy(update={"max_local_import_bytes": 100}),
+        catalog=catalog,
+        media=SimpleNamespace(resolve_local_source=lambda path: path.resolve()),
+        jobs=jobs,
+    )
+    original = catalog.with_upload_transaction
+
+    def committed_winner(operation):
+        original(operation)
+        raise IntegrityError("insert session", {}, RuntimeError("duplicate"))
+
+    with patch.object(
+        catalog,
+        "with_upload_transaction",
+        side_effect=committed_winner,
+    ):
+        replay = local.create_local_ingestion(
+            (str(source),),
+            principal=Principal(subject="owner", client_id="client-a"),
+            request_key="d" * 64,
+            index_after_import=False,
+        )
+
+    stored = catalog.get_upload_session_by_request("d" * 64)
+    assert stored is not None
+    assert replay.session_id == stored.session_id
+    assert replay.file_count == 1
+    catalog.close()
+
+
 def _file(
     key: str,
     *,
@@ -2087,212 +2227,6 @@ def test_split_tus_probe_keeps_incomplete_upload_without_quarantine(
     assert not api_quarantine.exists()
     stored = catalog.get_upload_intent(record.intent_id)
     assert stored is not None and stored.state == UploadState.accepted
-    assert stored.last_tus_offset == 10
-    assert stored.last_tus_progress_at is not None
-    assert stored.last_tus_progress_at > record.created_at
-    catalog.close()
-
-
-def test_tus_progress_tracking_survives_restart_without_refreshing_idle_time(
-    tmp_path: Path,
-) -> None:
-    service, catalog, jobs = _service(tmp_path)
-    now = utc_now()
-    progress_at = now - timedelta(minutes=1)
-    record = UploadIntentRecord(
-        intent_id=uuid4().hex,
-        request_key="a" * 64,
-        original_filename="restart.mp4",
-        byte_size=60,
-        declared_mime_type="video/mp4",
-        state=UploadState.accepted,
-        created_at=now - timedelta(minutes=2),
-        expires_at=now + timedelta(minutes=1),
-        upload_id="r" * 32,
-        last_tus_offset=12,
-        last_tus_progress_at=progress_at,
-    )
-    database_url = str(catalog.engine.url)
-    catalog.create_upload_intent(record, quota_limit=100)
-    catalog.close()
-
-    restarted_catalog = SQLCatalog(database_url)
-    restarted = RemoteUploadService(
-        settings=service.settings,
-        catalog=restarted_catalog,
-        media=_Media(),
-        jobs=jobs,
-        tusd_upload_probe=lambda upload_id: TusUploadProbe(
-            upload_id=upload_id,
-            length=60,
-            offset=12,
-        ),
-    )
-
-    result = restarted.reconcile()
-
-    stored = restarted_catalog.get_upload_intent(record.intent_id)
-    assert result["expired"] == 0
-    assert stored is not None
-    assert stored.last_tus_offset == 12
-    assert stored.last_tus_progress_at == progress_at
-    restarted_catalog.close()
-
-
-def test_abandoned_tus_upload_uses_final_head_and_releases_quota(
-    tmp_path: Path,
-) -> None:
-    service, catalog, jobs = _service(tmp_path)
-    now = utc_now()
-    record = UploadIntentRecord(
-        intent_id=uuid4().hex,
-        request_key="a" * 64,
-        original_filename="abandoned.mp4",
-        byte_size=60,
-        declared_mime_type="video/mp4",
-        state=UploadState.accepted,
-        created_at=now - timedelta(days=2),
-        expires_at=now - timedelta(days=1),
-        upload_id="a" * 32,
-        last_tus_offset=10,
-        last_tus_progress_at=now - timedelta(days=1),
-    )
-    catalog.create_upload_intent(record, quota_limit=100)
-    probes: list[str] = []
-
-    def probe(upload_id: str) -> TusUploadProbe:
-        probes.append(upload_id)
-        return TusUploadProbe(upload_id=upload_id, length=60, offset=10)
-
-    service = RemoteUploadService(
-        settings=service.settings,
-        catalog=catalog,
-        media=_Media(),
-        jobs=jobs,
-        tusd_upload_probe=probe,
-    )
-
-    with patch.object(service, "_terminate_upload") as terminate:
-        result = service.reconcile()
-
-    stored = catalog.get_upload_intent(record.intent_id)
-    assert probes == [record.upload_id]
-    assert result["expired"] == 1
-    assert stored is not None and stored.state == UploadState.expired
-    assert stored.upload_id is None
-    terminate.assert_called_once_with(record.upload_id)
-    with catalog.engine.connect() as connection:
-        assert connection.scalar(select(upload_quota.c.reserved_bytes)) == 0
-    catalog.close()
-
-
-def test_tus_expiration_compare_and_set_preserves_racing_progress(
-    tmp_path: Path,
-) -> None:
-    service, catalog, jobs = _service(tmp_path)
-    now = utc_now()
-    record = UploadIntentRecord(
-        intent_id=uuid4().hex,
-        request_key="a" * 64,
-        original_filename="racing.mp4",
-        byte_size=60,
-        declared_mime_type="video/mp4",
-        state=UploadState.accepted,
-        created_at=now - timedelta(days=2),
-        expires_at=now - timedelta(days=1),
-        upload_id="c" * 32,
-        last_tus_offset=10,
-        last_tus_progress_at=now - timedelta(days=1),
-    )
-    catalog.create_upload_intent(record, quota_limit=100)
-    calls = 0
-
-    def probe(upload_id: str) -> TusUploadProbe:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            catalog.with_upload_transaction(
-                lambda connection: catalog.update_upload(
-                    record.intent_id,
-                    state=UploadState.accepted,
-                    connection=connection,
-                    last_tus_offset=20,
-                    last_tus_progress_at=utc_now(),
-                    expected_states={UploadState.accepted},
-                    expected_upload_id=upload_id,
-                    expected_last_tus_offset=10,
-                )
-            )
-        return TusUploadProbe(upload_id=upload_id, length=60, offset=10)
-
-    service = RemoteUploadService(
-        settings=service.settings,
-        catalog=catalog,
-        media=_Media(),
-        jobs=jobs,
-        tusd_upload_probe=probe,
-    )
-
-    result = service.reconcile()
-
-    stored = catalog.get_upload_intent(record.intent_id)
-    assert calls == 1
-    assert result["expired"] == 0
-    assert stored is not None and stored.state == UploadState.accepted
-    assert stored.last_tus_offset == 20
-    with catalog.engine.connect() as connection:
-        assert connection.scalar(select(upload_quota.c.reserved_bytes)) == 60
-    catalog.close()
-
-
-def test_expired_tus_cleanup_failure_remains_retryable(
-    tmp_path: Path,
-) -> None:
-    service, catalog, jobs = _service(tmp_path)
-    now = utc_now()
-    record = UploadIntentRecord(
-        intent_id=uuid4().hex,
-        request_key="a" * 64,
-        original_filename="cleanup.mp4",
-        byte_size=60,
-        declared_mime_type="video/mp4",
-        state=UploadState.accepted,
-        created_at=now - timedelta(days=2),
-        expires_at=now - timedelta(days=1),
-        upload_id="d" * 32,
-        last_tus_offset=10,
-        last_tus_progress_at=now - timedelta(days=1),
-    )
-    catalog.create_upload_intent(record, quota_limit=100)
-    service = RemoteUploadService(
-        settings=service.settings,
-        catalog=catalog,
-        media=_Media(),
-        jobs=jobs,
-        tusd_upload_probe=lambda upload_id: TusUploadProbe(
-            upload_id=upload_id,
-            length=60,
-            offset=10,
-        ),
-    )
-
-    with patch.object(
-        service,
-        "_terminate_upload",
-        side_effect=(RuntimeError("offline"), RuntimeError("offline"), None),
-    ) as terminate:
-        first = service.reconcile()
-        after_failure = catalog.get_upload_intent(record.intent_id)
-        second = service.reconcile()
-
-    recovered = catalog.get_upload_intent(record.intent_id)
-    assert first["expired"] == 1
-    assert first["errors"] == 2
-    assert after_failure is not None and after_failure.state == UploadState.expired
-    assert after_failure.upload_id == record.upload_id
-    assert second["cleaned"] == 1
-    assert recovered is not None and recovered.upload_id is None
-    assert terminate.call_count == 3
     catalog.close()
 
 
@@ -2389,51 +2323,6 @@ def test_missing_tus_upload_expires_but_unavailable_tusd_does_not(
     assert result["errors"] == 1
     assert missing is not None and missing.state == UploadState.expired
     assert unavailable is not None and unavailable.state == UploadState.accepted
-    catalog.close()
-
-
-@pytest.mark.parametrize(
-    "probe",
-    (
-        TusUploadProbe(upload_id="e" * 32, length=60, offset=9),
-        TusUploadProbe(upload_id="e" * 32, length=61, offset=10),
-    ),
-)
-def test_invalid_or_inconsistent_tus_head_never_expires_upload(
-    tmp_path: Path,
-    probe: TusUploadProbe,
-) -> None:
-    service, catalog, jobs = _service(tmp_path)
-    now = utc_now()
-    record = UploadIntentRecord(
-        intent_id=uuid4().hex,
-        request_key="a" * 64,
-        original_filename="invalid-head.mp4",
-        byte_size=60,
-        declared_mime_type="video/mp4",
-        state=UploadState.accepted,
-        created_at=now - timedelta(days=2),
-        expires_at=now - timedelta(days=1),
-        upload_id="e" * 32,
-        last_tus_offset=10,
-        last_tus_progress_at=now - timedelta(days=1),
-    )
-    catalog.create_upload_intent(record, quota_limit=100)
-    service = RemoteUploadService(
-        settings=service.settings,
-        catalog=catalog,
-        media=_Media(),
-        jobs=jobs,
-        tusd_upload_probe=lambda _upload_id: probe,
-    )
-
-    result = service.reconcile()
-
-    stored = catalog.get_upload_intent(record.intent_id)
-    assert result["errors"] == 1
-    assert result["expired"] == 0
-    assert stored is not None and stored.state == UploadState.accepted
-    assert stored.last_tus_offset == 10
     catalog.close()
 
 
