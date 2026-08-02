@@ -35,7 +35,8 @@
     "active": true,
     "targets": "all",
     "resources": [
-      "../THIRD_PARTY_NOTICES.txt"
+      "../THIRD_PARTY_NOTICES.txt",
+      "../../LICENSE"
     ],
     "externalBin": [
       "binaries/uv"

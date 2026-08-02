@@ -1,7 +1,58 @@
-VidXP Desktop Third-Party Notices
-===================================
+VidXP Desktop Legal Notices
+===========================
 
-This artifact is generated from the locked production dependency graphs.
+This artifact is generated from locked production dependency graphs and bundled sidecar metadata.
+
+VIDXP PROJECT LICENSE
+=====================
+VidXP Desktop and VidXP | MIT | https://github.com/grayhatdevelopers/vidxp
+
+MIT License
+
+Copyright (c) 2026 Grayhat Developers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+BUNDLED EXECUTABLES
+===================
+uv 0.12.0 | MIT OR Apache-2.0 | https://github.com/astral-sh/uv/tree/0.12.0
+The complete MIT terms from the pinned uv release follow. The complete Apache-2.0 terms are included in the Rust dependency section below.
+
+MIT License
+
+Copyright (c) 2025 Astral Software Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 RUST DEPENDENCIES
 =================
@@ -843,15 +894,21 @@ Used by:
 License: Apache License 2.0 (Apache-2.0)
 Used by:
 - windows-collections 0.2.0 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
+- windows-collections 0.3.2 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-core 0.61.2 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
+- windows-core 0.62.2 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-future 0.2.1 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
+- windows-future 0.3.2 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-implement 0.60.2 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-interface 0.59.3 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-link 0.1.3 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-link 0.2.1 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-numerics 0.2.0 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
+- windows-numerics 0.3.1 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-result 0.3.4 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
+- windows-result 0.4.1 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-strings 0.4.2 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
+- windows-strings 0.5.1 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-sys 0.45.0 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-sys 0.59.0 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-sys 0.60.2 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
@@ -860,8 +917,10 @@ Used by:
 - windows-targets 0.52.6 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-targets 0.53.5 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-threading 0.1.0 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
+- windows-threading 0.2.1 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows-version 0.1.7 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows 0.61.3 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
+- windows 0.62.2 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows_aarch64_gnullvm 0.42.2 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows_aarch64_gnullvm 0.52.6 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
 - windows_aarch64_gnullvm 0.53.1 | https://github.com/microsoft/windows-rs | registry+https://github.com/rust-lang/crates.io-index
@@ -7466,6 +7525,7 @@ Used by:
 - objc2-web-kit 0.3.2 | https://github.com/madsmtm/objc2 | registry+https://github.com/rust-lang/crates.io-index
 - pin-project-lite 0.2.17 | https://github.com/taiki-e/pin-project-lite | registry+https://github.com/rust-lang/crates.io-index
 - proc-macro2 1.0.107 | https://github.com/dtolnay/proc-macro2 | registry+https://github.com/rust-lang/crates.io-index
+- process-wrap 9.1.0 | https://github.com/watchexec/process-wrap | registry+https://github.com/rust-lang/crates.io-index
 - quote 1.0.47 | https://github.com/dtolnay/quote | registry+https://github.com/rust-lang/crates.io-index
 - r-efi 5.3.0 | https://github.com/r-efi/r-efi | registry+https://github.com/rust-lang/crates.io-index
 - r-efi 6.0.0 | https://github.com/r-efi/r-efi | registry+https://github.com/rust-lang/crates.io-index
@@ -8974,6 +9034,7 @@ THE SOFTWARE.
 License: MIT License (MIT)
 Used by:
 - nix 0.30.1 | https://github.com/nix-rust/nix | registry+https://github.com/rust-lang/crates.io-index
+- nix 0.31.3 | https://github.com/nix-rust/nix | registry+https://github.com/rust-lang/crates.io-index
 
 The MIT License (MIT)
 
@@ -10754,58 +10815,204 @@ SOFTWARE.
 -------------------------------------------------------------------------------
 @tauri-apps/api@2.11.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri
 
-# @tauri-apps/api
+Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
 
- <img align="right" src="https://github.com/tauri-apps/tauri/raw/dev/.github/icon.png" height="128" width="128">
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 
-[![status](https://img.shields.io/badge/status-stable-blue.svg)](https://github.com/tauri-apps/tauri/tree/dev)
-[![License](https://img.shields.io/badge/License-MIT%20or%20Apache%202-green.svg)](https://opencollective.com/tauri)
-[![lint js](https://img.shields.io/github/actions/workflow/status/tauri-apps/tauri/lint-js.yml?label=lint%20js&logo=github)](https://github.com/tauri-apps/tauri/actions/workflows/lint-js.yml)
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ftauri-apps%2Ftauri.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Ftauri-apps%2Ftauri?ref=badge_shield)
-[![Chat Server](https://img.shields.io/badge/chat-discord-7289da.svg)](https://discord.gg/SpmNs4S)
-[![website](https://img.shields.io/badge/website-tauri.app-purple.svg)](https://tauri.app)
-[![https://good-labs.github.io/greater-good-affirmation/assets/images/badge.svg](https://good-labs.github.io/greater-good-affirmation/assets/images/badge.svg)](https://good-labs.github.io/greater-good-affirmation)
-[![support](https://img.shields.io/badge/sponsor-Open%20Collective-blue.svg)](https://opencollective.com/tauri)
+   1. Definitions.
 
-| Component       | Version                                               |
-| --------------- | ----------------------------------------------------- |
-| @tauri-apps/api | ![](https://img.shields.io/npm/v/@tauri-apps/api.svg) |
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
 
-## About Tauri
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
 
-Tauri is a polyglot and generic system that is very composable and allows engineers to make a wide variety of applications. It is used for building applications for Desktop Computers using a combination of Rust tools and HTML rendered in a Webview. Apps built with Tauri can ship with any number of pieces of an optional JS API / Rust API so that webviews can control the system via message passing. In fact, developers can extend the default API with their own functionality and bridge the Webview and Rust-based backend easily.
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
 
-Tauri apps can have custom menus and have tray-type interfaces. They can be updated, and are managed by the user's operating system as expected. They are very small, because they use the system's webview. They do not ship a runtime, since the final binary is compiled from rust. This makes the reversing of Tauri apps not a trivial task.
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
 
-## This module
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
 
-This is a typescript library that creates `cjs` and `esm` JavaScript endpoints for you to import into your Frontend framework so that the Webview can call and listen to backend activity. We also ship the pure typescript, because for some frameworks this is more optimal. It uses the message passing of webviews to their hosts.
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
 
-To learn more about the details of how all of these pieces fit together, please consult this [ARCHITECTURE.md](https://github.com/tauri-apps/tauri/blob/dev/ARCHITECTURE.md) document.
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
 
-## Installation
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
 
-The preferred method is to install this module locally as a dependency:
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
 
-```
-$ pnpm add @tauri-apps/api
-$ yarn add @tauri-apps/api
-$ npm add @tauri-apps/api
-```
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
 
-## Semver
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
 
-**tauri** is following [Semantic Versioning 2.0](https://semver.org/).
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
 
-## Licenses
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
 
-Code: (c) 2019 - 2021 - The Tauri Programme within The Commons Conservancy.
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
 
-MIT or MIT/Apache 2.0 where applicable.
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
 
-Logo: CC-BY-NC-ND
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
 
-- Original Tauri Logo Designs by [Daniel Thompson-Yvetot](https://github.com/nothingismagick) and [Guillaume Chau](https://github.com/akryum)
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+MIT License
+
+Copyright (c) 2017 - Present Tauri Apps Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 -------------------------------------------------------------------------------
 @types/react@19.2.18 | MIT | https://github.com/DefinitelyTyped/DefinitelyTyped
@@ -10971,58 +11178,27 @@ SOFTWARE.
 -------------------------------------------------------------------------------
 react-remove-scroll-bar@2.3.8 | MIT | https://github.com/theKashey/react-remove-scroll-bar
 
-<h1>react-remove-scroll-bar</h1>
+MIT License
 
-[![npm](https://img.shields.io/npm/v/react-remove-scroll-bar.svg)](https://www.npmjs.com/package/react-remove-scroll-bar)
-[![bundle size](https://badgen.net/bundlephobia/minzip/react-remove-scroll-bar)](https://bundlephobia.com/result?p=react-remove-scroll-bar)
-[![downloads](https://badgen.net/npm/dm/react-remove-scroll-bar)](https://www.npmtrends.com/react-remove-scroll-bar)
+Copyright holder: Anton Korzunov <thekashey@gmail.com>
 
-<hr />
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-> v1+ for React 15, v2+ requires React 16.8+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-Removes scroll bar (by setting `overflow: hidden` on body), and preserves the scroll bar "gap".
-
-Read - it just makes scroll bar invisible.
-
-Does nothing if scroll bar does not consume any space.
-
-# Usage
-
-```js
-import {RemoveScrollBar} from 'react-remove-scroll-bar';
-
-<RemoveScrollBar /> -> no scroll bar
-```
-
-### The Right Border
-To prevent content jumps __position:fixed__ elements with `right:0`  should have additional classname applied.
-It will just provide a _non-zero_ right, when it needed, to maintain the right "gap".
-```js
-import {zeroRightClassName,fullWidthClassName, noScrollbarsClassName} from 'react-remove-scroll-bar';
-
-// to set `right:0` on an element
-<div className={zeroRightClassName} />
-
-// to set `width:100%` on an element
-<div className={fullWidthClassName} />
-
-// to remove scrollbar from an element
-<div className={noScrollbarsClassName} />
-
-```
-
-# Size
-500b after compression (excluding tslib).
-
-# Scroll-Locky
-All code is a result of a [react-scroll-locky](https://github.com/theKashey/react-scroll-locky) refactoring.
-
-# Article
-There is a medium article about preventing the body scroll - [How to fight the <body> scroll](https://medium.com/@antonkorzunov/how-to-fight-the-body-scroll-2b00267b37ac)
-
-# License
-MIT
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 -------------------------------------------------------------------------------
 react-remove-scroll@2.7.2 | MIT | https://github.com/theKashey/react-remove-scroll
@@ -11302,6 +11478,16 @@ express Statement of Purpose.
  d. Affirmer understands and acknowledges that Creative Commons is not a
     party to this document and has no duty or obligation with respect to
     this CC0 or use of the Work.
+
+MIT License
+
+Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 -------------------------------------------------------------------------------
 use-callback-ref@1.3.3 | MIT | https://github.com/theKashey/use-callback-ref

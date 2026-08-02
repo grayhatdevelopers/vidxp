@@ -13,7 +13,8 @@
     "check": "npm run typecheck && npm run lint && npm run test && npm run build",
     "notices:write": "node scripts/generate-notices.mjs --write",
     "notices:check": "node scripts/generate-notices.mjs",
-    "model-catalog:check": "uv run python scripts/verify-model-catalog.py",
+    "model-catalog:write": "uv run --frozen python scripts/model-catalog.py --write",
+    "model-catalog:check": "uv run --frozen python scripts/model-catalog.py --check",
     "tauri": "tauri",
     "sync:branding": "node scripts/sync-branding.mjs",
     "icons": "npm run sync:branding && tauri icon ../docs/images/logo.png --output src-tauri/icons",
@@ -26,7 +27,6 @@
   },
   "dependencies": {
     "@mantine/core": "9.5.0",
-    "@mantine/hooks": "9.5.0",
     "@tabler/icons-react": "3.46.0",
     "@tauri-apps/api": "2.11.1",
     "react": "19.2.8",

@@ -101,6 +101,7 @@ jobs:
 
       - name: Verify generated desktop contracts and notices
         run: |
+          cargo fetch --manifest-path src-tauri/Cargo.toml --locked
           npm run model-catalog:check
           npm run notices:check
         working-directory: desktop
