@@ -476,7 +476,8 @@ class PackagingTests(unittest.TestCase):
         desktop_ci = (
             ROOT / ".github" / "workflows" / "desktop.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn(
+        self.assertIn("target: [windows, macos, linux]", desktop_ci)
+        self.assertNotIn(
             "!startsWith(github.head_ref, 'release-please--branches--')",
             desktop_ci,
         )

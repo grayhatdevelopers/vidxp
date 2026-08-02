@@ -55,4 +55,22 @@ describe('Desktop packaging and documentation contracts', () => {
     expect(installation).toContain('Prepare / verify models');
     expect(installation).toContain('Open VidXP');
   });
+
+  it('keeps pull-request desktop validation on every advertised platform and probe trigger', () => {
+    const workflow = read('.github/workflows/desktop.yml');
+    expect(workflow).toContain('target: [windows, macos, linux]');
+    for (const path of [
+      'src/vidxp/local_probe.py',
+      'src/vidxp/frontend.py',
+      'src/vidxp/cli.py',
+      'src/vidxp/cli_commands/probe.py',
+      'tests/test_local_probe.py',
+      'tests/test_packaging.py',
+    ]) {
+      expect(workflow).toContain(`- "${path}"`);
+    }
+    expect(read('.github/workflows/publish-desktop.yml')).toContain(
+      'uses: ./.github/workflows/desktop.yml',
+    );
+  });
 });

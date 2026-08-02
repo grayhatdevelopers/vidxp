@@ -22,6 +22,15 @@ on:
       - "desktop/**"
       - "src/vidxp/requirements/**"
       - "src/vidxp/capabilities/*/requirements.txt"
+      - "src/vidxp/local_probe.py"
+      - "src/vidxp/frontend.py"
+      - "src/vidxp/cli.py"
+      - "src/vidxp/cli_commands/probe.py"
+      - "tests/test_local_probe.py"
+      - "tests/test_cli.py"
+      - "tests/test_frontend.py"
+      - "tests/test_frontend_app.py"
+      - "tests/test_packaging.py"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/desktop.yml"
@@ -44,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--branches--') && '["windows"]' || '["windows","macos","linux"]') }}
+        target: [windows, macos, linux]
 
     steps:
       - uses: actions/checkout@v7
