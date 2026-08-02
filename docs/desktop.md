@@ -53,10 +53,11 @@ directory. Docker and Compose storage remains explicitly volume-backed and does
 not inherit this desktop layout.
 
 The application bundles `uv` and performs a system-media preflight before
-creating Python or downloading VidXP. If FFmpeg is missing on Windows or
-macOS, the application uses a native operating-system dialog to show the exact
-approved package-manager command and obtain consent before running it. Linux
-shows the applicable terminal command without trying to automate elevation.
+creating Python or downloading VidXP. If FFmpeg is missing, Windows can show
+and run the approved WinGet command after native confirmation when WinGet is
+available. macOS can do the same with Homebrew; without Homebrew it provides
+Homebrew or manual FFmpeg remediation instead. Linux shows the applicable APT,
+DNF, or manual terminal command without trying to automate elevation.
 The application verifies ffmpeg, ffprobe,
 `libx264`, and `aac`, then installs the exact Python and VidXP versions in
 `desktop/runtime-manifest.json`, persists the verified absolute executable
@@ -132,13 +133,14 @@ lock for the complete local-worker and frontend dependency set. Capability
 selection controls which packages are installed; the constraints prevent those
 packages from drifting independently after the desktop binary is published.
 
-FFmpeg and ffprobe are host prerequisites. Windows can install the supported
-FFmpeg package with Windows Package Manager. On macOS, install
-[Homebrew](https://brew.sh/) and run `brew install ffmpeg`, or install FFmpeg
-and ffprobe manually and make both executables available on `PATH`; the
-Desktop reports this remediation explicitly when Homebrew is unavailable.
-Linux uses the detected APT or DNF workflow, with manual installation as the
-fallback.
+FFmpeg and ffprobe are host prerequisites. When WinGet is available, Windows
+can show and run the supported FFmpeg install command after consent. When
+Homebrew is available, macOS can similarly offer `brew install ffmpeg`; without
+Homebrew it instructs the user to install [Homebrew](https://brew.sh/), install
+FFmpeg manually, or otherwise make FFmpeg and ffprobe available on `PATH`.
+Linux displays the detected APT or DNF command, with a manual command as the
+fallback, and does not automate elevation. Adopted installations remain
+responsible for their own media-runtime setup.
 
 Optional model preparation invokes the shared `vidxp prepare` command for only
 the selected modalities. A ready managed runtime also exposes a separate

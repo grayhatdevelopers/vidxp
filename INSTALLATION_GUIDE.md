@@ -25,15 +25,17 @@ Local model work requires a capability or worker extra.
 | Installation | Install first | Managed by VidXP |
 |---|---|---|
 | CLI or MCP | [uv 0.12+](https://docs.astral.sh/uv/getting-started/installation/) | Python and the isolated VidXP environment |
-| Desktop-managed target | A supported OS and internet access for first setup | uv, Python, VidXP, and selected model files |
-| Desktop with existing target | A compatible local `vidxp` executable | Target discovery and launch coordination only |
+| Desktop-managed target | A supported OS, internet access for first setup, FFmpeg, ffprobe, `libx264`, and `aac` | uv, Python, VidXP, and selected model files |
+| Desktop with existing target | A compatible local `vidxp` executable and that installation's own media-runtime setup | Target discovery and launch coordination only |
 | Docker | Docker Engine or Docker Desktop | Python, VidXP, and FFmpeg inside the image |
 
 Native CLI and desktop processing require FFmpeg, ffprobe, `libx264`, and
 `aac`. `vidxp init` checks them and offers the supported operating-system
-package-manager command when something is missing. The desktop app performs
-the same check through native confirmation dialogs. Docker already includes
-FFmpeg.
+package-manager command when something is missing. On Windows, Desktop can
+show and run the WinGet command after consent when WinGet is available. On
+macOS it can do the same with Homebrew; without Homebrew it provides Homebrew
+or manual FFmpeg remediation. Linux displays the applicable APT, DNF, or
+manual command without automating elevation. Docker already includes FFmpeg.
 
 Supported native systems are Windows x86-64, Linux x86-64, and Apple Silicon
 macOS 14 or newer. CPU is the supported runtime; GPU installation remains
@@ -336,9 +338,12 @@ it to the tray. Tray actions are **Manage VidXP**, **Open VidXP**, and **Quit
 VidXP**. Quit stops the exact browser service Desktop launched; broad worker
 shutdown is limited to a Desktop-owned runtime.
 
-The NSIS, DMG, and AppImage packages do not bundle FFmpeg. Managed setup uses a
-native confirmation dialog before running a supported package manager. An
-adopted installation keeps responsibility for its own FFmpeg setup.
+The NSIS, DMG, and AppImage packages do not bundle FFmpeg. Managed setup can
+run WinGet on Windows or Homebrew on macOS only after native confirmation and
+only when that package manager is available. Without Homebrew, macOS shows
+installation remediation instead. Linux displays an APT, DNF, or manual
+command and does not automate elevation. An adopted installation keeps
+responsibility for its own FFmpeg setup.
 Windows SmartScreen and macOS Gatekeeper may require explicit confirmation
 until signing is added. See [Desktop application](docs/desktop.md) for runtime,
 storage, and build details.
