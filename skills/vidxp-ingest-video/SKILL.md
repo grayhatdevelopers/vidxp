@@ -5,66 +5,30 @@ description: Use VidXP to upload, import, register, and automatically index vide
 
 # Ingest video with VidXP
 
-Use the VidXP MCP tools for the complete ingestion workflow. Do not replace them
-with an ad hoc upload script, base64 media in tool arguments, or manual database
-changes.
-
 ## Workflow
 
-1. Resolve the declared `vidxp` MCP dependency. When the host supports lazy
-   connector or tool discovery, search for VidXP before concluding it is absent.
-   If its tools still cannot be loaded, say that the VidXP connector is not
-   connected and stop instead of inventing a substitute.
-2. Call `get_workspace` to inspect existing media and index coverage. Avoid
-   importing the same video again when it is already registered or indexed.
-3. Select index modalities explicitly from the indexable capabilities returned
-   by `get_workspace`. For ordinary dialogue, scene, action, and named-person
-   retrieval, use `dialogue` and `scene` when available. Add `actor` only when
-   the user explicitly wants anonymous recurring-face cluster summaries; it
-   does not identify people by name or across videos, and exact detection or
-   overlay operations are not exposed through MCP yet. Do not omit `modalities`,
-   because omission indexes every installed capability.
-4. Call `get_runtime_readiness` before automatic indexing. If models required
-   by the selected modalities are missing, call `prepare_models` for those same
-   modalities and poll that job with `get_job` until it reaches a terminal state.
-5. Select ingestion from the tools actually exposed by the current transport:
-   - When `ingest_local_media` is available and the video has a filesystem path
-     accessible to VidXP, pass one to ten paths and poll only
-     `get_media_ingestion`.
-   - Otherwise call `create_media_upload`, give the returned upload link to the
-     user, and poll only `get_media_upload` after files are selected.
-6. Keep `index_after_import` enabled unless the user explicitly asks to register
-   media without indexing. Reuse the same idempotency key when retrying the same
-   request.
-7. Stop polling when the returned aggregate state is terminal. Treat each file
-   independently so one failure does not hide successful siblings.
-8. If the same request also asks to find or explain video content, continue with
-   the VidXP evidence workflow as soon as the successful media becomes indexed
-   and searchable; do not stop after ingestion or make the user ask again.
+1. Resolve the `vidxp` MCP tools and call `get_workspace`. Do not import a video
+   that is already registered or indexed.
+2. Choose indexable modalities from the workspace. Use `dialogue` and `scene`
+   for ordinary content retrieval. Add `actor` only when anonymous recurring-face
+   clusters are wanted; it does not identify people by name.
+3. Call `get_runtime_readiness`. If selected models are missing, submit
+   `prepare_models` for those modalities and poll its job with `get_job`.
+4. Use `ingest_local_media` for one to ten paths accessible to VidXP; otherwise
+   use `create_media_upload` and give the returned link to the user. Keep
+   `index_after_import` enabled unless registration-only behavior was requested.
+5. Poll the returned ingestion or upload ID with `get_media_ingestion` or
+   `get_media_upload`. Honor its poll interval, reuse the same identifiers, and
+   do not resubmit unchanged work.
+6. Stop at a terminal state and report each file's state, media ID, index job,
+   and searchable snapshot or generation. If indexing fails after registration,
+   retry with `start_indexing`; do not upload the file again.
+7. If the request also asks about the video, continue directly into the VidXP
+   evidence workflow once it is searchable.
 
-## Long-running operations
+## Long operations
 
-- Tell the user before polling that model preparation and indexing can take
-  several minutes, depending on video length, selected capabilities, hardware,
-  and whether models are already cached.
-- Honor a server-provided polling interval when present. Otherwise poll after
-  about 5 seconds initially and back off to about 15 seconds for sustained work.
-  Never busy-loop or create a shell script merely to wait.
-- Keep using the original job, ingestion, and idempotency identifiers. Do not
-  submit duplicate work because a state remains unchanged.
-- Give a concise update when the lifecycle stage or measured progress changes,
-  and approximately once per minute during a long unchanged stage. Do not emit
-  every poll result.
-- Report only progress and timing returned or directly measured by VidXP. Do not
-  invent an ETA. If the interaction must stop before completion, provide the
-  recovery identifier needed to resume polling later.
-
-## Recovery and output
-
-- If import fails, report its structured error and remediation.
-- If indexing fails after registration, do not upload the file again. Use the
-  returned media ID with `start_indexing` when the user wants to retry.
-- Report each filename, lifecycle state, media ID, index job, and searchable
-  snapshot or generation when present.
-- State clearly whether each video is merely uploaded, registered, indexing, or
-  indexed and searchable.
+- Tell the user that model preparation and indexing can take several minutes.
+- Update when the stage changes or about once per minute; do not narrate every
+  poll or invent an ETA.
+- Treat files independently so one failure does not hide successful siblings.

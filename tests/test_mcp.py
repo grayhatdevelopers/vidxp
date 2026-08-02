@@ -32,7 +32,6 @@ from vidxp.application_models import (
     EvidenceArtifact,
     EvidenceBoardCandidate,
     EvidenceBoardJobRequest,
-    EvidenceBoardJobResult,
     EvidenceBoardPage,
     EvidenceBoardResult,
     EvidenceBoardTile,
@@ -1274,7 +1273,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 media_id=MEDIA_ID,
                 modalities=("scene", "dialogue"),
                 evidence_delivery=InitialEvidenceDeliveryPolicy(
-                    mode=EvidenceDeliveryMode.keyframes
+                    mode=EvidenceDeliveryMode.none
                 ),
             ),
         )
@@ -1748,7 +1747,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 job_id=context.jobs.submit_evidence_board.call_args.kwargs["job_id"],
             )
 
-    async def test_get_job_projects_and_inlines_evidence_board_pages(self):
+    async def test_get_job_projects_default_evidence_board_with_search(self):
         try:
             from PIL import Image
         except ModuleNotFoundError:
@@ -1808,12 +1807,24 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 tiles=(tile,),
             )
             context = self.context(root, mcp_stdio_filesystem_accessible=False)
-            context.jobs.get.return_value = Job(
-                job_id=JOB_ID,
-                kind=JobKind.evidence_board,
-                state=JobState.succeeded,
-                queue=JobQueue.cpu,
-                result=EvidenceBoardJobResult(result=board),
+            source = search_evidence_job(page_artifact)
+            search = source.result.result
+            context.jobs.get.return_value = source.model_copy(
+                update={
+                    "result": SearchJobResult(
+                        result=search.model_copy(
+                            update={
+                                "evidence_delivery": EvidenceDeliveryResult(
+                                    policy=InitialEvidenceDeliveryPolicy(
+                                        mode=EvidenceDeliveryMode.none,
+                                    ),
+                                    items=(),
+                                    board=board,
+                                )
+                            }
+                        )
+                    )
+                }
             )
             context.application.open_artifact_content.return_value = LocalFileResource(
                 path=page_path,
@@ -1840,7 +1851,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(
                 any(isinstance(block, ResourceLink) for block in result.content)
             )
-            projected = result.structured_content["result"]["result"]["pages"][0]
+            projected = result.structured_content["result"]["result"][
+                "evidence_delivery"
+            ]["board"]["pages"][0]
             self.assertEqual(
                 projected["artifact"]["resource_uri"],
                 f"vidxp://artifacts/{ARTIFACT_ID}/content.jpg",

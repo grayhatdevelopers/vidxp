@@ -917,29 +917,21 @@ its listener. Filesystem-isolated or remote deployments with an oversized artifa
 and no public download origin report delivery as unavailable with configuration
 guidance.
 
-Search and query jobs can request bounded evidence delivery. MCP defaults to the
-strongest three keyframes; callers may select `none`, `keyframes`, or
-`keyframes_and_clips`, with a hard maximum of five items. Scene evidence extracts
-the authoritative indexed frame number. Other intervals and anonymous actor
-clusters use a clearly labeled representative full frame. Requested clips are
-range-clamped and rendered through the same snippet artifact service before the
-original search/query job succeeds, so the ordinary agent path is one submit plus
-polling that same job. `materialize_job_evidence` accepts one to ten stable evidence
-IDs from that completed result and produces follow-up keyframes or clips without
-rerunning retrieval. `create_evidence_clip` derives a single fallback clip from the
-same source-job contract; callers cannot supply authoritative timestamps.
-Keyframe-only retrieval keeps the existing read scope; requesting clip rendering
-requires repository write scope, matching the low-level clip operation.
-Evidence artifacts are best-effort and may fail independently, so completed result
-sets can contain partial frame or clip delivery.
+MCP search and query jobs compile their ranked candidates into annotated,
+media-separated JPEG evidence boards before the original job succeeds. The board
+uses the existing evidence-frame and artifact services, returns native image
+resources plus a tile map to stable evidence IDs, and is included in the same
+`get_job` response. The default budget is 24 tiles per page and four pages per
+job; `next_start_rank` continues without imposing the standalone-artifact limit.
 
-`create_evidence_board` freezes ranked candidates from a completed search or query
-job and submits a durable CPU job. It reuses the existing evidence-frame and
-artifact services to compose annotated, media-separated JPEG pages. The default
-budget is 24 tiles per page and four pages per job; `next_start_rank` continues
-without a fixed ten-item board cap. Completed board jobs return native MCP image
-resources plus a tile map back to the original evidence IDs. Individual frames and
-clips remain the authoritative drill-down path.
+Callers may additionally request `keyframes` or `keyframes_and_clips`, with a hard
+maximum of five standalone items in the initial job. Scene evidence extracts the
+authoritative indexed frame number; other intervals and anonymous actor clusters
+use a labeled representative frame. `materialize_job_evidence` accepts one to ten
+board evidence IDs for later frame or clip drill-down without rerunning retrieval.
+`create_evidence_board` remains for custom selections and continuation pages, and
+`create_evidence_clip` remains the single-item fallback. Clip rendering requires
+repository write scope; boards and keyframes retain read scope.
 
 ## 18. FastAPI adapter
 

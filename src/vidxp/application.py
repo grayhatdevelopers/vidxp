@@ -40,6 +40,7 @@ from vidxp.application_models import (
     SearchMomentsPlanStep,
     EvidenceBoardJobRequest,
     EvidenceBoardResult,
+    EvidenceDeliveryPolicy,
 )
 from vidxp.capabilities.actor.schemas import (
     ActorClusterSummary,
@@ -556,7 +557,7 @@ class VidXPApplication(ControlPlaneApplication):
         )
         policy = command.evidence_delivery
         if policy is not None:
-            return self.evidence_delivery.deliver_search(
+            return self._deliver_initial_evidence(
                 result,
                 policy,
                 execution=active_execution,
@@ -726,13 +727,53 @@ class VidXPApplication(ControlPlaneApplication):
         active_execution.checkpoint()
         policy = command.evidence_delivery
         if policy is not None:
-            answer = self.evidence_delivery.deliver_query(
+            answer = self._deliver_initial_evidence(
                 answer,
                 policy,
                 execution=active_execution,
             )
             active_execution.checkpoint()
         return answer
+
+    def _deliver_initial_evidence(
+        self,
+        result: FusedSearchResult | QueryAnswer,
+        policy: EvidenceDeliveryPolicy,
+        *,
+        execution: ExecutionContext,
+    ) -> FusedSearchResult | QueryAnswer:
+        delivered = (
+            self.evidence_delivery.deliver_search(
+                result,
+                policy,
+                execution=execution,
+            )
+            if isinstance(result, FusedSearchResult)
+            else self.evidence_delivery.deliver_query(
+                result,
+                policy,
+                execution=execution,
+            )
+        )
+        candidates = self.evidence_delivery.candidates(delivered)
+        if not policy.include_board or execution.job_id is None or not candidates:
+            return delivered
+        request = self.evidence_delivery.prepare_board_request(
+            source_job_id=execution.job_id,
+            evidence_ids=None,
+            start_rank=1,
+            result=delivered,
+        )
+        board = self.evidence_boards.create(request, execution=execution)
+        evidence_delivery = delivered.evidence_delivery
+        assert evidence_delivery is not None
+        return delivered.model_copy(
+            update={
+                "evidence_delivery": evidence_delivery.model_copy(
+                    update={"board": board}
+                )
+            }
+        )
 
     @application_boundary
     def actor_clusters(

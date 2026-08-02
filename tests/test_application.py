@@ -17,6 +17,8 @@ from vidxp.application_models import (
     DependencyCheckCommand,
     DependencyCheckResult,
     DependencyUnavailableError,
+    EvidenceBoardResult,
+    EvidenceDeliveryMode,
     FusedSearchResult,
     IndexResult,
     IndexSnapshotReference,
@@ -27,6 +29,8 @@ from vidxp.application_models import (
     QueryVideoCommand,
     RemoveIndexCommand,
     SearchCommand,
+    SearchHit,
+    InitialEvidenceDeliveryPolicy,
 )
 from vidxp.core.media import MediaUnavailableError
 from vidxp.core.contracts import IndexConfig, IndexSchemaError
@@ -62,6 +66,7 @@ from vidxp.repositories import RepositoryConfigError
 from vidxp.runtime import ModelRuntime
 from vidxp.settings import VidXPSettings
 from vidxp.ports import IndexStore
+from vidxp.execution import ExecutionContext
 
 
 MEDIA_ID = "123456781234423481234567890abcde"
@@ -537,6 +542,59 @@ class ApplicationTests(unittest.TestCase):
             calls[0][0].storage,
             manager.__enter__.return_value,
         )
+
+    def test_initial_evidence_attaches_board_to_completed_search(self):
+        def handler(_context, request):
+            return SearchResult(
+                query_id="indexed:1",
+                query=request.query,
+                modality="indexed",
+                hits=(
+                    SearchHit(
+                        rank=1,
+                        media_id=MEDIA_ID,
+                        video_id=MEDIA_ID,
+                        generation_id=GENERATION_ID,
+                        start=1.0,
+                        end=2.0,
+                        score=0.9,
+                        raw_distance=0.1,
+                        modality="indexed",
+                        source_id="indexed:1",
+                    ),
+                ),
+            )
+
+        manager = MagicMock()
+        manager.__enter__.return_value = Mock(spec=IndexStore)
+        application = self.indexed_application(handler, manager)
+        board = EvidenceBoardResult(
+            source_job_id=SNAPSHOT_ID,
+            source_fingerprint="b" * 64,
+            requested_count=1,
+            rendered_count=1,
+            failed_count=0,
+            pages=(),
+            tiles=(),
+        )
+        application.evidence_boards = Mock()
+        application.evidence_boards.create.return_value = board
+
+        result = application.search(
+            SearchCommand(
+                modalities=("indexed",),
+                query="yellow taxi",
+                evidence_delivery=InitialEvidenceDeliveryPolicy(
+                    mode=EvidenceDeliveryMode.none,
+                ),
+            ),
+            execution=ExecutionContext(job_id=SNAPSHOT_ID),
+        )
+
+        self.assertEqual(result.evidence_delivery.board, board)
+        request = application.evidence_boards.create.call_args.args[0]
+        self.assertEqual(request.source_job_id, SNAPSHOT_ID)
+        self.assertEqual(len(request.candidates), 1)
 
     def test_default_search_filters_indexed_non_search_capabilities(self):
         searched: list[str] = []

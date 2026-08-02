@@ -794,6 +794,7 @@ class EvidenceDeliveryMode(StrEnum):
 
 class EvidenceDeliveryPolicy(ApplicationModel):
     mode: EvidenceDeliveryMode = EvidenceDeliveryMode.none
+    include_board: bool = False
     max_items: int = Field(default=3, ge=1, le=10)
     padding_before_seconds: float = Field(default=2.0, ge=0, le=30)
     padding_after_seconds: float = Field(default=2.0, ge=0, le=30)
@@ -801,6 +802,7 @@ class EvidenceDeliveryPolicy(ApplicationModel):
 
 
 class InitialEvidenceDeliveryPolicy(EvidenceDeliveryPolicy):
+    include_board: bool = True
     max_items: int = Field(default=3, ge=1, le=5)
 
 
@@ -852,9 +854,9 @@ class SearchCommand(ApplicationModel):
     evidence_delivery: InitialEvidenceDeliveryPolicy | None = Field(
         default=None,
         description=(
-            "Optional bounded frame/clip delivery. Omit to preserve the "
-            "transport-neutral application default; MCP supplies a useful "
-            "keyframe default."
+            "Optional evidence-board and bounded frame/clip delivery. Omit to "
+            "preserve the transport-neutral application default; MCP supplies "
+            "an evidence-board default."
         ),
     )
 
@@ -1002,9 +1004,9 @@ class QueryVideoCommand(ApplicationModel):
     evidence_delivery: InitialEvidenceDeliveryPolicy | None = Field(
         default=None,
         description=(
-            "Optional bounded frame/clip delivery. Omit to preserve the "
-            "transport-neutral application default; MCP supplies a useful "
-            "keyframe default."
+            "Optional evidence-board and bounded frame/clip delivery. Omit to "
+            "preserve the transport-neutral application default; MCP supplies "
+            "an evidence-board default."
         ),
     )
 
@@ -1164,6 +1166,7 @@ class EvidenceDeliveryItem(ApplicationModel):
 class EvidenceDeliveryResult(ApplicationModel):
     policy: EvidenceDeliveryPolicy
     items: tuple[EvidenceDeliveryItem, ...] = Field(max_length=10)
+    board: "EvidenceBoardResult | None" = None
 
 
 class EvidenceBoardTile(EvidenceBoardCandidate):

@@ -523,12 +523,12 @@ def create_mcp_server(
             "media included in the active index snapshot. For search_moments "
             "and query_video, provide command.media_id to restrict work to one "
             "video, or omit it to search/query across every media item in that "
-            "snapshot. MCP defaults to three ranked evidence frames; request "
-            "keyframes_and_clips to receive bounded ready clips in the same "
-            "completed job. The ordinary flow is submit search/query, then poll "
-            "that job. For a broad result set, call create_evidence_board on "
-            "that completed job and inspect its annotated pages before drilling "
-            "into selected tile IDs. Use materialize_job_evidence with evidence "
+            "snapshot. MCP defaults to an annotated evidence board in the same "
+            "completed search/query job; request keyframes or "
+            "keyframes_and_clips only for standalone drill-down artifacts. The "
+            "ordinary flow is submit search/query, then poll that job and inspect "
+            "its board. Use create_evidence_board only for custom selections or "
+            "continuation pages. Use materialize_job_evidence with evidence "
             "IDs from the completed result to inspect additional candidates in "
             "batches of ten without rerunning retrieval or supplying timestamps. "
             "create_evidence_clip, create_clip, and get_artifact_download remain "
@@ -817,7 +817,13 @@ def create_mcp_server(
         EvidenceDeliveryResult,
         list[ImageContent | ResourceLink | TextContent],
     ]:
+        projected_board = None
         blocks: list[ImageContent | ResourceLink | TextContent] = []
+        if delivery.board is not None:
+            projected_board, board_blocks = await project_evidence_board(
+                delivery.board
+            )
+            blocks.extend(board_blocks)
         projected_items = []
         for item in delivery.items:
             keyframe = item.keyframe
@@ -888,7 +894,12 @@ def create_mcp_server(
                 item.model_copy(update={"keyframe": keyframe, "clip": clip})
             )
         return (
-            delivery.model_copy(update={"items": tuple(projected_items)}),
+            delivery.model_copy(
+                update={
+                    "items": tuple(projected_items),
+                    "board": projected_board,
+                }
+            ),
             blocks,
         )
 
@@ -1296,10 +1307,10 @@ def create_mcp_server(
         description=(
             "Submit a durable ranked moment search. Set command.media_id to "
             "search one registered video; omit it to search across every media "
-            "item in the active index snapshot. MCP defaults to the strongest "
-            "three keyframes. Set command.evidence_delivery.mode to "
-            "keyframes_and_clips for same-job clips, "
-            "then poll only this job for results and evidence."
+            "item in the active index snapshot. MCP returns an annotated board "
+            "of ranked results by default. Set command.evidence_delivery.mode "
+            "to keyframes or keyframes_and_clips only when standalone artifacts "
+            "are also needed, then poll only this job for results and evidence."
         ),
         annotations=_SUBMIT,
         structured_output=True,
@@ -1314,7 +1325,7 @@ def create_mcp_server(
                 projected = command.model_copy(
                     update={
                         "evidence_delivery": InitialEvidenceDeliveryPolicy(
-                            mode=EvidenceDeliveryMode.keyframes
+                            mode=EvidenceDeliveryMode.none
                         )
                     }
                 )
@@ -1347,10 +1358,10 @@ def create_mcp_server(
             "Submit a durable grounded natural-language query over indexed "
             "moments and actor evidence. Set command.media_id for one video, "
             "or omit it to query across every media item in the active index "
-            "snapshot. MCP defaults to the strongest three keyframes. Set "
-            "command.evidence_delivery.mode to keyframes_and_clips for "
-            "same-job clips, then poll only this job "
-            "for the grounded answer and inspectable evidence."
+            "snapshot. MCP returns an annotated board of ranked evidence by "
+            "default. Set command.evidence_delivery.mode to keyframes or "
+            "keyframes_and_clips only when standalone artifacts are also needed, "
+            "then poll only this job for the grounded answer and evidence."
         ),
         annotations=_SUBMIT,
         structured_output=True,
@@ -1365,7 +1376,7 @@ def create_mcp_server(
                 projected = command.model_copy(
                     update={
                         "evidence_delivery": InitialEvidenceDeliveryPolicy(
-                            mode=EvidenceDeliveryMode.keyframes
+                            mode=EvidenceDeliveryMode.none
                         )
                     }
                 )
@@ -1649,9 +1660,9 @@ def create_mcp_server(
         title="Get job",
         description=(
             "Poll a durable VidXP job and its typed result. Completed search "
-            "and query jobs include ranked evidence frames/resources and any "
-            "requested ready clips; completed evidence-board jobs include "
-            "annotated pages and their tile map in this same response."
+            "and query jobs include the default annotated board plus any requested "
+            "standalone frames or clips. Custom evidence-board jobs include their "
+            "annotated pages and tile map in this same response."
         ),
         annotations=_READ_ONLY,
         structured_output=True,

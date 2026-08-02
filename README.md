@@ -147,8 +147,8 @@ See the [Coolify guide](docs/deployment/coolify.md) for the complete setup.
 - Group recurring faces in a video and render a highlighted actor overlay.
 - Search one selected video or every video in the active library.
 - Open matching timestamps and export downloadable clips and overlays.
-- Review larger result sets as annotated evidence boards, then open the exact
-  frames or clips worth inspecting.
+- Receive search and query results as annotated evidence boards, then open the
+  exact frames or clips worth inspecting.
 - Retrieve completed clips through native MCP resources, local stdio paths, or
   short-lived resumable HTTPS downloads without embedding video bytes in tool JSON.
 - Keep personal, client, or project libraries separate.

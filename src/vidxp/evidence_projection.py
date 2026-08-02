@@ -72,12 +72,25 @@ def project_job_result_artifacts(
         projected_items.append(
             item.model_copy(update={"keyframe": keyframe, "clip": clip})
         )
+    board = delivery.board
+    if board is not None:
+        board = board.model_copy(
+            update={
+                "pages": tuple(
+                    page.model_copy(update={"artifact": project(page.artifact)})
+                    for page in board.pages
+                )
+            }
+        )
     return result.model_copy(
         update={
             "result": result.result.model_copy(
                 update={
                     "evidence_delivery": delivery.model_copy(
-                        update={"items": tuple(projected_items)}
+                        update={
+                            "items": tuple(projected_items),
+                            "board": board,
+                        }
                     )
                 }
             )
