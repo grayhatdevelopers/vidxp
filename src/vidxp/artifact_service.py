@@ -4,8 +4,9 @@ import hashlib
 import json
 import struct
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from vidxp.application_models import (
     ActorOverlayProfile,
@@ -27,6 +28,8 @@ from vidxp.ports import (
     ActorRendererPort,
     ArtifactCatalogPort,
     ArtifactStorePort,
+    EvidenceBoardRendererPort,
+    EvidenceBoardRenderTile,
     FrameRendererPort,
     LocalFileResource,
     MediaProbePort,
@@ -57,6 +60,14 @@ class InvalidArtifactError(RuntimeError):
 ARTIFACT_RENDER_CONTRACT_VERSION = 1
 
 
+@dataclass(frozen=True)
+class EvidenceBoardPageTileInput:
+    evidence_id: str
+    frame_artifact_id: str | None
+    annotation_lines: tuple[str, ...]
+    placeholder: str | None = None
+
+
 def artifact_result(record: ArtifactRecord) -> Artifact:
     return Artifact(
         schema_version=record.schema_version,
@@ -82,6 +93,17 @@ def _request_key(payload: dict) -> str:
         separators=(",", ":"),
     ).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def deterministic_artifact_operation_id(
+    job_id: str | None,
+    subject_id: str,
+    kind: str,
+) -> str:
+    digest = hashlib.sha256(
+        f"{job_id or 'direct'}\0{subject_id}\0{kind}".encode()
+    ).digest()[:16]
+    return UUID(bytes=digest, version=4).hex
 
 
 class ArtifactQueryService:
@@ -161,6 +183,7 @@ class ArtifactService(ArtifactQueryService):
         snippet_renderer: SnippetRendererPort,
         max_snippet_duration_seconds: float,
         frame_renderer: FrameRendererPort | None = None,
+        evidence_board_renderer: EvidenceBoardRendererPort | None = None,
     ) -> None:
         super().__init__(catalog=catalog, store=store)
         self.media = media
@@ -168,6 +191,7 @@ class ArtifactService(ArtifactQueryService):
         self.actor_renderer = actor_renderer
         self.snippet_renderer = snippet_renderer
         self.frame_renderer = frame_renderer
+        self.evidence_board_renderer = evidence_board_renderer
         self.max_snippet_duration_seconds = max_snippet_duration_seconds
 
     def create_actor_overlay(
@@ -329,6 +353,111 @@ class ArtifactService(ArtifactQueryService):
         width, height = self.png_dimensions(content.path)
         return artifact, width, height
 
+    def create_evidence_board_page(
+        self,
+        *,
+        media_id: str,
+        generation_id: str,
+        title: str,
+        tiles: tuple[EvidenceBoardPageTileInput, ...],
+        columns: int,
+        tile_width: int,
+        tile_height: int,
+        annotation_height: int,
+        maximum_bytes: int,
+        job_id: str | None = None,
+        execution: ExecutionContext | None = None,
+        artifact_operation_id: str | None = None,
+    ) -> tuple[Artifact, int, int]:
+        active_execution = execution_context(execution)
+        active_execution.checkpoint()
+        if self.evidence_board_renderer is None:
+            raise ArtifactRequestError("Evidence board rendering is not configured.")
+        if not tiles:
+            raise ArtifactRequestError("An evidence board page requires tiles.")
+        source = self.media.content(media_id)
+        render_tiles: list[EvidenceBoardRenderTile] = []
+        frame_identities: list[dict] = []
+        for tile in tiles:
+            active_execution.checkpoint()
+            frame_path = None
+            frame_sha256 = None
+            if tile.frame_artifact_id is not None:
+                record = self.require_record(tile.frame_artifact_id)
+                if (
+                    record.kind != ArtifactKind.evidence_frame
+                    or record.mime_type != "image/png"
+                    or record.media_id != media_id
+                    or record.generation_id != generation_id
+                ):
+                    raise ArtifactRequestError(
+                        "An evidence board input frame has the wrong identity."
+                    )
+                frame_path = self._verified_content(record)
+                frame_sha256 = record.sha256
+            frame_identities.append(
+                {
+                    "evidence_id": tile.evidence_id,
+                    "frame_sha256": frame_sha256,
+                    "annotation_lines": tile.annotation_lines,
+                    "placeholder": tile.placeholder,
+                }
+            )
+            render_tiles.append(
+                EvidenceBoardRenderTile(
+                    source=frame_path,
+                    annotation_lines=tile.annotation_lines,
+                    placeholder=tile.placeholder,
+                )
+            )
+        active_columns = min(columns, len(tiles))
+        width = active_columns * tile_width
+        height = 54 + ((len(tiles) - 1) // active_columns + 1) * (
+            tile_height + annotation_height
+        )
+        request_key = _request_key(
+            {
+                "kind": ArtifactKind.evidence_board,
+                "render_contract_version": ARTIFACT_RENDER_CONTRACT_VERSION,
+                "media_sha256": source.etag,
+                "generation_id": generation_id,
+                "profile": "overview-jpeg-v1",
+                "title": title,
+                "columns": active_columns,
+                "tile_width": tile_width,
+                "tile_height": tile_height,
+                "annotation_height": annotation_height,
+                "tiles": frame_identities,
+            }
+        )
+        renderer = self.evidence_board_renderer
+        artifact = self._create(
+            media_id=media_id,
+            generation_id=generation_id,
+            kind=ArtifactKind.evidence_board,
+            profile="overview-jpeg-v1",
+            request_key=request_key,
+            suffix=".jpg",
+            expected_mime_type="image/jpeg",
+            job_id=job_id,
+            execution=active_execution,
+            artifact_operation_id=artifact_operation_id,
+            render=lambda destination: renderer.render(
+                destination,
+                title=title,
+                tiles=tuple(render_tiles),
+                columns=active_columns,
+                tile_width=tile_width,
+                tile_height=tile_height,
+                annotation_height=annotation_height,
+                maximum_bytes=maximum_bytes,
+                cancellation=active_execution.cancellation,
+            ),
+            validate=self._validate_jpeg,
+            artifact_label="evidence board page",
+        )
+        return artifact, width, height
+
     def _create(
         self,
         *,
@@ -487,6 +616,28 @@ class ArtifactService(ArtifactQueryService):
                 "The rendered evidence image has invalid dimensions."
             )
         return width, height
+
+    @classmethod
+    def _validate_jpeg(cls, path: Path, expected_mime_type: str) -> str:
+        if expected_mime_type != "image/jpeg":
+            raise InvalidArtifactError("The evidence board image profile is invalid.")
+        cls.jpeg_dimensions(path)
+        return expected_mime_type
+
+    @staticmethod
+    def jpeg_dimensions(path: Path) -> tuple[int, int]:
+        try:
+            from PIL import Image
+
+            with Image.open(path) as image:
+                image.verify()
+                if image.format != "JPEG" or image.width <= 0 or image.height <= 0:
+                    raise ValueError
+                return image.width, image.height
+        except (ModuleNotFoundError, OSError, ValueError) as exc:
+            raise InvalidArtifactError(
+                "The rendered evidence board is not a valid JPEG image."
+            ) from exc
 
     def _delete_quietly(self, storage_key: str) -> None:
         try:

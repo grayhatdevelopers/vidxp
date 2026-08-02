@@ -933,6 +933,14 @@ requires repository write scope, matching the low-level clip operation.
 Evidence artifacts are best-effort and may fail independently, so completed result
 sets can contain partial frame or clip delivery.
 
+`create_evidence_board` freezes ranked candidates from a completed search or query
+job and submits a durable CPU job. It reuses the existing evidence-frame and
+artifact services to compose annotated, media-separated JPEG pages. The default
+budget is 24 tiles per page and four pages per job; `next_start_rank` continues
+without a fixed ten-item board cap. Completed board jobs return native MCP image
+resources plus a tile map back to the original evidence IDs. Individual frames and
+clips remain the authoritative drill-down path.
+
 ## 18. FastAPI adapter
 
 FastAPI owns:
@@ -1052,6 +1060,7 @@ Initial curated tools:
 - `create_clip`
 - `create_evidence_clip`
 - `materialize_job_evidence`
+- `create_evidence_board`
 - `get_artifact_download`
 - `list_jobs`
 - `get_job`

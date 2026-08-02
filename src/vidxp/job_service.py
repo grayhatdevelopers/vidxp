@@ -12,6 +12,7 @@ from vidxp.application_models import (
     CreateIndexCommand,
     CreateSnippetCommand,
     ErrorCategory,
+    EvidenceBoardJobRequest,
     IndexJobRequest,
     Job,
     JobKind,
@@ -173,6 +174,19 @@ class JobService:
     ) -> Job:
         return self.backend.submit(
             self._read_job_planner().plan_actor_overlay(command),
+            queue=JobQueue.cpu,
+            job_id=job_id,
+        )
+
+    @job_boundary
+    def submit_evidence_board(
+        self,
+        request: EvidenceBoardJobRequest,
+        *,
+        job_id: str | None = None,
+    ) -> Job:
+        return self.backend.submit(
+            request,
             queue=JobQueue.cpu,
             job_id=job_id,
         )

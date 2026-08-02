@@ -20,6 +20,7 @@ WORKFLOW_NAMES: dict[JobKind, str] = {
     JobKind.query: "vidxp.query.v1",
     JobKind.snippet: "vidxp.snippet.v1",
     JobKind.actor_overlay: "vidxp.actor_overlay.v1",
+    JobKind.evidence_board: "vidxp.evidence_board.v1",
     JobKind.prepare_models: "vidxp.prepare_models.v1",
 }
 WORKFLOW_KINDS = {name: kind for kind, name in WORKFLOW_NAMES.items()}

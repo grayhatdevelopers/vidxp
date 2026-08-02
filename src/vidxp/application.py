@@ -38,6 +38,8 @@ from vidxp.application_models import (
     QueryVideoCommand,
     SearchCommand,
     SearchMomentsPlanStep,
+    EvidenceBoardJobRequest,
+    EvidenceBoardResult,
 )
 from vidxp.capabilities.actor.schemas import (
     ActorClusterSummary,
@@ -75,6 +77,7 @@ from vidxp.media_service import (
     MediaService,
 )
 from vidxp.evidence_delivery import EvidenceDeliveryService
+from vidxp.evidence_board import EvidenceBoardService
 
 
 class VidXPApplication(ControlPlaneApplication):
@@ -114,6 +117,11 @@ class VidXPApplication(ControlPlaneApplication):
             artifacts=artifacts,
             media=media,
             max_clip_duration_seconds=settings.max_snippet_duration_seconds,
+        )
+        self.evidence_boards = EvidenceBoardService(
+            artifacts=artifacts,
+            media=media,
+            settings=settings,
         )
 
     @contextmanager
@@ -882,6 +890,15 @@ class VidXPApplication(ControlPlaneApplication):
             job_id=active_execution.job_id,
             execution=active_execution,
         )
+
+    @application_boundary
+    def create_evidence_board(
+        self,
+        request: EvidenceBoardJobRequest,
+        *,
+        execution: ExecutionContext | None = None,
+    ) -> EvidenceBoardResult:
+        return self.evidence_boards.create(request, execution=execution)
 
     @application_boundary
     def clear_index(self) -> bool:

@@ -104,6 +104,7 @@ class JobKind(StrEnum):
     query = "query"
     snippet = "snippet"
     actor_overlay = "actor_overlay"
+    evidence_board = "evidence_board"
     prepare_models = "prepare_models"
 
 
@@ -803,6 +804,28 @@ class InitialEvidenceDeliveryPolicy(EvidenceDeliveryPolicy):
     max_items: int = Field(default=3, ge=1, le=5)
 
 
+class EvidenceBoardCandidate(ApplicationModel):
+    evidence_id: Sha256
+    rank: int = Field(gt=0, le=200)
+    media_id: MediaId
+    generation_id: IndexGenerationId
+    modalities: tuple[Identifier, ...] = Field(min_length=1, max_length=8)
+    start: float = Field(ge=0)
+    end: float = Field(ge=0)
+    representative_timestamp: float = Field(ge=0)
+    frame_index: int | None = Field(default=None, ge=0)
+    frame_match: "EvidenceFrameMatch"
+    score: float | None = None
+    display_text: str | None = Field(default=None, max_length=512)
+    provenance: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _valid_interval(self) -> "EvidenceBoardCandidate":
+        if self.end < self.start:
+            raise ValueError("Evidence board candidate end precedes its start.")
+        return self
+
+
 class SearchCommand(ApplicationModel):
     query: SearchQuery = Field(description="Text to match against indexed moments.")
     modalities: tuple[Identifier, ...] = Field(
@@ -1143,6 +1166,38 @@ class EvidenceDeliveryResult(ApplicationModel):
     items: tuple[EvidenceDeliveryItem, ...] = Field(max_length=10)
 
 
+class EvidenceBoardTile(EvidenceBoardCandidate):
+    tile_id: Sha256
+    page_number: int = Field(gt=0, le=16)
+    position: int = Field(gt=0, le=48)
+    keyframe_artifact_id: ArtifactId | None = None
+    state: EvidenceDeliveryState
+    errors: tuple[ErrorDetail, ...] = ()
+
+
+class EvidenceBoardPage(ApplicationModel):
+    page_number: int = Field(gt=0, le=16)
+    media_id: MediaId
+    generation_id: IndexGenerationId
+    artifact: EvidenceArtifact
+    width: int = Field(gt=0, le=4096)
+    height: int = Field(gt=0, le=4096)
+    columns: int = Field(gt=0, le=12)
+    rows: int = Field(gt=0, le=12)
+    tile_ids: tuple[Sha256, ...] = Field(min_length=1, max_length=48)
+
+
+class EvidenceBoardResult(ApplicationModel):
+    source_job_id: JobId
+    source_fingerprint: Sha256
+    requested_count: int = Field(ge=0, le=200)
+    rendered_count: int = Field(ge=0, le=200)
+    failed_count: int = Field(ge=0, le=200)
+    pages: tuple[EvidenceBoardPage, ...] = Field(max_length=16)
+    tiles: tuple[EvidenceBoardTile, ...] = Field(max_length=200)
+    next_start_rank: int | None = Field(default=None, ge=1, le=200)
+
+
 class DraftClaim(ApplicationModel):
     text: str = Field(min_length=1, max_length=4096)
     evidence_ids: tuple[Sha256, ...] = Field(min_length=1, max_length=10)
@@ -1292,6 +1347,27 @@ class ActorOverlayJobRequest(ApplicationModel):
     snapshot: IndexSnapshotReference
 
 
+class EvidenceBoardJobRequest(ApplicationModel):
+    kind: Literal[JobKind.evidence_board] = JobKind.evidence_board
+    source_job_id: JobId
+    source_fingerprint: Sha256
+    candidates: tuple[EvidenceBoardCandidate, ...] = Field(
+        min_length=1,
+        max_length=200,
+    )
+
+    @field_validator("candidates")
+    @classmethod
+    def _unique_candidates(
+        cls,
+        values: tuple[EvidenceBoardCandidate, ...],
+    ) -> tuple[EvidenceBoardCandidate, ...]:
+        evidence_ids = tuple(item.evidence_id for item in values)
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise ValueError("Evidence board candidates must be unique.")
+        return values
+
+
 class PrepareModelsJobRequest(ApplicationModel):
     kind: Literal[JobKind.prepare_models] = JobKind.prepare_models
     command: PrepareModelsCommand
@@ -1304,6 +1380,7 @@ JobRequest = Annotated[
     | QueryJobRequest
     | SnippetJobRequest
     | ActorOverlayJobRequest
+    | EvidenceBoardJobRequest
     | PrepareModelsJobRequest,
     Field(discriminator="kind"),
 ]
@@ -1334,6 +1411,11 @@ class ArtifactJobResult(ApplicationModel):
     result: Artifact
 
 
+class EvidenceBoardJobResult(ApplicationModel):
+    kind: Literal[JobKind.evidence_board] = JobKind.evidence_board
+    result: EvidenceBoardResult
+
+
 class PrepareModelsJobResult(ApplicationModel):
     kind: Literal[JobKind.prepare_models] = JobKind.prepare_models
     result: PrepareModelsResult
@@ -1345,6 +1427,7 @@ JobResult = Annotated[
     | SearchJobResult
     | QueryJobResult
     | ArtifactJobResult
+    | EvidenceBoardJobResult
     | PrepareModelsJobResult,
     Field(discriminator="kind"),
 ]

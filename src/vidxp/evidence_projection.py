@@ -17,6 +17,19 @@ ArtifactUri = Callable[[Artifact], str]
 EvidenceArtifactProjection = Callable[[EvidenceArtifact], EvidenceArtifact]
 
 
+def _artifact_projection(
+    resource_uri: ArtifactUri | None,
+    project_artifact: EvidenceArtifactProjection | None,
+) -> EvidenceArtifactProjection:
+    if project_artifact is not None:
+        return project_artifact
+    if resource_uri is None:
+        raise ValueError("An evidence artifact projection is required.")
+    return lambda evidence: evidence.model_copy(
+        update={"resource_uri": resource_uri(evidence.artifact)}
+    )
+
+
 def project_job_result_artifacts(
     result: JobResult,
     *,
@@ -25,29 +38,37 @@ def project_job_result_artifacts(
 ) -> JobResult:
     """Traverse and project every evidence artifact in a typed job result."""
 
+    if result.kind == JobKind.evidence_board:
+        project = _artifact_projection(resource_uri, project_artifact)
+        board = result.result
+        return result.model_copy(
+            update={
+                "result": board.model_copy(
+                    update={
+                        "pages": tuple(
+                            page.model_copy(update={"artifact": project(page.artifact)})
+                            for page in board.pages
+                        )
+                    }
+                )
+            }
+        )
     if result.kind not in {JobKind.search, JobKind.query}:
         return result
     delivery = result.result.evidence_delivery
     if delivery is None:
         return result
-    if project_artifact is None:
-        if resource_uri is None:
-            raise ValueError("An evidence artifact projection is required.")
-
-        def project_artifact(evidence: EvidenceArtifact) -> EvidenceArtifact:
-            return evidence.model_copy(
-                update={"resource_uri": resource_uri(evidence.artifact)}
-            )
+    project = _artifact_projection(resource_uri, project_artifact)
     projected_items = []
     for item in delivery.items:
         keyframe = item.keyframe
         clip = item.clip
         if keyframe is not None:
             keyframe = keyframe.model_copy(
-                update={"artifact": project_artifact(keyframe.artifact)}
+                update={"artifact": project(keyframe.artifact)}
             )
         if clip is not None:
-            clip = project_artifact(clip)
+            clip = project(clip)
         projected_items.append(
             item.model_copy(update={"keyframe": keyframe, "clip": clip})
         )

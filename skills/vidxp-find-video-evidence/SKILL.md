@@ -1,6 +1,6 @@
 ---
 name: vidxp-find-video-evidence
-description: Use VidXP to search indexed videos, answer grounded questions about video content, locate when people, actions, dialogue, or scenes occur, and return inspectable keyframes or clips. Trigger for requests such as "find where X appears," "when does Y happen," "what is said," "what happens," or "show me the matching clip," even when the user does not name VidXP. Do not trigger for ingesting new media or ordinary video editing.
+description: Use VidXP to search indexed videos, answer grounded questions about video content, locate when people, actions, dialogue, or scenes occur, and return inspectable evidence boards, keyframes, or clips. Trigger for requests such as "find where X appears," "when does Y happen," "what is said," "what happens," or "show me the matching clip," even when the user does not name VidXP. Do not trigger for ingesting new media or ordinary video editing.
 ---
 
 # Find video evidence with VidXP
@@ -30,11 +30,14 @@ can deliver frames and clips itself.
    ResourceLinks.
 6. Inspect returned keyframes before asserting that a person or action is
    visibly present. Distinguish visual appearances from dialogue mentions.
-7. When useful candidates extend beyond the initial evidence delivery, call
-   `materialize_job_evidence` with evidence IDs from the completed job in
-   batches of at most ten. Request keyframes for verification and add clips
-   only for results worth presenting. Do not rerun retrieval or reconstruct
-   timestamps in FFmpeg.
+7. For a broad result set, call `create_evidence_board` on the completed source
+   job and poll its returned job ID. Inspect its annotated pages and tile map;
+   follow `next_start_rank` when another bounded page set remains. Boards are
+   overviews, not replacements for the underlying evidence IDs.
+8. Drill into selected board tiles with `materialize_job_evidence` in batches of
+   at most ten. Request keyframes for exact inspection and add clips only for
+   results worth presenting. Do not rerun retrieval or reconstruct timestamps
+   in FFmpeg.
 
 ## Current actor scope
 
@@ -63,10 +66,10 @@ can deliver frames and clips itself.
 - Reuse the submitted job ID and idempotency key. Give a concise update when the
   job stage changes and approximately once per minute during long unchanged
   work; do not narrate every poll or invent an ETA.
-- Evidence is not progressive while the job is running. As soon as the completed
-  `get_job` response supplies keyframes, clips, or ResourceLinks, present them to
-  the user directly instead of returning only timestamps or waiting for another
-  request.
+- Evidence is not progressive while a search, query, or board job is running.
+  As soon as the completed `get_job` response supplies board pages, keyframes,
+  clips, or ResourceLinks, present them directly instead of returning only
+  timestamps or waiting for another request.
 - Include the returned evidence blocks or working resource/download references
   in the final answer. Never leave an evidence heading empty. If the host does
   not render a ResourceLink, say so and use `get_artifact_download` to provide

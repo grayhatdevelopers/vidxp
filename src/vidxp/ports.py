@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
@@ -8,6 +9,7 @@ from typing import (
     Iterable,
     Mapping,
     Protocol,
+    Sequence,
     runtime_checkable,
 )
 
@@ -232,6 +234,30 @@ class FrameRendererPort(Protocol):
         frame_index: int | None,
         cancellation: CancellationToken,
         progress: ProgressCallback | None,
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class EvidenceBoardRenderTile:
+    source: Path | None
+    annotation_lines: tuple[str, ...]
+    placeholder: str | None = None
+
+
+@runtime_checkable
+class EvidenceBoardRendererPort(Protocol):
+    def render(
+        self,
+        destination: Path,
+        *,
+        title: str,
+        tiles: Sequence[EvidenceBoardRenderTile],
+        columns: int,
+        tile_width: int,
+        tile_height: int,
+        annotation_height: int,
+        maximum_bytes: int,
+        cancellation: CancellationToken,
     ) -> None: ...
 
 

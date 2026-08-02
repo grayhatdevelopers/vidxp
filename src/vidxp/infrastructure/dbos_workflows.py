@@ -15,6 +15,7 @@ from vidxp.application_models import (
     ApplicationError,
     ErrorCategory,
     ErrorDetail,
+    EvidenceBoardJobRequest,
     IndexJobRequest,
     JobKind,
     JobProgress,
@@ -213,6 +214,25 @@ class VidXPWorkerWorkflows(DBOSConfiguredInstance):
 
         return _step_boundary(execute)
 
+    @DBOS.step(name="vidxp.run_evidence_board.v1")
+    def run_evidence_board_step(self, payload: dict[str, Any]) -> dict[str, Any]:
+        def execute() -> dict[str, Any]:
+            request = EvidenceBoardJobRequest.model_validate(payload)
+            execution = _execution()
+            _publish_progress(
+                {
+                    "stage": "planning_board",
+                    "message": "Planning the evidence board pages.",
+                }
+            )
+            result = self.application.create_evidence_board(
+                request,
+                execution=execution,
+            )
+            return result.model_dump(mode="json")
+
+        return _step_boundary(execute)
+
     def _run_search(self, payload: dict[str, Any]) -> dict[str, Any]:
         def execute() -> dict[str, Any]:
             request = decode_workflow_request(payload)
@@ -351,6 +371,10 @@ class VidXPWorkerWorkflows(DBOSConfiguredInstance):
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         return self.run_artifact_step(payload)
+
+    @DBOS.workflow(name=WORKFLOW_NAMES[JobKind.evidence_board])
+    def evidence_board_workflow(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.run_evidence_board_step(payload)
 
     @DBOS.workflow(name=WORKFLOW_NAMES[JobKind.prepare_models])
     def prepare_models_workflow(

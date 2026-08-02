@@ -46,6 +46,7 @@ from vidxp.application_models import (
     EvidenceDeliveryMode,
     EvidenceDeliveryPolicy,
     EvidenceDeliveryResult,
+    EvidenceBoardResult,
     FusedSearchResult,
     Identifier,
     InitialEvidenceDeliveryPolicy,
@@ -98,7 +99,10 @@ from vidxp.idempotency import (
     scoped_request_key,
 )
 from vidxp.core.identifiers import ArtifactId
-from vidxp.evidence_delivery import EvidenceDeliveryService
+from vidxp.evidence_delivery import (
+    EvidenceDeliveryService,
+    require_completed_evidence_result,
+)
 from vidxp.settings import HttpAuthMode
 from vidxp.upload_service import RemoteUploadService
 
@@ -522,9 +526,11 @@ def create_mcp_server(
             "snapshot. MCP defaults to three ranked evidence frames; request "
             "keyframes_and_clips to receive bounded ready clips in the same "
             "completed job. The ordinary flow is submit search/query, then poll "
-            "that job. Use materialize_job_evidence with evidence IDs from the "
-            "completed result to inspect additional candidates in batches of "
-            "ten without rerunning retrieval or supplying timestamps. "
+            "that job. For a broad result set, call create_evidence_board on "
+            "that completed job and inspect its annotated pages before drilling "
+            "into selected tile IDs. Use materialize_job_evidence with evidence "
+            "IDs from the completed result to inspect additional candidates in "
+            "batches of ten without rerunning retrieval or supplying timestamps. "
             "create_evidence_clip, create_clip, and get_artifact_download remain "
             "advanced fallbacks. Use list_jobs to recover job IDs across agent "
             "sessions."
@@ -588,8 +594,7 @@ def create_mcp_server(
         if resource.byte_size > maximum or actual_size > maximum:
             if artifact_delivery == "local_stdio":
                 remediation = (
-                    "Use the verified local_path returned by "
-                    "get_artifact_download."
+                    "Use the verified local_path returned by get_artifact_download."
                 )
             elif settings.artifact_download_public_url is not None:
                 remediation = (
@@ -671,6 +676,19 @@ def create_mcp_server(
         return await artifact_bytes(
             artifact_id,
             expected_mime_type="image/png",
+        )
+
+    @server.resource(
+        "vidxp://artifacts/{artifact_id}/content.jpg",
+        name="vidxp_evidence_board_jpeg",
+        title="VidXP evidence board",
+        description="JPEG overview page compiled from authoritative evidence frames.",
+        mime_type="image/jpeg",
+    )
+    async def read_jpeg_artifact(artifact_id: ArtifactId) -> bytes:
+        return await artifact_bytes(
+            artifact_id,
+            expected_mime_type="image/jpeg",
         )
 
     async def project_artifact_delivery(
@@ -874,21 +892,58 @@ def create_mcp_server(
             blocks,
         )
 
+    async def project_evidence_board(
+        board: EvidenceBoardResult,
+    ) -> tuple[EvidenceBoardResult, list[ImageContent | ResourceLink | TextContent]]:
+        blocks: list[ImageContent | ResourceLink | TextContent] = []
+        projected_pages = []
+        inline_budget = min(settings.mcp_max_resource_bytes, 4 * 1024 * 1024)
+        inlined_bytes = 0
+        for page in board.pages:
+            artifact = page.artifact.artifact
+            delivery, link = await project_artifact_delivery(
+                artifact,
+                title=f"VidXP evidence board page {page.page_number}",
+                description=(
+                    f"Evidence overview for media {page.media_id}; "
+                    f"{len(page.tile_ids)} tiles."
+                ),
+            )
+            projected_pages.append(
+                page.model_copy(
+                    update={
+                        "artifact": page.artifact.model_copy(
+                            update={
+                                "resource_uri": delivery.resource_uri,
+                                "delivery": delivery,
+                            }
+                        )
+                    }
+                )
+            )
+            if (
+                artifact.byte_size <= inline_budget - inlined_bytes
+                and artifact.byte_size <= settings.mcp_max_resource_bytes
+            ):
+                image_bytes = await artifact_bytes(
+                    artifact.artifact_id,
+                    expected_mime_type="image/jpeg",
+                )
+                blocks.append(
+                    ImageContent(
+                        data=base64.b64encode(image_bytes).decode(),
+                        mimeType="image/jpeg",
+                    )
+                )
+                inlined_bytes += artifact.byte_size
+            if link is not None:
+                blocks.append(link)
+        return board.model_copy(update={"pages": tuple(projected_pages)}), blocks
+
     def completed_evidence_result(
         source_job_id: JobId,
     ) -> FusedSearchResult | QueryAnswer:
-        source = context.jobs.get(source_job_id)
-        if (
-            source.state != JobState.succeeded
-            or source.result is None
-            or source.kind not in {JobKind.search, JobKind.query}
-        ):
-            raise ApplicationError(
-                "evidence_source_job_not_complete",
-                ErrorCategory.conflict,
-                "Evidence materialization requires a completed search or query job.",
-            )
-        return source.result.result
+        return require_completed_evidence_result(context.jobs.get(source_job_id))
 
     @server.tool(
         title="Inspect VidXP workspace",
@@ -1491,6 +1546,51 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Create evidence board",
+        description=(
+            "Compile ranked evidence from a completed search/query job into "
+            "media-separated annotated image pages. Use the returned tile map "
+            "to choose evidence IDs for exact frame or clip drill-down. Boards "
+            "use bounded pages and return next_start_rank when more remain."
+        ),
+        annotations=_READ_ONLY,
+        structured_output=True,
+    )
+    async def create_evidence_board(
+        source_job_id: JobId,
+        idempotency_key: IdempotencyKey,
+        evidence_ids: Annotated[
+            tuple[Sha256, ...] | None,
+            Field(max_length=200),
+        ] = None,
+        start_rank: Annotated[int, Field(ge=1, le=200)] = 1,
+    ) -> Job:
+        def submit(actor: Principal) -> Job:
+            source = completed_evidence_result(source_job_id)
+            prepared = _evidence_delivery(context).prepare_board_request(
+                source_job_id=source_job_id,
+                evidence_ids=evidence_ids,
+                start_rank=start_rank,
+                result=source,
+            )
+            return context.jobs.submit_evidence_board(
+                prepared,
+                job_id=scoped_job_id(
+                    principal=actor,
+                    transport="mcp",
+                    operation="evidence-board",
+                    idempotency_key=idempotency_key,
+                ),
+            )
+
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=submit,
+        )
+
+    @server.tool(
         title="Get artifact download",
         description=(
             "Return a native lazy MCP ResourceLink plus transport-authoritative "
@@ -1548,7 +1648,8 @@ def create_mcp_server(
         description=(
             "Poll a durable VidXP job and its typed result. Completed search "
             "and query jobs include ranked evidence frames/resources and any "
-            "requested ready clips in this same response."
+            "requested ready clips; completed evidence-board jobs include "
+            "annotated pages and their tile map in this same response."
         ),
         annotations=_READ_ONLY,
         structured_output=True,
@@ -1582,6 +1683,15 @@ def create_mcp_server(
                         )
                     }
                 )
+        elif (
+            job.state == JobState.succeeded
+            and job.result is not None
+            and job.kind == JobKind.evidence_board
+        ):
+            board, blocks = await project_evidence_board(job.result.result)
+            projected = job.model_copy(
+                update={"result": job.result.model_copy(update={"result": board})}
+            )
         if not blocks:
             blocks.append(
                 TextContent(

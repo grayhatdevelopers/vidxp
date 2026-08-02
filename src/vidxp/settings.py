@@ -163,6 +163,8 @@ class VidXPSettings(BaseSettings):
         gt=0,
         le=3600,
     )
+    evidence_board_tiles_per_page: int = Field(default=24, gt=0, le=48)
+    evidence_board_pages_per_job: int = Field(default=4, gt=0, le=16)
     http_bind_host: str = Field(default="127.0.0.1", min_length=1)
     http_port: int = Field(default=DEFAULT_HTTP_PORT, gt=0, le=65535)
     http_auth_mode: HttpAuthMode = HttpAuthMode.none

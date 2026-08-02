@@ -54,7 +54,7 @@ def artifact_binding(artifact: Artifact) -> ArtifactBinding:
         raise ApplicationError(
             "artifact_type_unsupported",
             ErrorCategory.validation,
-            "Only completed PNG, MP4, and Matroska artifacts can be delivered.",
+            "Only completed PNG, JPEG, MP4, and Matroska artifacts can be delivered.",
             details={"mime_type": artifact.mime_type},
         ) from exc
     return ArtifactBinding(

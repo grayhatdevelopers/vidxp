@@ -12,6 +12,8 @@ from pydantic import TypeAdapter, ValidationError
 from vidxp.application_models import (
     Artifact,
     ArtifactJobResult,
+    EvidenceBoardJobResult,
+    EvidenceBoardResult,
     ErrorDetail,
     ErrorCategory,
     IndexJobResult,
@@ -414,6 +416,10 @@ class DBOSJobBackend:
                 result = ArtifactJobResult(
                     kind=kind,
                     result=Artifact.model_validate(status.output),
+                )
+            elif kind == JobKind.evidence_board:
+                result = EvidenceBoardJobResult(
+                    result=EvidenceBoardResult.model_validate(status.output)
                 )
             else:
                 result = PrepareModelsJobResult(

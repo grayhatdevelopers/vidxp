@@ -32,6 +32,7 @@ from vidxp.evidence_delivery import (
     EvidenceDeliveryService,
     resolve_evidence_range,
 )
+from vidxp.evidence_board import EvidenceBoardService
 from vidxp.artifact_service import ArtifactService
 from vidxp.execution import ExecutionContext
 from vidxp.infrastructure.local_artifacts import FFmpegFrameRenderer
@@ -41,6 +42,7 @@ from vidxp.infrastructure.local_artifacts import (
 )
 from vidxp.infrastructure.local_catalog import LocalCatalog
 from vidxp.infrastructure.local_media import FFprobeMediaProbe, LocalMediaStore
+from vidxp.infrastructure.pillow_board import PillowEvidenceBoardRenderer
 from vidxp.media_service import MediaService
 from vidxp.search_fusion import fuse_search_results
 from vidxp.settings import VidXPSettings
@@ -511,6 +513,7 @@ class ExactFrameRendererTests(unittest.TestCase):
                 actor_renderer=Mock(),
                 snippet_renderer=FFmpegSnippetRenderer(),
                 frame_renderer=FFmpegFrameRenderer(),
+                evidence_board_renderer=PillowEvidenceBoardRenderer(),
                 max_snippet_duration_seconds=5,
             )
             delivery_service = EvidenceDeliveryService(
@@ -578,6 +581,35 @@ class ExactFrameRendererTests(unittest.TestCase):
                 frame.artifact_id,
             )
             self.assertEqual(repeated_item.clip.artifact.artifact_id, clip.artifact_id)
+
+            board_request = delivery_service.prepare_board_request(
+                source_job_id=JOB_ID,
+                evidence_ids=None,
+                start_rank=1,
+                result=search,
+            )
+            boards = EvidenceBoardService(
+                artifacts=artifacts,
+                media=media,
+                settings=settings,
+            )
+            board = boards.create(
+                board_request,
+                execution=ExecutionContext(job_id="523456781234423481234567890abcde"),
+            )
+            repeated_board = boards.create(
+                board_request,
+                execution=ExecutionContext(job_id="523456781234423481234567890abcde"),
+            )
+            page = board.pages[0].artifact.artifact
+            page_content = artifacts.content(page.artifact_id)
+
+            self.assertEqual(page.mime_type, "image/jpeg")
+            self.assertEqual(page_content.path.read_bytes()[:2], b"\xff\xd8")
+            self.assertEqual(
+                repeated_board.pages[0].artifact.artifact.artifact_id,
+                page.artifact_id,
+            )
 
 
 if __name__ == "__main__":

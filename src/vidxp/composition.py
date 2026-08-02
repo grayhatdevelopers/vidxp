@@ -37,6 +37,7 @@ from vidxp.infrastructure.local_artifacts import (
     LocalActorRenderer,
     LocalArtifactStore,
 )
+from vidxp.infrastructure.pillow_board import PillowEvidenceBoardRenderer
 from vidxp.infrastructure.local_catalog import LocalCatalog
 from vidxp.infrastructure.sql_catalog import SQLCatalog
 from vidxp.infrastructure.sql_snapshots import SQLSnapshotRepository
@@ -293,6 +294,7 @@ def _create_artifact_service(
         actor_renderer=LocalActorRenderer(),
         snippet_renderer=FFmpegSnippetRenderer(settings.ffmpeg_executable),
         frame_renderer=FFmpegFrameRenderer(settings.ffmpeg_executable),
+        evidence_board_renderer=PillowEvidenceBoardRenderer(),
         max_snippet_duration_seconds=settings.max_snippet_duration_seconds,
     )
 

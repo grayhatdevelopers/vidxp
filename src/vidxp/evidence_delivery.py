@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
-from uuid import UUID
+import json
 
 from vidxp.application_models import (
     ApplicationError,
@@ -10,6 +9,8 @@ from vidxp.application_models import (
     ErrorCategory,
     ErrorDetail,
     EvidenceArtifact,
+    EvidenceBoardCandidate,
+    EvidenceBoardJobRequest,
     EvidenceDeliveryItem,
     EvidenceDeliveryMode,
     EvidenceDeliveryPolicy,
@@ -19,13 +20,35 @@ from vidxp.application_models import (
     EvidenceKeyframe,
     EvidenceRangeResolution,
     FusedSearchResult,
+    Job,
+    JobKind,
+    JobState,
     MomentEvidence,
     QueryAnswer,
 )
-from vidxp.artifact_service import ArtifactService
+from vidxp.artifact_service import (
+    ArtifactService,
+    deterministic_artifact_operation_id,
+)
 from vidxp.core.contracts import IndexCancelledError
 from vidxp.execution import ExecutionContext, execution_context
 from vidxp.media_service import MediaService
+
+
+def require_completed_evidence_result(
+    job: Job,
+) -> FusedSearchResult | QueryAnswer:
+    if (
+        job.state != JobState.succeeded
+        or job.result is None
+        or job.kind not in {JobKind.search, JobKind.query}
+    ):
+        raise ApplicationError(
+            "evidence_source_job_not_complete",
+            ErrorCategory.conflict,
+            "Evidence materialization requires a completed search or query job.",
+        )
+    return job.result.result
 
 
 def resolve_evidence_range(
@@ -105,29 +128,6 @@ def resolve_evidence_range(
     )
 
 
-@dataclass(frozen=True)
-class _Candidate:
-    evidence_id: str
-    rank: int
-    media_id: str
-    generation_id: str
-    modalities: tuple[str, ...]
-    start: float
-    end: float
-    representative: float
-    frame_index: int | None
-    frame_match: EvidenceFrameMatch
-    score: float | None
-    provenance: dict
-
-
-def _operation_id(job_id: str | None, evidence_id: str, kind: str) -> str:
-    digest = hashlib.sha256(
-        f"{job_id or 'direct'}\0{evidence_id}\0{kind}".encode()
-    ).digest()[:16]
-    return UUID(bytes=digest, version=4).hex
-
-
 def _failure(code: str, label: str, exc: BaseException) -> ErrorDetail:
     if isinstance(exc, ApplicationError):
         return exc.detail
@@ -159,8 +159,10 @@ class EvidenceDeliveryService:
         self.max_clip_duration_seconds = max_clip_duration_seconds
 
     @staticmethod
-    def _search_candidates(result: FusedSearchResult) -> tuple[_Candidate, ...]:
-        candidates: list[_Candidate] = []
+    def _search_candidates(
+        result: FusedSearchResult,
+    ) -> tuple[EvidenceBoardCandidate, ...]:
+        candidates: list[EvidenceBoardCandidate] = []
         for moment in result.moments:
             if moment.moment_id is None:
                 continue
@@ -175,7 +177,7 @@ class EvidenceDeliveryService:
                 else (selected.start + selected.end) / 2
             )
             candidates.append(
-                _Candidate(
+                EvidenceBoardCandidate(
                     evidence_id=moment.moment_id,
                     rank=moment.rank,
                     media_id=moment.media_id,
@@ -183,7 +185,7 @@ class EvidenceDeliveryService:
                     modalities=moment.modalities,
                     start=moment.start,
                     end=moment.end,
-                    representative=representative,
+                    representative_timestamp=representative,
                     frame_index=frame_index,
                     frame_match=(
                         EvidenceFrameMatch.exact_indexed_frame
@@ -191,6 +193,9 @@ class EvidenceDeliveryService:
                         else EvidenceFrameMatch.representative
                     ),
                     score=moment.score,
+                    display_text=EvidenceDeliveryService._display_text(
+                        selected.metadata
+                    ),
                     provenance={
                         "constituent_hits": [
                             {
@@ -208,8 +213,10 @@ class EvidenceDeliveryService:
         return tuple(candidates)
 
     @staticmethod
-    def _query_candidates(answer: QueryAnswer) -> tuple[_Candidate, ...]:
-        candidates: list[_Candidate] = []
+    def _query_candidates(
+        answer: QueryAnswer,
+    ) -> tuple[EvidenceBoardCandidate, ...]:
+        candidates: list[EvidenceBoardCandidate] = []
         for rank, evidence in enumerate(answer.evidence, start=1):
             if isinstance(evidence, MomentEvidence):
                 raw_index = evidence.hit.metadata.get("frame_index")
@@ -241,7 +248,7 @@ class EvidenceDeliveryService:
                     "identity_semantics": "anonymous_cluster",
                 }
             candidates.append(
-                _Candidate(
+                EvidenceBoardCandidate(
                     evidence_id=evidence.evidence_id,
                     rank=rank,
                     media_id=evidence.media_id,
@@ -249,7 +256,7 @@ class EvidenceDeliveryService:
                     modalities=(evidence.modality,),
                     start=evidence.start,
                     end=evidence.end,
-                    representative=representative,
+                    representative_timestamp=representative,
                     frame_index=frame_index,
                     frame_match=(
                         EvidenceFrameMatch.exact_indexed_frame
@@ -257,10 +264,90 @@ class EvidenceDeliveryService:
                         else EvidenceFrameMatch.representative
                     ),
                     score=score,
+                    display_text=evidence.display_text,
                     provenance=provenance,
                 )
             )
         return tuple(candidates)
+
+    @staticmethod
+    def _display_text(metadata: dict) -> str | None:
+        for key in ("display_text", "text", "transcript", "caption", "label"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:512]
+        return None
+
+    @classmethod
+    def candidates(
+        cls,
+        result: FusedSearchResult | QueryAnswer,
+    ) -> tuple[EvidenceBoardCandidate, ...]:
+        return (
+            cls._search_candidates(result)
+            if isinstance(result, FusedSearchResult)
+            else cls._query_candidates(result)
+        )
+
+    @classmethod
+    def prepare_board_request(
+        cls,
+        *,
+        source_job_id: str,
+        evidence_ids: tuple[str, ...] | None,
+        start_rank: int,
+        result: FusedSearchResult | QueryAnswer,
+    ) -> EvidenceBoardJobRequest:
+        candidates = cls.candidates(result)
+        by_id = {candidate.evidence_id: candidate for candidate in candidates}
+        if evidence_ids is None:
+            selected = tuple(
+                candidate
+                for candidate in candidates
+                if candidate.rank >= start_rank
+            )
+        else:
+            missing = tuple(
+                evidence_id
+                for evidence_id in evidence_ids
+                if evidence_id not in by_id
+            )
+            if missing:
+                raise ApplicationError(
+                    "evidence_not_in_source_job",
+                    ErrorCategory.not_found,
+                    "One or more evidence IDs do not belong to the completed source job.",
+                    details={"evidence_ids": list(missing)},
+                )
+            selected = tuple(
+                sorted(
+                    (
+                        by_id[evidence_id]
+                        for evidence_id in evidence_ids
+                        if by_id[evidence_id].rank >= start_rank
+                    ),
+                    key=lambda candidate: candidate.rank,
+                )
+            )
+        if not selected:
+            raise ApplicationError(
+                "evidence_board_empty",
+                ErrorCategory.validation,
+                "The requested source range contains no boardable evidence.",
+            )
+        source_payload = [candidate.model_dump(mode="json") for candidate in candidates]
+        source_fingerprint = hashlib.sha256(
+            json.dumps(
+                source_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        return EvidenceBoardJobRequest(
+            source_job_id=source_job_id,
+            source_fingerprint=source_fingerprint,
+            candidates=selected,
+        )
 
     def deliver_search(
         self,
@@ -296,11 +383,7 @@ class EvidenceDeliveryService:
     ) -> EvidenceDeliveryResult:
         """Materialize a bounded selection from a completed retrieval result."""
 
-        candidates = (
-            self._search_candidates(result)
-            if isinstance(result, FusedSearchResult)
-            else self._query_candidates(result)
-        )
+        candidates = self.candidates(result)
         by_id = {candidate.evidence_id: candidate for candidate in candidates}
         missing = tuple(item for item in evidence_ids if item not in by_id)
         if missing:
@@ -315,7 +398,7 @@ class EvidenceDeliveryService:
 
     def _deliver(
         self,
-        candidates: tuple[_Candidate, ...],
+        candidates: tuple[EvidenceBoardCandidate, ...],
         policy: EvidenceDeliveryPolicy,
         *,
         execution: ExecutionContext | None,
@@ -339,7 +422,7 @@ class EvidenceDeliveryService:
                 resolved = resolve_evidence_range(
                     source_start=candidate.start,
                     source_end=candidate.end,
-                    representative_timestamp=candidate.representative,
+                    representative_timestamp=candidate.representative_timestamp,
                     media_duration=media.duration_seconds,
                     padding_before=policy.padding_before_seconds,
                     padding_after=policy.padding_after_seconds,
@@ -380,7 +463,7 @@ class EvidenceDeliveryService:
                     frame_index=candidate.frame_index,
                     job_id=active.job_id,
                     execution=active,
-                    artifact_operation_id=_operation_id(
+                    artifact_operation_id=deterministic_artifact_operation_id(
                         active.job_id, candidate.evidence_id, "frame"
                     ),
                 )
@@ -415,7 +498,7 @@ class EvidenceDeliveryService:
                         ),
                         job_id=active.job_id,
                         execution=active,
-                        artifact_operation_id=_operation_id(
+                        artifact_operation_id=deterministic_artifact_operation_id(
                             active.job_id,
                             candidate.evidence_id,
                             f"clip:{policy.clip_profile.value}",
@@ -465,12 +548,8 @@ class EvidenceDeliveryService:
         *,
         padding_before: float,
         padding_after: float,
-    ) -> tuple[_Candidate, EvidenceRangeResolution]:
-        candidates = (
-            self._search_candidates(result)
-            if isinstance(result, FusedSearchResult)
-            else self._query_candidates(result)
-        )
+    ) -> tuple[EvidenceBoardCandidate, EvidenceRangeResolution]:
+        candidates = self.candidates(result)
         candidate = next(
             (item for item in candidates if item.evidence_id == evidence_id),
             None,
@@ -485,7 +564,7 @@ class EvidenceDeliveryService:
         return candidate, resolve_evidence_range(
             source_start=candidate.start,
             source_end=candidate.end,
-            representative_timestamp=candidate.representative,
+            representative_timestamp=candidate.representative_timestamp,
             media_duration=media.duration_seconds,
             padding_before=padding_before,
             padding_after=padding_after,

@@ -147,6 +147,8 @@ See the [Coolify guide](docs/deployment/coolify.md) for the complete setup.
 - Group recurring faces in a video and render a highlighted actor overlay.
 - Search one selected video or every video in the active library.
 - Open matching timestamps and export downloadable clips and overlays.
+- Review larger result sets as annotated evidence boards, then open the exact
+  frames or clips worth inspecting.
 - Retrieve completed clips through native MCP resources, local stdio paths, or
   short-lived resumable HTTPS downloads without embedding video bytes in tool JSON.
 - Keep personal, client, or project libraries separate.
@@ -194,6 +196,9 @@ agents can show the evidence behind an answer without making users translate raw
 timestamps. Evidence rendering is best-effort: a result can still be useful when
 an individual frame or clip cannot be produced. Agents can request additional
 ranked evidence in small batches without rerunning the search.
+For broader result sets, an agent can first show bounded evidence-board pages
+with a tile-to-evidence map, then fetch exact frames or clips only for the
+selected tiles.
 
 Remote agents can hand users a short-lived page for selecting and uploading
 multiple videos. Local agents can ingest approved filesystem paths without moving

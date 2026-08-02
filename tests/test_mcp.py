@@ -30,6 +30,12 @@ from vidxp.application_models import (
     ApplicationError,
     Artifact,
     EvidenceArtifact,
+    EvidenceBoardCandidate,
+    EvidenceBoardJobRequest,
+    EvidenceBoardJobResult,
+    EvidenceBoardPage,
+    EvidenceBoardResult,
+    EvidenceBoardTile,
     EvidenceDeliveryItem,
     EvidenceDeliveryResult,
     EvidenceDeliveryState,
@@ -114,6 +120,7 @@ MCP_TOOL_NAMES = [
     "create_clip",
     "create_evidence_clip",
     "materialize_job_evidence",
+    "create_evidence_board",
     "get_artifact_download",
     "list_jobs",
     "get_job",
@@ -1104,7 +1111,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         rendered = output.getvalue()
         self.assertIn("OK VidXP MCP", rendered)
         self.assertIn("Index state: missing", rendered)
-        self.assertIn("Tools: 21", rendered)
+        self.assertIn("Tools: 22", rendered)
         self.assertIn("get_index_status", rendered)
 
     async def test_server_info_exposes_vidxp_branding(self):
@@ -1673,6 +1680,170 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 call.args[2].mode,
                 EvidenceDeliveryMode.keyframes_and_clips,
+            )
+
+    async def test_create_evidence_board_submits_frozen_candidates(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            context = self.context(root)
+            frame = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                generation_id="523456781234423481234567890abcde",
+                job_id=JOB_ID,
+                kind=ArtifactKind.evidence_frame,
+                profile="png",
+                mime_type="image/png",
+                byte_size=1,
+                sha256="a" * 64,
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            source = search_evidence_job(frame)
+            candidate = EvidenceBoardCandidate(
+                evidence_id="e" * 64,
+                rank=1,
+                media_id=MEDIA_ID,
+                generation_id="523456781234423481234567890abcde",
+                modalities=("scene",),
+                start=1.0,
+                end=2.0,
+                representative_timestamp=1.4,
+                frame_index=7,
+                frame_match=EvidenceFrameMatch.exact_indexed_frame,
+            )
+            prepared = EvidenceBoardJobRequest(
+                source_job_id=JOB_ID,
+                source_fingerprint="f" * 64,
+                candidates=(candidate,),
+            )
+            delivery = Mock()
+            delivery.prepare_board_request.return_value = prepared
+            context = replace(context, evidence_delivery=delivery)
+            context.jobs.get.return_value = source
+            context.jobs.submit_evidence_board.return_value = queued_job().model_copy(
+                update={"kind": JobKind.evidence_board}
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.read"}),
+                ),
+            )
+
+            async with Client(server) as client:
+                result = await client.call_tool(
+                    "create_evidence_board",
+                    {
+                        "source_job_id": JOB_ID,
+                        "idempotency_key": "board-0001",
+                    },
+                )
+
+            self.assertFalse(result.is_error, result.content)
+            delivery.prepare_board_request.assert_called_once()
+            context.jobs.submit_evidence_board.assert_called_once_with(
+                prepared,
+                job_id=context.jobs.submit_evidence_board.call_args.kwargs["job_id"],
+            )
+
+    async def test_get_job_projects_and_inlines_evidence_board_pages(self):
+        try:
+            from PIL import Image
+        except ModuleNotFoundError:
+            self.skipTest("Pillow is unavailable in this test profile")
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            page_path = root / "board.jpg"
+            Image.new("RGB", (320, 286), "purple").save(page_path, format="JPEG")
+            page_bytes = page_path.read_bytes()
+            page_artifact = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                generation_id="523456781234423481234567890abcde",
+                job_id=JOB_ID,
+                kind=ArtifactKind.evidence_board,
+                profile="overview-jpeg-v1",
+                mime_type="image/jpeg",
+                byte_size=len(page_bytes),
+                sha256=hashlib.sha256(page_bytes).hexdigest(),
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            tile = EvidenceBoardTile(
+                tile_id="d" * 64,
+                evidence_id="e" * 64,
+                page_number=1,
+                position=1,
+                rank=1,
+                media_id=MEDIA_ID,
+                generation_id="523456781234423481234567890abcde",
+                modalities=("scene",),
+                start=1.0,
+                end=2.0,
+                representative_timestamp=1.4,
+                frame_match=EvidenceFrameMatch.representative,
+                state=EvidenceDeliveryState.ready,
+            )
+            board = EvidenceBoardResult(
+                source_job_id=JOB_ID,
+                source_fingerprint="f" * 64,
+                requested_count=1,
+                rendered_count=1,
+                failed_count=0,
+                pages=(
+                    EvidenceBoardPage(
+                        page_number=1,
+                        media_id=MEDIA_ID,
+                        generation_id="523456781234423481234567890abcde",
+                        artifact=EvidenceArtifact(artifact=page_artifact),
+                        width=320,
+                        height=286,
+                        columns=1,
+                        rows=1,
+                        tile_ids=(tile.tile_id,),
+                    ),
+                ),
+                tiles=(tile,),
+            )
+            context = self.context(root, mcp_stdio_filesystem_accessible=False)
+            context.jobs.get.return_value = Job(
+                job_id=JOB_ID,
+                kind=JobKind.evidence_board,
+                state=JobState.succeeded,
+                queue=JobQueue.cpu,
+                result=EvidenceBoardJobResult(result=board),
+            )
+            context.application.open_artifact_content.return_value = LocalFileResource(
+                path=page_path,
+                filename=f"evidence_board-{ARTIFACT_ID}.jpg",
+                mime_type="image/jpeg",
+                byte_size=len(page_bytes),
+                etag=page_artifact.sha256,
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.read"}),
+                ),
+            )
+
+            async with Client(server) as client:
+                result = await client.call_tool("get_job", {"job_id": JOB_ID})
+
+            self.assertFalse(result.is_error, result.content)
+            self.assertTrue(
+                any(isinstance(block, ImageContent) for block in result.content)
+            )
+            self.assertTrue(
+                any(isinstance(block, ResourceLink) for block in result.content)
+            )
+            projected = result.structured_content["result"]["result"]["pages"][0]
+            self.assertEqual(
+                projected["artifact"]["resource_uri"],
+                f"vidxp://artifacts/{ARTIFACT_ID}/content.jpg",
             )
 
     async def test_one_job_search_returns_frame_and_ready_clip(self):
@@ -2403,9 +2574,13 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 19)
+        self.assertEqual(len(discovered.tools), 20)
         self.assertNotIn(
             "create_media_upload",
+            {tool.name for tool in discovered.tools},
+        )
+        self.assertIn(
+            "create_evidence_board",
             {tool.name for tool in discovered.tools},
         )
         self.assertEqual(result.structured_content, {"items": []})

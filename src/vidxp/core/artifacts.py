@@ -40,6 +40,7 @@ class ArtifactRendererUnavailableError(RuntimeError):
 
 class ArtifactKind(StrEnum):
     actor_overlay = "actor_overlay"
+    evidence_board = "evidence_board"
     evidence_frame = "evidence_frame"
     snippet = "snippet"
 
@@ -51,6 +52,7 @@ def artifact_file_identity(
     mime_type: str,
 ) -> tuple[str, str]:
     extension = {
+        "image/jpeg": "jpg",
         "image/png": "png",
         "video/mp4": "mp4",
         "video/x-matroska": "mkv",
