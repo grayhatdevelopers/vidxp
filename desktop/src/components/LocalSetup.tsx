@@ -19,7 +19,7 @@ import {
   IconFolderOpen,
   IconRefresh,
 } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   activateLocalTarget,
@@ -43,7 +43,7 @@ interface CandidateState extends LocalTargetCandidate {
 }
 
 function candidatePath(candidate: LocalTargetCandidate): string {
-  return candidate.canonical_executable || candidate.executable;
+  return candidate.executable;
 }
 
 function candidateDisplayPath(candidate: LocalTargetCandidate): string {
@@ -62,16 +62,22 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
   const [displayName, setDisplayName] = useState('Local VidXP');
   const [busy, setBusy] = useState<'discover' | 'browse' | 'activate' | null>('discover');
   const [failure, setFailure] = useState<string | null>(null);
+  const candidateGeneration = useRef(new Map<string, number>());
 
   async function discover() {
     setBusy('discover');
     setFailure(null);
     try {
       const discovered = await discoverLocalTargets();
-      setCandidates((current) => discovered.map((candidate) => ({
-        ...candidate,
-        ...current.find((item) => candidatePath(item) === candidatePath(candidate)),
-      })));
+      setCandidates((current) => discovered.map((candidate) => {
+        const prior = current.find((item) => candidatePath(item) === candidatePath(candidate));
+        return {
+          ...candidate,
+          checking: prior?.checking,
+          inspection: prior?.inspection,
+          inspectionError: prior?.inspectionError,
+        };
+      }));
     } catch (error) {
       setFailure(errorMessage(error, 'VidXP discovery could not be completed.'));
     } finally {
@@ -84,6 +90,8 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
   }, []);
 
   async function checkCandidate(path: string) {
+    const generation = (candidateGeneration.current.get(path) ?? 0) + 1;
+    candidateGeneration.current.set(path, generation);
     setCandidates((current) => current.map((candidate) => (
       candidatePath(candidate) === path
         ? { ...candidate, checking: true, inspection: undefined, inspectionError: undefined }
@@ -91,12 +99,14 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
     )));
     try {
       const inspection = await inspectLocalTarget(path);
+      if (candidateGeneration.current.get(path) !== generation) return;
       setCandidates((current) => current.map((candidate) => (
         candidatePath(candidate) === path
           ? { ...candidate, checking: false, inspection, inspectionError: undefined }
           : candidate
       )));
     } catch (error) {
+      if (candidateGeneration.current.get(path) !== generation) return;
       const message = errorMessage(error, 'This executable could not be inspected.');
       setCandidates((current) => current.map((candidate) => (
         candidatePath(candidate) === path
@@ -134,13 +144,14 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
     setBusy('activate');
     setFailure(null);
     try {
-      await activateLocalTarget({
-        executable: inspection.validation.canonical_executable || inspection.executable,
-        displayName: displayName.trim() || undefined,
-      });
+      await activateLocalTarget(
+        inspection.validation.canonical_executable,
+        displayName.trim() || undefined,
+      );
       await onActivated();
     } catch (error) {
       setFailure(errorMessage(error, 'The inspected target could not be activated.'));
+    } finally {
       setBusy(null);
     }
   }
@@ -173,7 +184,7 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
                 const selected = selectedPath === path;
                 const inspection = candidate.inspection;
                 const validation = inspection?.validation;
-                const title = inspection?.reported_version ? `VidXP ${inspection.reported_version}` : candidate.display_name || 'VidXP executable';
+                const title = inspection?.reported_version ? `VidXP ${inspection.reported_version}` : 'VidXP executable';
                 const color = inspection?.state === 'ready_to_use' ? 'teal' : inspection?.state === 'update_required' ? 'yellow' : inspection?.state === 'cannot_start' || candidate.inspectionError ? 'red' : 'gray';
                 return (
                   <div className="candidateWrapper" key={path}>

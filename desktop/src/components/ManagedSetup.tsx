@@ -17,7 +17,6 @@ import {
   chooseModelDirectory,
   displayPath,
   errorMessage,
-  hideToTray,
   installMediaRuntime,
   installRuntime,
   launchUi,
@@ -30,11 +29,12 @@ import {
 } from '../tauri';
 
 interface ManagedSetupProps {
+  draftId: string;
   onBack: () => void;
   onReady: () => Promise<void>;
 }
 
-export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
+export function ManagedSetup({ draftId, onBack, onReady }: ManagedSetupProps) {
   const [manifest, setManifest] = useState<RuntimeManifest | null>(null);
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [capabilities, setCapabilities] = useState<string[]>([]);
@@ -120,7 +120,7 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
     setFailure(null);
     try {
       setMessage('Checking FFmpeg and required codecs…');
-      await installMediaRuntime();
+      await installMediaRuntime(draftId);
       setMessage(
         prepareModels
           ? 'Creating the managed runtime, verifying cached models, and downloading anything missing…'
@@ -131,6 +131,7 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
         surfaces,
         prepare_models: prepareModels,
         model_directory: modelDirectory || undefined,
+        draft_id: draftId,
       });
       setModelDirectory(result.model_directory);
       await refreshInventory(result.model_directory);
@@ -138,10 +139,9 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
       setStatus(nextStatus);
       setMessage(result.prepared ? 'Runtime and selected models are ready.' : 'Runtime ready. Model downloads were deferred.');
       await onReady();
-      if (result.surfaces.includes('browser')) await launchUi();
-      else await hideToTray();
     } catch (error) {
-      setFailure(errorMessage(error, 'Managed setup failed. No active runtime was replaced.'));
+      setFailure(errorMessage(error, 'Managed setup failed. The previous target remains authoritative; any completed replacement runtime is retained for recovery.'));
+    } finally {
       setBusy(null);
     }
   }
@@ -153,8 +153,26 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
       await launchUi();
     } catch (error) {
       setFailure(errorMessage(error, 'VidXP could not be opened.'));
+    } finally {
       setBusy(null);
     }
+  }
+
+  const sameValues = (left: string[], right: string[]) =>
+    [...left].sort().join('\u0000') === [...right].sort().join('\u0000');
+  const dirty = Boolean(status?.ready) && (
+    !sameValues(capabilities, status?.capabilities ?? [])
+    || !sameValues(surfaces, status?.surfaces ?? [])
+    || modelDirectory !== status?.model_directory
+  );
+
+  function resetDraft() {
+    if (!status?.ready) return;
+    setCapabilities(status.capabilities);
+    setSurfaces(status.surfaces);
+    setModelDirectory(status.model_directory);
+    void refreshInventory(status.model_directory);
+    setFailure(null);
   }
 
   const isBusy = busy === 'load' || busy === 'folder' || busy === 'install' || busy === 'launch';
@@ -262,16 +280,22 @@ export function ManagedSetup({ onBack, onReady }: ManagedSetupProps) {
 
       {status?.state === 'ready' && (
         <div className="runtimeSummary">
-          <Text fw={700}>Existing managed runtime is ready</Text>
+          <Text fw={700}>Installed managed runtime</Text>
           <Text size="sm">VidXP {status.package_version} · Capabilities: {status.capabilities.join(', ') || 'none'} · Interfaces: {status.surfaces.join(', ') || 'processing only'}</Text>
           <Text size="sm" className="pathText">Models: {displayPath(status.model_directory)}</Text>
         </div>
       )}
 
+      {dirty && <Alert color="yellow" title="Update creates a replacement runtime">The installed runtime remains active while Desktop creates and validates this draft. It is replaced only after activation succeeds.</Alert>}
+
       <div className="managedFooter">
         <div className="statusRegion" role="status" aria-live="polite" aria-atomic="true">{isBusy && <Loader size="xs" />}{(isBusy || status?.ready) && message}</div>
         {status?.ready ? (
-          <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={busy === 'launch'} onClick={() => void launch()}>Open VidXP</Button>
+          <Group>
+            <Button variant="default" disabled={!dirty || isBusy} onClick={resetDraft}>Reset changes</Button>
+            <Button loading={busy === 'install'} disabled={!dirty || !manifest || busy === 'load'} onClick={() => void install()}>Apply update</Button>
+            <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={busy === 'launch'} disabled={dirty} onClick={() => void launch()}>Open VidXP</Button>
+          </Group>
         ) : (
           <Button loading={busy === 'install'} disabled={!manifest || busy === 'load'} onClick={() => void install()}>Configure VidXP</Button>
         )}

@@ -1,6 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { displayPath } from './tauri';
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke }));
+
+import {
+  beginManagedSetup,
+  displayPath,
+  installRuntime,
+  recheckTargetState,
+  targetSetupState,
+} from './tauri';
+
+beforeEach(() => invoke.mockReset());
 
 describe('displayPath', () => {
   it('prettifies extended Windows drive and UNC paths', () => {
@@ -23,5 +35,36 @@ describe('displayPath', () => {
     ];
 
     for (const path of paths) expect(displayPath(path)).toBe(path);
+  });
+});
+
+describe('desktop IPC adapter', () => {
+  const emptyState = { profiles: [], selected_profile_id: null, issues: [] };
+
+  it('uses distinct state read and revalidation commands', async () => {
+    invoke.mockResolvedValue(emptyState);
+
+    await expect(targetSetupState()).resolves.toEqual(emptyState);
+    await expect(recheckTargetState()).resolves.toEqual(emptyState);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'target_state');
+    expect(invoke).toHaveBeenNthCalledWith(2, 'refresh_target_state');
+  });
+
+  it('preserves the scoped managed draft and install request contracts', async () => {
+    const draft = { id: 'draft-1', previous_profile_id: 'profile-1' };
+    const request = {
+      capabilities: ['actor'],
+      surfaces: ['browser'],
+      prepare_models: false,
+      draft_id: draft.id,
+    };
+    invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce({ prepared: false });
+
+    await expect(beginManagedSetup()).resolves.toEqual(draft);
+    await installRuntime(request);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'begin_managed_setup');
+    expect(invoke).toHaveBeenNthCalledWith(2, 'install_runtime', { request });
   });
 });

@@ -8,22 +8,18 @@ const WINDOWS_EXTENDED_UNC_PREFIX = 'UNC\\';
 
 export function displayPath(path: string): string {
   if (!path.startsWith(WINDOWS_EXTENDED_PATH_PREFIX)) return path;
-
   const remainder = path.slice(WINDOWS_EXTENDED_PATH_PREFIX.length);
   if (/^[a-z]:\\/i.test(remainder)) return remainder;
   if (remainder.slice(0, WINDOWS_EXTENDED_UNC_PREFIX.length).toUpperCase() === WINDOWS_EXTENDED_UNC_PREFIX) {
-    const uncPath = remainder.slice(WINDOWS_EXTENDED_UNC_PREFIX.length);
-    const [server, share] = uncPath.split('\\');
-    if (server && share) return `\\\\${uncPath}`;
+    const [server, share] = remainder.slice(WINDOWS_EXTENDED_UNC_PREFIX.length).split('\\');
+    if (server && share) return `\\\\${remainder.slice(WINDOWS_EXTENDED_UNC_PREFIX.length)}`;
   }
   return path;
 }
 
 export interface TargetError {
-  code?: string;
-  message?: string;
-  detail?: string;
-  action?: string;
+  code: string;
+  message: string;
 }
 
 export interface FrontendCapability {
@@ -35,89 +31,20 @@ export interface FrontendCapability {
   remediation: string;
 }
 
-export interface TargetProfile {
+interface RuntimeIdentity {
+  python_executable: string;
+  python_version: string;
+  implementation: string;
+  prefix: string;
+  base_prefix: string;
+}
+
+interface WireTargetProfile {
   id: string;
   display_name: string;
   schema_version: number;
   kind: TargetKind;
   lifecycle_ownership: LifecycleOwnership;
-  executable?: string | null;
-  canonical_executable?: string | null;
-  display_executable?: string | null;
-  data_root?: string | null;
-  display_data_root?: string | null;
-  repository_root?: string | null;
-  display_repository_root?: string | null;
-  model_directory?: string | null;
-  display_model_directory?: string | null;
-  vidxp_version?: string | null;
-  probe_version?: string | number | null;
-  compatibility_version?: string | number | null;
-  launch_protocol_version?: string | number | null;
-  last_validated_at?: string | null;
-  validation_error?: TargetError | null;
-  can_launch_frontend?: boolean | null;
-  frontend?: FrontendCapability | null;
-}
-
-export interface TargetSetupState {
-  profiles: TargetProfile[];
-  selected_profile_id?: string | null;
-  selected_profile?: TargetProfile | null;
-  selected_profile_error?: TargetError | null;
-  notice?: string | null;
-  issues?: TargetError[];
-}
-
-export interface LocalTargetCandidate {
-  executable: string;
-  canonical_executable?: string | null;
-  display_path?: string | null;
-  display_name?: string | null;
-  source?: string | null;
-}
-
-export interface LocalTargetValidation {
-  compatible?: boolean;
-  status?: 'compatible' | 'incompatible';
-  canonical_executable?: string | null;
-  executable?: string | null;
-  executable_identity?: string | null;
-  display_executable?: string | null;
-  vidxp_version?: string | null;
-  protocol_version?: string | number | null;
-  probe_version?: string | number | null;
-  launch_protocol_version?: string | number | null;
-  python_executable?: string | null;
-  display_python_executable?: string | null;
-  python_version?: string | null;
-  data_root?: string | null;
-  display_data_root?: string | null;
-  can_launch_frontend?: boolean | null;
-  frontend?: FrontendCapability | null;
-  error?: TargetError | null;
-  warnings?: string[];
-}
-
-export interface LocalTargetInspection {
-  state: 'ready_to_use' | 'update_required' | 'cannot_start';
-  adoptable: boolean;
-  executable: string;
-  reported_version?: string | null;
-  probe_compatible: boolean;
-  launch_compatible: boolean;
-  validation?: LocalTargetValidation | null;
-  message: string;
-  remediation: string;
-  technical_details?: string | null;
-}
-
-interface RustRuntimeIdentity {
-  python_executable: string;
-  python_version: string;
-}
-
-interface RustTargetProfile extends Omit<TargetProfile, 'vidxp_version' | 'probe_version' | 'last_validated_at'> {
   executable: string;
   data_root: string;
   repository_root: string;
@@ -125,40 +52,80 @@ interface RustTargetProfile extends Omit<TargetProfile, 'vidxp_version' | 'probe
   probe_schema_version: number;
   probe_protocol_version: number;
   launch_protocol_version: number;
-  runtime?: RustRuntimeIdentity | null;
-  frontend?: FrontendCapability | null;
-  last_successful_validation_at?: number | null;
+  runtime: RuntimeIdentity | null;
+  frontend: FrontendCapability;
+  last_successful_validation_at: number | null;
+  validation_error: TargetError | null;
+  managed_runtime_profile?: string;
+  capabilities: string[];
+  surfaces: string[];
+  model_directory?: string;
 }
 
-interface RustTargetState {
-  profiles: RustTargetProfile[];
-  selected_profile_id?: string | null;
-  issues?: TargetError[];
+interface WireTargetState {
+  profiles: WireTargetProfile[];
+  selected_profile_id: string | null;
+  issues: TargetError[];
 }
 
-interface RustValidatedTarget {
+export interface TargetProfile extends WireTargetProfile {
+  display_executable: string;
+  display_data_root: string;
+  display_repository_root: string;
+  display_model_directory?: string;
+  last_validated_at: string | null;
+}
+
+export interface TargetSetupState {
+  profiles: TargetProfile[];
+  selected_profile_id: string | null;
+  issues: TargetError[];
+}
+
+export interface LocalTargetCandidate {
+  executable: string;
+  display_path: string;
+  source: string;
+}
+
+interface WireValidatedTarget {
   executable: string;
   product_version: string;
   probe_schema_version: number;
   probe_protocol_version: number;
   launch_protocol_version: number;
-  runtime: RustRuntimeIdentity;
+  runtime: RuntimeIdentity;
   data_root: string;
+  repository_root: string;
   frontend: FrontendCapability;
   validated_at: number;
 }
 
-interface RustTargetInspection {
-  state: LocalTargetInspection['state'];
+interface WireTargetInspection {
+  state: 'ready_to_use' | 'update_required' | 'cannot_start';
   adoptable: boolean;
   executable: string;
-  reported_version?: string | null;
+  reported_version: string | null;
   probe_compatible: boolean;
   launch_compatible: boolean;
-  validated?: RustValidatedTarget | null;
+  validated: WireValidatedTarget | null;
   message: string;
   remediation: string;
-  technical_details?: string | null;
+  technical_details: string | null;
+}
+
+export interface LocalTargetValidation {
+  canonical_executable: string;
+  protocol_version: number;
+  launch_protocol_version: number;
+  python_version: string;
+  display_data_root: string;
+  can_launch_frontend: boolean;
+  frontend: FrontendCapability;
+}
+
+export interface LocalTargetInspection extends Omit<WireTargetInspection, 'validated'> {
+  validation: LocalTargetValidation | null;
 }
 
 export interface CapabilitySpec {
@@ -190,22 +157,22 @@ export interface RuntimeStatus {
   detail: string;
 }
 
-export interface CachedModelEntry {
-  id: string;
-  label: string;
-}
-
 export interface ModelDirectoryInventory {
   directory: string;
   exists: boolean;
   readable: boolean;
   total_bytes: number;
   file_count: number;
-  recognized_models: CachedModelEntry[];
+  recognized_models: { id: string; label: string }[];
   empty: boolean;
   verification_required: boolean;
   truncated: boolean;
   detail: string;
+}
+
+export interface ManagedSetupDraft {
+  id: string;
+  previous_profile_id: string | null;
 }
 
 export interface InstallRuntimeRequest {
@@ -213,191 +180,121 @@ export interface InstallRuntimeRequest {
   surfaces: string[];
   prepare_models: boolean;
   model_directory?: string;
+  draft_id?: string;
 }
 
 export interface InstallRuntimeResult {
+  package_version: string;
   capabilities: string[];
   surfaces: string[];
   model_directory: string;
   prepared: boolean;
 }
 
-function normalizeProfile(profile: RustTargetProfile): TargetProfile {
+function normalizeProfile(profile: WireTargetProfile): TargetProfile {
   return {
     ...profile,
-    canonical_executable: profile.executable,
     display_executable: displayPath(profile.executable),
     display_data_root: displayPath(profile.data_root),
     display_repository_root: displayPath(profile.repository_root),
-    display_model_directory: profile.model_directory ? displayPath(profile.model_directory) : null,
-    vidxp_version: profile.observed_vidxp_version,
-    probe_version: profile.probe_protocol_version,
-    compatibility_version: profile.probe_schema_version,
-    launch_protocol_version: profile.launch_protocol_version,
+    display_model_directory: profile.model_directory ? displayPath(profile.model_directory) : undefined,
     last_validated_at: profile.last_successful_validation_at
       ? new Date(profile.last_successful_validation_at * 1000).toISOString()
       : null,
-    can_launch_frontend: profile.frontend?.launchable ?? null,
   };
 }
 
-function normalizeState(state: RustTargetState): TargetSetupState {
-  const profiles = state.profiles.map(normalizeProfile);
-  const selected = profiles.find((profile) => profile.id === state.selected_profile_id) ?? null;
-  return {
-    profiles,
-    selected_profile_id: state.selected_profile_id,
-    selected_profile: selected,
-    selected_profile_error: selected?.validation_error ?? null,
-    issues: state.issues ?? [],
-  };
+function normalizeState(state: WireTargetState): TargetSetupState {
+  return { ...state, profiles: state.profiles.map(normalizeProfile) };
 }
 
-export async function targetSetupState(): Promise<TargetSetupState> {
-  return normalizeState(await invoke<RustTargetState>('refresh_target_state'));
+export function targetSetupState(): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('target_state').then(normalizeState);
+}
+
+export function recheckTargetState(): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('refresh_target_state').then(normalizeState);
 }
 
 export async function discoverLocalTargets(): Promise<LocalTargetCandidate[]> {
-  const result = await invoke<LocalTargetCandidate[] | { candidates: LocalTargetCandidate[] }>(
-    'discover_local_targets',
-  );
-  const candidates = Array.isArray(result) ? result : result.candidates;
-  return candidates.map((candidate) => ({
-    ...candidate,
-    canonical_executable: candidate.canonical_executable || candidate.executable,
-    display_path: candidate.display_path || displayPath(candidate.executable),
-    source: candidate.source || 'PATH',
+  const candidates = await invoke<{ executable: string }[]>('discover_local_targets');
+  return candidates.map(({ executable }) => ({
+    executable,
+    display_path: displayPath(executable),
+    source: 'PATH',
   }));
 }
 
 export async function chooseLocalExecutable(): Promise<LocalTargetCandidate | null> {
-  const result = await invoke<string | LocalTargetCandidate | null>('choose_local_executable');
-  if (!result) return null;
-  const candidate = typeof result === 'string' ? { executable: result } : result;
-  return {
-    ...candidate,
-    canonical_executable: candidate.canonical_executable || candidate.executable,
-    display_path: candidate.display_path || displayPath(candidate.executable),
-    source: candidate.source || 'Selected file',
-  };
-}
-
-export function validateLocalTarget(executable: string): Promise<LocalTargetValidation> {
-  return invoke<RustValidatedTarget>('validate_local_target', { executable }).then((result) => ({
-    compatible: true,
-    executable: result.executable,
-    canonical_executable: result.executable,
-    display_executable: displayPath(result.executable),
-    vidxp_version: result.product_version,
-    protocol_version: result.probe_protocol_version,
-    probe_version: result.probe_schema_version,
-    launch_protocol_version: result.launch_protocol_version,
-    python_executable: result.runtime.python_executable,
-    display_python_executable: displayPath(result.runtime.python_executable),
-    python_version: result.runtime.python_version,
-    data_root: result.data_root,
-    display_data_root: displayPath(result.data_root),
-    can_launch_frontend: result.frontend.launchable,
-    frontend: result.frontend,
-    warnings:
-      result.frontend.optional && !result.frontend.available ? [result.frontend.message] : undefined,
-  }));
-}
-
-function normalizeValidatedTarget(result: RustValidatedTarget): LocalTargetValidation {
-  return {
-    compatible: true,
-    executable: result.executable,
-    canonical_executable: result.executable,
-    display_executable: displayPath(result.executable),
-    vidxp_version: result.product_version,
-    protocol_version: result.probe_protocol_version,
-    probe_version: result.probe_schema_version,
-    launch_protocol_version: result.launch_protocol_version,
-    python_executable: result.runtime.python_executable,
-    display_python_executable: displayPath(result.runtime.python_executable),
-    python_version: result.runtime.python_version,
-    data_root: result.data_root,
-    display_data_root: displayPath(result.data_root),
-    can_launch_frontend: result.frontend.launchable,
-    frontend: result.frontend,
-    warnings:
-      result.frontend.optional && !result.frontend.available ? [result.frontend.message] : undefined,
-  };
+  const executable = await invoke<string | null>('choose_local_executable');
+  return executable
+    ? { executable, display_path: displayPath(executable), source: 'Selected file' }
+    : null;
 }
 
 export function inspectLocalTarget(executable: string): Promise<LocalTargetInspection> {
-  return invoke<RustTargetInspection>('inspect_local_target', { executable }).then((result) => ({
+  return invoke<WireTargetInspection>('inspect_local_target', { executable }).then((result) => ({
     ...result,
-    validation: result.validated ? normalizeValidatedTarget(result.validated) : null,
+    validation: result.validated
+      ? {
+          canonical_executable: result.validated.executable,
+          protocol_version: result.validated.probe_protocol_version,
+          launch_protocol_version: result.validated.launch_protocol_version,
+          python_version: result.validated.runtime.python_version,
+          display_data_root: displayPath(result.validated.data_root),
+          can_launch_frontend: result.validated.frontend.launchable,
+          frontend: result.validated.frontend,
+        }
+      : null,
   }));
 }
 
-export function activateLocalTarget(request: {
-  executable: string;
-  displayName?: string;
-  dataRoot?: string;
-}): Promise<TargetProfile | TargetSetupState> {
-  return invoke<RustTargetProfile>('adopt_local_target', {
-    executable: request.executable,
-    displayName: request.displayName || null,
+export function activateLocalTarget(executable: string, displayName?: string): Promise<TargetProfile> {
+  return invoke<WireTargetProfile>('adopt_local_target', {
+    executable,
+    displayName: displayName || null,
   }).then(normalizeProfile);
 }
 
-export function chooseManagedTarget(): Promise<TargetProfile | TargetSetupState> {
-  return invoke<RustTargetState>('begin_managed_setup').then(normalizeState);
+export function selectTargetProfile(profileId: string): Promise<TargetProfile> {
+  return invoke<WireTargetProfile>('select_target_profile', { profileId }).then(normalizeProfile);
 }
 
-export function runtimeManifest(): Promise<RuntimeManifest> {
-  return invoke('runtime_manifest');
+export function deleteTargetProfile(profileId: string): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('delete_target_profile', { profileId }).then(normalizeState);
 }
 
-export function runtimeStatus(): Promise<RuntimeStatus> {
-  return invoke('runtime_status');
+export function beginManagedSetup(): Promise<ManagedSetupDraft> {
+  return invoke('begin_managed_setup');
 }
 
+export function cancelManagedSetup(): Promise<void> {
+  return invoke('cancel_managed_setup');
+}
+
+export function runtimeManifest(): Promise<RuntimeManifest> { return invoke('runtime_manifest'); }
+export function runtimeStatus(): Promise<RuntimeStatus> { return invoke('runtime_status'); }
 export function modelDirectoryInventory(directory?: string): Promise<ModelDirectoryInventory> {
   return invoke('model_directory_inventory', { directory: directory || null });
 }
-
-export function chooseModelDirectory(): Promise<string | null> {
-  return invoke('choose_model_directory');
+export function chooseModelDirectory(): Promise<string | null> { return invoke('choose_model_directory'); }
+export function installMediaRuntime(draftId?: string): Promise<RuntimeStatus> {
+  return invoke('install_media_runtime', { draftId: draftId || null });
 }
-
-export function installMediaRuntime(): Promise<unknown> {
-  return invoke('install_media_runtime');
-}
-
 export function installRuntime(request: InstallRuntimeRequest): Promise<InstallRuntimeResult> {
   return invoke('install_runtime', { request });
 }
-
-export function launchUi(): Promise<void> {
-  return invoke('launch_ui');
-}
-
-export function hideToTray(): Promise<void> {
-  return invoke('hide_to_tray');
-}
+export function launchUi(): Promise<void> { return invoke('launch_ui'); }
 
 export function selectedProfile(state: TargetSetupState): TargetProfile | null {
-  if (state.selected_profile) {
-    return state.selected_profile;
-  }
   return state.profiles.find((profile) => profile.id === state.selected_profile_id) ?? null;
 }
 
-export function isCompatible(validation: LocalTargetValidation): boolean {
-  return validation.compatible === true || validation.status === 'compatible';
-}
-
 export function errorMessage(error: unknown, fallback = 'Something went wrong.'): string {
-  if (typeof error === 'string') {
-    return error;
-  }
+  if (typeof error === 'string') return error;
   if (error && typeof error === 'object') {
-    const targetError = error as TargetError;
-    const message = targetError.message ?? targetError.detail ?? fallback;
+    const targetError = error as Partial<TargetError>;
+    const message = targetError.message ?? fallback;
     return targetError.code ? `${targetError.code} · ${message}` : message;
   }
   return fallback;
