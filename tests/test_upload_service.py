@@ -2189,7 +2189,7 @@ def test_expired_creation_persists_state_and_releases_quota(
     catalog.close()
 
 
-def test_split_tus_probe_keeps_incomplete_upload_without_quarantine(
+def test_split_tus_probe_expires_intent_but_retains_incomplete_tus_resource(
     tmp_path: Path,
 ) -> None:
     service, catalog, jobs = _service(tmp_path)
@@ -2223,10 +2223,18 @@ def test_split_tus_probe_keeps_incomplete_upload_without_quarantine(
     )
     result = service.reconcile()
 
-    assert result["expired"] == 0
+    assert result["expired"] == 1
+    assert result["cleaned"] == 0
     assert not api_quarantine.exists()
     stored = catalog.get_upload_intent(record.intent_id)
-    assert stored is not None and stored.state == UploadState.accepted
+    assert stored is not None and stored.state == UploadState.expired
+    assert stored.upload_id is None
+    assert catalog.cleanup_uploads() == ()
+    service.create_intent(
+        _command(),
+        principal=Principal(subject="owner"),
+        request_key="b" * 64,
+    )
     catalog.close()
 
 

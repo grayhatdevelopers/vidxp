@@ -412,8 +412,10 @@ The supported server topology uses tusd filestore on a named quarantine volume
 shared read-only with the hook service and worker. The API intentionally does not
 mount that volume: one centralized internal tusd `HEAD` probe supplies the
 authoritative upload length and offset for resume discovery and missed-finish
-recovery. Existing incomplete resources are retained; a missing expired resource
-may expire, and an unavailable tusd is never treated as absence.
+recovery. When an incomplete upload passes its intent lifetime, VidXP expires the
+application intent and releases its quota while retaining the external tus
+resource for explicit operator cleanup. A missing expired resource may expire,
+and an unavailable tusd is never treated as absence.
 Managed media and artifacts use the stack's named content volume. The whole
 deployment is single-node and one deployed stack is one repository boundary.
 Deployed clients upload directly to tusd; FastAPI does not proxy large video

@@ -1471,6 +1471,15 @@ class RemoteUploadService:
                             tus_probes[record.upload_id] = probe
                         if probe is not None:
                             self._validate_tus_probe(record, probe)
+                            # Expire VidXP's intent and release its reservation, but
+                            # leave the still-present tus resource for explicit
+                            # operator cleanup. Deleting it here would race a client
+                            # that resumed after the HEAD observation.
+                            self._expire_intent(
+                                record.intent_id,
+                                clear_upload_id=True,
+                            )
+                            expired += 1
                             continue
                         tus_upload_missing = True
                     elif (
@@ -1595,7 +1604,12 @@ class RemoteUploadService:
 
         self.catalog.with_upload_transaction(terminate)
 
-    def _expire_intent(self, intent_id: str) -> str | None:
+    def _expire_intent(
+        self,
+        intent_id: str,
+        *,
+        clear_upload_id: bool = False,
+    ) -> str | None:
         def expire(connection: Connection) -> str | None:
             record = self.catalog.get_upload_intent(
                 intent_id,
@@ -1612,8 +1626,9 @@ class RemoteUploadService:
                 intent_id,
                 state=UploadState.expired,
                 connection=connection,
+                clear_upload_id=clear_upload_id,
             )
-            return record.upload_id
+            return None if clear_upload_id else record.upload_id
 
         return self.catalog.with_upload_transaction(expire)
 
