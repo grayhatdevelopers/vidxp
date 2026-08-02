@@ -16,74 +16,91 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "upload_sessions",
-        sa.Column(
-            "transfer_backend",
-            sa.String(length=32),
-            nullable=False,
-            server_default="tus",
-        ),
-    )
-    op.add_column(
-        "upload_sessions",
-        sa.Column(
-            "index_after_import", sa.Boolean(), nullable=False, server_default=sa.true()
-        ),
-    )
-    op.add_column(
-        "upload_sessions",
-        sa.Column("index_modalities", sa.JSON(), nullable=False, server_default="[]"),
-    )
-    op.add_column(
+    with op.batch_alter_table("upload_sessions") as batch:
+        batch.add_column(
+            sa.Column(
+                "transfer_backend",
+                sa.String(length=32),
+                nullable=False,
+                server_default="tus",
+            )
+        )
+        batch.add_column(
+            sa.Column(
+                "index_after_import",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.true(),
+            )
+        )
+        batch.add_column(
+            sa.Column(
+                "index_modalities",
+                sa.JSON(),
+                nullable=False,
+                server_default="[]",
+            )
+        )
+    with op.batch_alter_table("upload_intents") as batch:
+        batch.add_column(
+            sa.Column(
+                "transfer_backend",
+                sa.String(length=32),
+                nullable=False,
+                server_default="tus",
+            )
+        )
+        batch.add_column(
+            sa.Column(
+                "index_after_import",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.true(),
+            )
+        )
+        batch.add_column(
+            sa.Column(
+                "index_modalities",
+                sa.JSON(),
+                nullable=False,
+                server_default="[]",
+            )
+        )
+        batch.add_column(
+            sa.Column("index_job_id", sa.String(length=36), nullable=True)
+        )
+        batch.add_column(sa.Column("source_path", sa.Text(), nullable=True))
+        batch.add_column(
+            sa.Column("content_sha256", sa.String(length=64), nullable=True)
+        )
+        batch.add_column(
+            sa.Column("failure_code", sa.String(length=128), nullable=True)
+        )
+        batch.add_column(
+            sa.Column("failure_message", sa.String(length=512), nullable=True)
+        )
+    op.create_index(
+        "uq_upload_intents_index_job_id",
         "upload_intents",
-        sa.Column(
-            "transfer_backend",
-            sa.String(length=32),
-            nullable=False,
-            server_default="tus",
-        ),
-    )
-    op.add_column(
-        "upload_intents",
-        sa.Column(
-            "index_after_import", sa.Boolean(), nullable=False, server_default=sa.true()
-        ),
-    )
-    op.add_column(
-        "upload_intents",
-        sa.Column("index_modalities", sa.JSON(), nullable=False, server_default="[]"),
-    )
-    op.add_column(
-        "upload_intents", sa.Column("index_job_id", sa.String(length=36), nullable=True)
-    )
-    op.add_column("upload_intents", sa.Column("source_path", sa.Text(), nullable=True))
-    op.add_column(
-        "upload_intents",
-        sa.Column("failure_code", sa.String(length=128), nullable=True),
-    )
-    op.add_column(
-        "upload_intents",
-        sa.Column("failure_message", sa.String(length=512), nullable=True),
-    )
-    op.create_unique_constraint(
-        "uq_upload_intents_index_job_id", "upload_intents", ["index_job_id"]
+        ["index_job_id"],
+        unique=True,
     )
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "uq_upload_intents_index_job_id", "upload_intents", type_="unique"
-    )
-    for name in (
-        "failure_message",
-        "failure_code",
-        "source_path",
-        "index_job_id",
-        "index_modalities",
-        "index_after_import",
-        "transfer_backend",
-    ):
-        op.drop_column("upload_intents", name)
-    for name in ("index_modalities", "index_after_import", "transfer_backend"):
-        op.drop_column("upload_sessions", name)
+    op.drop_index("uq_upload_intents_index_job_id", table_name="upload_intents")
+    with op.batch_alter_table("upload_intents") as batch:
+        for name in (
+            "failure_message",
+            "failure_code",
+            "content_sha256",
+            "source_path",
+            "index_job_id",
+            "index_modalities",
+            "index_after_import",
+            "transfer_backend",
+        ):
+            batch.drop_column(name)
+    with op.batch_alter_table("upload_sessions") as batch:
+        for name in ("index_modalities", "index_after_import", "transfer_backend"):
+            batch.drop_column(name)

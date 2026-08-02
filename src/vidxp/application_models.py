@@ -444,6 +444,8 @@ class MediaUploadStatus(ApplicationModel):
     index_after_import: bool = True
     index_modalities: tuple[str, ...] = ()
     error: ErrorDetail | None = None
+    terminal: bool = False
+    poll_after_seconds: int = Field(default=2, ge=0, le=60)
     status: str = Field(min_length=1, max_length=512)
     next_action: str = Field(min_length=1, max_length=1024)
 
@@ -526,6 +528,8 @@ class MediaUploadSessionStatus(ApplicationModel):
     searchable_file_count: NonNegativeInt = 0
     failed_file_count: NonNegativeInt
     items: tuple[MediaUploadStatus, ...] = ()
+    terminal: bool = False
+    poll_after_seconds: int = Field(default=2, ge=0, le=60)
     status: str = Field(min_length=1, max_length=512)
     next_action: str = Field(min_length=1, max_length=1024)
 
@@ -1368,9 +1372,28 @@ class Job(ApplicationModel):
     recovery_attempts: int = Field(default=0, ge=0)
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
+    terminal: bool
+    poll_after_seconds: int = Field(ge=0, le=60)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_poll_contract(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        state = JobState(payload.get("state"))
+        terminal = state not in {JobState.queued, JobState.running}
+        payload.setdefault("terminal", terminal)
+        payload.setdefault("poll_after_seconds", 0 if terminal else 1)
+        return payload
 
     @model_validator(mode="after")
     def _validate_terminal_payload(self) -> "Job":
+        terminal = self.state not in {JobState.queued, JobState.running}
+        if self.terminal != terminal:
+            raise ValueError("job terminality must match its state")
+        if self.poll_after_seconds != (0 if terminal else 1):
+            raise ValueError("job polling cadence must match its state")
         if self.state == JobState.succeeded:
             if self.result is None or self.error is not None:
                 raise ValueError("succeeded jobs require a result and no error")

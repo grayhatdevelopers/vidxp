@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event
 from pathlib import Path
 from datetime import timedelta
 from types import SimpleNamespace
@@ -26,8 +29,10 @@ from vidxp.core.uploads import UploadIntentRecord, UploadSessionState, UploadSta
 from vidxp.infrastructure.sql_catalog import SQLCatalog
 from vidxp.infrastructure.sql_tables import media as media_table
 from vidxp.infrastructure.sql_tables import upload_intents, upload_quota
+from vidxp.ingestion_coordinator import IngestionCoordinator
 from vidxp.settings import VidXPSettings
 from vidxp.upload_service import RemoteUploadService
+from vidxp import upload_service as upload_service_module
 
 
 class _Media:
@@ -87,6 +92,35 @@ class _RecoveringNativeJobs:
         )
 
 
+class _RestartingCoordinatorJobs:
+    def __init__(self) -> None:
+        self.jobs: dict[str, SimpleNamespace] = {}
+        self.index_crashes = True
+        self.import_submissions: list[str] = []
+        self.index_submissions: list[str] = []
+
+    def submit_local_media_import(self, _command, *, job_id: str):
+        self.import_submissions.append(job_id)
+        return self.jobs.setdefault(
+            job_id,
+            SimpleNamespace(job_id=job_id, state=JobState.queued, result=None),
+        )
+
+    def submit_index(self, _command, *, job_id: str):
+        if self.index_crashes:
+            raise RuntimeError("simulated process interruption")
+        self.index_submissions.append(job_id)
+        return self.jobs.setdefault(
+            job_id,
+            SimpleNamespace(job_id=job_id, state=JobState.queued, result=None),
+        )
+
+    def get(self, job_id: str):
+        try:
+            return self.jobs[job_id]
+        except KeyError as exc:
+            raise ResourceNotFoundError("job") from exc
+
 def test_native_multipart_import_submission_recovers_after_linking(
     tmp_path: Path,
 ) -> None:
@@ -118,29 +152,30 @@ def test_native_multipart_import_submission_recovers_after_linking(
         _file("native-01", size=20),
         session_token=browser.session_token,
     )
-    staged = tmp_path / "staged-upload"
+    settings.quarantine_root.mkdir(parents=True, exist_ok=True)
+    staged = settings.quarantine_root / "vidxp-upload-recovery.mp4"
     staged.write_bytes(b"x" * 20)
 
-    with pytest.raises(ApplicationError) as unavailable:
-        service.complete_multipart_file(
-            link.status.session_id,
-            authorization.status.intent_id,
-            staged_path=staged,
-            original_filename="sample.mp4",
-            declared_mime_type="video/mp4",
-            byte_size=20,
-            session_token=browser.session_token,
-        )
-
-    assert unavailable.value.detail.code == "job_backend_unavailable"
+    accepted = service.complete_multipart_file(
+        link.status.session_id,
+        authorization.status.intent_id,
+        staged_path=staged,
+        original_filename="sample.mp4",
+        declared_mime_type="video/mp4",
+        byte_size=20,
+        session_token=browser.session_token,
+    )
+    assert accepted.items[0].phase == "uploaded"
+    service.coordinator.run_once()
     stored = catalog.get_upload_intent(authorization.status.intent_id)
     assert stored is not None
     assert stored.state == UploadState.processing
     assert stored.job_id is not None
-    assert jobs.submissions == [(stored.intent_id, stored.job_id)]
-    assert (settings.quarantine_root / stored.intent_id).is_file()
+    assert jobs.submissions == [(stored.upload_id, stored.job_id)]
+    assert (settings.quarantine_root / (stored.upload_id or "")).is_file()
 
     jobs.available = True
+    service.coordinator.run_once()
     recovered = service.get_status(
         link.status.session_id,
         principal=Principal(subject="owner", client_id="mcp-client"),
@@ -148,10 +183,89 @@ def test_native_multipart_import_submission_recovers_after_linking(
 
     assert recovered.items[0].phase == "importing"
     assert jobs.submissions == [
-        (stored.intent_id, stored.job_id),
-        (stored.intent_id, stored.job_id),
+        (stored.upload_id, stored.job_id),
+        (stored.upload_id, stored.job_id),
     ]
     assert jobs.submitted is True
+    catalog.close()
+
+
+def test_concurrent_multipart_attempt_cannot_replace_winning_bytes(
+    tmp_path: Path,
+) -> None:
+    catalog = SQLCatalog(
+        f"sqlite:///{(tmp_path / 'race.sqlite3').resolve().as_posix()}",
+        initialize=True,
+    )
+    settings = VidXPSettings(
+        repository_root=tmp_path,
+        upload_handoff_public_url="http://127.0.0.1:8765/upload-handoff",
+        upload_handoff_secret="h" * 32,
+        upload_max_bytes=100,
+        upload_quota_bytes=100,
+        upload_session_max_files=2,
+        upload_session_max_bytes=100,
+        max_local_import_bytes=100,
+        http_max_small_upload_bytes=100,
+    )
+    jobs = _RecoveringNativeJobs()
+    service = RemoteUploadService(
+        settings=settings,
+        catalog=catalog,
+        media=_Media(),
+        jobs=jobs,
+    )
+    link, browser = _open_session(service)
+    authorization = service.authorize_session_file(
+        link.status.session_id,
+        _file("race-01", size=20),
+        session_token=browser.session_token,
+    )
+    settings.quarantine_root.mkdir(parents=True, exist_ok=True)
+    winner = settings.quarantine_root / "vidxp-upload-winner.mp4"
+    loser = settings.quarantine_root / "vidxp-upload-loser.mp4"
+    winner.write_bytes(b"a" * 20)
+    loser.write_bytes(b"b" * 20)
+    both_hashed = Barrier(2)
+    winner_committed = Event()
+    real_sha256 = upload_service_module._file_sha256
+
+    def ordered_sha256(path: Path) -> str:
+        digest = real_sha256(path)
+        both_hashed.wait(timeout=5)
+        if path.name == loser.name:
+            assert winner_committed.wait(timeout=5)
+        return digest
+
+    def submit(path: Path):
+        result = service.complete_multipart_file(
+            link.status.session_id,
+            authorization.status.intent_id,
+            staged_path=path,
+            original_filename="sample.mp4",
+            declared_mime_type="video/mp4",
+            byte_size=20,
+            session_token=browser.session_token,
+        )
+        if path.name == winner.name:
+            winner_committed.set()
+        return result
+
+    with patch.object(upload_service_module, "_file_sha256", ordered_sha256):
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            winner_result = executor.submit(submit, winner)
+            loser_result = executor.submit(submit, loser)
+            assert winner_result.result(timeout=10).items[0].phase == "uploaded"
+            assert loser_result.result(timeout=10).items[0].phase == "uploaded"
+
+    stored = catalog.get_upload_intent(authorization.status.intent_id)
+    assert stored is not None
+    assert stored.upload_id == winner.name
+    assert stored.content_sha256 == hashlib.sha256(b"a" * 20).hexdigest()
+    assert winner.read_bytes() == b"a" * 20
+    assert not loser.exists()
+    service.coordinator.run_once()
+    assert jobs.submissions[0][0] == winner.name
     catalog.close()
 
 
@@ -162,6 +276,7 @@ def _service(
     maximum_file_bytes: int = 100,
     maximum_files: int = 3,
     maximum_session_bytes: int = 200,
+    authenticated: bool = False,
 ) -> tuple[RemoteUploadService, SQLCatalog, _Jobs]:
     catalog = SQLCatalog(
         f"sqlite:///{(root / 'server.sqlite3').resolve().as_posix()}",
@@ -180,6 +295,8 @@ def _service(
         upload_quota_bytes=quota,
         upload_session_max_files=maximum_files,
         upload_session_max_bytes=maximum_session_bytes,
+        http_auth_mode="static" if authenticated else "none",
+        http_static_bearer_token="s" * 32 if authenticated else None,
     )
     return (
         RemoteUploadService(
@@ -293,6 +410,227 @@ def _open_session(service: RemoteUploadService, request_key: str = "a" * 64):
         capability=link.capability,
     )
     return link, browser
+
+
+def test_local_ingestion_batch_rolls_back_and_replays_after_database_failure(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.mp4"
+    second = tmp_path / "second.mp4"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    catalog = SQLCatalog(
+        f"sqlite:///{(tmp_path / 'local-batch.sqlite3').resolve().as_posix()}",
+        initialize=True,
+    )
+    settings = VidXPSettings(
+        repository_root=tmp_path,
+        trusted_local_import_roots=(tmp_path,),
+        max_local_import_bytes=100,
+        upload_max_bytes=100,
+        upload_session_max_bytes=200,
+    )
+    service = RemoteUploadService(
+        settings=settings,
+        catalog=catalog,
+        media=SimpleNamespace(resolve_local_source=lambda path: path.resolve()),
+        jobs=_RecoveringNativeJobs(),
+    )
+    request_key = "e" * 64
+    original = catalog.create_upload_session_file
+    calls = 0
+
+    def fail_second(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise IntegrityError("injected", {}, RuntimeError("database failure"))
+        return original(*args, **kwargs)
+
+    with patch.object(
+        catalog,
+        "create_upload_session_file",
+        side_effect=fail_second,
+    ):
+        with pytest.raises(IntegrityError):
+            service.create_local_ingestion(
+                (str(first), str(second)),
+                principal=Principal(subject="local", client_id="stdio"),
+                request_key=request_key,
+                index_after_import=False,
+            )
+
+    assert catalog.get_upload_session_by_request(request_key) is None
+    with catalog.engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(upload_intents)) == 0
+        assert connection.scalar(select(func.count()).select_from(upload_quota)) == 0
+
+    replay = service.create_local_ingestion(
+        (str(first), str(second)),
+        principal=Principal(subject="local", client_id="stdio"),
+        request_key=request_key,
+        index_after_import=False,
+    )
+    assert replay.file_count == 2
+    assert [item.original_filename for item in replay.items] == [
+        first.name,
+        second.name,
+    ]
+    assert catalog.get_upload_session_by_request(request_key) is not None
+    catalog.close()
+
+
+def test_authenticated_status_and_close_require_initiating_principal(
+    tmp_path: Path,
+) -> None:
+    service, catalog, _jobs = _service(tmp_path, authenticated=True)
+    owner = Principal(subject="owner", client_id="client-a")
+    link = service.create_upload_session(
+        principal=owner,
+        request_key="c" * 64,
+    )
+
+    assert service.get_status(link.status.session_id, principal=owner).session_id == (
+        link.status.session_id
+    )
+    for outsider in (
+        Principal(subject="other", client_id="client-a"),
+        Principal(subject="owner", client_id="client-b"),
+    ):
+        with pytest.raises(ApplicationError) as hidden:
+            service.get_status(link.status.session_id, principal=outsider)
+        assert hidden.value.detail.code == "resource_not_found"
+        with pytest.raises(ApplicationError) as close_hidden:
+            service.close_upload_session(
+                link.status.session_id,
+                principal=outsider,
+            )
+        assert close_hidden.value.detail.code == "resource_not_found"
+
+    closed = service.close_upload_session(link.status.session_id, principal=owner)
+    assert closed.session_state == UploadSessionState.closed
+    catalog.close()
+
+
+def test_status_projection_never_opens_write_transaction_or_submits_jobs(
+    tmp_path: Path,
+) -> None:
+    service, catalog, jobs = _service(tmp_path)
+    link = service.create_upload_session(
+        principal=Principal(subject="owner"),
+        request_key="d" * 64,
+    )
+    with patch.object(
+        catalog,
+        "with_upload_transaction",
+        side_effect=AssertionError("status attempted a write"),
+    ):
+        status = service.get_status(
+            link.status.session_id,
+            principal=Principal(subject="owner"),
+        )
+
+    assert status.session_id == link.status.session_id
+    assert jobs.calls == []
+    catalog.close()
+
+
+def test_coordinator_recovers_import_and_pre_index_restart_without_status_polling(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "autonomous.mp4"
+    source.write_bytes(b"video")
+    catalog = SQLCatalog(
+        f"sqlite:///{(tmp_path / 'restart.sqlite3').resolve().as_posix()}",
+        initialize=True,
+    )
+    jobs = _RestartingCoordinatorJobs()
+    settings = VidXPSettings(
+        repository_root=tmp_path,
+        trusted_local_import_roots=(tmp_path,),
+        max_local_import_bytes=100,
+        upload_max_bytes=100,
+        upload_session_max_bytes=200,
+    )
+    service = RemoteUploadService(
+        settings=settings,
+        catalog=catalog,
+        media=SimpleNamespace(resolve_local_source=lambda path: path.resolve()),
+        jobs=jobs,
+    )
+    submitted = service.create_local_ingestion(
+        (str(source),),
+        principal=Principal(subject="local", client_id="stdio"),
+        request_key="f" * 64,
+        index_after_import=True,
+        index_modalities=("scene",),
+    )
+    intent_id = submitted.items[0].intent_id
+
+    first_process = IngestionCoordinator(
+        catalog=catalog,
+        jobs=jobs,
+        interval_seconds=1,
+    )
+    first_process.run_once()
+    importing = catalog.get_upload_intent(intent_id)
+    assert importing is not None
+    assert importing.state == UploadState.processing
+    assert importing.job_id is not None
+    assert jobs.import_submissions == [importing.job_id]
+
+    with catalog.engine.begin() as connection:
+        connection.execute(
+            insert(media_table).values(
+                media_id="123456781234423481234567890abcde",
+                sha256="9" * 64,
+                created_at=utc_now().isoformat(),
+                payload={},
+            )
+        )
+    jobs.jobs[importing.job_id] = SimpleNamespace(
+        job_id=importing.job_id,
+        state=JobState.succeeded,
+        result=SimpleNamespace(
+            result=SimpleNamespace(media_id="123456781234423481234567890abcde")
+        ),
+    )
+    crashed_process = IngestionCoordinator(
+        catalog=catalog,
+        jobs=jobs,
+        interval_seconds=1,
+    )
+    with pytest.raises(RuntimeError, match="simulated process interruption"):
+        crashed_process.advance(importing)
+    registered = catalog.get_upload_intent(intent_id)
+    assert registered is not None
+    assert registered.state == UploadState.ready
+    assert registered.index_job_id is None
+
+    jobs.index_crashes = False
+    restarted_process = IngestionCoordinator(
+        catalog=catalog,
+        jobs=jobs,
+        interval_seconds=1,
+    )
+    restarted_process.run_once()
+    indexing = catalog.get_upload_intent(intent_id)
+    assert indexing is not None and indexing.index_job_id is not None
+    assert jobs.index_submissions == [indexing.index_job_id]
+    jobs.jobs[indexing.index_job_id] = SimpleNamespace(
+        job_id=indexing.index_job_id,
+        state=JobState.succeeded,
+        result=SimpleNamespace(
+            result=SimpleNamespace(
+                generation_id="223456781234423481234567890abcde",
+                snapshot_id="323456781234423481234567890abcde",
+            )
+        ),
+    )
+    restarted_process.run_once()
+    indexed = catalog.get_upload_intent(intent_id)
+    assert indexed is not None and indexed.state == UploadState.indexed
+    catalog.close()
 
 
 def test_capability_tamper_expiry_and_replay(

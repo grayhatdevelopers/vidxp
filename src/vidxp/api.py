@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import logging
 from contextlib import asynccontextmanager
 from typing import Annotated, AsyncIterator
 
@@ -24,7 +22,7 @@ from vidxp.api_routes import create_api_router
 from vidxp.api_routes.dependencies import context
 from vidxp.composition import HttpApplicationContext, create_http_application
 from vidxp.mcp import MCPTransportSecurityBoundary, create_remote_mcp
-from vidxp.settings import ApplicationMode, VidXPSettings
+from vidxp.settings import VidXPSettings
 from vidxp.upload_page import router as upload_page_router
 from vidxp.artifact_download import router as artifact_download_router
 
@@ -37,7 +35,6 @@ _BEARER_SECURITY = HTTPBearer(
         "server middleware."
     ),
 )
-LOGGER = logging.getLogger(__name__)
 
 
 def create_app(
@@ -68,37 +65,17 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        recovery_task = None
-
-        async def recover_native_ingestion() -> None:
-            while True:
-                try:
-                    if active_context.uploads is not None:
-                        await asyncio.to_thread(active_context.uploads.reconcile)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    LOGGER.exception("Native ingestion recovery failed.")
-                await asyncio.sleep(active_settings.upload_recovery_interval_seconds)
-
         try:
-            active_context.jobs.start()
-            if (
-                active_settings.mode == ApplicationMode.local
-                and active_context.uploads is not None
-            ):
-                recovery_task = asyncio.create_task(recover_native_ingestion())
+            active_context.start()
             async with remote_mcp.server.session_manager.run():
                 yield
         finally:
-            if recovery_task is not None:
-                recovery_task.cancel()
-                try:
-                    await recovery_task
-                except asyncio.CancelledError:
-                    pass
             if owns_context:
                 active_context.close()
+            elif active_context.uploads is not None:
+                coordinator = getattr(active_context.uploads, "coordinator", None)
+                if coordinator is not None:
+                    coordinator.stop()
 
     publish_docs = active_settings.http_auth_mode.value == "none"
     app = FastAPI(

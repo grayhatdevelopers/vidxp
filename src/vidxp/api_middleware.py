@@ -25,6 +25,9 @@ _UPLOAD_HANDOFF_PAGE = re.compile(r"^/upload-handoff/[0-9a-f]{32}$")
 _UPLOAD_HANDOFF_STATUS = re.compile(r"^/upload-handoff/[0-9a-f]{32}/status$")
 _UPLOAD_HANDOFF_BOOTSTRAP = re.compile(r"^/upload-handoff/[0-9a-f]{32}/bootstrap$")
 _UPLOAD_SESSION_FILES = re.compile(r"^/upload-handoff/[0-9a-f]{32}/files$")
+_UPLOAD_SESSION_CONTENT = re.compile(
+    r"^/upload-handoff/[0-9a-f]{32}/files/[0-9a-f]{32}/content$"
+)
 _UPLOAD_SESSION_CANCEL = re.compile(
     r"^/upload-handoff/[0-9a-f]{32}/files/[0-9a-f]{32}/cancel$"
 )
@@ -67,6 +70,7 @@ def _public_upload_handoff_request(scope: Scope) -> bool:
         and (
             _UPLOAD_HANDOFF_BOOTSTRAP.fullmatch(path) is not None
             or _UPLOAD_SESSION_FILES.fullmatch(path) is not None
+            or _UPLOAD_SESSION_CONTENT.fullmatch(path) is not None
             or _UPLOAD_SESSION_CANCEL.fullmatch(path) is not None
             or _UPLOAD_SESSION_CLOSE.fullmatch(path) is not None
         )

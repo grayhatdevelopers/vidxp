@@ -124,16 +124,35 @@ class ControlPlaneContext:
     catalog: SQLCatalog | None = None
     uploads: RemoteUploadService | None = None
 
+    def start(self) -> None:
+        self.jobs.start()
+        coordinator = (
+            getattr(self.uploads, "coordinator", None)
+            if self.uploads is not None
+            else None
+        )
+        if coordinator is not None:
+            coordinator.start(self.uploads.reconcile)
+
     def close(self) -> None:
         try:
-            if self.settings.mode != ApplicationMode.server:
-                self.jobs.stop_worker()
+            coordinator = (
+                getattr(self.uploads, "coordinator", None)
+                if self.uploads is not None
+                else None
+            )
+            if coordinator is not None:
+                coordinator.stop()
         finally:
             try:
-                self.jobs.close()
+                if self.settings.mode != ApplicationMode.server:
+                    self.jobs.stop_worker()
             finally:
-                if self.catalog is not None:
-                    self.catalog.close()
+                try:
+                    self.jobs.close()
+                finally:
+                    if self.catalog is not None:
+                        self.catalog.close()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -151,9 +170,16 @@ class UploadHookContext:
     catalog: SQLCatalog
     uploads: RemoteUploadService
 
+    def start(self) -> None:
+        self.jobs.start()
+        self.uploads.coordinator.start(self.uploads.reconcile)
+
     def close(self) -> None:
-        self.jobs.close()
-        self.catalog.close()
+        try:
+            self.uploads.coordinator.stop()
+        finally:
+            self.jobs.close()
+            self.catalog.close()
 
 
 @dataclass(frozen=True)

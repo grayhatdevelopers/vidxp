@@ -28,6 +28,9 @@ from vidxp.upload_service import RemoteUploadService
 
 
 class _Jobs:
+    def start(self) -> None:
+        pass
+
     def enqueue_media_import_in_transaction(
         self,
         upload_id: str,

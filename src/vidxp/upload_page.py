@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from importlib.resources import files
 from typing import Annotated
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
 from starlette.datastructures import UploadFile
@@ -23,6 +21,7 @@ from vidxp.application_models import (
     UploadIntentId,
     UploadSessionId,
 )
+from vidxp.browser_capability import BrowserCapabilitySurface
 from vidxp.composition import HttpApplicationContext
 from vidxp.upload_service import RemoteUploadService, UploadBrowserSession
 
@@ -36,6 +35,21 @@ _ASSETS = {
 }
 
 
+def _surface(service: HttpApplicationContext) -> BrowserCapabilitySurface:
+    return BrowserCapabilitySurface(
+        public_url=service.settings.upload_handoff_public_url,
+        package_directory="upload_page",
+        assets=_ASSETS,
+        cookie_name=_SESSION_COOKIE,
+        unavailable_code="remote_upload_handoff_unavailable",
+        unavailable_message="Browser upload handoffs are not configured.",
+        forbidden_code="upload_handoff_origin_forbidden",
+        forbidden_message=(
+            "The upload handoff request must come from its VidXP page."
+        ),
+    )
+
+
 def _uploads(service: HttpApplicationContext) -> RemoteUploadService:
     if service.uploads is None:
         raise ApplicationError(
@@ -46,42 +60,11 @@ def _uploads(service: HttpApplicationContext) -> RemoteUploadService:
     return service.uploads
 
 
-def _asset(name: str) -> bytes:
-    if name not in _ASSETS:
-        raise ApplicationError(
-            "resource_not_found",
-            ErrorCategory.not_found,
-            "The requested upload-page asset was not found.",
-        )
-    return files("vidxp").joinpath("assets", "upload_page", name).read_bytes()
-
-
 def _require_same_origin(
     request: Request,
     service: HttpApplicationContext,
 ) -> None:
-    public_url = service.settings.upload_handoff_public_url
-    if public_url is None:
-        raise ApplicationError(
-            "remote_upload_handoff_unavailable",
-            ErrorCategory.unavailable,
-            "Browser upload handoffs are not configured.",
-        )
-    parsed = urlsplit(public_url)
-    expected = f"{parsed.scheme}://{parsed.netloc}"
-    if (
-        request.headers.get("origin") != expected
-        or request.headers.get(
-            "sec-fetch-site",
-            "same-origin",
-        )
-        != "same-origin"
-    ):
-        raise ApplicationError(
-            "upload_handoff_origin_forbidden",
-            ErrorCategory.authorization,
-            "The upload handoff request must come from its VidXP page.",
-        )
+    _surface(service).require_same_origin(request)
 
 
 def _session_response(
@@ -100,30 +83,29 @@ def _set_session_cookie(
     session: UploadBrowserSession,
     service: HttpApplicationContext,
 ) -> None:
-    response.set_cookie(
-        _SESSION_COOKIE,
-        session.session_token,
-        max_age=service.settings.upload_session_ttl_seconds,
-        expires=session.session_expires_at,
+    _surface(service).establish_session(
+        response,
+        token=session.session_token,
+        expires_at=session.session_expires_at,
         path=f"/upload-handoff/{session_id}",
-        secure=True,
-        httponly=True,
-        samesite="strict",
     )
 
 
 @router.get("/assets/{asset_name}", include_in_schema=False)
-def upload_page_asset(asset_name: str) -> Response:
-    return Response(content=_asset(asset_name), media_type=_ASSETS[asset_name])
+def upload_page_asset(
+    asset_name: str,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+) -> Response:
+    return _surface(service).asset(asset_name)
 
 
 @router.get("/{session_id}", include_in_schema=False)
-def upload_page(session_id: UploadSessionId) -> Response:
+def upload_page(
+    session_id: UploadSessionId,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+) -> Response:
     del session_id
-    content = (
-        files("vidxp").joinpath("assets", "upload_page", "index.html").read_bytes()
-    )
-    return Response(content=content, media_type="text/html; charset=utf-8")
+    return _surface(service).page()
 
 
 @router.post(
@@ -238,19 +220,16 @@ async def upload_multipart_file(
             maximum=service.settings.http_max_small_upload_bytes,
             directory=service.settings.quarantine_root,
         )
-        try:
-            return await asyncio.to_thread(
-                uploads.complete_multipart_file,
-                session_id,
-                intent_id,
-                staged_path=staged,
-                original_filename=upload.filename or "",
-                declared_mime_type=upload.content_type,
-                byte_size=staged.stat().st_size,
-                session_token=session_token,
-            )
-        finally:
-            staged.unlink(missing_ok=True)
+        return await asyncio.to_thread(
+            uploads.complete_multipart_file,
+            session_id,
+            intent_id,
+            staged_path=staged,
+            original_filename=upload.filename or "",
+            declared_mime_type=upload.content_type,
+            byte_size=staged.stat().st_size,
+            session_token=session_token,
+        )
 
 
 @router.post(

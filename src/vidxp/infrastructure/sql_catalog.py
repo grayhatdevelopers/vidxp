@@ -84,6 +84,7 @@ def _upload_record(row: Any) -> UploadIntentRecord:
         index_modalities=tuple(row.index_modalities or ()),
         index_job_id=row.index_job_id,
         source_path=row.source_path,
+        content_sha256=row.content_sha256,
         failure_code=row.failure_code,
         failure_message=row.failure_message,
     )
@@ -570,6 +571,7 @@ class SQLCatalog:
                 index_modalities=list(record.index_modalities),
                 index_job_id=record.index_job_id,
                 source_path=record.source_path,
+                content_sha256=record.content_sha256,
                 failure_code=record.failure_code,
                 failure_message=record.failure_message,
             )
@@ -580,29 +582,37 @@ class SQLCatalog:
         record: UploadSessionRecord,
     ) -> UploadSessionRecord:
         with self._write_transaction() as connection:
-            connection.execute(
-                insert(upload_sessions).values(
-                    session_id=record.session_id,
-                    request_key=record.request_key,
-                    selector=record.selector,
-                    capability_digest=record.capability_digest,
-                    initiating_subject=record.initiating_subject,
-                    initiating_client_id=record.initiating_client_id,
-                    repository_binding=record.repository_binding,
-                    purpose=record.purpose,
-                    state=record.state.value,
-                    maximum_files=record.maximum_files,
-                    maximum_file_bytes=record.maximum_file_bytes,
-                    maximum_aggregate_bytes=record.maximum_aggregate_bytes,
-                    created_at=record.created_at.isoformat(),
-                    expires_at=record.expires_at.isoformat(),
-                    browser_session_digest=record.browser_session_digest,
-                    transfer_backend=record.transfer_backend.value,
-                    index_after_import=record.index_after_import,
-                    index_modalities=list(record.index_modalities),
-                )
-            )
+            self.create_upload_session_in_transaction(record, connection=connection)
         return record
+
+    def create_upload_session_in_transaction(
+        self,
+        record: UploadSessionRecord,
+        *,
+        connection: Connection,
+    ) -> None:
+        connection.execute(
+            insert(upload_sessions).values(
+                session_id=record.session_id,
+                request_key=record.request_key,
+                selector=record.selector,
+                capability_digest=record.capability_digest,
+                initiating_subject=record.initiating_subject,
+                initiating_client_id=record.initiating_client_id,
+                repository_binding=record.repository_binding,
+                purpose=record.purpose,
+                state=record.state.value,
+                maximum_files=record.maximum_files,
+                maximum_file_bytes=record.maximum_file_bytes,
+                maximum_aggregate_bytes=record.maximum_aggregate_bytes,
+                created_at=record.created_at.isoformat(),
+                expires_at=record.expires_at.isoformat(),
+                browser_session_digest=record.browser_session_digest,
+                transfer_backend=record.transfer_backend.value,
+                index_after_import=record.index_after_import,
+                index_modalities=list(record.index_modalities),
+            )
+        )
 
     def get_upload_session_by_request(
         self,
@@ -932,6 +942,7 @@ class SQLCatalog:
         index_job_id: str | None = None,
         failure_code: str | None = None,
         failure_message: str | None = None,
+        content_sha256: str | None = None,
         clear_upload_id: bool = False,
         expected_states: set[UploadState] | None = None,
     ) -> bool:
@@ -965,6 +976,8 @@ class SQLCatalog:
             values["failure_code"] = failure_code
         if failure_message is not None:
             values["failure_message"] = failure_message
+        if content_sha256 is not None:
+            values["content_sha256"] = content_sha256
         result = connection.execute(
             update(upload_intents)
             .where(upload_intents.c.intent_id == intent_id)
@@ -1031,6 +1044,7 @@ class SQLCatalog:
                     upload_intents.c.state.in_(
                         (
                             UploadState.ready.value,
+                            UploadState.indexed.value,
                             UploadState.expired.value,
                         )
                     ),
@@ -1059,9 +1073,13 @@ class SQLCatalog:
                             )
                         ),
                         and_(
+                            upload_intents.c.state == UploadState.accepted.value,
+                            upload_intents.c.transfer_backend
+                            == UploadTransferBackend.multipart.value,
+                        ),
+                        and_(
                             upload_intents.c.state == UploadState.ready.value,
                             upload_intents.c.index_after_import.is_(True),
-                            upload_intents.c.index_job_id.is_(None),
                         ),
                     )
                 )

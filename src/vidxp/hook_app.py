@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
-import logging
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -16,7 +14,6 @@ from vidxp.infrastructure.tusd_contracts import (
 from vidxp.settings import VidXPSettings
 from vidxp.tusd_hooks import TusdHookService
 
-LOGGER = logging.getLogger(__name__)
 
 
 def create_hook_app(
@@ -31,30 +28,16 @@ def create_hook_app(
         authenticator=active_context.authenticator,
         authorization=active_context.authorization,
     )
-    recovery_task: asyncio.Task[None] | None = None
-
-    async def recover() -> None:
-        interval = active_context.settings.upload_recovery_interval_seconds
-        while True:
-            try:
-                await asyncio.to_thread(active_context.uploads.reconcile)
-            except Exception:
-                LOGGER.exception("The resumable-upload recovery sweep failed.")
-            await asyncio.sleep(interval)
-
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        nonlocal recovery_task
-        recovery_task = asyncio.create_task(recover())
+        active_context.start()
         try:
             yield
         finally:
-            recovery_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await recovery_task
-            recovery_task = None
             if owns_context:
                 active_context.close()
+            else:
+                active_context.uploads.coordinator.stop()
 
     app = FastAPI(
         title="VidXP tusd hooks",
@@ -67,8 +50,6 @@ def create_hook_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         try:
-            if recovery_task is None or recovery_task.done():
-                raise RuntimeError("The upload recovery task is not running.")
             active_context.catalog.health()
         except Exception as exc:
             raise HTTPException(

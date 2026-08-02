@@ -1,0 +1,328 @@
+from __future__ import annotations
+
+import hashlib
+import logging
+from pathlib import Path
+from threading import Event, Lock, Thread
+from typing import Any, Callable
+from uuid import UUID
+
+from sqlalchemy.engine import Connection
+
+from vidxp.application_models import (
+    ApplicationError,
+    CreateIndexCommand,
+    ErrorCategory,
+    ErrorDetail,
+    ImportMediaCommand,
+    JobState,
+)
+from vidxp.core.uploads import UploadIntentRecord, UploadState, UploadTransferBackend
+from vidxp.infrastructure.sql_catalog import SQLCatalog
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def derived_ingestion_job_id(intent_id: str, operation: str) -> str:
+    payload = bytearray(
+        hashlib.sha256(
+            f"vidxp-ingestion-v1\0{intent_id}\0{operation}".encode()
+        ).digest()[:16]
+    )
+    payload[6] = (payload[6] & 0x0F) | 0x40
+    payload[8] = (payload[8] & 0x3F) | 0x80
+    return UUID(bytes=bytes(payload)).hex
+
+
+class IngestionCoordinator:
+    """Sole owner of import-to-index transitions and deterministic recovery."""
+
+    def __init__(
+        self,
+        *,
+        catalog: SQLCatalog,
+        jobs: Any | None,
+        interval_seconds: float,
+    ) -> None:
+        self.catalog = catalog
+        self.jobs = jobs
+        self.interval_seconds = interval_seconds
+        self._wake = Event()
+        self._stop = Event()
+        self._lifecycle_lock = Lock()
+        self._thread: Thread | None = None
+        self._sweep: Callable[[], Any] | None = None
+
+    def start(self, sweep: Callable[[], Any]) -> None:
+        with self._lifecycle_lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._sweep = sweep
+            self._stop.clear()
+            self._wake.set()
+            self._thread = Thread(
+                target=self._run,
+                name="vidxp-ingestion-coordinator",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def stop(self) -> None:
+        with self._lifecycle_lock:
+            thread = self._thread
+            self._thread = None
+            self._stop.set()
+            self._wake.set()
+        if thread is not None:
+            thread.join(timeout=max(5.0, self.interval_seconds + 1.0))
+
+    def wake(self) -> None:
+        self._wake.set()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._wake.clear()
+            try:
+                if self._sweep is not None:
+                    self._sweep()
+            except Exception:
+                LOGGER.exception("The media-ingestion coordinator sweep failed.")
+            self._wake.wait(self.interval_seconds)
+
+    def run_once(self) -> dict[str, int]:
+        advanced = 0
+        errors = 0
+        if self.jobs is None:
+            return {"advanced": advanced, "errors": errors}
+        for record in self.catalog.active_ingestions():
+            try:
+                updated = self.advance(record)
+                advanced += int(updated != record)
+            except Exception:
+                errors += 1
+                LOGGER.exception(
+                    "Media ingestion advancement failed for intent %s.",
+                    record.intent_id,
+                )
+        return {"advanced": advanced, "errors": errors}
+
+    def advance(self, intent: UploadIntentRecord) -> UploadIntentRecord:
+        if self.jobs is None:
+            return intent
+        if (
+            intent.state == UploadState.pending
+            and intent.transfer_backend == UploadTransferBackend.local_path
+        ) or (
+            intent.state == UploadState.accepted
+            and intent.transfer_backend == UploadTransferBackend.multipart
+        ):
+            # Link and submit once per sweep. If submission is interrupted after
+            # the durable link, the next sweep recovers the same deterministic
+            # job ID instead of issuing a second attempt immediately.
+            return self._start_import(intent)
+        if intent.state == UploadState.processing and intent.job_id is not None:
+            try:
+                job = self.jobs.get(intent.job_id)
+            except ApplicationError as exc:
+                if exc.detail.code != "resource_not_found":
+                    raise
+                try:
+                    job = self._submit_import_job(intent)
+                except ApplicationError:
+                    return intent
+            if job.state == JobState.succeeded and job.result is not None:
+                media_id = job.result.result.media_id
+
+                def register(connection: Connection) -> None:
+                    self.catalog.update_upload(
+                        intent.intent_id,
+                        state=UploadState.ready,
+                        connection=connection,
+                        media_id=media_id,
+                        expected_states={UploadState.processing},
+                    )
+
+                self.catalog.with_upload_transaction(register)
+                intent = self.catalog.get_upload_intent(intent.intent_id) or intent
+            elif job.state in {
+                JobState.failed,
+                JobState.cancelled,
+                JobState.recovery_exhausted,
+            }:
+                detail = job.error or ErrorDetail(
+                    code="media_import_failed",
+                    category=ErrorCategory.internal,
+                    message="The durable media import failed.",
+                )
+                intent = self._fail(intent, detail)
+        if (
+            intent.state == UploadState.ready
+            and intent.index_after_import
+            and intent.index_job_id is None
+        ):
+            try:
+                job = self.jobs.submit_index(
+                    CreateIndexCommand(
+                        media_id=intent.media_id or "",
+                        modalities=intent.index_modalities,
+                    ),
+                    job_id=derived_ingestion_job_id(intent.intent_id, "index"),
+                )
+            except ApplicationError as exc:
+                return self._fail(intent, exc.detail)
+
+            def link_index(connection: Connection) -> None:
+                self.catalog.update_upload(
+                    intent.intent_id,
+                    state=UploadState.ready,
+                    connection=connection,
+                    index_job_id=job.job_id,
+                    expected_states={UploadState.ready},
+                )
+
+            self.catalog.with_upload_transaction(link_index)
+            intent = self.catalog.get_upload_intent(intent.intent_id) or intent
+        if intent.index_job_id is not None:
+            job = self.jobs.get(intent.index_job_id)
+            if job.state == JobState.succeeded:
+                self.catalog.with_upload_transaction(
+                    lambda connection: self.catalog.update_upload(
+                        intent.intent_id,
+                        state=UploadState.indexed,
+                        connection=connection,
+                        expected_states={UploadState.ready},
+                    )
+                )
+                intent = self.catalog.get_upload_intent(intent.intent_id) or intent
+            elif job.state in {
+                JobState.failed,
+                JobState.cancelled,
+                JobState.recovery_exhausted,
+            }:
+                detail = job.error or ErrorDetail(
+                    code="media_index_failed",
+                    category=ErrorCategory.internal,
+                    message="Automatic indexing failed.",
+                )
+                intent = self._fail(intent, detail)
+        return intent
+
+    def complete_tus_transfer(
+        self,
+        *,
+        intent_id: str,
+        upload_id: str,
+        byte_size: int,
+        offset: int,
+    ) -> str:
+        if self.jobs is None:
+            raise RuntimeError("Upload job submission is not configured.")
+
+        def complete(connection: Connection) -> str:
+            record = self.catalog.get_upload_intent(
+                intent_id,
+                connection=connection,
+                for_update=True,
+            )
+            if record is None or record.upload_id != upload_id:
+                raise ApplicationError(
+                    "upload_completion_invalid",
+                    ErrorCategory.validation,
+                    "The completed upload does not match its intent.",
+                )
+            if byte_size != record.byte_size or offset != record.byte_size:
+                raise ApplicationError(
+                    "upload_incomplete",
+                    ErrorCategory.validation,
+                    "The upload is not complete.",
+                )
+            if record.job_id is not None:
+                return record.job_id
+            if record.state != UploadState.accepted:
+                raise ApplicationError(
+                    "upload_completion_invalid",
+                    ErrorCategory.conflict,
+                    "The upload is not ready for completion.",
+                )
+            job_id = self.jobs.enqueue_media_import_in_transaction(
+                upload_id,
+                connection=connection,
+                job_id=upload_id,
+            )
+            self.catalog.update_upload(
+                record.intent_id,
+                state=UploadState.processing,
+                connection=connection,
+                job_id=job_id,
+            )
+            return job_id
+
+        result = self.catalog.with_upload_transaction(complete)
+        self.wake()
+        return result
+
+    def _start_import(self, intent: UploadIntentRecord) -> UploadIntentRecord:
+        if self.jobs is None:
+            return intent
+        expected_state = (
+            UploadState.pending
+            if intent.transfer_backend == UploadTransferBackend.local_path
+            else UploadState.accepted
+        )
+        job_id = derived_ingestion_job_id(intent.intent_id, "import")
+
+        def link(connection: Connection) -> None:
+            self.catalog.update_upload(
+                intent.intent_id,
+                state=UploadState.processing,
+                connection=connection,
+                upload_id=intent.upload_id or intent.intent_id,
+                job_id=job_id,
+                expected_states={expected_state},
+            )
+
+        self.catalog.with_upload_transaction(link)
+        linked = self.catalog.get_upload_intent(intent.intent_id) or intent
+        try:
+            self._submit_import_job(linked)
+        except ApplicationError:
+            pass
+        return linked
+
+    def _submit_import_job(self, intent: UploadIntentRecord):
+        if self.jobs is None or intent.job_id is None:
+            raise RuntimeError("Media import job submission is not configured.")
+        if intent.transfer_backend == UploadTransferBackend.local_path:
+            if intent.source_path is None:
+                raise RuntimeError("The local ingestion source is unavailable.")
+            return self.jobs.submit_local_media_import(
+                ImportMediaCommand(
+                    path=Path(intent.source_path),
+                    original_filename=intent.original_filename,
+                    declared_mime_type=intent.declared_mime_type,
+                ),
+                job_id=intent.job_id,
+            )
+        if intent.upload_id is None:
+            raise RuntimeError("The completed upload identifier is unavailable.")
+        return self.jobs.submit_completed_media_import(
+            intent.upload_id,
+            job_id=intent.job_id,
+        )
+
+    def _fail(
+        self,
+        intent: UploadIntentRecord,
+        detail: ErrorDetail,
+    ) -> UploadIntentRecord:
+        self.catalog.with_upload_transaction(
+            lambda connection: self.catalog.update_upload(
+                intent.intent_id,
+                state=UploadState.failed,
+                connection=connection,
+                failure_code=detail.code,
+                failure_message=detail.message,
+            )
+        )
+        return self.catalog.get_upload_intent(intent.intent_id) or intent

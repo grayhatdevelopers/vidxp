@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -12,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
@@ -21,10 +20,8 @@ from vidxp.application_models import (
     ApplicationError,
     CreateUploadFileCommand,
     CreateUploadIntentCommand,
-    CreateIndexCommand,
     ErrorCategory,
     ErrorDetail,
-    ImportMediaCommand,
     JobState,
     MediaUploadSessionStatus,
     MediaUploadStatus,
@@ -46,21 +43,12 @@ from vidxp.infrastructure.sql_catalog import (
     UploadQuotaExceededError,
 )
 from vidxp.media_service import MediaService
-from vidxp.settings import ApplicationMode, VidXPSettings
+from vidxp.ingestion_coordinator import IngestionCoordinator
+from vidxp.settings import ApplicationMode, HttpAuthMode, VidXPSettings
+from vidxp.upload_status import UploadStatusProjector
 
 LOGGER = logging.getLogger(__name__)
 _CREATION_GRANT_TTL_SECONDS = 5 * 60
-
-
-def _derived_job_id(intent_id: str, operation: str) -> str:
-    payload = bytearray(
-        hashlib.sha256(
-            f"vidxp-ingestion-v1\0{intent_id}\0{operation}".encode()
-        ).digest()[:16]
-    )
-    payload[6] = (payload[6] & 0x0F) | 0x40
-    payload[8] = (payload[8] & 0x3F) | 0x80
-    return UUID(bytes=bytes(payload)).hex
 
 
 @dataclass(frozen=True)
@@ -88,6 +76,14 @@ class UploadFileAuthorization:
 
 def _token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _public_intent(record: UploadIntentRecord) -> UploadIntent:
@@ -123,6 +119,15 @@ class RemoteUploadService:
         self.jobs = jobs
         self._tusd_upload_exists = tusd_upload_exists
         self.default_index_modalities = default_index_modalities
+        self.status = UploadStatusProjector(catalog=catalog, jobs=jobs)
+        self.coordinator = IngestionCoordinator(
+            catalog=catalog,
+            jobs=jobs,
+            interval_seconds=min(
+                2.0,
+                float(settings.upload_recovery_interval_seconds),
+            ),
+        )
 
     @property
     def transfer_backend(self) -> UploadTransferBackend:
@@ -273,108 +278,10 @@ class RemoteUploadService:
         *,
         session: UploadSessionRecord | None = None,
     ) -> MediaUploadStatus:
-        session = session or self.catalog.get_upload_session(link.session_id)
-        if session is None:
+        active_session = session or self.catalog.get_upload_session(link.session_id)
+        if active_session is None:
             raise RuntimeError("The upload session status is unavailable.")
-
-        def inspect_job(job_id: str | None):
-            if self.jobs is None or job_id is None:
-                return None
-            try:
-                return self.jobs.get(job_id)
-            except (ApplicationError, KeyError):
-                return None
-
-        import_job = inspect_job(intent.job_id)
-        index_job = inspect_job(intent.index_job_id)
-        generation_id = None
-        snapshot_id = None
-        if (
-            index_job is not None
-            and index_job.state == JobState.succeeded
-            and getattr(index_job, "result", None) is not None
-        ):
-            generation_id = index_job.result.result.generation_id
-            snapshot_id = index_job.result.result.snapshot_id
-        error = None
-        if index_job is not None and getattr(index_job, "error", None) is not None:
-            error = index_job.error
-        elif import_job is not None and getattr(import_job, "error", None) is not None:
-            error = import_job.error
-        elif intent.failure_code is not None:
-            error = ErrorDetail(
-                code=intent.failure_code,
-                category=ErrorCategory.validation,
-                message=intent.failure_message or "Media ingestion failed.",
-            )
-
-        if (
-            intent.state == UploadState.pending
-            and intent.transfer_backend == UploadTransferBackend.local_path
-        ):
-            phase = "uploaded"
-            status = "The local file is validated and queued for import."
-            next_action = "Poll this ingestion status."
-        elif intent.state in {UploadState.pending, UploadState.accepted}:
-            phase = "transferring"
-            status = "The file is authorized and transferring to VidXP."
-            next_action = "Continue the transfer, then poll this ingestion status."
-        elif intent.state == UploadState.processing:
-            phase = "importing"
-            status = "VidXP is validating and registering the video."
-            next_action = "Poll this ingestion status; import_job_id is diagnostic."
-        elif intent.state == UploadState.ready and not intent.index_after_import:
-            phase = "registered"
-            status = "The video is registered; automatic indexing was disabled."
-            next_action = (
-                "Use start_indexing only if the advanced opt-out was unintended."
-            )
-        elif (
-            intent.state == UploadState.ready
-            and index_job is not None
-            and index_job.state == JobState.succeeded
-        ):
-            phase = "indexed"
-            status = "The video is registered, indexed, and searchable."
-            next_action = "Use search_moments or query_video."
-        elif intent.state == UploadState.ready and intent.index_job_id is not None:
-            phase = "indexing"
-            status = "The registered video is being indexed."
-            next_action = "Poll this ingestion status; index_job_id is diagnostic."
-        elif intent.state == UploadState.ready:
-            phase = "registered"
-            status = "The video is registered and awaiting automatic indexing."
-            next_action = "Poll this ingestion status."
-        else:
-            phase = "failed"
-            status = "This file did not complete media ingestion."
-            next_action = (
-                "Inspect the structured error and retry only this file with a new key."
-            )
-        return MediaUploadStatus(
-            intent_id=intent.intent_id,
-            client_file_key=link.client_file_key,
-            state=intent.state,
-            original_filename=intent.original_filename,
-            byte_size=intent.byte_size,
-            declared_mime_type=intent.declared_mime_type,
-            expires_at=intent.expires_at,
-            phase=phase,
-            transport=session.transfer_backend,
-            resumable=session.transfer_backend == UploadTransferBackend.tus,
-            job_id=intent.job_id,
-            import_job_id=intent.job_id,
-            index_job_id=intent.index_job_id,
-            media_id=intent.media_id,
-            generation_id=generation_id,
-            snapshot_id=snapshot_id,
-            searchable=phase == "indexed",
-            index_after_import=intent.index_after_import,
-            index_modalities=intent.index_modalities,
-            error=error,
-            status=status,
-            next_action=next_action,
-        )
+        return self.status.file(link, intent, session=active_session)
 
     def _session_status(
         self,
@@ -386,250 +293,7 @@ class RemoteUploadService:
         ]
         | None = None,
     ) -> MediaUploadSessionStatus:
-        children = (
-            self.catalog.list_upload_session_files(record.session_id)
-            if children is None
-            else children
-        )
-        if self.jobs is not None:
-            children = tuple(
-                (link, self._advance_ingestion(intent)) for link, intent in children
-            )
-        items = tuple(
-            self.file_status(link, intent, session=record) for link, intent in children
-        )
-        states = tuple(intent.state for _, intent in children)
-        failed_states = {UploadState.failed, UploadState.expired}
-        uploaded_states = {
-            UploadState.processing,
-            UploadState.ready,
-            UploadState.failed,
-        }
-        reserved_states = {
-            UploadState.pending,
-            UploadState.accepted,
-            UploadState.processing,
-            UploadState.failed,
-        }
-        phases = tuple(item.phase for item in items)
-        if not states:
-            aggregate_state = "empty"
-        elif all(phase in {"registered", "indexed"} for phase in phases):
-            aggregate_state = "ready"
-        elif all(phase == "failed" for phase in phases):
-            aggregate_state = "failed"
-        elif any(phase == "failed" for phase in phases):
-            aggregate_state = "partial_failure"
-        elif any(phase == "transferring" for phase in phases):
-            aggregate_state = "uploading"
-        else:
-            aggregate_state = "processing"
-        now = utc_now()
-        session_state = (
-            UploadSessionState.expired if record.expires_at <= now else record.state
-        )
-        file_count = len(children)
-        total_bytes = sum(intent.byte_size for _, intent in children)
-        reserved = [intent for _, intent in children if intent.state in reserved_states]
-        uploaded = [intent for _, intent in children if intent.state in uploaded_states]
-        ready_count = sum(item.phase in {"registered", "indexed"} for item in items)
-        searchable_count = sum(item.searchable for item in items)
-        failed_count = sum(state in failed_states for state in states)
-        if session_state == UploadSessionState.open:
-            status = "The upload session is open for file selection."
-            next_action = (
-                "Give the capability link to the user, then poll "
-                "get_media_upload for per-file results."
-            )
-        elif session_state == UploadSessionState.expired:
-            status = "The upload session expired."
-            next_action = (
-                "Create a new upload session; existing processing or ready "
-                "child results remain visible."
-            )
-        else:
-            status = "The upload session is closed to new files."
-            next_action = (
-                "Poll get_media_upload until every successful child is indexed "
-                "and searchable."
-            )
-        return MediaUploadSessionStatus(
-            session_id=record.session_id,
-            session_state=session_state,
-            aggregate_state=aggregate_state,
-            transfer_backend=record.transfer_backend,
-            resumable=record.transfer_backend == UploadTransferBackend.tus,
-            index_after_import=record.index_after_import,
-            index_modalities=record.index_modalities,
-            expires_at=record.expires_at,
-            maximum_files=record.maximum_files,
-            maximum_file_bytes=record.maximum_file_bytes,
-            maximum_aggregate_bytes=record.maximum_aggregate_bytes,
-            file_count=file_count,
-            total_bytes=total_bytes,
-            reserved_file_count=len(reserved),
-            reserved_bytes=sum(intent.byte_size for intent in reserved),
-            uploaded_file_count=len(uploaded),
-            uploaded_bytes=sum(intent.byte_size for intent in uploaded),
-            ready_file_count=ready_count,
-            searchable_file_count=searchable_count,
-            failed_file_count=failed_count,
-            items=items,
-            status=status,
-            next_action=next_action,
-        )
-
-    def _advance_ingestion(
-        self,
-        intent: UploadIntentRecord,
-    ) -> UploadIntentRecord:
-        if self.jobs is None:
-            return intent
-        if (
-            intent.transfer_backend == UploadTransferBackend.local_path
-            and intent.state == UploadState.pending
-        ):
-            intent = self._start_local_import(intent)
-        if intent.state == UploadState.processing and intent.job_id is not None:
-            try:
-                job = self.jobs.get(intent.job_id)
-            except ApplicationError as exc:
-                if exc.detail.code != "resource_not_found":
-                    raise
-                try:
-                    job = self._submit_import_job(intent)
-                except ApplicationError:
-                    return intent
-            if job.state == JobState.succeeded and job.result is not None:
-                media_id = job.result.result.media_id
-
-                def register(connection: Connection) -> None:
-                    self.catalog.update_upload(
-                        intent.intent_id,
-                        state=UploadState.ready,
-                        connection=connection,
-                        media_id=media_id,
-                        expected_states={UploadState.processing},
-                    )
-
-                self.catalog.with_upload_transaction(register)
-                intent = self.catalog.get_upload_intent(intent.intent_id) or intent
-            elif job.state in {
-                JobState.failed,
-                JobState.cancelled,
-                JobState.recovery_exhausted,
-            }:
-                detail = job.error or ErrorDetail(
-                    code="media_import_failed",
-                    category=ErrorCategory.internal,
-                    message="The durable media import failed.",
-                )
-                intent = self._fail_intent(intent, detail)
-        if (
-            intent.state == UploadState.ready
-            and intent.index_after_import
-            and intent.index_job_id is None
-        ):
-            try:
-                job = self.jobs.submit_index(
-                    CreateIndexCommand(
-                        media_id=intent.media_id or "",
-                        modalities=intent.index_modalities,
-                    ),
-                    job_id=_derived_job_id(intent.intent_id, "index"),
-                )
-            except ApplicationError as exc:
-                return self._fail_intent(intent, exc.detail)
-
-            def link_index(connection: Connection) -> None:
-                self.catalog.update_upload(
-                    intent.intent_id,
-                    state=UploadState.ready,
-                    connection=connection,
-                    index_job_id=job.job_id,
-                    expected_states={UploadState.ready},
-                )
-
-            self.catalog.with_upload_transaction(link_index)
-            intent = self.catalog.get_upload_intent(intent.intent_id) or intent
-        if intent.index_job_id is not None:
-            job = self.jobs.get(intent.index_job_id)
-            if job.state in {
-                JobState.failed,
-                JobState.cancelled,
-                JobState.recovery_exhausted,
-            }:
-                detail = job.error or ErrorDetail(
-                    code="media_index_failed",
-                    category=ErrorCategory.internal,
-                    message="Automatic indexing failed.",
-                )
-                intent = self._fail_intent(intent, detail)
-        return intent
-
-    def _start_local_import(
-        self,
-        intent: UploadIntentRecord,
-    ) -> UploadIntentRecord:
-        if self.jobs is None or intent.source_path is None:
-            return intent
-        job_id = _derived_job_id(intent.intent_id, "import")
-
-        def link(connection: Connection) -> None:
-            self.catalog.update_upload(
-                intent.intent_id,
-                state=UploadState.processing,
-                connection=connection,
-                upload_id=intent.intent_id,
-                job_id=job_id,
-                expected_states={UploadState.pending},
-            )
-
-        self.catalog.with_upload_transaction(link)
-        linked = self.catalog.get_upload_intent(intent.intent_id) or intent
-        try:
-            self._submit_import_job(linked)
-        except ApplicationError:
-            pass
-        return linked
-
-    def _submit_import_job(self, intent: UploadIntentRecord):
-        if self.jobs is None or intent.job_id is None:
-            raise RuntimeError("Media import job submission is not configured.")
-        if intent.transfer_backend == UploadTransferBackend.local_path:
-            if intent.source_path is None:
-                raise RuntimeError("The local ingestion source is unavailable.")
-            return self.jobs.submit_local_media_import(
-                ImportMediaCommand(
-                    path=Path(intent.source_path),
-                    original_filename=intent.original_filename,
-                    declared_mime_type=intent.declared_mime_type,
-                ),
-                job_id=intent.job_id,
-            )
-        if intent.upload_id is None:
-            raise RuntimeError("The completed upload identifier is unavailable.")
-        return self.jobs.submit_completed_media_import(
-            intent.upload_id,
-            job_id=intent.job_id,
-        )
-
-    def _fail_intent(
-        self,
-        intent: UploadIntentRecord,
-        detail: ErrorDetail,
-    ) -> UploadIntentRecord:
-        def fail(connection: Connection) -> None:
-            self.catalog.update_upload(
-                intent.intent_id,
-                state=UploadState.failed,
-                connection=connection,
-                failure_code=detail.code,
-                failure_message=detail.message,
-            )
-
-        self.catalog.with_upload_transaction(fail)
-        return self.catalog.get_upload_intent(intent.intent_id) or intent
+        return self.status.session(record, children=children)
 
     def create_local_ingestion(
         self,
@@ -714,7 +378,7 @@ class RemoteUploadService:
             index_after_import=index_after_import and bool(selected),
             index_modalities=selected,
         )
-        self.catalog.create_upload_session(session)
+        children: list[tuple[UploadSessionFileRecord, UploadIntentRecord]] = []
         for position, raw_path in enumerate(paths, start=1):
             client_file_key = f"local-{position:02d}"
             fallback_filename = f"input-{position}.bin"
@@ -784,20 +448,27 @@ class RemoteUploadService:
                 intent_id=intent.intent_id,
                 created_at=now,
             )
-            self.catalog.with_upload_transaction(
-                lambda connection, item=intent, binding=link: (
-                    self.catalog.create_upload_session_file(
-                        binding,
-                        item,
-                        quota_limit=max(
-                            self.settings.upload_quota_bytes,
-                            session.maximum_aggregate_bytes,
-                        ),
-                        connection=connection,
-                    )
-                )
+            children.append((link, intent))
+
+        def persist_batch(connection: Connection) -> None:
+            self.catalog.create_upload_session_in_transaction(
+                session,
+                connection=connection,
             )
-        return self._session_status(session)
+            for link, intent in children:
+                self.catalog.create_upload_session_file(
+                    link,
+                    intent,
+                    quota_limit=max(
+                        self.settings.upload_quota_bytes,
+                        session.maximum_aggregate_bytes,
+                    ),
+                    connection=connection,
+                )
+
+        self.catalog.with_upload_transaction(persist_batch)
+        self.coordinator.wake()
+        return self._session_status(session, children=tuple(children))
 
     def get_status(
         self,
@@ -805,7 +476,6 @@ class RemoteUploadService:
         *,
         principal: Principal,
     ) -> MediaUploadSessionStatus:
-        del principal
         record = self.catalog.get_upload_session(session_id)
         if record is None or record.repository_binding != self._repository_binding():
             raise ApplicationError(
@@ -813,6 +483,7 @@ class RemoteUploadService:
                 ErrorCategory.not_found,
                 "The requested upload session was not found.",
             )
+        self._require_principal_ownership(record, principal)
         return self._session_status(record)
 
     def exchange_upload_session(
@@ -876,16 +547,16 @@ class RemoteUploadService:
         resume_urls = {}
         if record.transfer_backend == UploadTransferBackend.tus:
             assert self.settings.upload_public_endpoint is not None
-        for link, intent in children:
-            if (
-                intent.state == UploadState.accepted
-                and intent.upload_id is not None
-                and self._tusd_creation_exists(intent)
-            ):
-                resume_urls[link.client_file_key] = (
-                    self.settings.upload_public_endpoint + intent.upload_id
-                )
             creation_url = self.settings.upload_public_endpoint
+            for link, intent in children:
+                if (
+                    intent.state == UploadState.accepted
+                    and intent.upload_id is not None
+                    and self._tusd_creation_exists(intent)
+                ):
+                    resume_urls[link.client_file_key] = (
+                        self.settings.upload_public_endpoint + intent.upload_id
+                    )
         else:
             assert self.settings.upload_handoff_public_url is not None
             creation_url = (
@@ -1094,7 +765,6 @@ class RemoteUploadService:
         *,
         principal: Principal,
     ) -> MediaUploadSessionStatus:
-        del principal
         now = utc_now()
 
         def close(connection: Connection) -> UploadSessionRecord:
@@ -1112,6 +782,7 @@ class RemoteUploadService:
                     ErrorCategory.not_found,
                     "The requested upload session was not found.",
                 )
+            self._require_principal_ownership(record, principal)
             state = (
                 UploadSessionState.expired
                 if record.expires_at <= now
@@ -1191,7 +862,11 @@ class RemoteUploadService:
                     ErrorCategory.not_found,
                     "The requested session file was not found.",
                 )
-            if intent.state in {UploadState.processing, UploadState.ready}:
+            if intent.state in {
+                UploadState.processing,
+                UploadState.ready,
+                UploadState.indexed,
+            }:
                 raise ApplicationError(
                     "upload_cancellation_forbidden",
                     ErrorCategory.conflict,
@@ -1383,9 +1058,33 @@ class RemoteUploadService:
         byte_size: int,
         session_token: str | None,
     ) -> MediaUploadSessionStatus:
-        """Atomically bind a bounded multipart body to its session intent."""
+        """Claim one immutable staged body without touching a winning sibling."""
 
-        def inspect(connection: Connection) -> UploadIntentRecord:
+        attempt_path = staged_path.resolve()
+        quarantine_root = self.settings.quarantine_root.resolve()
+        if (
+            attempt_path.parent != quarantine_root
+            or not attempt_path.is_file()
+            or attempt_path.is_symlink()
+        ):
+            staged_path.unlink(missing_ok=True)
+            raise ApplicationError(
+                "upload_staging_invalid",
+                ErrorCategory.validation,
+                "The multipart staging object is invalid.",
+            )
+        attempt_id = attempt_path.name
+        if self._quarantine_path(attempt_id) != attempt_path:
+            staged_path.unlink(missing_ok=True)
+            raise ApplicationError(
+                "upload_staging_invalid",
+                ErrorCategory.validation,
+                "The multipart staging object is invalid.",
+            )
+        actual_size = attempt_path.stat().st_size
+        content_sha256 = _file_sha256(attempt_path)
+
+        def claim(connection: Connection) -> tuple[bool, UploadIntentRecord]:
             session = self.catalog.get_upload_session(
                 session_id,
                 connection=connection,
@@ -1422,6 +1121,7 @@ class RemoteUploadService:
             if (
                 intent.original_filename != original_filename
                 or intent.byte_size != byte_size
+                or intent.byte_size != actual_size
                 or intent.declared_mime_type != declared_mime_type
             ):
                 raise ApplicationError(
@@ -1429,56 +1129,42 @@ class RemoteUploadService:
                     ErrorCategory.validation,
                     "The multipart body does not match its selected file metadata.",
                 )
-            return intent
-
-        intent = self.catalog.with_upload_transaction(inspect)
-        if intent.state in {UploadState.processing, UploadState.ready}:
-            return self.browser_session(
-                session_id,
-                session_token=session_token,
-            ).status
-        if intent.state != UploadState.pending:
-            raise ApplicationError(
-                "upload_intent_consumed",
-                ErrorCategory.conflict,
-                "This multipart file cannot be submitted again.",
+            if intent.state in {
+                UploadState.accepted,
+                UploadState.processing,
+                UploadState.ready,
+                UploadState.indexed,
+            }:
+                return False, intent
+            if intent.state != UploadState.pending:
+                raise ApplicationError(
+                    "upload_intent_consumed",
+                    ErrorCategory.conflict,
+                    "This multipart file cannot be submitted again.",
+                )
+            self.catalog.update_upload(
+                intent.intent_id,
+                state=UploadState.accepted,
+                connection=connection,
+                upload_id=attempt_id,
+                content_sha256=content_sha256,
+                expected_states={UploadState.pending},
             )
-        destination = self._quarantine_path(intent.intent_id)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(staged_path, destination)
+            return True, intent.model_copy(
+                update={
+                    "state": UploadState.accepted,
+                    "upload_id": attempt_id,
+                    "content_sha256": content_sha256,
+                }
+            )
+
+        claimed = False
         try:
-
-            def accept(connection: Connection) -> None:
-                current = self.catalog.get_upload_intent(
-                    intent.intent_id,
-                    connection=connection,
-                    for_update=True,
-                )
-                if current is None or current.state != UploadState.pending:
-                    raise ApplicationError(
-                        "upload_intent_consumed",
-                        ErrorCategory.conflict,
-                        "This multipart file was already accepted.",
-                    )
-                self.catalog.update_upload(
-                    current.intent_id,
-                    state=UploadState.accepted,
-                    connection=connection,
-                    upload_id=current.intent_id,
-                )
-
-            self.catalog.with_upload_transaction(accept)
-            self.complete_upload(
-                intent_id=intent.intent_id,
-                upload_id=intent.intent_id,
-                byte_size=byte_size,
-                offset=byte_size,
-            )
-        except Exception:
-            current = self.catalog.get_upload_intent(intent.intent_id)
-            if current is None or current.state == UploadState.pending:
-                destination.unlink(missing_ok=True)
-            raise
+            claimed, _intent = self.catalog.with_upload_transaction(claim)
+        finally:
+            if not claimed:
+                attempt_path.unlink(missing_ok=True)
+        self.coordinator.wake()
         return self.browser_session(
             session_id,
             session_token=session_token,
@@ -1512,71 +1198,17 @@ class RemoteUploadService:
                 )
             if current.job_id is not None:
                 return current.job_id
-            job_id = _derived_job_id(current.intent_id, "import")
+            advanced = self.coordinator.advance(current)
+            if advanced.job_id is None:
+                raise RuntimeError("The multipart import job was not linked.")
+            return advanced.job_id
 
-            def link_job(connection: Connection) -> None:
-                record = self.catalog.get_upload_intent(
-                    current.intent_id,
-                    connection=connection,
-                    for_update=True,
-                )
-                if record is None:
-                    raise RuntimeError("The multipart upload intent disappeared.")
-                if record.job_id is None:
-                    self.catalog.update_upload(
-                        record.intent_id,
-                        state=UploadState.processing,
-                        connection=connection,
-                        job_id=job_id,
-                    )
-
-            self.catalog.with_upload_transaction(link_job)
-            linked = self.catalog.get_upload_intent(current.intent_id)
-            if linked is None:
-                raise RuntimeError("The multipart upload intent disappeared.")
-            self._submit_import_job(linked)
-            return job_id
-
-        def complete(connection: Connection) -> str:
-            record = self.catalog.get_upload_intent(
-                intent_id,
-                connection=connection,
-                for_update=True,
-            )
-            if record is None or record.upload_id != upload_id:
-                raise ApplicationError(
-                    "upload_completion_invalid",
-                    ErrorCategory.validation,
-                    "The completed upload does not match its intent.",
-                )
-            if byte_size != record.byte_size or offset != record.byte_size:
-                raise ApplicationError(
-                    "upload_incomplete",
-                    ErrorCategory.validation,
-                    "The upload is not complete.",
-                )
-            if record.job_id is not None:
-                return record.job_id
-            if record.state != UploadState.accepted:
-                raise ApplicationError(
-                    "upload_completion_invalid",
-                    ErrorCategory.conflict,
-                    "The upload is not ready for completion.",
-                )
-            job_id = self.jobs.enqueue_media_import_in_transaction(
-                upload_id,
-                connection=connection,
-                job_id=upload_id,
-            )
-            self.catalog.update_upload(
-                record.intent_id,
-                state=UploadState.processing,
-                connection=connection,
-                job_id=job_id,
-            )
-            return job_id
-
-        return self.catalog.with_upload_transaction(complete)
+        return self.coordinator.complete_tus_transfer(
+            intent_id=intent_id,
+            upload_id=upload_id,
+            byte_size=byte_size,
+            offset=offset,
+        )
 
     def import_completed(
         self,
@@ -1591,7 +1223,10 @@ class RemoteUploadService:
                 ErrorCategory.not_found,
                 "The completed upload is unavailable.",
             )
-        if record.state == UploadState.ready and record.media_id is not None:
+        if (
+            record.state in {UploadState.ready, UploadState.indexed}
+            and record.media_id is not None
+        ):
             asset = self.media.get(record.media_id)
             self._cleanup_after_import(upload_id)
             return asset
@@ -1605,6 +1240,29 @@ class RemoteUploadService:
                 "The upload is not ready for import.",
             )
         path = self._quarantine_path(upload_id)
+        try:
+            actual_size = path.stat().st_size
+        except OSError as exc:
+            raise ApplicationError(
+                "upload_content_unavailable",
+                ErrorCategory.unavailable,
+                "The accepted upload content is unavailable from quarantine.",
+            ) from exc
+        if actual_size != record.byte_size:
+            raise ApplicationError(
+                "upload_content_size_mismatch",
+                ErrorCategory.validation,
+                "The accepted upload size no longer matches its durable intent.",
+            )
+        if (
+            record.content_sha256 is not None
+            and _file_sha256(path) != record.content_sha256
+        ):
+            raise ApplicationError(
+                "upload_content_digest_mismatch",
+                ErrorCategory.validation,
+                "The accepted upload digest no longer matches its durable intent.",
+            )
         request_key = hashlib.sha256(
             f"vidxp-upload-import-v1\0{record.intent_id}".encode()
         ).hexdigest()
@@ -1639,19 +1297,9 @@ class RemoteUploadService:
 
     def reconcile(self) -> dict[str, int]:
         recovered = 0
-        errors = 0
-        advanced = 0
-        if self.jobs is not None:
-            for record in self.catalog.active_ingestions():
-                try:
-                    updated = self._advance_ingestion(record)
-                    advanced += int(updated != record)
-                except Exception:
-                    errors += 1
-                    LOGGER.exception(
-                        "Media ingestion advancement failed for intent %s.",
-                        record.intent_id,
-                    )
+        coordinated = self.coordinator.run_once()
+        errors = coordinated["errors"]
+        advanced = coordinated["advanced"]
         for record in self.catalog.recoverable_uploads():
             try:
                 if record.upload_id is None:
@@ -1791,6 +1439,7 @@ class RemoteUploadService:
                 return
             if internal and record.state in {
                 UploadState.ready,
+                UploadState.indexed,
                 UploadState.failed,
                 UploadState.expired,
             }:
@@ -1825,8 +1474,8 @@ class RemoteUploadService:
                     "A processing upload cannot be terminated.",
                 )
             state = (
-                UploadState.ready
-                if record.state == UploadState.ready
+                record.state
+                if record.state in {UploadState.ready, UploadState.indexed}
                 else UploadState.expired
             )
             self.catalog.update_upload(
@@ -2118,6 +1767,26 @@ class RemoteUploadService:
             or record.purpose != "media-upload"
         ):
             raise RuntimeError("The stored upload session binding is invalid.")
+
+    def _require_principal_ownership(
+        self,
+        record: UploadSessionRecord,
+        principal: Principal,
+    ) -> None:
+        if self.settings.http_auth_mode == HttpAuthMode.none:
+            return
+        if (
+            record.initiating_subject != principal.subject
+            or (
+                record.initiating_client_id is not None
+                and record.initiating_client_id != principal.client_id
+            )
+        ):
+            raise ApplicationError(
+                "resource_not_found",
+                ErrorCategory.not_found,
+                "The requested upload session was not found.",
+            )
 
     def _require_browser_session(
         self,

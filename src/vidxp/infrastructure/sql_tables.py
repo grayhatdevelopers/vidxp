@@ -90,6 +90,7 @@ upload_intents = Table(
     Column("index_modalities", JSON, nullable=False, default=list),
     Column("index_job_id", String(36), nullable=True, unique=True),
     Column("source_path", Text, nullable=True),
+    Column("content_sha256", String(64), nullable=True),
     Column("failure_code", String(128), nullable=True),
     Column("failure_message", String(512), nullable=True),
 )

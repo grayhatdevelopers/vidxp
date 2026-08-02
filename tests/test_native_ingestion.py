@@ -187,6 +187,8 @@ def test_native_http_browser_session_uses_bounded_multipart(
         runtime_backend="cpu",
         upload_handoff_public_url="https://testserver/upload-handoff",
         upload_handoff_secret="h" * 32,
+        http_auth_mode="static",
+        http_static_bearer_token="s" * 32,
         http_trusted_hosts=("testserver",),
         http_max_json_body_bytes=1024,
         workflow_poll_interval_seconds=0.05,
@@ -208,6 +210,7 @@ def test_native_http_browser_session_uses_bounded_multipart(
             create_app(context=context),
             base_url="https://testserver",
         ) as client:
+            assert client.get("/api/v1/media").status_code == 401
             page = client.get(f"/upload-handoff/{session_id}")
             assert page.status_code == 200
             assert "script-src 'self'" in page.headers["content-security-policy"]
@@ -323,20 +326,22 @@ async def _automatic_index_scenario(tmp_path: Path) -> None:
             )
             assert not submitted.is_error
             ingestion_id = submitted.structured_content["session_id"]
-            item = None
+            intent_id = submitted.structured_content["items"][0]["intent_id"]
             for _attempt in range(900):
-                status = await client.call_tool(
-                    "get_media_ingestion",
-                    {"ingestion_id": ingestion_id},
-                )
-                assert not status.is_error
-                item = status.structured_content["items"][0]
-                if item["phase"] in {"indexed", "failed"}:
+                stored = context.catalog.get_upload_intent(intent_id)
+                if stored is not None and stored.state.value in {"indexed", "failed"}:
                     break
                 await asyncio.sleep(0.1)
             else:
-                raise AssertionError("Automatic indexing did not finish.")
-            assert item is not None
+                raise AssertionError(
+                    "Autonomous indexing did not finish without status polling."
+                )
+            status = await client.call_tool(
+                "get_media_ingestion",
+                {"ingestion_id": ingestion_id},
+            )
+            assert not status.is_error
+            item = status.structured_content["items"][0]
             assert item["phase"] == "indexed", item.get("error")
             assert item["import_job_id"]
             assert item["index_job_id"]

@@ -8,6 +8,7 @@ from vidxp.core.identifiers import (
     JobId,
     MediaId,
     MimeType,
+    Sha256,
     Uuid4Hex,
 )
 from vidxp.core.media import validate_display_filename
@@ -18,6 +19,7 @@ class UploadState(StrEnum):
     accepted = "accepted"
     processing = "processing"
     ready = "ready"
+    indexed = "indexed"
     failed = "failed"
     expired = "expired"
 
@@ -64,6 +66,7 @@ class UploadIntentRecord(BaseModel):
     index_modalities: tuple[str, ...] = ()
     index_job_id: JobId | None = None
     source_path: str | None = Field(default=None, max_length=32767)
+    content_sha256: Sha256 | None = None
     failure_code: str | None = Field(
         default=None,
         min_length=1,
@@ -87,6 +90,7 @@ class UploadIntentRecord(BaseModel):
         if self.state in {
             UploadState.processing,
             UploadState.ready,
+            UploadState.indexed,
         } and self.job_id is None:
             raise ValueError(f"{self.state} uploads require a job identifier")
         if self.state in {
@@ -94,10 +98,11 @@ class UploadIntentRecord(BaseModel):
             UploadState.accepted,
         } and self.job_id is not None:
             raise ValueError(f"{self.state} uploads cannot have a job identifier")
-        if self.state == UploadState.ready and self.media_id is None:
-            raise ValueError("ready uploads require a media identifier")
+        if self.state in {UploadState.ready, UploadState.indexed} and self.media_id is None:
+            raise ValueError("registered uploads require a media identifier")
         if self.media_id is not None and self.state not in {
             UploadState.ready,
+            UploadState.indexed,
             UploadState.failed,
         }:
             raise ValueError("only registered uploads may reference media")
@@ -106,6 +111,11 @@ class UploadIntentRecord(BaseModel):
                 raise ValueError("local-path ingestion requires its canonical source")
         elif self.source_path is not None:
             raise ValueError("only local-path ingestion may retain a source path")
+        if (
+            self.content_sha256 is not None
+            and self.transfer_backend != UploadTransferBackend.multipart
+        ):
+            raise ValueError("only multipart ingestion may retain a content digest")
         if self.index_job_id is not None and self.media_id is None:
             raise ValueError("index jobs require a registered media identifier")
         if not self.index_after_import and self.index_job_id is not None:
