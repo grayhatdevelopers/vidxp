@@ -12,10 +12,10 @@ use std::{
 
 use process_wrap::std::{ChildWrapper, CommandWrap};
 
+#[cfg(windows)]
+use process_wrap::std::JobObject;
 #[cfg(unix)]
 use process_wrap::std::ProcessGroup;
-#[cfg(windows)]
-use process_wrap::std::{CreationFlags, JobObject};
 
 #[derive(Clone, Copy)]
 pub struct BackgroundPolicy {
@@ -127,14 +127,29 @@ fn read_bounded(stream: impl Read + Send + 'static, limit: usize) -> OutputReade
 fn wrapped(command: Command) -> CommandWrap {
     let mut wrapped = CommandWrap::from(command);
     #[cfg(windows)]
-    {
-        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
-        wrapped.wrap(CreationFlags(CREATE_NO_WINDOW));
-        wrapped.wrap(JobObject);
-    }
+    wrapped.wrap(JobObject);
     #[cfg(unix)]
     wrapped.wrap(ProcessGroup::leader());
     wrapped
+}
+
+fn spawn_owned(command: Command) -> std::io::Result<Box<dyn ChildWrapper>> {
+    let mut wrapped = wrapped(command);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
+
+        // JobObject starts the child suspended so it can establish whole-tree ownership before
+        // allowing it to run. Apply both flags at the final spawn boundary: every desktop command
+        // stays console-free without weakening job supervision.
+        wrapped.spawn_with(|command| {
+            command.creation_flags((CREATE_NO_WINDOW | CREATE_SUSPENDED).0);
+            command.spawn()
+        })
+    }
+    #[cfg(not(windows))]
+    wrapped.spawn()
 }
 
 pub struct OwnedChild(Box<dyn ChildWrapper>);
@@ -166,8 +181,7 @@ pub fn spawn_service(mut command: Command) -> Result<OwnedChild, BackgroundError
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    wrapped(command)
-        .spawn()
+    spawn_owned(command)
         .map(OwnedChild)
         .map_err(|error| BackgroundError {
             kind: BackgroundErrorKind::Start,
@@ -215,8 +229,7 @@ where
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = wrapped(command)
-        .spawn()
+    let mut child = spawn_owned(command)
         .map(OwnedChild)
         .map_err(|error| BackgroundError {
             kind: BackgroundErrorKind::Start,
@@ -363,6 +376,32 @@ pub async fn run_async(
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_console_probe() {
+        if std::env::var_os("VIDXP_WINDOWS_CONSOLE_PROBE").is_none() {
+            return;
+        }
+
+        unsafe extern "system" {
+            fn GetConsoleWindow() -> *mut std::ffi::c_void;
+        }
+
+        assert!(unsafe { GetConsoleWindow() }.is_null());
+    }
+
+    #[cfg(windows)]
+    fn console_probe_command() -> Command {
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        command
+            .args([
+                "--exact",
+                "background_process::tests::windows_console_probe",
+            ])
+            .env("VIDXP_WINDOWS_CONSOLE_PROBE", "1");
+        command
+    }
+
     fn shell_command(script: &str) -> Command {
         if cfg!(windows) {
             let mut command = Command::new("cmd");
@@ -388,6 +427,40 @@ mod tests {
         .expect("background command");
         assert!(result.status.success());
         assert!(String::from_utf8_lossy(&result.stdout).contains("runner"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn captured_commands_do_not_create_a_windows_console() {
+        let result = run(
+            console_probe_command(),
+            BackgroundPolicy {
+                timeout: Duration::from_secs(5),
+                max_output_bytes: 4096,
+            },
+            None,
+        )
+        .expect("console probe");
+        assert!(
+            result.status.success(),
+            "console probe failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn service_commands_do_not_create_a_windows_console() {
+        let mut child = spawn_service(console_probe_command()).expect("console probe service");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().expect("console probe status") {
+                assert!(status.success(), "console probe failed");
+                break;
+            }
+            assert!(Instant::now() < deadline, "console probe timed out");
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]
