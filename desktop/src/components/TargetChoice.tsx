@@ -5,6 +5,7 @@ import type { TargetKind } from '../tauri';
 
 interface TargetChoiceProps {
   value: TargetKind | null;
+  disabled?: boolean;
   onChange: (value: TargetKind) => void;
   onContinue: () => void;
 }
@@ -26,7 +27,7 @@ const targets = [
   },
 ];
 
-export function TargetChoice({ value, onChange, onContinue }: TargetChoiceProps) {
+export function TargetChoice({ value, disabled, onChange, onContinue }: TargetChoiceProps) {
   return (
     <section aria-labelledby="target-choice-title">
       <div className="sectionHeading">
@@ -42,6 +43,7 @@ export function TargetChoice({ value, onChange, onContinue }: TargetChoiceProps)
         aria-label="VidXP target"
         value={value}
         onChange={(next) => onChange(next as TargetKind)}
+        readOnly={disabled}
       >
         <div className="targetGrid">
           {targets.map((target) => {
@@ -72,7 +74,7 @@ export function TargetChoice({ value, onChange, onContinue }: TargetChoiceProps)
       </Radio.Group>
 
       <Group justify="flex-end" mt="xl">
-        <Button size="md" disabled={!value} onClick={onContinue}>
+        <Button size="md" disabled={!value || disabled} onClick={onContinue}>
           Continue
         </Button>
       </Group>

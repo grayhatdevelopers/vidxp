@@ -11,9 +11,12 @@ export function useAsyncAction<TArgs extends unknown[], TResult>(
   const [status, setStatus] = useState<AsyncStatus>('idle');
   const [error, setError] = useState<unknown>(null);
 
-  useEffect(() => () => {
-    mounted.current = false;
-    generation.current += 1;
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+    };
   }, []);
 
   const run = useCallback(async (...args: TArgs) => {

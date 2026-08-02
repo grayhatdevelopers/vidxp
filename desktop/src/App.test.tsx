@@ -1,6 +1,7 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -8,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   chooseLocalExecutable: vi.fn(), inspectLocalTarget: vi.fn(), activateLocalTarget: vi.fn(),
   selectTargetProfile: vi.fn(), deleteTargetProfile: vi.fn(), beginManagedSetup: vi.fn(),
   cancelManagedSetup: vi.fn(), installMediaRuntime: vi.fn(), installRuntime: vi.fn(),
+  prepareManagedModels: vi.fn(),
   runtimeManifest: vi.fn(), runtimeStatus: vi.fn(), launchUi: vi.fn(),
   chooseModelDirectory: vi.fn(), modelDirectoryInventory: vi.fn(),
 }));
@@ -44,8 +46,15 @@ const managedProfile = {
 const emptyState = { profiles: [], selected_profile_id: null, issues: [] };
 const localState = { profiles: [localProfile], selected_profile_id: localProfile.id, issues: [] };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
 function renderApp() {
-  return render(<MantineProvider env="test" defaultColorScheme="dark"><App /></MantineProvider>);
+  return render(<StrictMode><MantineProvider env="test" defaultColorScheme="dark"><App /></MantineProvider></StrictMode>);
 }
 
 async function enterLocal(user: ReturnType<typeof userEvent.setup>) {
@@ -76,12 +85,16 @@ describe('desktop target lifecycle', () => {
       validation: { canonical_executable: 'C:\\Tools\\VidXP\\vidxp.exe', protocol_version: 1, launch_protocol_version: 1, python_version: '3.14', display_data_root: 'C:\\Data', can_launch_frontend: true, frontend },
     });
     mocks.beginManagedSetup.mockResolvedValue({ id: 'draft-1', previous_profile_id: null });
-    mocks.cancelManagedSetup.mockResolvedValue(undefined);
+    mocks.cancelManagedSetup.mockResolvedValue(emptyState);
     mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', capabilities: { scene: { extra: 'scene', label: 'Visual scene search' } }, surfaces: { browser: { extra: 'frontend', label: 'Browser interface', description: 'Browser UI', default: true } } });
     mocks.runtimeStatus.mockResolvedValue({ state: 'never_configured', ready: false, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'C:\\Models', detail: 'No managed runtime yet.' });
     mocks.modelDirectoryInventory.mockResolvedValue({ directory: 'C:\\Models', exists: false, readable: true, total_bytes: 0, file_count: 0, recognized_models: [], empty: true, verification_required: false, truncated: false, detail: 'Empty.' });
     mocks.installMediaRuntime.mockResolvedValue({ ready: true });
-    mocks.installRuntime.mockResolvedValue({ package_version: '0.4.0', capabilities: ['scene'], surfaces: ['browser'], model_directory: 'C:\\Models', prepared: true });
+    mocks.installRuntime.mockResolvedValue({
+      install: { package_version: '0.4.0', capabilities: ['scene'], surfaces: ['browser'], model_directory: 'C:\\Models', prepared: true },
+      setup: { profiles: [managedProfile], selected_profile_id: managedProfile.id, issues: [] },
+    });
+    mocks.prepareManagedModels.mockResolvedValue({ profiles: [managedProfile], selected_profile_id: managedProfile.id, issues: [] });
     mocks.launchUi.mockResolvedValue(undefined);
   });
 
@@ -115,8 +128,7 @@ describe('desktop target lifecycle', () => {
   });
 
   it('adopts the inspected candidate without an installation action', async () => {
-    mocks.activateLocalTarget.mockResolvedValue(localProfile);
-    mocks.targetSetupState.mockResolvedValueOnce(emptyState).mockResolvedValueOnce(localState);
+    mocks.activateLocalTarget.mockResolvedValue(localState);
     const user = userEvent.setup(); renderApp(); await enterLocal(user);
     await user.click(await screen.findByRole('radio', { name: /VidXP executable/i }));
     await user.click(await screen.findByRole('button', { name: 'Use this installation' }));
@@ -140,13 +152,14 @@ describe('desktop target lifecycle', () => {
     mocks.targetSetupState.mockResolvedValue(localState);
     mocks.recheckTargetState.mockResolvedValue(localState);
     mocks.beginManagedSetup.mockResolvedValue({ id: 'draft-1', previous_profile_id: localProfile.id });
+    mocks.cancelManagedSetup.mockResolvedValue(localState);
     const user = userEvent.setup(); renderApp();
     await user.click(await screen.findByRole('button', { name: 'Manage targets' }));
     await user.click(screen.getByRole('radio', { name: /Set up VidXP for me/i }));
     await user.click(screen.getByRole('button', { name: 'Continue' }));
     await user.click(screen.getByRole('button', { name: 'Continue to setup' }));
     await user.click(await screen.findByRole('button', { name: 'Back' }));
-    expect(mocks.cancelManagedSetup).toHaveBeenCalledTimes(1);
+    expect(mocks.cancelManagedSetup).toHaveBeenCalledWith('draft-1');
     expect(await screen.findByRole('heading', { name: 'Studio VidXP' })).toBeVisible();
   });
 
@@ -154,8 +167,7 @@ describe('desktop target lifecycle', () => {
     const saved = { ...localProfile, id: 'local-2', display_name: 'Other VidXP' };
     const state = { profiles: [localProfile, saved], selected_profile_id: localProfile.id, issues: [] };
     mocks.targetSetupState.mockResolvedValue(state); mocks.recheckTargetState.mockResolvedValue(state);
-    mocks.selectTargetProfile.mockResolvedValue(saved);
-    mocks.targetSetupState.mockResolvedValueOnce(state).mockResolvedValueOnce({ ...state, selected_profile_id: saved.id });
+    mocks.selectTargetProfile.mockResolvedValue({ ...state, selected_profile_id: saved.id });
     mocks.deleteTargetProfile.mockResolvedValue({ profiles: [saved], selected_profile_id: saved.id, issues: [] });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup(); renderApp();
@@ -198,11 +210,76 @@ describe('desktop target lifecycle', () => {
   });
 
   it('passes the scoped draft through first-time installation and does not auto-open the browser', async () => {
-    mocks.targetSetupState.mockResolvedValueOnce(emptyState).mockResolvedValueOnce({ profiles: [managedProfile], selected_profile_id: managedProfile.id, issues: [] });
     const user = userEvent.setup(); renderApp(); await enterManaged(user);
     await user.click(await screen.findByRole('button', { name: 'Configure VidXP' }));
     await waitFor(() => expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({ draft_id: 'draft-1' })));
     expect(mocks.installMediaRuntime).toHaveBeenCalledWith('draft-1');
     expect(mocks.launchUi).not.toHaveBeenCalled();
+  });
+
+  it('coalesces duplicate managed Continue actions', async () => {
+    const pending = deferred<{ id: string; previous_profile_id: null }>();
+    mocks.beginManagedSetup.mockReturnValue(pending.promise);
+    const user = userEvent.setup(); renderApp();
+    await screen.findByRole('heading', { name: 'Where should VidXP run?' });
+    await user.click(screen.getByRole('radio', { name: /Set up VidXP for me/i }));
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    const continueButton = screen.getByRole('button', { name: 'Continue to setup' });
+    await user.dblClick(continueButton);
+    expect(mocks.beginManagedSetup).toHaveBeenCalledTimes(1);
+    pending.resolve({ id: 'draft-1', previous_profile_id: null });
+    expect(await screen.findByRole('heading', { name: 'Set up local processing' })).toBeVisible();
+  });
+
+  it('freezes managed controls and coalesces Apply while a replacement is running', async () => {
+    mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models', detail: 'Ready.' });
+    const media = deferred<{ ready: boolean }>();
+    mocks.installMediaRuntime.mockReturnValue(media.promise);
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+    const browser = screen.getByRole('checkbox', { name: /Browser interface/i });
+    await user.click(browser);
+    const apply = screen.getByRole('button', { name: 'Apply update' });
+    await user.dblClick(apply);
+    expect(mocks.installMediaRuntime).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
+    expect(browser).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Choose folder…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Reset changes' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Prepare / verify models' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Open VidXP' })).toBeDisabled();
+    media.resolve({ ready: true });
+    expect(await screen.findByRole('heading', { name: 'Managed VidXP' })).toBeVisible();
+  });
+
+  it('prepares models for an unchanged ready runtime without making the draft dirty', async () => {
+    mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models', detail: 'Ready.' });
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+    expect(screen.getByRole('button', { name: 'Apply update' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Prepare / verify models' }));
+    expect(mocks.prepareManagedModels).toHaveBeenCalledWith('draft-1');
+  });
+
+  it('uses the committed install state without a fallible status refresh', async () => {
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+    await user.click(screen.getByRole('button', { name: 'Configure VidXP' }));
+    expect(await screen.findByRole('heading', { name: 'Managed VidXP' })).toBeVisible();
+    expect(mocks.runtimeStatus).toHaveBeenCalledTimes(1);
+    expect(mocks.targetSetupState).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces duplicate saved-profile Select actions', async () => {
+    const saved = { ...localProfile, id: 'local-2', display_name: 'Other VidXP' };
+    const state = { profiles: [localProfile, saved], selected_profile_id: localProfile.id, issues: [] };
+    const selection = deferred<typeof state>();
+    mocks.targetSetupState.mockResolvedValue(state);
+    mocks.recheckTargetState.mockResolvedValue(state);
+    mocks.selectTargetProfile.mockReturnValue(selection.promise);
+    const user = userEvent.setup(); renderApp();
+    await user.click(await screen.findByRole('button', { name: 'Manage targets' }));
+    const select = screen.getAllByRole('button', { name: 'Select' }).find((button) => !button.hasAttribute('disabled'))!;
+    await user.dblClick(select);
+    expect(mocks.selectTargetProfile).toHaveBeenCalledTimes(1);
+    selection.resolve({ ...state, selected_profile_id: saved.id });
+    expect(await screen.findByRole('heading', { name: 'Other VidXP' })).toBeVisible();
   });
 });

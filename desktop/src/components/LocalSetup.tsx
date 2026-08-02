@@ -29,11 +29,12 @@ import {
   inspectLocalTarget,
   type LocalTargetCandidate,
   type LocalTargetInspection,
+  type TargetSetupState,
 } from '../tauri';
 
 interface LocalSetupProps {
   onBack: () => void;
-  onActivated: () => Promise<void>;
+  onActivated: (setup: TargetSetupState) => void;
 }
 
 interface CandidateState extends LocalTargetCandidate {
@@ -144,11 +145,11 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
     setBusy('activate');
     setFailure(null);
     try {
-      await activateLocalTarget(
+      const setup = await activateLocalTarget(
         inspection.validation.canonical_executable,
         displayName.trim() || undefined,
       );
-      await onActivated();
+      onActivated(setup);
     } catch (error) {
       setFailure(errorMessage(error, 'The inspected target could not be activated.'));
     } finally {
@@ -158,7 +159,7 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
 
   return (
     <section aria-labelledby="local-setup-title">
-      <Button variant="subtle" leftSection={<IconArrowLeft aria-hidden="true" size={17} />} onClick={onBack}>Back</Button>
+      <Button variant="subtle" leftSection={<IconArrowLeft aria-hidden="true" size={17} />} onClick={onBack} disabled={busy !== null}>Back</Button>
       <div className="sectionHeading compactHeading">
         <Text className="eyebrow">EXISTING INSTALLATION</Text>
         <Title id="local-setup-title" order={1} className="pageTitle">Connect this desktop to VidXP</Title>
@@ -171,13 +172,13 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
             <Title order={2} className="panelTitle">Found on this computer</Title>
             <Text className="mutedText" size="sm">Select one candidate to check it, or browse to another executable.</Text>
           </div>
-          <Button variant="default" leftSection={<IconRefresh aria-hidden="true" size={16} />} loading={busy === 'discover'} onClick={() => void discover()}>Scan again</Button>
+          <Button variant="default" leftSection={<IconRefresh aria-hidden="true" size={16} />} loading={busy === 'discover'} disabled={busy !== null} onClick={() => void discover()}>Scan again</Button>
         </Group>
 
         {busy === 'discover' && candidates.length === 0 ? (
           <div className="emptyState" role="status" aria-live="polite"><Loader size="sm" /> Looking for VidXP executables…</div>
         ) : candidates.length > 0 ? (
-          <Radio.Group value={selectedPath} onChange={selectCandidate} aria-label="Discovered VidXP executables">
+          <Radio.Group value={selectedPath} onChange={selectCandidate} aria-label="Discovered VidXP executables" readOnly={busy !== null}>
             <Stack gap="xs">
               {candidates.map((candidate) => {
                 const path = candidatePath(candidate);
@@ -250,7 +251,7 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
           <div className="emptyState"><IconFileSearch aria-hidden="true" size={22} /><span>No candidates were found automatically. Your installation may still be usable.</span></div>
         )}
 
-        <Button mt="md" variant="light" leftSection={<IconFolderOpen aria-hidden="true" size={17} />} loading={busy === 'browse'} onClick={() => void browse()}>Browse for an executable…</Button>
+        <Button mt="md" variant="light" leftSection={<IconFolderOpen aria-hidden="true" size={17} />} loading={busy === 'browse'} disabled={busy !== null} onClick={() => void browse()}>Browse for an executable…</Button>
       </div>
 
       {busy === 'activate' && <div className="statusRegion" role="status" aria-live="polite"><Loader size="xs" /> Saving and activating this target…</div>}

@@ -180,7 +180,7 @@ export interface InstallRuntimeRequest {
   surfaces: string[];
   prepare_models: boolean;
   model_directory?: string;
-  draft_id?: string;
+  draft_id: string;
 }
 
 export interface InstallRuntimeResult {
@@ -189,6 +189,16 @@ export interface InstallRuntimeResult {
   surfaces: string[];
   model_directory: string;
   prepared: boolean;
+}
+
+export interface InstallTransitionResult {
+  install: InstallRuntimeResult;
+  setup: TargetSetupState;
+}
+
+interface WireInstallTransitionResult {
+  install: InstallRuntimeResult;
+  setup: WireTargetState;
 }
 
 function normalizeProfile(profile: WireTargetProfile): TargetProfile {
@@ -249,15 +259,15 @@ export function inspectLocalTarget(executable: string): Promise<LocalTargetInspe
   }));
 }
 
-export function activateLocalTarget(executable: string, displayName?: string): Promise<TargetProfile> {
-  return invoke<WireTargetProfile>('adopt_local_target', {
+export function activateLocalTarget(executable: string, displayName?: string): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('adopt_local_target', {
     executable,
     displayName: displayName || null,
-  }).then(normalizeProfile);
+  }).then(normalizeState);
 }
 
-export function selectTargetProfile(profileId: string): Promise<TargetProfile> {
-  return invoke<WireTargetProfile>('select_target_profile', { profileId }).then(normalizeProfile);
+export function selectTargetProfile(profileId: string): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('select_target_profile', { profileId }).then(normalizeState);
 }
 
 export function deleteTargetProfile(profileId: string): Promise<TargetSetupState> {
@@ -268,8 +278,8 @@ export function beginManagedSetup(): Promise<ManagedSetupDraft> {
   return invoke('begin_managed_setup');
 }
 
-export function cancelManagedSetup(): Promise<void> {
-  return invoke('cancel_managed_setup');
+export function cancelManagedSetup(draftId: string): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('cancel_managed_setup', { draftId }).then(normalizeState);
 }
 
 export function runtimeManifest(): Promise<RuntimeManifest> { return invoke('runtime_manifest'); }
@@ -278,11 +288,17 @@ export function modelDirectoryInventory(directory?: string): Promise<ModelDirect
   return invoke('model_directory_inventory', { directory: directory || null });
 }
 export function chooseModelDirectory(): Promise<string | null> { return invoke('choose_model_directory'); }
-export function installMediaRuntime(draftId?: string): Promise<RuntimeStatus> {
-  return invoke('install_media_runtime', { draftId: draftId || null });
+export function installMediaRuntime(draftId: string): Promise<RuntimeStatus> {
+  return invoke('install_media_runtime', { draftId });
 }
-export function installRuntime(request: InstallRuntimeRequest): Promise<InstallRuntimeResult> {
-  return invoke('install_runtime', { request });
+export function installRuntime(request: InstallRuntimeRequest): Promise<InstallTransitionResult> {
+  return invoke<WireInstallTransitionResult>('install_runtime', { request }).then((result) => ({
+    install: result.install,
+    setup: normalizeState(result.setup),
+  }));
+}
+export function prepareManagedModels(draftId: string): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('prepare_managed_models', { draftId }).then(normalizeState);
 }
 export function launchUi(): Promise<void> { return invoke('launch_ui'); }
 

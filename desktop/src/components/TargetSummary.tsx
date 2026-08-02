@@ -8,12 +8,13 @@ interface TargetSummaryProps {
   profile: TargetProfile;
   validationError?: TargetError | null;
   checking?: boolean;
+  operationPending?: boolean;
   onRecheck: () => Promise<void>;
   onManageManaged: () => void;
   onChooseAnother: () => void;
 }
 
-export function TargetSummary({ profile, validationError, checking, onRecheck, onManageManaged, onChooseAnother }: TargetSummaryProps) {
+export function TargetSummary({ profile, validationError, checking, operationPending, onRecheck, onManageManaged, onChooseAnother }: TargetSummaryProps) {
   const opening = useAsyncAction('launching', launchUi);
   const executable = profile.display_executable;
   const desktopSurfaceUnavailable = !profile.frontend.launchable;
@@ -69,11 +70,11 @@ export function TargetSummary({ profile, validationError, checking, onRecheck, o
         </div>
         <Group justify="space-between" mt="xl">
           <Group>
-            <Button variant="default" leftSection={<IconRefresh aria-hidden="true" size={17} />} onClick={onChooseAnother}>Manage targets</Button>
-            <Button variant="subtle" leftSection={<IconRefresh aria-hidden="true" size={17} />} loading={checking} onClick={() => void onRecheck()}>Recheck target</Button>
-            {profile.kind === 'managed' && <Button variant="subtle" leftSection={<IconSettings aria-hidden="true" size={17} />} onClick={onManageManaged}>Manage setup</Button>}
+            <Button variant="default" leftSection={<IconRefresh aria-hidden="true" size={17} />} disabled={operationPending} onClick={onChooseAnother}>Manage targets</Button>
+            <Button variant="subtle" leftSection={<IconRefresh aria-hidden="true" size={17} />} loading={checking} disabled={operationPending && !checking} onClick={() => void onRecheck()}>Recheck target</Button>
+            {profile.kind === 'managed' && <Button variant="subtle" leftSection={<IconSettings aria-hidden="true" size={17} />} disabled={operationPending} onClick={onManageManaged}>Manage setup</Button>}
           </Group>
-          <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={opening.pending} disabled={Boolean(validationError) || desktopSurfaceUnavailable || checking} onClick={() => void open()}>Open VidXP</Button>
+          <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={opening.pending} disabled={Boolean(validationError) || desktopSurfaceUnavailable || operationPending} onClick={() => void open()}>Open VidXP</Button>
         </Group>
       </div>
     </section>

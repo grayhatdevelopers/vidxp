@@ -59,7 +59,10 @@ describe('desktop IPC adapter', () => {
       prepare_models: false,
       draft_id: draft.id,
     };
-    invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce({ prepared: false });
+    invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce({
+      install: { prepared: false },
+      setup: emptyState,
+    });
 
     await expect(beginManagedSetup()).resolves.toEqual(draft);
     await installRuntime(request);

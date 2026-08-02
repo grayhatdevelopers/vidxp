@@ -11,7 +11,7 @@ import {
   Title,
 } from '@mantine/core';
 import { IconAlertCircle, IconArrowLeft, IconExternalLink, IconFolderOpen } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   chooseModelDirectory,
@@ -21,37 +21,78 @@ import {
   installRuntime,
   launchUi,
   modelDirectoryInventory,
+  prepareManagedModels,
   runtimeManifest,
   runtimeStatus,
   type RuntimeManifest,
   type RuntimeStatus,
   type ModelDirectoryInventory,
+  type TargetSetupState,
 } from '../tauri';
 
 interface ManagedSetupProps {
   draftId: string;
-  onBack: () => void;
-  onReady: () => Promise<void>;
+  onBack: () => Promise<void>;
+  onCommitted: (setup: TargetSetupState) => void;
 }
 
-export function ManagedSetup({ draftId, onBack, onReady }: ManagedSetupProps) {
+type ManagedOperation = 'load' | 'folder' | 'install' | 'prepare' | 'launch';
+
+export function ManagedSetup({ draftId, onBack, onCommitted }: ManagedSetupProps) {
   const [manifest, setManifest] = useState<RuntimeManifest | null>(null);
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [capabilities, setCapabilities] = useState<string[]>([]);
   const [surfaces, setSurfaces] = useState<string[]>([]);
-  const [prepareModels, setPrepareModels] = useState(true);
+  const [prepareDuringInstall, setPrepareDuringInstall] = useState(true);
   const [modelDirectory, setModelDirectory] = useState('');
   const [inventory, setInventory] = useState<ModelDirectoryInventory | null>(null);
-  const [inventoryLoading, setInventoryLoading] = useState(false);
-  const [busy, setBusy] = useState<'load' | 'folder' | 'install' | 'launch' | null>('load');
+  const [operation, setOperation] = useState<ManagedOperation | null>('load');
   const [message, setMessage] = useState('Loading managed runtime options…');
   const [failure, setFailure] = useState<string | null>(null);
+  const activeOperation = useRef<{ id: number; kind: ManagedOperation } | null>({ id: 1, kind: 'load' });
+  const nextOperation = useRef(1);
+  const mounted = useRef(true);
+  const initialLoad = useRef<Promise<{
+    manifest: RuntimeManifest;
+    status: RuntimeStatus;
+    inventory: ModelDirectoryInventory;
+  }> | null>(null);
 
-  async function load() {
-    setBusy('load');
+  function beginOperation(kind: ManagedOperation): number | null {
+    if (activeOperation.current) return null;
+    const id = ++nextOperation.current;
+    activeOperation.current = { id, kind };
+    setOperation(kind);
+    return id;
+  }
+
+  const settleOperation = useCallback((id: number) => {
+    if (!mounted.current || activeOperation.current?.id !== id) return;
+    activeOperation.current = null;
+    setOperation(null);
+  }, []);
+
+  const load = useCallback(async () => {
+    let operationId = activeOperation.current?.kind === 'load'
+      ? activeOperation.current.id
+      : null;
+    if (operationId === null && !activeOperation.current) {
+      operationId = ++nextOperation.current;
+      activeOperation.current = { id: operationId, kind: 'load' };
+      setOperation('load');
+    }
+    if (operationId === null) return;
     setFailure(null);
     try {
-      const [nextManifest, nextStatus] = await Promise.all([runtimeManifest(), runtimeStatus()]);
+      const request = initialLoad.current ?? Promise.all([runtimeManifest(), runtimeStatus()])
+        .then(async ([nextManifest, nextStatus]) => ({
+          manifest: nextManifest,
+          status: nextStatus,
+          inventory: await modelDirectoryInventory(nextStatus.model_directory),
+        }));
+      initialLoad.current = request;
+      const { manifest: nextManifest, status: nextStatus, inventory: nextInventory } = await request;
+      if (!mounted.current || activeOperation.current?.id !== operationId) return;
       setManifest(nextManifest);
       setStatus(nextStatus);
       setCapabilities(
@@ -65,39 +106,45 @@ export function ManagedSetup({ draftId, onBack, onReady }: ManagedSetupProps) {
               .map(([id]) => id),
       );
       setModelDirectory(nextStatus.model_directory);
-      setInventoryLoading(true);
-      setInventory(await modelDirectoryInventory(nextStatus.model_directory));
+      setInventory(nextInventory);
       setMessage(nextStatus.ready ? 'The managed runtime is ready.' : nextStatus.detail);
     } catch (error) {
-      setFailure(errorMessage(error, 'Managed setup could not be loaded.'));
+      if (mounted.current && activeOperation.current?.id === operationId) {
+        setFailure(errorMessage(error, 'Managed setup could not be loaded.'));
+      }
     } finally {
-      setInventoryLoading(false);
-      setBusy((current) => (current === 'load' ? null : current));
+      settleOperation(operationId);
     }
-  }
+  }, [settleOperation]);
 
-  async function refreshInventory(directory: string) {
-    setInventoryLoading(true);
+  async function refreshInventory(directory: string): Promise<boolean> {
     try {
       setInventory(await modelDirectoryInventory(directory));
+      return true;
     } catch (error) {
       setInventory(null);
       setFailure(errorMessage(error, 'The selected model folder could not be inventoried.'));
-    } finally {
-      setInventoryLoading(false);
+      return false;
     }
   }
 
   useEffect(() => {
+    mounted.current = true;
     void load();
-  }, []);
+    return () => {
+      mounted.current = false;
+      nextOperation.current += 1;
+      activeOperation.current = null;
+    };
+  }, [load]);
 
   function toggleValue(value: string, checked: boolean, setter: (next: string[]) => void, current: string[]) {
     setter(checked ? [...current, value] : current.filter((item) => item !== value));
   }
 
   async function chooseFolder() {
-    setBusy('folder');
+    const operationId = beginOperation('folder');
+    if (operationId === null) return;
     try {
       const selected = await chooseModelDirectory();
       if (selected) {
@@ -107,7 +154,7 @@ export function ManagedSetup({ draftId, onBack, onReady }: ManagedSetupProps) {
     } catch (error) {
       setFailure(errorMessage(error, 'The model folder could not be selected.'));
     } finally {
-      setBusy((current) => (current === 'folder' ? null : current));
+      settleOperation(operationId);
     }
   }
 
@@ -116,45 +163,64 @@ export function ManagedSetup({ draftId, onBack, onReady }: ManagedSetupProps) {
       setFailure('Select at least one capability.');
       return;
     }
-    setBusy('install');
+    const operationId = beginOperation('install');
+    if (operationId === null) return;
+    const captured = {
+      capabilities: [...capabilities],
+      surfaces: [...surfaces],
+      prepare_models: prepareDuringInstall,
+      model_directory: modelDirectory || undefined,
+      draft_id: draftId,
+    };
     setFailure(null);
     try {
       setMessage('Checking FFmpeg and required codecs…');
       await installMediaRuntime(draftId);
       setMessage(
-        prepareModels
+        captured.prepare_models
           ? 'Creating the managed runtime, verifying cached models, and downloading anything missing…'
           : 'Creating the managed runtime…',
       );
-      const result = await installRuntime({
-        capabilities,
-        surfaces,
-        prepare_models: prepareModels,
-        model_directory: modelDirectory || undefined,
-        draft_id: draftId,
-      });
-      setModelDirectory(result.model_directory);
-      await refreshInventory(result.model_directory);
-      const nextStatus = await runtimeStatus();
-      setStatus(nextStatus);
-      setMessage(result.prepared ? 'Runtime and selected models are ready.' : 'Runtime ready. Model downloads were deferred.');
-      await onReady();
+      const result = await installRuntime(captured);
+      setMessage(result.install.prepared ? 'Runtime and selected models are ready.' : 'Runtime ready. Model downloads were deferred.');
+      activeOperation.current = null;
+      onCommitted(result.setup);
     } catch (error) {
       setFailure(errorMessage(error, 'Managed setup failed. The previous target remains authoritative; any completed replacement runtime is retained for recovery.'));
     } finally {
-      setBusy(null);
+      settleOperation(operationId);
     }
   }
 
   async function launch() {
-    setBusy('launch');
+    const operationId = beginOperation('launch');
+    if (operationId === null) return;
     setFailure(null);
     try {
       await launchUi();
     } catch (error) {
       setFailure(errorMessage(error, 'VidXP could not be opened.'));
     } finally {
-      setBusy(null);
+      settleOperation(operationId);
+    }
+  }
+
+  async function prepareModels() {
+    const operationId = beginOperation('prepare');
+    if (operationId === null) return;
+    setFailure(null);
+    setMessage('Verifying cached model files and downloading anything missing…');
+    try {
+      await prepareManagedModels(draftId);
+      setMessage('Selected models are prepared.');
+      const refreshed = await refreshInventory(modelDirectory);
+      if (!refreshed) {
+        setFailure('Models were prepared, but the cache inventory could not be refreshed.');
+      }
+    } catch (error) {
+      setFailure(errorMessage(error, 'Model preparation failed. The installed runtime remains active.'));
+    } finally {
+      settleOperation(operationId);
     }
   }
 
@@ -171,11 +237,10 @@ export function ManagedSetup({ draftId, onBack, onReady }: ManagedSetupProps) {
     setCapabilities(status.capabilities);
     setSurfaces(status.surfaces);
     setModelDirectory(status.model_directory);
-    void refreshInventory(status.model_directory);
     setFailure(null);
   }
 
-  const isBusy = busy === 'load' || busy === 'folder' || busy === 'install' || busy === 'launch';
+  const isBusy = operation !== null;
   const attentionTitle = /ffmpeg|ffprobe/i.test(message) ? 'Media tools required' : 'Managed runtime needs attention';
 
   function formatBytes(bytes: number) {
@@ -192,7 +257,7 @@ export function ManagedSetup({ draftId, onBack, onReady }: ManagedSetupProps) {
 
   return (
     <section aria-labelledby="managed-setup-title">
-      <Button variant="subtle" leftSection={<IconArrowLeft aria-hidden="true" size={17} />} onClick={onBack} disabled={busy === 'install'}>Back</Button>
+      <Button variant="subtle" leftSection={<IconArrowLeft aria-hidden="true" size={17} />} onClick={() => void onBack()} disabled={isBusy}>Back</Button>
       <div className="sectionHeading compactHeading">
         <Text className="eyebrow">DESKTOP-MANAGED RUNTIME</Text>
         <Title id="managed-setup-title" order={1} className="pageTitle">Set up local processing</Title>
@@ -211,7 +276,8 @@ export function ManagedSetup({ draftId, onBack, onReady }: ManagedSetupProps) {
                   className="optionCard"
                   key={id}
                   checked={capabilities.includes(id)}
-                  onClick={() => toggleValue(id, !capabilities.includes(id), setCapabilities, capabilities)}
+                  disabled={isBusy}
+                  onClick={() => { if (!isBusy) toggleValue(id, !capabilities.includes(id), setCapabilities, capabilities); }}
                 >
                   <Group wrap="nowrap" align="flex-start"><Checkbox.Indicator aria-hidden="true" /><div><Text fw={650}>{capability.label}</Text><Text size="sm" className="mutedText">{capability.description || `Installs the ${capability.extra} capability.`}</Text></div></Group>
                 </Checkbox.Card>
@@ -223,7 +289,7 @@ export function ManagedSetup({ draftId, onBack, onReady }: ManagedSetupProps) {
             <Title order={2} className="panelTitle" mb="md">Interface</Title>
             <Stack gap="xs">
               {Object.entries(manifest.surfaces).map(([id, surface]) => (
-                <Checkbox key={id} checked={surfaces.includes(id)} onChange={(event) => toggleValue(id, event.currentTarget.checked, setSurfaces, surfaces)} label={surface.label} description={surface.description} />
+                <Checkbox key={id} checked={surfaces.includes(id)} disabled={isBusy} onChange={(event) => toggleValue(id, event.currentTarget.checked, setSurfaces, surfaces)} label={surface.label} description={surface.description} />
               ))}
             </Stack>
           </div>
@@ -231,10 +297,10 @@ export function ManagedSetup({ draftId, onBack, onReady }: ManagedSetupProps) {
           <div className="setupPanel">
             <Group justify="space-between" align="center" wrap="nowrap">
               <div className="folderCopy"><Text fw={650}>Model storage</Text><Text size="sm" className="pathText">{modelDirectory ? displayPath(modelDirectory) : 'Using the default location'}</Text></div>
-              <Button variant="default" leftSection={<IconFolderOpen aria-hidden="true" size={16} />} loading={busy === 'folder'} onClick={() => void chooseFolder()}>Choose folder…</Button>
+              <Button variant="default" leftSection={<IconFolderOpen aria-hidden="true" size={16} />} loading={operation === 'folder'} disabled={isBusy} onClick={() => void chooseFolder()}>Choose folder…</Button>
             </Group>
             <div className="cacheInventory" aria-live="polite">
-              {inventoryLoading ? (
+              {operation === 'load' || operation === 'folder' ? (
                 <Text size="sm" mt="md"><Loader size="xs" /> Checking cached model files…</Text>
               ) : inventory && !inventory.readable ? (
                 <Alert mt="md" color="red" title="Model folder cannot be read">{inventory.detail}</Alert>
@@ -257,16 +323,16 @@ export function ManagedSetup({ draftId, onBack, onReady }: ManagedSetupProps) {
                 </>
               ) : null}
             </div>
-            <Switch mt="lg" checked={prepareModels} onChange={(event) => setPrepareModels(event.currentTarget.checked)} label="Verify cached models and download anything missing" description={prepareModels ? 'Valid cached files in this folder will be reused.' : 'Preparation is deferred; missing models can be downloaded later.'} />
+            {!status?.ready && <Switch mt="lg" checked={prepareDuringInstall} disabled={isBusy} onChange={(event) => setPrepareDuringInstall(event.currentTarget.checked)} label="Verify cached models and download anything missing during setup" description={prepareDuringInstall ? 'Valid cached files in this folder will be reused.' : 'Preparation is deferred; missing models can be downloaded later.'} />}
           </div>
         </Stack>
       )}
 
-      {status?.state === 'never_configured' && busy !== 'install' && (
+      {status?.state === 'never_configured' && operation !== 'install' && (
         <div className="neutralSetupNote" role="status">{status.detail}</div>
       )}
 
-      {status?.state === 'broken' && busy !== 'install' && (
+      {status?.state === 'broken' && operation !== 'install' && (
         <Alert
           className="managedAttention"
           icon={<IconAlertCircle aria-hidden="true" />}
@@ -293,11 +359,12 @@ export function ManagedSetup({ draftId, onBack, onReady }: ManagedSetupProps) {
         {status?.ready ? (
           <Group>
             <Button variant="default" disabled={!dirty || isBusy} onClick={resetDraft}>Reset changes</Button>
-            <Button loading={busy === 'install'} disabled={!dirty || !manifest || busy === 'load'} onClick={() => void install()}>Apply update</Button>
-            <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={busy === 'launch'} disabled={dirty} onClick={() => void launch()}>Open VidXP</Button>
+            <Button loading={operation === 'install'} disabled={!dirty || !manifest || isBusy} onClick={() => void install()}>Apply update</Button>
+            <Button variant="light" loading={operation === 'prepare'} disabled={dirty || isBusy} onClick={() => void prepareModels()}>Prepare / verify models</Button>
+            <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={operation === 'launch'} disabled={dirty || isBusy} onClick={() => void launch()}>Open VidXP</Button>
           </Group>
         ) : (
-          <Button loading={busy === 'install'} disabled={!manifest || busy === 'load'} onClick={() => void install()}>Configure VidXP</Button>
+          <Button loading={operation === 'install'} disabled={!manifest || isBusy} onClick={() => void install()}>Configure VidXP</Button>
         )}
       </div>
       {failure && <Alert mt="md" icon={<IconAlertCircle aria-hidden="true" />} color="red" title="Could not continue" role="alert">{failure}</Alert>}
