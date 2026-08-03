@@ -25,4 +25,13 @@ updates:
       github-actions:
         patterns:
           - "*"
+    ignore:
+      # The action ref is the Rust version to install, not an action release.
+      # Dependabot otherwise proposes unreleased toolchains such as 1.100.0.
+      - dependency-name: dtolnay/rust-toolchain
+      # The v4 ref already follows current v4 security and patch releases.
+      - dependency-name: github/codeql-action
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
     open-pull-requests-limit: 2

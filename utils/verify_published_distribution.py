@@ -13,12 +13,23 @@ from urllib.parse import quote
 from urllib.request import urlopen
 
 
+_PUBLISH_ATTESTATION_SUFFIX = ".publish.attestation"
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as file:
         for chunk in iter(lambda: file.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def distribution_files(payload: dict[str, object]) -> dict[str, str]:
+    return {
+        file["filename"]: file["digests"]["sha256"]
+        for file in payload.get("urls", [])
+        if not file["filename"].endswith(_PUBLISH_ATTESTATION_SUFFIX)
+    }
 
 
 def main() -> int:
@@ -50,10 +61,7 @@ def main() -> int:
             return 0
         raise
 
-    remote = {
-        file["filename"]: file["digests"]["sha256"]
-        for file in payload.get("urls", [])
-    }
+    remote = distribution_files(payload)
     if local == remote:
         print("identical")
         return 0

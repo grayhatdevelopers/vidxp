@@ -3,11 +3,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from utils.release_contract import validate
+from utils.release_contract import validate, version_sources
 from utils.prepare_nightly import prepare
 
 
 class ReleaseContractTests(unittest.TestCase):
+    def current_release(self) -> tuple[str, str]:
+        versions = set(version_sources().values())
+        self.assertEqual(len(versions), 1)
+        version = versions.pop()
+        channel = "beta" if "-b" in version else "stable"
+        return version, channel
+
     def copy_contract(self, destination: Path) -> None:
         root = Path(__file__).resolve().parents[1]
         for relative in (
@@ -22,8 +29,9 @@ class ReleaseContractTests(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes((root / relative).read_bytes())
 
-    def test_beta_contract_matches_every_release_source(self):
-        self.assertEqual(validate("beta", "v0.4.0-b"), "0.4.0-b")
+    def test_current_contract_matches_every_release_source(self):
+        version, channel = self.current_release()
+        self.assertEqual(validate(channel, f"v{version}"), version)
 
     def test_rejects_a_divergent_desktop_version(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -36,12 +44,15 @@ class ReleaseContractTests(unittest.TestCase):
                 validate("beta", None, root)
 
     def test_beta_and_stable_channels_are_not_interchangeable(self):
-        with self.assertRaisesRegex(ValueError, "stable release version"):
-            validate("stable", None)
+        _, channel = self.current_release()
+        other_channel = "stable" if channel == "beta" else "beta"
+        with self.assertRaisesRegex(ValueError, f"{other_channel} release version"):
+            validate(other_channel, None)
 
     def test_tag_must_match_the_combined_version(self):
+        _, channel = self.current_release()
         with self.assertRaisesRegex(ValueError, "does not match"):
-            validate("beta", "v0.4.0-b.9")
+            validate(channel, "v999.999.999")
 
     def test_nightly_version_is_unique_without_changing_release_sources(self):
         with tempfile.TemporaryDirectory() as temporary:
