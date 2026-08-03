@@ -124,6 +124,7 @@ MCP_TOOL_NAMES = [
     "get_artifact_download",
     "list_jobs",
     "get_job",
+    "get_job_evidence",
     "get_job_status",
     "wait_job",
     "retry_job",
@@ -425,7 +426,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             uploads,
         )
 
-    async def test_curated_tools_have_structured_output_schemas(self):
+    async def test_curated_tools_publish_their_intended_output_contracts(self):
         with TemporaryDirectory() as directory:
             context, _uploads = self.upload_context(Path(directory))
             server = create_mcp_server(
@@ -443,11 +444,17 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             [tool.name for tool in discovered.tools],
             MCP_TOOL_NAMES,
         )
+        tools = {tool.name: tool for tool in discovered.tools}
+        self.assertIsNone(tools["get_job_evidence"].output_schema)
+        self.assertIsNone(tools["materialize_job_evidence"].output_schema)
         self.assertTrue(
-            all(tool.output_schema is not None for tool in discovered.tools)
+            all(
+                tool.output_schema is not None
+                for tool in discovered.tools
+                if tool.name not in {"get_job_evidence", "materialize_job_evidence"}
+            )
         )
         self.assertTrue(all(tool.title for tool in discovered.tools))
-        tools = {tool.name: tool for tool in discovered.tools}
         self.assertFalse(tools["create_media_upload"].annotations.read_only_hint)
         self.assertTrue(tools["create_media_upload"].annotations.idempotent_hint)
         self.assertTrue(tools["get_media_upload"].annotations.read_only_hint)
@@ -1113,7 +1120,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         rendered = output.getvalue()
         self.assertIn("OK VidXP MCP", rendered)
         self.assertIn("Index state: missing", rendered)
-        self.assertIn("Tools: 24", rendered)
+        self.assertIn("Tools: 25", rendered)
         self.assertIn("get_index_status", rendered)
 
     async def test_server_info_exposes_vidxp_branding(self):
@@ -1359,6 +1366,43 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(error["retryable"])
         self.assertTrue(error["details"]["partial_files_preserved"])
 
+    async def test_get_job_returns_machine_record_without_loading_evidence_bytes(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            frame = Artifact(
+                artifact_id=ARTIFACT_ID,
+                media_id=MEDIA_ID,
+                generation_id="523456781234423481234567890abcde",
+                job_id=JOB_ID,
+                kind=ArtifactKind.evidence_frame,
+                profile="png",
+                mime_type="image/png",
+                byte_size=1,
+                sha256="a" * 64,
+                state=ArtifactState.ready,
+                created_at=datetime.now(timezone.utc),
+            )
+            context.jobs.get.return_value = search_evidence_job(frame)
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.read"}),
+                ),
+            )
+            async with Client(server) as client:
+                result = await client.call_tool("get_job", {"job_id": JOB_ID})
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.structured_content["job_id"], JOB_ID)
+        self.assertFalse(
+            any(
+                isinstance(block, (ImageContent, ResourceLink))
+                for block in result.content
+            )
+        )
+        context.application.open_artifact_content.assert_not_called()
+
     async def test_compact_job_status_and_wait_avoid_full_result_projection(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
@@ -1423,11 +1467,11 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 created_at=datetime.now(timezone.utc),
             )
             cases = (
-                ("local_stdio", False, "local_file"),
-                ("streamable_http", False, "mcp_resource"),
-                ("streamable_http", True, "https_download"),
+                ("local_stdio", False),
+                ("streamable_http", False),
+                ("streamable_http", True),
             )
-            for transport, configured, expected_mode in cases:
+            for transport, configured in cases:
                 with self.subTest(transport=transport, configured=configured):
                     context = self.context(
                         root,
@@ -1463,40 +1507,26 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         artifact_delivery=transport,
                     )
                     async with Client(server) as client:
-                        result = await client.call_tool("get_job", {"job_id": JOB_ID})
+                        result = await client.call_tool(
+                            "get_job_evidence", {"job_id": JOB_ID}
+                        )
                         uri = f"vidxp://artifacts/{ARTIFACT_ID}/content.png"
                         resource = await client.read_resource(uri)
 
                     self.assertFalse(result.is_error)
+                    self.assertIsNone(result.structured_content)
+                    self.assertIn(evidence_id := "e" * 64, result.content[0].text)
+                    self.assertIn("1.000-2.000", result.content[0].text)
                     self.assertTrue(
                         any(isinstance(block, ImageContent) for block in result.content)
                     )
                     self.assertTrue(
                         any(isinstance(block, ResourceLink) for block in result.content)
                     )
-                    projected = result.structured_content["result"]["result"][
-                        "evidence_delivery"
-                    ]["items"][0]["keyframe"]["artifact"]
-                    self.assertEqual(projected["resource_uri"], uri)
-                    delivery = projected["delivery"]
-                    self.assertEqual(delivery["resource_uri"], uri)
                     self.assertEqual(len(resource.contents), 1)
-                    self.assertEqual(delivery["delivery_mode"], expected_mode)
-                    if expected_mode == "local_file":
-                        self.assertEqual(Path(delivery["local_path"]), frame_path)
-                    elif expected_mode == "https_download":
-                        self.assertTrue(
-                            delivery["download_url"].startswith(
-                                "https://public.example/artifact-download/"
-                            )
-                        )
-                        self.assertIsNone(delivery["local_path"])
-                    else:
-                        self.assertIsNone(delivery["local_path"])
-                        self.assertEqual(
-                            delivery["delivery_error"]["code"],
-                            "public_download_origin_unavailable",
-                        )
+                    self.assertEqual(
+                        evidence_id, durable.result.result.moments[0].moment_id
+                    )
 
     async def test_inline_evidence_respects_configured_resource_byte_limit(self):
         with TemporaryDirectory() as directory:
@@ -1547,8 +1577,11 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         artifact_delivery="streamable_http",
                     )
                     async with Client(server) as client:
-                        result = await client.call_tool("get_job", {"job_id": JOB_ID})
+                        result = await client.call_tool(
+                            "get_job_evidence", {"job_id": JOB_ID}
+                        )
                         self.assertFalse(result.is_error)
+                        self.assertIsNone(result.structured_content)
                         self.assertEqual(
                             any(
                                 isinstance(block, ImageContent)
@@ -1562,21 +1595,6 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                                 for block in result.content
                             ),
                             byte_size <= maximum,
-                        )
-                        projected = result.structured_content["result"]["result"][
-                            "evidence_delivery"
-                        ]["items"][0]["keyframe"]["artifact"]
-                        self.assertEqual(
-                            projected["delivery"]["delivery_mode"],
-                            "https_download",
-                        )
-                        expected_resource_uri = (
-                            f"vidxp://artifacts/{ARTIFACT_ID}/content.png"
-                            if byte_size <= maximum
-                            else None
-                        )
-                        self.assertEqual(
-                            projected["resource_uri"], expected_resource_uri
                         )
                         if not expect_inline:
                             context.application.open_artifact_content.assert_not_called()
@@ -1714,9 +1732,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 sum(isinstance(block, ResourceLink) for block in result.content),
                 2,
             )
-            item = result.structured_content["items"][0]
-            self.assertIsNotNone(item["keyframe"]["artifact"]["resource_uri"])
-            self.assertIsNotNone(item["clip"]["resource_uri"])
+            self.assertIsNone(result.structured_content)
+            self.assertIn("1.000-2.000", result.content[0].text)
+            self.assertIn("e" * 64, result.content[0].text)
             call = evidence_delivery.deliver_selected.call_args
             self.assertEqual(call.args[0], source.result.result)
             self.assertEqual(call.args[1], ("e" * 64,))
@@ -1886,21 +1904,18 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             )
 
             async with Client(server) as client:
-                result = await client.call_tool("get_job", {"job_id": JOB_ID})
+                result = await client.call_tool("get_job_evidence", {"job_id": JOB_ID})
 
             self.assertFalse(result.is_error, result.content)
+            self.assertIsNone(result.structured_content)
+            self.assertIn("Board: 1/1 candidates", result.content[0].text)
+            self.assertIn("1.000-2.000", result.content[0].text)
+            self.assertIn("e" * 64, result.content[0].text)
             self.assertTrue(
                 any(isinstance(block, ImageContent) for block in result.content)
             )
             self.assertTrue(
                 any(isinstance(block, ResourceLink) for block in result.content)
-            )
-            projected = result.structured_content["result"]["result"][
-                "evidence_delivery"
-            ]["board"]["pages"][0]
-            self.assertEqual(
-                projected["artifact"]["resource_uri"],
-                f"vidxp://artifacts/{ARTIFACT_ID}/content.jpg",
             )
 
     async def test_one_job_search_returns_frame_and_ready_clip(self):
@@ -1973,6 +1988,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             )
             context.jobs.get.side_effect = (
                 search_evidence_job(frame, clip),
+                search_evidence_job(frame, clip),
+                query_evidence_job(frame, clip),
                 query_evidence_job(frame, clip),
             )
 
@@ -2017,6 +2034,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     },
                 )
                 completed = await client.call_tool("get_job", {"job_id": JOB_ID})
+                presented = await client.call_tool(
+                    "get_job_evidence", {"job_id": JOB_ID}
+                )
                 clip_resource = await client.read_resource(
                     f"vidxp://artifacts/{clip_id}/content.mp4"
                 )
@@ -2035,20 +2055,29 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     },
                 )
                 completed_query = await client.call_tool("get_job", {"job_id": JOB_ID})
+                presented_query = await client.call_tool(
+                    "get_job_evidence", {"job_id": JOB_ID}
+                )
 
             self.assertFalse(submitted.is_error)
             self.assertFalse(completed.is_error)
+            self.assertFalse(presented.is_error)
             self.assertFalse(submitted_query.is_error)
             self.assertFalse(completed_query.is_error)
+            self.assertFalse(presented_query.is_error)
             item = completed.structured_content["result"]["result"][
                 "evidence_delivery"
             ]["items"][0]
             self.assertIsNotNone(item["keyframe"])
             self.assertIsNotNone(item["clip"])
             links = [
-                block for block in completed.content if isinstance(block, ResourceLink)
+                block for block in presented.content if isinstance(block, ResourceLink)
             ]
             self.assertEqual(len(links), 2)
+            self.assertIsNone(presented.structured_content)
+            self.assertTrue(
+                any(isinstance(block, ImageContent) for block in presented.content)
+            )
             self.assertEqual(len(clip_resource.contents), 1)
             duration = float(
                 subprocess.check_output(
@@ -2071,6 +2100,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             )
             query_result = completed_query.structured_content["result"]["result"]
             cited = query_result["claims"][0]["evidence_ids"][0]
+            self.assertIsNone(presented_query.structured_content)
+            self.assertIn("Grounded answer:", presented_query.content[0].text)
+            self.assertIn(cited, presented_query.content[0].text)
             self.assertEqual(cited, query_result["evidence"][0]["evidence_id"])
             self.assertEqual(
                 cited,
@@ -2631,7 +2663,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 22)
+        self.assertEqual(len(discovered.tools), 23)
         self.assertNotIn(
             "create_media_upload",
             {tool.name for tool in discovered.tools},

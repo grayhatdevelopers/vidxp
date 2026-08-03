@@ -920,18 +920,22 @@ guidance.
 MCP search and query jobs compile their ranked candidates into annotated,
 media-separated JPEG evidence boards before the original job succeeds. The board
 uses the existing evidence-frame and artifact services, returns native image
-resources plus a tile map to stable evidence IDs, and is included in the same
-full `get_job` response. Active observation uses compact job summaries and
-bounded waits, so result payloads and evidence are fetched only once after the
-job becomes terminal. The default budget is 24 tiles per page and four pages
-per job; `next_start_rank` continues without imposing the standalone-artifact
-limit.
+resources plus a concise index to stable evidence IDs. Active observation uses
+compact job summaries and bounded waits; after the job becomes terminal,
+`get_job_evidence` returns content-only board images, links, timestamps, and
+evidence IDs that remain model-visible in hosts that prioritize
+`structuredContent` over MCP content blocks. `get_job` is the explicit full
+machine record and does not load or duplicate evidence bytes. The default budget
+is 24 tiles per page and four pages per job; `next_start_rank` continues without
+imposing the standalone-artifact limit.
 
 Callers may additionally request `keyframes` or `keyframes_and_clips`, with a hard
 maximum of five standalone items in the initial job. Scene evidence extracts the
 authoritative indexed frame number; other intervals and anonymous actor clusters
 use a labeled representative frame. `materialize_job_evidence` accepts one to ten
-board evidence IDs for later frame or clip drill-down without rerunning retrieval.
+board evidence IDs for later frame or clip drill-down without rerunning retrieval;
+it likewise returns content-only images and links rather than duplicating its full
+delivery model.
 `create_evidence_board` remains for custom selections and continuation pages, and
 `create_evidence_clip` remains the single-item fallback. Clip rendering requires
 repository write scope; boards and keyframes retain read scope.
@@ -1059,6 +1063,7 @@ Initial curated tools:
 - `get_artifact_download`
 - `list_jobs`
 - `get_job`
+- `get_job_evidence`
 - `get_job_status`
 - `wait_job`
 - `retry_job`

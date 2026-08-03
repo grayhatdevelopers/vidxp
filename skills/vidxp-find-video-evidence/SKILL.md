@@ -14,14 +14,17 @@ description: Use VidXP to search indexed videos, answer grounded questions about
 3. Omit `command.evidence_delivery` for the normal path. The completed job
    includes an annotated board covering the ranked results.
 4. Call `wait_job` for bounded waits. Pass its `observation_token` as
-   `after_observation_token` on the next wait. When terminal, call `get_job`
-   once. Search and query may take time; update the user
+   `after_observation_token` on the next wait. When terminal, call
+   `get_job_evidence` once. It returns the concise evidence index and visual
+   content without the full structured job dump. Use `get_job` only when exact
+   machine fields not present in that index are actually needed. Search and
+   query may take time; update the user
    when the stage changes or about once per minute, never after every wait and
    never with an invented ETA.
 5. Inspect and show the returned board before making visual claims. Use its tile
    evidence IDs for follow-up:
    - `materialize_job_evidence` accepts up to ten selected IDs and returns
-     standalone keyframes or clips without rerunning retrieval.
+     model-visible standalone keyframes or clip links without rerunning retrieval.
    - `create_evidence_board` is only for a custom selection or the
      `next_start_rank` continuation; wait on its returned job ID the same way.
 6. When standalone artifacts are required in the initial job, put exactly this
