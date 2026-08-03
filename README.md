@@ -186,6 +186,8 @@ Run `vidxp --help` or `vidxp <command> --help` for the full command reference.
 Use the Python package to add selected VidXP capabilities directly to an
 application, or use the HTTP API when VidXP runs as a service.
 
+[![VidXP being used with ChatGPT Desktop AI](./docs/images/claude-with-vidxp.jpg)](https://youtu.be/fa4Zx-bSOh4)
+
 MCP clients can add and discover videos, start indexing, search dialogue and
 scenes, ask questions about a library, and create clips or actor overlays.
 Local agents can connect over stdio; remote agents can connect to a
