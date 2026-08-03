@@ -175,17 +175,18 @@ curl --fail-with-body \
   --data '{"modalities":["dialogue","scene","actor"],"capability_options":{}}'
 ```
 
-The `202 Accepted` response contains the durable `job_id` and a `Location`
-header. Poll that location until the job succeeds:
+The `202 Accepted` response contains the durable `job_id`. Use the bounded wait
+endpoint for compact status, passing the returned observation token on the next
+request. Fetch the full job once after it becomes terminal:
 
 ```bash
 curl --fail-with-body \
   --header "Authorization: Bearer ${VIDXP_HTTP_STATIC_BEARER_TOKEN}" \
-  "https://${VIDXP_PUBLIC_API_HOST}/api/v1/jobs/<job-id>"
+  "https://${VIDXP_PUBLIC_API_HOST}/api/v1/jobs/<job-id>/wait?timeout_seconds=30"
 ```
 
-The Streamable HTTP MCP `prepare_models` and `get_job` tools expose the same
-operation for an authenticated agent client. Check
+The Streamable HTTP MCP `prepare_models`, `wait_job`, and `get_job` tools expose
+the same operation for an authenticated agent client. Check
 `/api/v1/runtime/readiness` afterward; `/ready` covers control-plane
 availability and does not claim that every optional model is prepared.
 

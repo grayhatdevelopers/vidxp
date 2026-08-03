@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from functools import wraps
-from time import sleep
+from time import monotonic, sleep
 from typing import Any, Callable, Protocol
 
 from vidxp.application_models import (
@@ -20,6 +22,10 @@ from vidxp.application_models import (
     JobQueue,
     JobResult,
     JobState,
+    JobSummary,
+    JobWaitResult,
+    DEFAULT_JOB_WAIT_SECONDS,
+    MAX_JOB_WAIT_SECONDS,
     InvalidRequestError,
     ListJobsCommand,
     MediaImportJobRequest,
@@ -257,6 +263,62 @@ class JobService:
         return job
 
     @job_boundary
+    def summary(self, job_id: str) -> JobSummary:
+        return self._summary(self.get(job_id))
+
+    @job_boundary
+    def wait_for_change(
+        self,
+        job_id: str,
+        *,
+        after: str | None = None,
+        timeout_seconds: float = DEFAULT_JOB_WAIT_SECONDS,
+    ) -> JobWaitResult:
+        if timeout_seconds <= 0 or timeout_seconds > MAX_JOB_WAIT_SECONDS:
+            raise InvalidRequestError(
+                errors=[
+                    {
+                        "field": "timeout_seconds",
+                        "message": (
+                            "The timeout must be greater than zero and no more "
+                            f"than {MAX_JOB_WAIT_SECONDS} seconds."
+                        ),
+                    }
+                ]
+            )
+        initial = self.get(job_id)
+        initial_summary = self._summary(initial)
+        if initial_summary.terminal:
+            return JobWaitResult(
+                job=initial_summary,
+                changed=(
+                    after is not None and initial_summary.observation_token != after
+                ),
+                timed_out=False,
+            )
+        if after is not None and initial_summary.observation_token != after:
+            return JobWaitResult(
+                job=initial_summary,
+                changed=True,
+                timed_out=False,
+            )
+
+        baseline = after or initial_summary.observation_token
+        job, timed_out = self._poll_until(
+            job_id,
+            deadline=monotonic() + timeout_seconds,
+            predicate=lambda candidate: (
+                candidate.terminal
+                or self._summary(candidate).observation_token != baseline
+            ),
+        )
+        return JobWaitResult(
+            job=self._summary(job),
+            changed=not timed_out,
+            timed_out=timed_out,
+        )
+
+    @job_boundary
     def list(self, command: ListJobsCommand) -> JobPage:
         return self.backend.list(command)
 
@@ -350,16 +412,87 @@ class JobService:
         progress: Callable[[Job], None] | None = None,
     ) -> Job:
         last_progress = None
-        while True:
-            job = self.get(job_id)
+
+        def report(job: Job) -> None:
+            nonlocal last_progress
             if progress is not None and job.progress != last_progress:
                 progress(job)
                 last_progress = job.progress
-            if job.state not in {JobState.queued, JobState.running}:
-                if job.state != JobState.succeeded:
-                    self.result(job.job_id)
-                return job
-            sleep(self.settings.workflow_poll_interval_seconds)
+
+        job, _timed_out = self._poll_until(
+            job_id,
+            deadline=None,
+            predicate=lambda candidate: candidate.terminal,
+            on_job=report,
+        )
+        if job.state != JobState.succeeded:
+            self.result(job.job_id)
+        return job
+
+    def _poll_until(
+        self,
+        job_id: str,
+        *,
+        deadline: float | None,
+        predicate: Callable[[Job], bool],
+        on_job: Callable[[Job], None] | None = None,
+    ) -> tuple[Job, bool]:
+        while True:
+            job = self.get(job_id)
+            if on_job is not None:
+                on_job(job)
+            if predicate(job):
+                return job, False
+            if deadline is not None:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    return job, True
+                interval = min(
+                    self.settings.workflow_poll_interval_seconds,
+                    remaining,
+                )
+            else:
+                interval = self.settings.workflow_poll_interval_seconds
+            sleep(interval)
+
+    @staticmethod
+    def _summary(job: Job) -> JobSummary:
+        progress = job.progress
+        error = job.error
+        observation = {
+            "job_id": job.job_id,
+            "kind": job.kind.value,
+            "state": job.state.value,
+            "queue": job.queue.value,
+            "stage": None if progress is None else progress.stage,
+            "total": None if progress is None else progress.total,
+            "error_code": None if error is None else error.code,
+            "recovery_attempts": job.recovery_attempts,
+            "terminal": job.terminal,
+            "result_available": job.result is not None,
+        }
+        token = hashlib.sha256(
+            json.dumps(
+                observation,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return JobSummary(
+            job_id=job.job_id,
+            kind=job.kind,
+            state=job.state,
+            queue=job.queue,
+            progress=progress,
+            error=error,
+            recovery_attempts=job.recovery_attempts,
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+            terminal=job.terminal,
+            poll_after_seconds=job.poll_after_seconds,
+            result_available=job.result is not None,
+            observation_token=token,
+        )
 
     def _model_queue(self) -> JobQueue:
         return (

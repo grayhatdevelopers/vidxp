@@ -79,6 +79,108 @@ class JobContractTests(unittest.TestCase):
         self.assertNotIn('"path"', schema)
         self.assertNotIn("model_cache", schema)
 
+    def test_job_summary_omits_result_and_ignores_in_stage_progress_noise(self):
+        now = datetime.now(timezone.utc)
+        first = Job(
+            job_id=JOB_ID,
+            kind=JobKind.index,
+            state=JobState.running,
+            queue=JobQueue.cpu,
+            progress=JobProgress(
+                stage="frames",
+                message="Indexed 1 frame.",
+                current=1,
+                total=10,
+                updated_at=now,
+            ),
+        )
+        later = first.model_copy(
+            update={
+                "progress": first.progress.model_copy(
+                    update={"current": 8, "message": "Indexed 8 frames."}
+                )
+            }
+        )
+
+        first_summary = JobService._summary(first)
+        later_summary = JobService._summary(later)
+
+        self.assertNotIn("result", first_summary.model_dump(mode="json"))
+        self.assertFalse(first_summary.result_available)
+        self.assertEqual(
+            first_summary.observation_token,
+            later_summary.observation_token,
+        )
+        self.assertEqual(later_summary.progress.current, 8)
+
+    def test_wait_for_change_returns_on_stage_change_with_compact_status(self):
+        now = datetime.now(timezone.utc)
+        running = Job(
+            job_id=JOB_ID,
+            kind=JobKind.index,
+            state=JobState.running,
+            queue=JobQueue.cpu,
+            progress=JobProgress(
+                stage="frames",
+                message="Indexing frames.",
+                current=1,
+                total=10,
+                updated_at=now,
+            ),
+        )
+        next_stage = running.model_copy(
+            update={
+                "progress": JobProgress(
+                    stage="embeddings",
+                    message="Writing embeddings.",
+                    current=0,
+                    total=10,
+                    updated_at=now,
+                )
+            }
+        )
+        backend = Mock()
+        backend.get.side_effect = [running, running, next_stage]
+        service = JobService(
+            settings=VidXPSettings(
+                repository_root=Path("repository"),
+                runtime_backend="cpu",
+                workflow_poll_interval_seconds=0.001,
+            ),
+            backend=backend,
+        )
+
+        waited = service.wait_for_change(JOB_ID, timeout_seconds=1)
+
+        self.assertTrue(waited.changed)
+        self.assertFalse(waited.timed_out)
+        self.assertEqual(waited.job.progress.stage, "embeddings")
+        self.assertNotIn("result", waited.model_dump(mode="json")["job"])
+
+    def test_wait_for_change_times_out_without_fabricating_a_change(self):
+        running = Job(
+            job_id=JOB_ID,
+            kind=JobKind.index,
+            state=JobState.running,
+            queue=JobQueue.cpu,
+        )
+        backend = Mock()
+        backend.get.return_value = running
+        service = JobService(
+            settings=VidXPSettings(
+                repository_root=Path("repository"),
+                runtime_backend="cpu",
+                workflow_poll_interval_seconds=0.001,
+            ),
+            backend=backend,
+        )
+
+        waited = service.wait_for_change(JOB_ID, timeout_seconds=0.003)
+
+        self.assertFalse(waited.changed)
+        self.assertTrue(waited.timed_out)
+        self.assertEqual(waited.job.state, JobState.running)
+
     def test_job_service_routes_model_work_without_reimplementing_it(self):
         backend = Mock()
         preflight = Mock()

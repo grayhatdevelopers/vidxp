@@ -13,15 +13,17 @@ description: Use VidXP to search indexed videos, answer grounded questions about
    grounded answer. Set `command.media_id` when the user means one video.
 3. Omit `command.evidence_delivery` for the normal path. The completed job
    includes an annotated board covering the ranked results.
-4. Poll only that job with `get_job`, honoring `poll_after_seconds`. Search and
-   query may take time; update the user when the stage changes or about once per
-   minute, never on every poll and never with an invented ETA.
+4. Call `wait_job` for bounded waits. Pass its `observation_token` as
+   `after_observation_token` on the next wait. When terminal, call `get_job`
+   once. Search and query may take time; update the user
+   when the stage changes or about once per minute, never after every wait and
+   never with an invented ETA.
 5. Inspect and show the returned board before making visual claims. Use its tile
    evidence IDs for follow-up:
    - `materialize_job_evidence` accepts up to ten selected IDs and returns
      standalone keyframes or clips without rerunning retrieval.
    - `create_evidence_board` is only for a custom selection or the
-     `next_start_rank` continuation; poll its returned job ID.
+     `next_start_rank` continuation; wait on its returned job ID the same way.
 6. When standalone artifacts are required in the initial job, put exactly this
    inside `command`: `"evidence_delivery": {"mode":
    "keyframes_and_clips", "max_items": 3}`. Never send
@@ -43,6 +45,6 @@ description: Use VidXP to search indexed videos, answer grounded questions about
   `get_artifact_download`.
 - Preserve the source job and evidence IDs. Describe scores as retrieval scores,
   and distinguish a visible appearance from a dialogue or caption mention.
-- Stop polling on success, failure, or cancellation. An empty result means no
+- Stop waiting on success, failure, or cancellation. An empty result means no
   matching indexed evidence was found, not that the event is absent from the
   original video.

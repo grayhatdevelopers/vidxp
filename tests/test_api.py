@@ -36,6 +36,7 @@ from vidxp.application_models import (
     JobKind,
     JobQueue,
     JobState,
+    JobWaitResult,
     IndexStatus,
     MediaAsset,
     Principal,
@@ -548,6 +549,41 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(error["code"], "model_download_failed")
         self.assertTrue(error["retryable"])
         self.assertTrue(error["details"]["partial_files_preserved"])
+
+    def test_http_job_summary_and_bounded_wait_do_not_project_results(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            compact = JobService._summary(queued_job())
+            context.jobs.summary.return_value = compact
+            context.jobs.wait_for_change.return_value = JobWaitResult(
+                job=compact,
+                changed=False,
+                timed_out=True,
+            )
+            with TestClient(create_app(context=context)) as client:
+                summary = client.get(
+                    f"/api/v1/jobs/{JOB_ID}/status",
+                )
+                waited = client.get(
+                    f"/api/v1/jobs/{JOB_ID}/wait",
+                    params={
+                        "after_observation_token": compact.observation_token,
+                        "timeout_seconds": 5,
+                    },
+                )
+
+        self.assertEqual(summary.status_code, 200)
+        self.assertNotIn("result", summary.json())
+        self.assertEqual(summary.json()["observation_token"], compact.observation_token)
+        self.assertEqual(waited.status_code, 200)
+        self.assertTrue(waited.json()["timed_out"])
+        context.jobs.summary.assert_called_once_with(JOB_ID)
+        context.jobs.wait_for_change.assert_called_once_with(
+            JOB_ID,
+            after=compact.observation_token,
+            timeout_seconds=5,
+        )
+        context.jobs.get.assert_not_called()
 
     def test_http_job_projects_durable_evidence_to_protected_artifact_route(self):
         with TemporaryDirectory() as directory:

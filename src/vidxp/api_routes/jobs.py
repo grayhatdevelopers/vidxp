@@ -15,14 +15,19 @@ from vidxp.application_models import (
     CreateActorOverlayCommand,
     CreateIndexCommand,
     CreateSnippetCommand,
+    DEFAULT_JOB_WAIT_SECONDS,
     Job,
     JobPage,
     JobResult,
+    JobSummary,
+    JobWaitResult,
     ListJobsCommand,
+    MAX_JOB_WAIT_SECONDS,
     Principal,
     PrepareModelsCommand,
     QueryVideoCommand,
     SearchCommand,
+    Sha256,
 )
 from vidxp.composition import HttpApplicationContext
 from vidxp.core.identifiers import JobId
@@ -285,6 +290,47 @@ def get_job(
     service: Annotated[HttpApplicationContext, Depends(context)],
 ) -> Job:
     return _http_job(service.jobs.get(job_id))
+
+
+@router.get(
+    "/{job_id}/status",
+    response_model=JobSummary,
+    operation_id="getJobStatus",
+    summary="Get compact job status",
+    dependencies=[Depends(read_principal)],
+)
+def get_job_status(
+    job_id: JobId,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+) -> JobSummary:
+    return service.jobs.summary(job_id)
+
+
+@router.get(
+    "/{job_id}/wait",
+    response_model=JobWaitResult,
+    operation_id="waitForJobChange",
+    summary="Wait for a job change",
+    description=(
+        "Wait up to 30 seconds for a job to change stage or become terminal. "
+        "Pass the previous observation token on subsequent requests."
+    ),
+    dependencies=[Depends(read_principal)],
+)
+def wait_for_job_change(
+    job_id: JobId,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+    after_observation_token: Sha256 | None = None,
+    timeout_seconds: Annotated[
+        int,
+        Query(gt=0, le=MAX_JOB_WAIT_SECONDS),
+    ] = DEFAULT_JOB_WAIT_SECONDS,
+) -> JobWaitResult:
+    return service.jobs.wait_for_change(
+        job_id,
+        after=after_observation_token,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 @router.get(

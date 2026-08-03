@@ -921,8 +921,11 @@ MCP search and query jobs compile their ranked candidates into annotated,
 media-separated JPEG evidence boards before the original job succeeds. The board
 uses the existing evidence-frame and artifact services, returns native image
 resources plus a tile map to stable evidence IDs, and is included in the same
-`get_job` response. The default budget is 24 tiles per page and four pages per
-job; `next_start_rank` continues without imposing the standalone-artifact limit.
+full `get_job` response. Active observation uses compact job summaries and
+bounded waits, so result payloads and evidence are fetched only once after the
+job becomes terminal. The default budget is 24 tiles per page and four pages
+per job; `next_start_rank` continues without imposing the standalone-artifact
+limit.
 
 Callers may additionally request `keyframes` or `keyframes_and_clips`, with a hard
 maximum of five standalone items in the initial job. Scene evidence extracts the
@@ -1056,13 +1059,17 @@ Initial curated tools:
 - `get_artifact_download`
 - `list_jobs`
 - `get_job`
+- `get_job_status`
+- `wait_job`
 - `retry_job`
 - `cancel_job`
 
 Media and job discovery let an agent recover registered assets and durable work
-without carrying IDs across sessions. Generic job polling, retry, and cancellation
-cover indexing, search, and query without duplicating operation contracts. Video
-bytes remain on the HTTP/tus ingestion boundary rather than crossing MCP.
+without carrying IDs across sessions. Compact summaries and `wait_job` provide
+bounded observation without repeatedly returning completed result payloads;
+retry and cancellation cover indexing, search, and query without duplicating
+operation contracts. Video bytes remain on the HTTP/tus ingestion boundary
+rather than crossing MCP.
 
 Tool results use real output schemas and structured content. Descriptions remain
 short and agent-oriented; full API response schemas are not embedded as prose.

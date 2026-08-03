@@ -56,6 +56,7 @@ from vidxp.application_models import (
     JobPage,
     JobQueue,
     JobState,
+    JobWaitResult,
     SearchHit,
     SearchJobResult,
     MediaPage,
@@ -123,6 +124,8 @@ MCP_TOOL_NAMES = [
     "get_artifact_download",
     "list_jobs",
     "get_job",
+    "get_job_status",
+    "wait_job",
     "retry_job",
     "cancel_job",
 ]
@@ -1110,7 +1113,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         rendered = output.getvalue()
         self.assertIn("OK VidXP MCP", rendered)
         self.assertIn("Index state: missing", rendered)
-        self.assertIn("Tools: 22", rendered)
+        self.assertIn("Tools: 24", rendered)
         self.assertIn("get_index_status", rendered)
 
     async def test_server_info_exposes_vidxp_branding(self):
@@ -1355,6 +1358,47 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(error["code"], "model_download_failed")
         self.assertTrue(error["retryable"])
         self.assertTrue(error["details"]["partial_files_preserved"])
+
+    async def test_compact_job_status_and_wait_avoid_full_result_projection(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            compact = JobService._summary(queued_job())
+            context.jobs.summary.return_value = compact
+            context.jobs.wait_for_change.return_value = JobWaitResult(
+                job=compact,
+                changed=False,
+                timed_out=True,
+            )
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.read"}),
+                ),
+            )
+            async with Client(server) as client:
+                summary = await client.call_tool(
+                    "get_job_status",
+                    {"job_id": JOB_ID},
+                )
+                waited = await client.call_tool(
+                    "wait_job",
+                    {
+                        "job_id": JOB_ID,
+                        "after_observation_token": compact.observation_token,
+                        "timeout_seconds": 5,
+                    },
+                )
+
+        self.assertFalse(summary.is_error)
+        self.assertNotIn("result", summary.structured_content)
+        self.assertEqual(
+            summary.structured_content["observation_token"],
+            compact.observation_token,
+        )
+        self.assertFalse(waited.is_error)
+        self.assertTrue(waited.structured_content["timed_out"])
+        context.jobs.get.assert_not_called()
 
     async def test_completed_search_projects_inline_frame_and_readable_resource(self):
         png_bytes = base64.b64decode(
@@ -2587,7 +2631,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 20)
+        self.assertEqual(len(discovered.tools), 22)
         self.assertNotIn(
             "create_media_upload",
             {tool.name for tool in discovered.tools},

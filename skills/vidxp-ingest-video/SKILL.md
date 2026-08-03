@@ -13,7 +13,8 @@ description: Use VidXP to upload, import, register, and automatically index vide
    for ordinary content retrieval. Add `actor` only when anonymous recurring-face
    clusters are wanted; it does not identify people by name.
 3. Call `get_runtime_readiness`. If selected models are missing, submit
-   `prepare_models` for those modalities and poll its job with `get_job`.
+   `prepare_models`, use `wait_job` with its observation token for subsequent
+   bounded waits, then fetch `get_job` once when terminal.
 4. Use `ingest_local_media` for one to ten paths accessible to VidXP; otherwise
    use `create_media_upload` and give the returned link to the user. Keep
    `index_after_import` enabled unless registration-only behavior was requested.
@@ -30,5 +31,5 @@ description: Use VidXP to upload, import, register, and automatically index vide
 
 - Tell the user that model preparation and indexing can take several minutes.
 - Update when the stage changes or about once per minute; do not narrate every
-  poll or invent an ETA.
+  status check or invent an ETA.
 - Treat files independently so one failure does not hide successful siblings.

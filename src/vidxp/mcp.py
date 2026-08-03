@@ -47,6 +47,7 @@ from vidxp.application_models import (
     EvidenceDeliveryPolicy,
     EvidenceDeliveryResult,
     EvidenceBoardResult,
+    DEFAULT_JOB_WAIT_SECONDS,
     FusedSearchResult,
     Identifier,
     InitialEvidenceDeliveryPolicy,
@@ -54,11 +55,14 @@ from vidxp.application_models import (
     Job,
     JobId,
     JobKind,
-    JobState,
     JobPage,
+    JobState,
+    JobSummary,
+    JobWaitResult,
     ListJobsCommand,
     ListMediaCommand,
     LocalMediaIngestionCommand,
+    MAX_JOB_WAIT_SECONDS,
     MediaAsset,
     MediaId,
     MediaPage,
@@ -513,8 +517,8 @@ def create_mcp_server(
             "Call get_workspace before planning index, search, query, or actor "
             "work; it reports valid capability roles for each media item. Call "
             "get_runtime_readiness before indexing. If selected model "
-            "artifacts are missing, submit prepare_models and poll get_job "
-            "until it completes. "
+            "artifacts are missing, submit prepare_models and use wait_job "
+            "until it completes, then fetch the full job once. "
             f"{ingestion_instructions}"
             "Automatic indexing uses every indexable capability exposed by "
             "the repository runtime unless modalities are supplied; set "
@@ -526,8 +530,9 @@ def create_mcp_server(
             "snapshot. MCP defaults to an annotated evidence board in the same "
             "completed search/query job; request keyframes or "
             "keyframes_and_clips only for standalone drill-down artifacts. The "
-            "ordinary flow is submit search/query, then poll that job and inspect "
-            "its board. Use create_evidence_board only for custom selections or "
+            "ordinary flow is submit search/query, use wait_job for bounded "
+            "status observation, then call get_job once and "
+            "inspect its board. Use create_evidence_board only for custom selections or "
             "continuation pages. Use materialize_job_evidence with evidence "
             "IDs from the completed result to inspect additional candidates in "
             "batches of ten without rerunning retrieval or supplying timestamps. "
@@ -1244,7 +1249,7 @@ def create_mcp_server(
         description=(
             "Add or replace one registered media ID in the active multi-video "
             "index snapshot. Obtain the ID from list_media or a completed "
-            "upload, then poll get_job."
+            "upload, then observe it with wait_job and fetch get_job once."
         ),
         annotations=_SUBMIT,
         structured_output=True,
@@ -1659,10 +1664,9 @@ def create_mcp_server(
     @server.tool(
         title="Get job",
         description=(
-            "Poll a durable VidXP job and its typed result. Completed search "
-            "and query jobs include the default annotated board plus any requested "
-            "standalone frames or clips. Custom evidence-board jobs include their "
-            "annotated pages and tile map in this same response."
+            "Fetch a durable VidXP job with its typed result, evidence, and "
+            "ResourceLinks. Use get_job_status or wait_job while work is active, "
+            "then fetch this full result once after completion."
         ),
         annotations=_READ_ONLY,
         structured_output=True,
@@ -1715,6 +1719,54 @@ def create_mcp_server(
         return CallToolResult(
             content=blocks,
             structured_content=projected.model_dump(mode="json"),
+        )
+
+    @server.tool(
+        title="Get compact job status",
+        description=(
+            "Return compact durable job status without its typed result, "
+            "evidence payloads, or ResourceLinks. Prefer wait_job after this "
+            "initial observation."
+        ),
+        annotations=_READ_ONLY,
+        structured_output=True,
+    )
+    async def get_job_status(job_id: JobId) -> JobSummary:
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=lambda _actor: context.jobs.summary(job_id),
+        )
+
+    @server.tool(
+        title="Wait for job change",
+        description=(
+            "Wait up to 30 seconds for a durable job to change stage or reach a "
+            "terminal state. Pass the previous observation token on subsequent "
+            "calls. Returns compact status only; fetch the full job once after "
+            "completion."
+        ),
+        annotations=_READ_ONLY,
+        structured_output=True,
+    )
+    async def wait_job(
+        job_id: JobId,
+        after_observation_token: Sha256 | None = None,
+        timeout_seconds: Annotated[
+            int,
+            Field(gt=0, le=MAX_JOB_WAIT_SECONDS),
+        ] = DEFAULT_JOB_WAIT_SECONDS,
+    ) -> JobWaitResult:
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=lambda _actor: context.jobs.wait_for_change(
+                job_id,
+                after=after_observation_token,
+                timeout_seconds=timeout_seconds,
+            ),
         )
 
     @server.tool(
