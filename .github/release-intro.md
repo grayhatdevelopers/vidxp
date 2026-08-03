@@ -15,7 +15,16 @@ Verify downloaded files against [SHA256SUMS]({checksums_url}).
 ### Command line
 
 ```bash
-python -m pip install "vidxp[local-worker,mcp]=={version}"
+uv tool install --python 3.14 --torch-backend cpu \
+  "vidxp[local-worker,mcp]=={version}"
+```
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first. Add
+`frontend` to the extras if you also want the local browser interface:
+
+```bash
+uv tool install --python 3.14 --torch-backend cpu \
+  "vidxp[local-worker,mcp,frontend]=={version}"
 ```
 
 ### Containers

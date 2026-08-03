@@ -40,7 +40,12 @@ class ReleaseNotesTests(unittest.TestCase):
 
         self.assertLess(result.index("## Download VidXP"), result.index("## Changelog"))
         self.assertIn("VidXP%20Setup.exe", result)
+        self.assertIn(
+            "uv tool install --python 3.14 --torch-backend cpu", result
+        )
         self.assertIn("vidxp[local-worker,mcp]==0.4.0-b", result)
+        self.assertIn("vidxp[local-worker,mcp,frontend]==0.4.0-b", result)
+        self.assertNotIn("python -m pip install", result)
         self.assertIn("ghcr.io/grayhatdevelopers/vidxp:0.4.0-b", result)
         self.assertNotIn("Beta release", result)
 
