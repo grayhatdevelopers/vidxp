@@ -1,19 +1,38 @@
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const bundles = {
-  darwin: "dmg",
-  linux: "appimage",
-  win32: "nsis",
+const bundleSpecs = {
+  darwin: {
+    bundle: "dmg",
+    directory: "dmg",
+    suffix: ".dmg",
+    filename: (version) => `VidXP_${version}_aarch64.dmg`,
+  },
+  linux: {
+    bundle: "appimage",
+    directory: "appimage",
+    suffix: ".AppImage",
+    filename: (version) => `VidXP_${version}_amd64.AppImage`,
+  },
+  win32: {
+    bundle: "nsis",
+    directory: "nsis",
+    suffix: "-setup.exe",
+    filename: (version) => `VidXP_${version}_x64-setup.exe`,
+  },
 };
 
-const bundle = bundles[process.platform];
-if (!bundle) {
+const bundleSpec = bundleSpecs[process.platform];
+if (!bundleSpec) {
   throw new Error(`Unsupported desktop build platform: ${process.platform}`);
 }
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const bundleRoot = resolve(desktopRoot, "src-tauri", "target", "release", "bundle");
+rmSync(bundleRoot, { force: true, recursive: true });
+
 const executable = resolve(
   desktopRoot,
   "node_modules",
@@ -22,11 +41,35 @@ const executable = resolve(
 );
 const result = spawnSync(
   executable,
-  ["build", "--bundles", bundle, "--ci", "--no-sign", "--", "--locked"],
+  ["build", "--bundles", bundleSpec.bundle, "--ci", "--no-sign", "--", "--locked"],
   { shell: process.platform === "win32", stdio: "inherit" },
 );
 
 if (result.error) {
   throw result.error;
 }
-process.exit(result.status ?? 1);
+if (result.status !== 0) {
+  process.exit(result.status ?? 1);
+}
+
+const { version } = JSON.parse(
+  readFileSync(resolve(desktopRoot, "package.json"), "utf8"),
+);
+const outputDirectory = resolve(bundleRoot, bundleSpec.directory);
+const expectedArtifact = resolve(outputDirectory, bundleSpec.filename(version));
+const packagedArtifacts = existsSync(outputDirectory)
+  ? readdirSync(outputDirectory, { withFileTypes: true })
+      .filter(
+        (entry) => entry.isFile() && entry.name.endsWith(bundleSpec.suffix),
+      )
+      .map((entry) => entry.name)
+  : [];
+if (
+  !existsSync(expectedArtifact) ||
+  packagedArtifacts.length !== 1 ||
+  packagedArtifacts[0] !== bundleSpec.filename(version)
+) {
+  throw new Error(
+    `Expected only ${expectedArtifact}, found: ${packagedArtifacts.join(", ") || "none"}`,
+  );
+}

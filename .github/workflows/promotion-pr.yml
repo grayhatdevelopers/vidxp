@@ -37,15 +37,9 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
-          comparison="$(
-            gh api "repos/$REPOSITORY/compare/release...main" \
-              --jq '[.status, .ahead_by] | @tsv'
+          ahead="$(
+            gh api "repos/$REPOSITORY/compare/release...main" --jq .ahead_by
           )"
-          IFS=$'\t' read -r status ahead <<< "$comparison"
-          if [[ "$status" == "diverged" ]]; then
-            echo "release and main diverged; stable synchronization must finish first."
-            exit 0
-          fi
           if [[ "$ahead" == "0" ]]; then
             echo "main has no commits to promote."
             exit 0

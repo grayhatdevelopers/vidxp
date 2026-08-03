@@ -112,12 +112,20 @@ jobs:
 
       - name: Prepare release assets and checksums
         id: source
+        env:
+          VERSION: ${{ steps.contract.outputs.version }}
         shell: bash
         run: |
           mkdir release-assets
-          find candidate-artifacts/vidxp-python-dist \
-            candidate-artifacts/vidxp-desktop-* \
-            -type f -exec cp '{}' release-assets/ ';'
+          find candidate-artifacts/vidxp-python-dist -type f \
+            \( -name '*.whl' -o -name '*.tar.gz' \) \
+            -exec cp '{}' release-assets/ ';'
+          cp "candidate-artifacts/vidxp-desktop-windows-x86_64/VidXP_${VERSION}_x64-setup.exe" \
+            release-assets/
+          cp "candidate-artifacts/vidxp-desktop-macos-aarch64/VidXP_${VERSION}_aarch64.dmg" \
+            release-assets/
+          cp "candidate-artifacts/vidxp-desktop-linux-x86_64/VidXP_${VERSION}_amd64.AppImage" \
+            release-assets/
           [[ "$(find release-assets -maxdepth 1 -name '*.whl' | wc -l)" == 1 ]]
           [[ "$(find release-assets -maxdepth 1 -name '*.tar.gz' | wc -l)" == 1 ]]
           [[ "$(find release-assets -maxdepth 1 -name '*.exe' | wc -l)" == 1 ]]
