@@ -1,99 +1,138 @@
-name: Release (tag → PyPI and GHCR)
+name: Publish combined release
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing stable core tag to publish.
+        description: Existing combined release tag created by Release Please.
+        required: true
+        type: string
+      candidate_run_id:
+        description: Successful Release candidate workflow run.
+        required: true
+        type: string
+      candidate_head_sha:
+        description: Exact Release Please head revision that was validated.
         required: true
         type: string
 
 permissions:
+  actions: read
   contents: read
-  pull-requests: read
 
 concurrency:
-  group: pypi-${{ inputs.tag }}
+  group: publish-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  validate:
-    uses: ./.github/workflows/ci.yml
-    with:
-      checkout_ref: ${{ inputs.tag }}
-      force_validation: true
-      python_versions: '["3.11","3.12","3.13","3.14"]'
-      provider_platforms: '["ubuntu-24.04","windows-2025","macos-15"]'
-      run_containers: false
-
-  build:
-    needs: validate
+  resolve:
     runs-on: ubuntu-latest
     outputs:
+      channel: ${{ steps.contract.outputs.channel }}
+      control_digest: ${{ steps.candidate.outputs.control_digest }}
+      product_digest: ${{ steps.candidate.outputs.product_digest }}
       source_sha: ${{ steps.source.outputs.sha }}
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.contract.outputs.version }}
+      worker_digest: ${{ steps.candidate.outputs.worker_digest }}
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           ref: ${{ inputs.tag }}
 
-      - name: Resolve source revision
-        id: source
-        shell: bash
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-          cache: pip
-
-      - name: Verify stable tag
-        id: version
+      - name: Verify tag and combined version contract
+        id: contract
         shell: bash
         run: |
           tag="${{ inputs.tag }}"
-          if [[ "$tag" != v* || "$tag" == *-* ]]; then
-            echo "::error::$tag is not a stable core release tag."
-            exit 1
-          fi
-          if ! git show-ref --verify --quiet "refs/tags/$tag"; then
-            echo "::error::$tag is not an existing Git tag."
-            exit 1
-          fi
-          version="${tag#v}"
-          package_version="$(
-            python -c \
-              'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])'
-          )"
-          if [[ "$package_version" != "$version" ]]; then
-            echo "::error::Tag $tag does not match package version $package_version."
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          git show-ref --verify --quiet "refs/tags/$tag"
+          if [[ "$tag" == *-* ]]; then channel=beta; else channel=stable; fi
+          python utils/release_contract.py \
+            --channel "$channel" \
+            --expected-tag "$tag" \
+            --github-output >> "$GITHUB_OUTPUT"
 
-      - name: Install build tooling
-        run: python -m pip install -r utils/build-requirements.txt
-
-      - name: Build distribution
-        run: bash utils/build_package.sh
-
-      - name: Smoke distribution
+      - name: Download the exact candidate artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ inputs.candidate_run_id }}
         shell: bash
         run: |
-          python -m venv .release-smoke
-          .release-smoke/bin/python -m pip install dist/*.whl
-          .release-smoke/bin/python -m pip check
-          .release-smoke/bin/vidxp --version
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          run="$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json conclusion,event,name)"
+          [[ "$(jq -r .conclusion <<< "$run")" == "success" ]]
+          [[ "$(jq -r .event <<< "$run")" == "workflow_dispatch" ]]
+          [[ "$(jq -r .name <<< "$run")" == "Release candidate" ]]
+          for artifact in \
+            vidxp-release-candidate \
+            vidxp-python-dist \
+            vidxp-desktop-windows-x86_64 \
+            vidxp-desktop-macos-aarch64 \
+            vidxp-desktop-linux-x86_64; do
+            gh run download "$RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "$artifact" \
+              --dir "candidate-artifacts/$artifact"
+          done
+
+      - name: Match the candidate to the merged release tree
+        id: candidate
+        env:
+          CANDIDATE_HEAD_SHA: ${{ inputs.candidate_head_sha }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CHANNEL: ${{ steps.contract.outputs.channel }}
+          TAG: ${{ steps.contract.outputs.tag }}
+          VERSION: ${{ steps.contract.outputs.version }}
+        shell: bash
+        run: |
+          [[ "$CANDIDATE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          candidate="candidate-artifacts/vidxp-release-candidate/release-candidate.json"
+          jq -e \
+            --arg run "$CANDIDATE_RUN_ID" \
+            --arg channel "$CHANNEL" \
+            --arg sha "$CANDIDATE_HEAD_SHA" \
+            --arg tag "$TAG" \
+            --arg version "$VERSION" \
+            '.candidate_run_id == $run and .channel == $channel and
+             .source_sha == $sha and .tag == $tag and .version == $version' \
+            "$candidate"
+
+          git fetch origin "$CANDIDATE_HEAD_SHA"
+          candidate_tree="$(git rev-parse "${CANDIDATE_HEAD_SHA}^{tree}")"
+          release_tree="$(git rev-parse 'HEAD^{tree}')"
+          recorded_tree="$(jq -r .source_tree "$candidate")"
+          [[ "$candidate_tree" == "$release_tree" ]]
+          [[ "$recorded_tree" == "$release_tree" ]]
+
+          echo "product_digest=$(jq -r .containers.product "$candidate")" >> "$GITHUB_OUTPUT"
+          echo "control_digest=$(jq -r .containers.control "$candidate")" >> "$GITHUB_OUTPUT"
+          echo "worker_digest=$(jq -r .containers.worker "$candidate")" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release assets and checksums
+        id: source
+        shell: bash
+        run: |
+          mkdir release-assets
+          find candidate-artifacts/vidxp-python-dist \
+            candidate-artifacts/vidxp-desktop-* \
+            -type f -exec cp '{}' release-assets/ ';'
+          [[ "$(find release-assets -maxdepth 1 -name '*.whl' | wc -l)" == 1 ]]
+          [[ "$(find release-assets -maxdepth 1 -name '*.tar.gz' | wc -l)" == 1 ]]
+          [[ "$(find release-assets -maxdepth 1 -name '*.exe' | wc -l)" == 1 ]]
+          [[ "$(find release-assets -maxdepth 1 -name '*.dmg' | wc -l)" == 1 ]]
+          [[ "$(find release-assets -maxdepth 1 -name '*.AppImage' | wc -l)" == 1 ]]
+          (cd release-assets && sha256sum * > SHA256SUMS)
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: pypi-${{ inputs.tag }}
-          path: dist/
+          name: vidxp-release-assets
+          path: release-assets/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
 
   publish-pypi:
-    needs: build
+    needs: resolve
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -106,23 +145,25 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: pypi-${{ inputs.tag }}
-          path: dist/
+          name: vidxp-release-assets
+          path: release-assets/
 
       - name: Check PyPI release state
         id: registry
         shell: bash
         run: |
+          mkdir dist
+          cp release-assets/*.whl release-assets/*.tar.gz dist/
           state="$(
             python utils/verify_published_distribution.py \
               --repository https://pypi.org \
               --package vidxp \
-              --version "${{ needs.build.outputs.version }}" \
+              --version "${{ needs.resolve.outputs.version }}" \
               --dist dist
           )"
           echo "state=$state" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to PyPI
+      - name: Publish the beta or stable package to PyPI
         if: steps.registry.outputs.state == 'absent'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -130,20 +171,24 @@ jobs:
 
   publish-containers:
     needs:
-      - build
+      - resolve
       - publish-pypi
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/containers.yml
     with:
-      channel: stable
-      tag: ${{ inputs.tag }}
-      version: ${{ needs.build.outputs.version }}
+      candidate_id: ${{ inputs.candidate_head_sha }}
+      channel: ${{ needs.resolve.outputs.channel }}
+      control_digest: ${{ needs.resolve.outputs.control_digest }}
+      operation: promote
+      product_digest: ${{ needs.resolve.outputs.product_digest }}
+      version: ${{ needs.resolve.outputs.version }}
+      worker_digest: ${{ needs.resolve.outputs.worker_digest }}
 
   publish-github:
     needs:
-      - build
+      - resolve
       - publish-pypi
       - publish-containers
     runs-on: ubuntu-latest
@@ -153,26 +198,37 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: pypi-${{ inputs.tag }}
-          path: dist/
+          name: vidxp-release-assets
+          path: release-assets/
 
-      - name: Publish complete stable release
+      - name: Publish the complete combined release
         env:
+          CHANNEL: ${{ needs.resolve.outputs.channel }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
         shell: bash
         run: |
-          gh release upload "${{ inputs.tag }}" dist/* \
+          gh release upload "$TAG" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
-          gh release edit "${{ inputs.tag }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft=false
+          if [[ "$CHANNEL" == "beta" ]]; then
+            gh release edit "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft=false \
+              --prerelease
+          else
+            gh release edit "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft=false \
+              --latest
+          fi
 
-      - name: Synchronize stable source back to main
+      - name: Synchronize a completed stable release back to main
+        if: needs.resolve.outputs.channel == 'stable'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh workflow run sync-channels.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref main \
-            -f release_sha="${{ needs.build.outputs.source_sha }}"
+            -f release_sha="${{ needs.resolve.outputs.source_sha }}"

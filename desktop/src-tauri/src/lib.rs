@@ -1010,14 +1010,6 @@ fn base_package_specification(manifest: &RuntimeManifest) -> String {
     format!("{}=={}", manifest.package_name, manifest.package_version)
 }
 
-fn package_index(package_version: &str) -> &'static str {
-    if package_version.split_once('-').is_some() {
-        "https://test.pypi.org/simple"
-    } else {
-        "https://pypi.org/simple"
-    }
-}
-
 fn package_acquisition_arguments(manifest: &RuntimeManifest, python: &Path) -> Vec<String> {
     vec![
         "pip".into(),
@@ -1027,7 +1019,7 @@ fn package_acquisition_arguments(manifest: &RuntimeManifest, python: &Path) -> V
         "--no-config".into(),
         "--no-deps".into(),
         "--default-index".into(),
-        package_index(&manifest.package_version).into(),
+        manifest.dependency_index.clone(),
         "--index-strategy".into(),
         "first-index".into(),
         base_package_specification(manifest),
@@ -3232,10 +3224,9 @@ mod tests {
         configured_runtime_status, dependency_installation_arguments, desktop_paths_from_roots,
         display_command, inventory_model_directory, manifest, manifest_digest,
         normalize_line_endings, normalized_runtime_constraints, package_acquisition_arguments,
-        package_index, package_specification, read_active_runtime_snapshot,
-        reconcile_managed_runtime_storage, required_encoder_missing, restore_active_runtime,
-        selected_capabilities, selected_surfaces, ui_process_action, write_activation_journal,
-        write_active_runtime,
+        package_specification, read_active_runtime_snapshot, reconcile_managed_runtime_storage,
+        required_encoder_missing, restore_active_runtime, selected_capabilities, selected_surfaces,
+        ui_process_action, write_activation_journal, write_active_runtime,
     };
     use std::{
         ffi::OsStr,
@@ -3791,7 +3782,7 @@ mod tests {
         let manifest = manifest().expect("manifest");
         let python = Path::new("managed-python");
         let constraints = Path::new("runtime-constraints.txt");
-        let selected_package_index = package_index(&manifest.package_version);
+        let selected_package_index = manifest.dependency_index.as_str();
         let acquisition = package_acquisition_arguments(&manifest, python);
         let dependencies = dependency_installation_arguments(
             &manifest,
@@ -3802,15 +3793,7 @@ mod tests {
             true,
         );
 
-        let expected_package_index = if manifest.package_version.contains('-') {
-            "https://test.pypi.org/simple"
-        } else {
-            "https://pypi.org/simple"
-        };
-
-        assert_eq!(selected_package_index, expected_package_index);
-        assert_eq!(package_index("0.3.0-b.1"), "https://test.pypi.org/simple");
-        assert_eq!(package_index("0.3.0"), "https://pypi.org/simple");
+        assert_eq!(selected_package_index, "https://pypi.org/simple");
         assert_eq!(manifest.dependency_index, "https://pypi.org/simple");
         assert!(acquisition.iter().any(|item| item == "--no-deps"));
         assert!(

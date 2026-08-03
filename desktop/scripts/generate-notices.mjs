@@ -130,7 +130,9 @@ try {
     '',
     uvMitLicense,
     '',
-    readFileSync(rustNotices, 'utf8').trim(),
+    readFileSync(rustNotices, 'utf8')
+      .replace(/^\- vidxp-desktop [^\n]+\n/m, '')
+      .trim(),
     '',
     frontend.join('\n').trim(),
     '',

@@ -1,0 +1,40 @@
+name: Release gate
+
+on:
+  pull_request_target:
+    branches:
+      - main
+      - release
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: none
+  statuses: write
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Classify the pull request without checking out its code
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TARGET_URL: ${{ github.event.pull_request.html_url }}
+        shell: bash
+        run: |
+          if [[ "$HEAD_REF" == release-please--branches--* ]]; then
+            state=pending
+            description='Waiting for the combined release candidate'
+          else
+            state=success
+            description='Not a Release Please pull request'
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
+            -f state="$state" \
+            -f context=release/candidate \
+            -f description="$description" \
+            -f target_url="$TARGET_URL"

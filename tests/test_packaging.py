@@ -581,7 +581,15 @@ class PackagingTests(unittest.TestCase):
             "system",
         )
 
-    def test_release_please_preserves_desktop_manifests_and_links_versions(self):
+    def test_combined_release_contract_and_workflow_boundaries(self):
+        expected_extra_files = {
+            "desktop/src-tauri/Cargo.toml",
+            "desktop/src-tauri/Cargo.lock",
+            "desktop/package.json",
+            "desktop/package-lock.json",
+            "desktop/runtime-manifest.json",
+            "desktop/src-tauri/tauri.conf.json",
+        }
         for filename in (
             "release-please-config.json",
             "release-please-config.stable.json",
@@ -589,31 +597,32 @@ class PackagingTests(unittest.TestCase):
             config = json.loads(
                 (ROOT / filename).read_text(encoding="utf-8")
             )
-            self.assertNotIn("group-pull-request-title-pattern", config)
-            linked_versions = [
-                plugin
-                for plugin in config["plugins"]
-                if plugin["type"] == "linked-versions"
-            ]
-            self.assertEqual(len(linked_versions), 1, filename)
+            self.assertEqual(set(config["packages"]), {"."}, filename)
             root_package = config["packages"]["."]
             self.assertFalse(root_package["include-component-in-tag"])
             self.assertNotIn("component", root_package)
             self.assertEqual(
-                set(linked_versions[0]["components"]),
-                {"", "desktop"},
+                {
+                    entry["path"]
+                    for entry in root_package["extra-files"]
+                    if entry["path"] != ".release-please-manifest.json"
+                },
+                expected_extra_files,
                 filename,
             )
-
-            desktop = config["packages"]["desktop"]
-            self.assertEqual(desktop["version-file"], "VERSION", filename)
             generic_files = {
                 extra["path"]
-                for extra in desktop["extra-files"]
+                for extra in root_package["extra-files"]
                 if extra["type"] == "generic"
             }
-            self.assertIn("src-tauri/Cargo.toml", generic_files, filename)
-            self.assertIn("src-tauri/Cargo.lock", generic_files, filename)
+            self.assertEqual(
+                generic_files,
+                {
+                    "desktop/src-tauri/Cargo.toml",
+                    "desktop/src-tauri/Cargo.lock",
+                },
+                filename,
+            )
 
         stable = json.loads(
             (ROOT / "release-please-config.stable.json").read_text(
@@ -628,11 +637,16 @@ class PackagingTests(unittest.TestCase):
         }
         self.assertEqual(
             beta_manifest_updates,
-            {
-                (".release-please-manifest.json", "$['.']"),
-                (".release-please-manifest.json", "$.desktop"),
-            },
+            {(".release-please-manifest.json", "$['.']")},
         )
+        for filename in (
+            ".release-please-manifest.json",
+            ".release-please-manifest.stable.json",
+        ):
+            manifest_versions = json.loads(
+                (ROOT / filename).read_text(encoding="utf-8")
+            )
+            self.assertEqual(set(manifest_versions), {"."}, filename)
 
         manifest = json.loads(
             (ROOT / "desktop" / "runtime-manifest.json").read_text(
@@ -647,14 +661,18 @@ class PackagingTests(unittest.TestCase):
                 ROOT / "desktop" / "src-tauri" / "Cargo.toml"
             ).read_text(encoding="utf-8")
         )
-        version_file = (
-            ROOT / "desktop" / "VERSION"
-        ).read_text(encoding="utf-8").strip()
-        self.assertEqual(version_file, manifest["desktop_version"])
-        self.assertEqual(version_file, package["version"])
-        self.assertEqual(version_file, cargo["package"]["version"])
+        project = tomllib.loads(
+            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        version = project["project"]["version"]
+        self.assertFalse((ROOT / "desktop" / "VERSION").exists())
+        self.assertEqual(version, manifest["desktop_version"])
+        self.assertEqual(version, manifest["package_version"])
+        self.assertEqual(version, package["version"])
+        self.assertEqual(version, cargo["package"]["version"])
+        self.assertEqual(manifest["dependency_index"], "https://pypi.org/simple")
         version_marker = (
-            f'version = "{version_file}" # x-release-please-version'
+            f'version = "{version}" # x-release-please-version'
         )
         for filename in ("Cargo.toml", "Cargo.lock"):
             self.assertIn(
@@ -665,62 +683,41 @@ class PackagingTests(unittest.TestCase):
                 filename,
             )
         self.assertNotIn(
-            f"vidxp=={version_file}",
+            f"vidxp=={version}",
             (
                 ROOT / "desktop" / "src-tauri" / "src" / "lib.rs"
             ).read_text(encoding="utf-8"),
         )
 
-        build_command = "bash utils/build_package.sh"
-        for workflow in (
-            ".github/workflows/ci.yml",
-            ".github/workflows/release-to-test-pypi.yml",
-            ".github/workflows/release-to-pypi.yml",
-        ):
-            self.assertIn(
-                build_command,
-                (ROOT / workflow).read_text(encoding="utf-8"),
-                workflow,
-            )
+        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        nightly = (
+            ROOT / ".github/workflows/release-to-test-pypi.yml"
+        ).read_text(encoding="utf-8")
+        publisher = (
+            ROOT / ".github/workflows/release-to-pypi.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("bash utils/build_package.sh", ci)
+        self.assertIn("bash utils/build_package.sh", nightly)
+        self.assertNotIn("bash utils/build_package.sh", publisher)
+        self.assertIn("candidate_run_id", publisher)
+        self.assertIn("source_tree", publisher)
+        self.assertIn("operation: promote", publisher)
 
         release_workflow = (
             ROOT / ".github" / "workflows" / "release-please.yml"
         ).read_text(encoding="utf-8")
-        self.assertEqual(release_workflow.count('--ref "$TAG"'), 2)
-        self.assertEqual(
-            release_workflow.count('--repo "$GITHUB_REPOSITORY"'),
-            2,
+        self.assertIn("gh workflow run release-candidate.yml", release_workflow)
+        self.assertIn("gh workflow run release-to-pypi.yml", release_workflow)
+        self.assertIn('--ref "$TARGET_BRANCH"', release_workflow)
+        self.assertIn('--ref "$TAG"', release_workflow)
+        self.assertFalse(
+            (ROOT / ".github/workflows/publish-desktop.yml").exists()
         )
-        self.assertNotIn(
-            '--ref "${{ github.ref_name }}"',
-            release_workflow,
-        )
-
-        publisher_repo_flags = {
-            "release-to-test-pypi.yml": 2,
-            "release-to-pypi.yml": 3,
-            "publish-desktop.yml": 4,
-        }
-        for workflow, expected in publisher_repo_flags.items():
-            contents = (
-                ROOT / ".github" / "workflows" / workflow
-            ).read_text(encoding="utf-8")
-            self.assertEqual(
-                contents.count('--repo "$GITHUB_REPOSITORY"'),
-                expected,
-                workflow,
-            )
-
-        desktop_publish = (
-            ROOT / ".github" / "workflows" / "publish-desktop.yml"
+        gate = (
+            ROOT / ".github/workflows/release-gate.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn('"VERSION":', desktop_publish)
-        self.assertIn('"runtime manifest package":', desktop_publish)
-        self.assertEqual(desktop_publish.count("--latest"), 1)
-        core_publish = (
-            ROOT / ".github" / "workflows" / "release-to-pypi.yml"
-        ).read_text(encoding="utf-8")
-        self.assertNotIn("--latest", core_publish)
+        self.assertIn("pull_request_target:", gate)
+        self.assertIn("context=release/candidate", gate)
 
         for workflow in ("ci.yml", "desktop.yml", "security.yml"):
             contents = (

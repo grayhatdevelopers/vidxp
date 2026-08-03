@@ -35,6 +35,11 @@ on:
         required: false
         default: false
         type: boolean
+      package_artifact_name:
+        description: Preserve the already-smoke-tested distribution under this name.
+        required: false
+        default: ""
+        type: string
   workflow_dispatch:
     inputs:
       checkout_ref:
@@ -61,9 +66,14 @@ on:
         required: false
         default: true
         type: boolean
+      package_artifact_name:
+        description: Preserve the already-smoke-tested distribution under this name.
+        required: false
+        default: ""
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.checkout_ref || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -86,6 +96,9 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.checkout_ref || github.sha }}
+
+      - name: Validate GitHub Actions workflows
+        run: bash utils/check_workflows.sh
 
       - name: Determine validation scope
         id: scope
@@ -238,22 +251,21 @@ jobs:
               assert find_spec(module) is None, module
           PY
 
+      - name: Preserve the validated distribution
+        if: >-
+          needs.scope.outputs.run_suite == 'true' &&
+          matrix.python-version == '3.14' &&
+          inputs.package_artifact_name != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.package_artifact_name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Validate Compose configuration
         if: needs.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'
-        env:
-          POSTGRES_PASSWORD: ci-postgres-password
-          VIDXP_ARTIFACT_DOWNLOAD_SECRET: ci-artifact-download-secret-000000
-          VIDXP_CONTROL_IMAGE: vidxp-control:ci
-          VIDXP_PUBLIC_API_HOST: api.example.test
-          VIDXP_UPLOAD_CLEANUP_TOKEN: ci-upload-cleanup-token-0000000000
-          VIDXP_UPLOAD_CORS_ORIGIN_REGEX: '^(https://api\.example\.test)$'
-          VIDXP_UPLOAD_HANDOFF_PUBLIC_URL: https://api.example.test/upload-handoff
-          VIDXP_UPLOAD_HANDOFF_SECRET: ci-upload-handoff-secret-000000000
-          VIDXP_UPLOAD_PUBLIC_ENDPOINT: https://uploads.example.test/uploads/
-          VIDXP_WORKER_IMAGE: vidxp-worker:ci
-        run: |
-          docker compose -f compose.yaml config --quiet
-          docker compose -f compose.coolify.yaml config --quiet
+        run: bash utils/validate_compose.sh
 
       - name: Build container
         if: needs.scope.outputs.run_container == 'true' && matrix.python-version == '3.14'

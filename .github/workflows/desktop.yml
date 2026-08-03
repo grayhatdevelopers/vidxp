@@ -7,6 +7,11 @@ on:
         description: Commit to build
         required: true
         type: string
+      artifact_retention_days:
+        description: Number of days to retain built installers.
+        required: false
+        default: 14
+        type: number
   workflow_dispatch:
     inputs:
       checkout_ref:
@@ -14,6 +19,11 @@ on:
         required: false
         default: ""
         type: string
+      artifact_retention_days:
+        description: Number of days to retain built installers.
+        required: false
+        default: 14
+        type: number
   pull_request:
     branches:
       - main
@@ -176,4 +186,4 @@ jobs:
           path: ${{ matrix.target == 'windows' && 'desktop/src-tauri/target/release/bundle/nsis/*-setup.exe' || matrix.target == 'macos' && 'desktop/src-tauri/target/release/bundle/dmg/*.dmg' || 'desktop/src-tauri/target/release/bundle/appimage/*.AppImage' }}
           if-no-files-found: error
           compression-level: 0
-          retention-days: 14
+          retention-days: ${{ inputs.artifact_retention_days || 14 }}

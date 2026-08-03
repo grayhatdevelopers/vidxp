@@ -1,0 +1,205 @@
+name: Release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Release Please pull request number.
+        required: true
+        type: string
+      target_branch:
+        description: main for beta or release for stable.
+        required: true
+        type: string
+      base_sha:
+        description: Target branch revision included in the candidate.
+        required: true
+        type: string
+      head_sha:
+        description: Exact Release Please revision to build.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: release-candidate-${{ inputs.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  pending:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark the exact candidate revision pending
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
+            -f state=pending \
+            -f context=release/candidate \
+            -f description='Building the combined release candidate' \
+            -f target_url="$TARGET_URL"
+
+  contract:
+    needs: pending
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.contract.outputs.channel }}
+      source_tree: ${{ steps.source.outputs.tree }}
+      tag: ${{ steps.contract.outputs.tag }}
+      version: ${{ steps.contract.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.head_sha }}
+
+      - name: Verify the candidate source and current pull request
+        id: source
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          PULL_REQUEST: ${{ inputs.pull_request }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+        shell: bash
+        run: |
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TARGET_BRANCH" == "main" || "$TARGET_BRANCH" == "release" ]]
+          [[ "$(git rev-parse HEAD)" == "$HEAD_SHA" ]]
+          git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PULL_REQUEST")"
+          [[ "$(jq -r .state <<< "$pr")" == "open" ]]
+          [[ "$(jq -r .base.ref <<< "$pr")" == "$TARGET_BRANCH" ]]
+          [[ "$(jq -r .base.sha <<< "$pr")" == "$BASE_SHA" ]]
+          [[ "$(jq -r .head.sha <<< "$pr")" == "$HEAD_SHA" ]]
+          [[ "$(jq -r .head.ref <<< "$pr")" == release-please--branches--* ]]
+          echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+
+      - name: Validate the combined version contract
+        id: contract
+        shell: bash
+        run: |
+          channel="${{ inputs.target_branch == 'release' && 'stable' || 'beta' }}"
+          python utils/release_contract.py --channel "$channel" --github-output \
+            >> "$GITHUB_OUTPUT"
+
+  core:
+    needs: contract
+    uses: ./.github/workflows/ci.yml
+    with:
+      checkout_ref: ${{ inputs.head_sha }}
+      force_validation: true
+      package_artifact_name: vidxp-python-dist
+      provider_platforms: '["ubuntu-24.04","windows-2025","macos-15"]'
+      python_versions: '["3.11","3.12","3.13","3.14"]'
+      run_containers: false
+
+  desktop:
+    needs: contract
+    uses: ./.github/workflows/desktop.yml
+    with:
+      artifact_retention_days: 30
+      checkout_ref: ${{ inputs.head_sha }}
+
+  containers:
+    needs: contract
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/containers.yml
+    with:
+      candidate_id: ${{ inputs.head_sha }}
+      checkout_ref: ${{ inputs.head_sha }}
+      operation: stage
+      version: ${{ needs.contract.outputs.version }}
+
+  finalize:
+    if: always()
+    needs:
+      - pending
+      - contract
+      - core
+      - desktop
+      - containers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record the successful candidate
+        if: >-
+          needs.pending.result == 'success' &&
+          needs.contract.result == 'success' &&
+          needs.core.result == 'success' &&
+          needs.desktop.result == 'success' &&
+          needs.containers.result == 'success'
+        env:
+          CHANNEL: ${{ needs.contract.outputs.channel }}
+          CONTROL_DIGEST: ${{ needs.containers.outputs.control_digest }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          PRODUCT_DIGEST: ${{ needs.containers.outputs.product_digest }}
+          SOURCE_TREE: ${{ needs.contract.outputs.source_tree }}
+          TAG: ${{ needs.contract.outputs.tag }}
+          VERSION: ${{ needs.contract.outputs.version }}
+          WORKER_DIGEST: ${{ needs.containers.outputs.worker_digest }}
+        shell: bash
+        run: |
+          jq -n \
+            --arg candidate_run_id "$GITHUB_RUN_ID" \
+            --arg channel "$CHANNEL" \
+            --arg control_digest "$CONTROL_DIGEST" \
+            --arg product_digest "$PRODUCT_DIGEST" \
+            --arg source_sha "$HEAD_SHA" \
+            --arg source_tree "$SOURCE_TREE" \
+            --arg tag "$TAG" \
+            --arg version "$VERSION" \
+            --arg worker_digest "$WORKER_DIGEST" \
+            '{candidate_run_id: $candidate_run_id, channel: $channel,
+              source_sha: $source_sha, source_tree: $source_tree, tag: $tag,
+              version: $version, containers: {product: $product_digest,
+              control: $control_digest, worker: $worker_digest}}' \
+            > release-candidate.json
+
+      - name: Preserve the candidate manifest
+        if: >-
+          needs.pending.result == 'success' &&
+          needs.contract.result == 'success' &&
+          needs.core.result == 'success' &&
+          needs.desktop.result == 'success' &&
+          needs.containers.result == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: vidxp-release-candidate
+          path: release-candidate.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish the candidate status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          SUCCESS: ${{ needs.pending.result == 'success' && needs.contract.result == 'success' && needs.core.result == 'success' && needs.desktop.result == 'success' && needs.containers.result == 'success' }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          if [[ "$SUCCESS" == "true" ]]; then
+            state=success
+            description='Combined release candidate is ready'
+          else
+            state=failure
+            description='Combined release candidate failed'
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
+            -f state="$state" \
+            -f context=release/candidate \
+            -f description="$description" \
+            -f target_url="$TARGET_URL"
+          [[ "$state" == "success" ]]

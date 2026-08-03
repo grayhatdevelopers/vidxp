@@ -1,73 +1,79 @@
 # Release process
 
-VidXP publishes two independently versioned components:
+VidXP ships one version across the Python package, three desktop installers,
+and the product, control, and worker container images.
 
-| Component | Tag | Beta artifacts | Stable artifacts |
-|---|---|---|---|
-| Core | `v<version>` | TestPyPI and `beta` GHCR images | PyPI and versioned/`latest` GHCR images |
-| Desktop | `desktop-v<version>` | Prerelease installers | Stable installers |
+| Channel | Trigger | Python | Desktop | Containers | GitHub |
+|---|---|---|---|---|---|
+| Nightly | Non-documentation push to `main` | Unique `.dev…` build on TestPyPI | — | — | Actions artifact only |
+| Beta | Merge the Release Please PR into `main` | PyPI prerelease | Windows, macOS, Linux | Versioned and `beta` tags | One prerelease |
+| Stable | Merge the Release Please PR into `release` | PyPI release | Windows, macOS, Linux | Versioned and `latest` tags | One latest release |
 
-`main` is the default integration branch and the beta channel. `release` is
-the protected stable channel.
+`main` is the integration and beta branch. `release` is the stable branch.
+Feature and fix pull requests target `main`; the existing promotion workflow
+maintains the `main` → `release` draft used to select a stable baseline.
 
-## Beta channel
+## Candidate before merge
 
-Feature and fix pull requests target `main`. Release Please maintains a beta
-release pull request on that branch from Conventional Commits.
+Release Please maintains one combined release PR per channel and updates every
+version source together. The **Prepare releases** workflow brings that PR up to
+date with its target branch and explicitly dispatches **Release candidate**.
 
-Merging the beta release pull request:
+The candidate reuses the normal CI, desktop, and container workflows. It:
 
-1. updates only the changed component versions and changelogs;
-2. creates immutable prerelease tags and draft GitHub releases;
-3. publishes a changed core to TestPyPI and the `beta` product, control, and
-   worker images to GHCR;
-4. builds changed desktop installers; and
-5. exposes each GitHub prerelease only after its complete artifact set exists.
+1. validates the exact Release Please head against the current target branch;
+2. runs the full Python/provider suite and retains its tested wheel and sdist;
+3. builds and tests all three desktop installers and retains them;
+4. builds and smokes the three container targets once, pushes temporary
+   candidate tags, and records their immutable digests; and
+5. records a `release/candidate` commit status linked to the Actions run.
 
-The desktop runtime manifest pins the selected core package version. A core
-release updates that pin, but a new desktop installer is published only when
-the desktop component also has a releasable change.
+Merging a Release Please PR is allowed only when `release/candidate` succeeds.
+The lightweight **Release gate** marks that same context successful for ordinary
+PRs, so the rule does not add release builds to normal development changes.
 
-## Promote beta to stable
+Configure `release/candidate` as a required status on both channel branches.
+Roll this out in order: merge the workflow changes to `main`, enable the rule on
+`main`, promote those workflows to `release`, then enable the rule on `release`.
+Do not enable the `release` rule before its base branch contains Release gate.
 
-The **Maintain stable promotion PR** workflow keeps one draft pull request from
-`main` to `release` whenever the branches differ. Closing it without merging
-causes a fresh draft to be created while there are still commits to promote.
+## Publication after merge
 
-To promote:
+After a valid release PR is merged, Release Please creates the combined tag and
+a draft GitHub release. **Publish combined release** then:
 
-1. freeze merges to `main` for the short promotion window;
-2. mark the `main` → `release` draft ready and merge it;
-3. review the stable Release Please pull request created on `release`; and
-4. merge that pull request to publish stable artifacts.
+1. downloads artifacts from the successful candidate run;
+2. proves that the merged tag and candidate have the same Git tree and version;
+3. publishes the already-tested wheel and sdist to PyPI;
+4. promotes the recorded container digests to public version/channel tags
+   without rebuilding; and
+5. uploads the Python and desktop artifacts plus checksums to the same GitHub
+   release before making it public.
 
-A stable core release runs the complete Python and provider matrix, builds and
-smokes the distribution, publishes it to PyPI, then builds and smokes all
-three GHCR images. Desktop releases build Windows, macOS, and Linux installers.
-GitHub releases remain drafts until their complete artifact set is public.
+Beta packages intentionally use real PyPI so the desktop-managed runtime can
+resolve its pinned prerelease and normal dependencies from one index. TestPyPI
+is reserved for unique nightly package validation.
 
-After all stable releases created from that commit are public,
-**Synchronize release channels** fast-forwards `main` to `release`. It refuses
-to overwrite new work on `main`. The scheduled run repairs a missed
-synchronization after the publication state becomes complete.
+Publication is resumable. An existing Python version must have the exact same
+filenames and SHA-256 values; immutable container tags must resolve to the
+recorded candidate digests. Matching work is reused, while a conflict stops the
+run. A failed publication leaves the GitHub release as a draft, and rerunning
+the same publisher continues from the same candidate without rebuilding or
+rewriting a branch.
 
-## Publication integrity and retries
+After a stable release is public, **Synchronize release channels** carries the
+published version baseline back to `main`. It fast-forwards when possible and
+opens a synchronization PR rather than overwriting newer work.
 
-Registry publication is version-locked:
+## Maintainer checklist
 
-- an absent Python version is published normally;
-- an existing Python version is accepted only when its complete filename and
-  SHA-256 set exactly matches the distribution built from the immutable tag;
-- an existing versioned container tag is accepted only when its source revision
-  label matches the immutable release tag; and
-- any conflict stops publication before moving channel tags or exposing the
-  GitHub release.
+Before merging a Release Please PR:
 
-For an infrastructure failure, rerun the failed jobs from the same workflow
-run. If a workflow fix is required, merge the fix to the channel branch and
-dispatch the publisher again with the existing tag. Verified matching
-artifacts are reused; conflicting artifacts fail instead of being skipped.
+- confirm it contains one `v<version>` change across the package and desktop
+  manifests;
+- confirm `release/candidate` points to the latest PR head and succeeded;
+- review the generated changelog as product release notes; and
+- for stable, confirm the selected `main` baseline was promoted to `release`.
 
-If version selection or changelog content is wrong, do not merge the Release
-Please pull request. Correct the commits or configuration and let Release
-Please update it.
+If version selection or changelog content is wrong, do not merge the release
+PR. Correct the commits or configuration and let Release Please update it.

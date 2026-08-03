@@ -1,27 +1,14 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "always-update": true,
   "bootstrap-sha": "61e8b6f8374f3fa3b8c4012e499b4064d8f5c4d2",
   "bump-minor-pre-major": false,
   "bump-patch-for-minor-pre-major": false,
   "draft": true,
   "force-tag-creation": true,
   "include-v-in-tag": true,
-  "separate-pull-requests": false,
-  "plugins": [
-    {
-      "type": "linked-versions",
-      "groupName": "VidXP",
-      "components": [
-        "",
-        "desktop"
-      ]
-    }
-  ],
   "packages": {
     ".": {
-      "exclude-paths": [
-        "desktop"
-      ],
       "extra-files": [
         {
           "jsonpath": "$['.']",
@@ -29,61 +16,47 @@
           "type": "json"
         },
         {
-          "jsonpath": "$.desktop",
-          "path": ".release-please-manifest.json",
+          "path": "desktop/src-tauri/Cargo.toml",
+          "type": "generic"
+        },
+        {
+          "path": "desktop/src-tauri/Cargo.lock",
+          "type": "generic"
+        },
+        {
+          "jsonpath": "$.version",
+          "path": "desktop/package.json",
+          "type": "json"
+        },
+        {
+          "jsonpath": "$.version",
+          "path": "desktop/package-lock.json",
+          "type": "json"
+        },
+        {
+          "jsonpath": "$.packages[''].version",
+          "path": "desktop/package-lock.json",
+          "type": "json"
+        },
+        {
+          "jsonpath": "$.desktop_version",
+          "path": "desktop/runtime-manifest.json",
           "type": "json"
         },
         {
           "jsonpath": "$.package_version",
           "path": "desktop/runtime-manifest.json",
           "type": "json"
+        },
+        {
+          "jsonpath": "$.version",
+          "path": "desktop/src-tauri/tauri.conf.json",
+          "type": "json"
         }
       ],
       "include-component-in-tag": false,
       "package-name": "vidxp",
       "release-type": "python"
-    },
-    "desktop": {
-      "component": "desktop",
-      "extra-files": [
-        {
-          "path": "src-tauri/Cargo.toml",
-          "type": "generic"
-        },
-        {
-          "path": "src-tauri/Cargo.lock",
-          "type": "generic"
-        },
-        {
-          "jsonpath": "$.version",
-          "path": "package.json",
-          "type": "json"
-        },
-        {
-          "jsonpath": "$.version",
-          "path": "package-lock.json",
-          "type": "json"
-        },
-        {
-          "jsonpath": "$.packages[''].version",
-          "path": "package-lock.json",
-          "type": "json"
-        },
-        {
-          "jsonpath": "$.desktop_version",
-          "path": "runtime-manifest.json",
-          "type": "json"
-        },
-        {
-          "jsonpath": "$.version",
-          "path": "src-tauri/tauri.conf.json",
-          "type": "json"
-        }
-      ],
-      "include-component-in-tag": true,
-      "package-name": "vidxp-desktop",
-      "release-type": "simple",
-      "version-file": "VERSION"
     }
   }
 }

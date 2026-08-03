@@ -69,8 +69,11 @@ describe('Desktop packaging and documentation contracts', () => {
     ]) {
       expect(workflow).toContain(`- "${path}"`);
     }
-    expect(read('.github/workflows/publish-desktop.yml')).toContain(
+    expect(read('.github/workflows/release-candidate.yml')).toContain(
       'uses: ./.github/workflows/desktop.yml',
+    );
+    expect(read('.github/workflows/release-to-pypi.yml')).toContain(
+      'vidxp-desktop-windows-x86_64',
     );
   });
 });

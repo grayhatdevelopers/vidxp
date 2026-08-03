@@ -242,7 +242,7 @@ merge describe the public change accurately:
 Write user-visible `feat`, `fix`, and `perf` subjects for users, not for the
 implementation history. Internal corrections to an unreleased feature should
 remain part of that feature rather than appear as fictional public bug fixes.
-Release Please prepares the version and component changelogs in a pull request;
+Release Please prepares the combined version and changelog in a pull request;
 do not edit released changelog sections by hand.
 
 ## Documentation style

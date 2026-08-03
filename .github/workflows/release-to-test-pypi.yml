@@ -1,18 +1,25 @@
-name: Prerelease (tag → TestPyPI)
+name: Publish nightly package
 
 on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
   workflow_dispatch:
     inputs:
-      tag:
-        description: Existing core prerelease tag to publish.
-        required: true
+      checkout_ref:
+        description: Main revision to publish as an ephemeral nightly.
+        required: false
+        default: ""
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: testpypi-${{ inputs.tag }}
+  group: nightly-testpypi
   cancel-in-progress: false
 
 jobs:
@@ -23,54 +30,35 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
 
-      - name: Verify prerelease tag
+      - name: Assign an ephemeral nightly version
         id: version
         shell: bash
         run: |
-          tag="${{ inputs.tag }}"
-          if [[ "$tag" != v*-* ]]; then
-            echo "::error::$tag is not a core prerelease tag."
-            exit 1
-          fi
-          if ! git show-ref --verify --quiet "refs/tags/$tag"; then
-            echo "::error::$tag is not an existing Git tag."
-            exit 1
-          fi
-          version="${tag#v}"
-          package_version="$(
-            python -c \
-              'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])'
-          )"
-          if [[ "$package_version" != "$version" ]]; then
-            echo "::error::Tag $tag does not match package version $package_version."
-            exit 1
-          fi
+          version="$(python utils/prepare_nightly.py --run-number "$GITHUB_RUN_NUMBER")"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Install build tooling
         run: python -m pip install -r utils/build-requirements.txt
 
-      - name: Build distribution
-        run: bash utils/build_package.sh
-
-      - name: Smoke distribution
+      - name: Build and smoke the nightly distribution
         shell: bash
         run: |
-          python -m venv .release-smoke
-          .release-smoke/bin/python -m pip install dist/*.whl
-          .release-smoke/bin/python -m pip check
-          .release-smoke/bin/vidxp --version
+          bash utils/build_package.sh
+          python -m venv .nightly-smoke
+          .nightly-smoke/bin/python -m pip install dist/*.whl
+          .nightly-smoke/bin/python -m pip check
+          [[ "$(.nightly-smoke/bin/vidxp --version)" == "VidXP ${{ steps.version.outputs.version }}" ]]
 
       - uses: actions/upload-artifact@v7
         with:
-          name: testpypi-${{ inputs.tag }}
+          name: vidxp-nightly-dist
           path: dist/
           if-no-files-found: error
           retention-days: 14
@@ -85,11 +73,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - uses: actions/download-artifact@v8
         with:
-          name: testpypi-${{ inputs.tag }}
+          name: vidxp-nightly-dist
           path: dist/
 
       - name: Check TestPyPI release state
@@ -105,49 +93,39 @@ jobs:
           )"
           echo "state=$state" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to TestPyPI
+      - name: Publish the unique nightly to TestPyPI
         if: steps.registry.outputs.state == 'absent'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
           packages-dir: dist/
 
-  publish-containers:
-    needs:
-      - build
-      - publish
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/containers.yml
-    with:
-      channel: beta
-      tag: ${{ inputs.tag }}
-      version: ${{ needs.build.outputs.version }}
-
-  publish-github:
-    needs:
-      - build
-      - publish
-      - publish-containers
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: testpypi-${{ inputs.tag }}
-          path: dist/
-
-      - name: Publish complete prerelease
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download and install the exact TestPyPI artifact
         shell: bash
         run: |
-          gh release upload "${{ inputs.tag }}" dist/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-          gh release edit "${{ inputs.tag }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft=false \
-            --prerelease
+          for attempt in {1..30}; do
+            state="$(
+              python utils/verify_published_distribution.py \
+                --repository https://test.pypi.org \
+                --package vidxp \
+                --version "${{ needs.build.outputs.version }}" \
+                --dist dist
+            )"
+            [[ "$state" == "identical" ]] && break
+            sleep 10
+          done
+          [[ "$state" == "identical" ]]
+
+          python -m pip download \
+            --index-url https://test.pypi.org/simple \
+            --no-deps \
+            --no-cache-dir \
+            --dest downloaded \
+            "vidxp==${{ needs.build.outputs.version }}"
+          [[ "$(sha256sum dist/*.whl | cut -d' ' -f1)" == \
+              "$(sha256sum downloaded/*.whl | cut -d' ' -f1)" ]]
+          python -m venv .testpypi-smoke
+          .testpypi-smoke/bin/python -m pip install downloaded/*.whl
+          .testpypi-smoke/bin/python -m pip check
+          [[ "$(.testpypi-smoke/bin/vidxp --version)" == \
+              "VidXP ${{ needs.build.outputs.version }}" ]]

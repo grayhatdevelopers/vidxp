@@ -118,12 +118,11 @@ Users select dialogue, scene, and actor capabilities independently. Interfaces
 are selected separately: the browser interface adds the `frontend` extra only
 when selected. Model preparation can be deferred, and a native folder picker
 can select a model-cache directory before any model is downloaded.
-For the current beta, it first acquires only the exact VidXP package from
-TestPyPI with dependency resolution disabled. It then resolves that installed
-package's selected extras from production PyPI. This prevents TestPyPI from
-becoming a competing source for transitive dependencies. The acquisition index
-is derived from the stamped package version: prereleases use TestPyPI and stable
-versions use production PyPI.
+The managed runtime acquires the exact VidXP package with dependency resolution
+disabled, then resolves that package's selected extras. Beta and stable desktop
+releases use production PyPI for both steps, so a pinned prerelease and its
+normal dependencies come from one authoritative index. TestPyPI is used only
+for package-only nightly validation and is never a desktop runtime source.
 Windows and Linux resolve CPU-only PyTorch wheels using uv's
 `--torch-backend cpu`; macOS uses native PyPI wheels. The custom PyTorch index
 is therefore a resolver input and is not embedded as a package URL, avoiding

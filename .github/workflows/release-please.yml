@@ -12,6 +12,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  statuses: write
 
 concurrency:
   group: release-please-${{ github.ref_name }}
@@ -21,15 +22,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Enable the beta publication workflow
-        if: github.ref_name == 'main'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >-
-          gh api --method PUT
-          "repos/$GITHUB_REPOSITORY/actions/workflows/release-to-test-pypi.yml/enable"
-
-      - name: Prepare or create component releases
+      - name: Prepare or create the combined release
         id: release
         uses: googleapis/release-please-action@v5
         with:
@@ -38,30 +31,95 @@ jobs:
           target-branch: ${{ github.ref_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish the core release
+      - name: Refresh and validate the open release candidate
+        if: steps.release.outputs.release_created != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_BRANCH: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          pr="$(
+            gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$TARGET_BRANCH&per_page=100" \
+              --jq '[.[] | select(.head.ref | startswith("release-please--branches--"))][0]'
+          )"
+          [[ "$pr" != "null" ]] || exit 0
+
+          number="$(jq -r .number <<< "$pr")"
+          head="$(jq -r .head.sha <<< "$pr")"
+          base="$(jq -r .base.sha <<< "$pr")"
+          update_log="$RUNNER_TEMP/update-branch.log"
+          if ! gh api --method PUT \
+            "repos/$GITHUB_REPOSITORY/pulls/$number/update-branch" \
+            -f expected_head_sha="$head" >"$update_log" 2>&1; then
+            if ! grep -qiE 'already up.to.date|422|head branch was modified' "$update_log"; then
+              cat "$update_log"
+              exit 1
+            fi
+          fi
+
+          for attempt in {1..45}; do
+            pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")"
+            head="$(jq -r .head.sha <<< "$pr")"
+            base="$(jq -r .base.sha <<< "$pr")"
+            comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/${base}...${head}")"
+            if [[ "$(jq -r .merge_base_commit.sha <<< "$comparison")" == "$base" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          [[ "$(jq -r .merge_base_commit.sha <<< "$comparison")" == "$base" ]]
+
+          current_status="$(
+            gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" \
+              --jq '[.statuses[] | select(.context == "release/candidate")] | sort_by(.updated_at) | last | .state // ""'
+          )"
+          if [[ "$current_status" == "success" ]]; then
+            echo "Candidate $head is already validated."
+            exit 0
+          fi
+
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/release-candidate.yml"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$head" \
+            -f state=pending \
+            -f context=release/candidate \
+            -f description='Combined release candidate is queued' \
+            -f target_url="$run_url"
+          gh workflow run release-candidate.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$TARGET_BRANCH" \
+            -f pull_request="$number" \
+            -f target_branch="$TARGET_BRANCH" \
+            -f base_sha="$base" \
+            -f head_sha="$head"
+
+      - name: Dispatch publication of the validated candidate
         if: steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
           TAG: ${{ steps.release.outputs.tag_name }}
+          TARGET_BRANCH: ${{ github.ref_name }}
         shell: bash
         run: |
-          if [[ "${{ github.ref_name }}" == "release" ]]; then
-            workflow="release-to-pypi.yml"
-          else
-            workflow="release-to-test-pypi.yml"
-          fi
-          gh workflow run "$workflow" \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref "$TAG" \
-            -f tag="$TAG"
+          pr="$(
+            gh api -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/commits/$RELEASE_SHA/pulls" \
+              --jq '[.[] | select(.base.ref == env.TARGET_BRANCH and (.head.ref | startswith("release-please--branches--")))][0]'
+          )"
+          [[ "$pr" != "null" ]]
+          head="$(jq -r .head.sha <<< "$pr")"
+          status="$(
+            gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" \
+              --jq '[.statuses[] | select(.context == "release/candidate")] | sort_by(.updated_at) | last'
+          )"
+          [[ "$(jq -r .state <<< "$status")" == "success" ]]
+          target_url="$(jq -r .target_url <<< "$status")"
+          [[ "$target_url" =~ /actions/runs/([0-9]+)$ ]]
+          candidate_run_id="${BASH_REMATCH[1]}"
 
-      - name: Publish the desktop release
-        if: steps.release.outputs['desktop--release_created'] == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.release.outputs['desktop--tag_name'] }}
-        run: |
-          gh workflow run publish-desktop.yml \
+          gh workflow run release-to-pypi.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref "$TAG" \
-            -f tag="$TAG"
+            -f tag="$TAG" \
+            -f candidate_run_id="$candidate_run_id" \
+            -f candidate_head_sha="$head"

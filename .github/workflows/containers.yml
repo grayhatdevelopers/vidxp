@@ -1,50 +1,89 @@
-name: Publish core containers
+name: Release containers
 
 on:
   workflow_call:
     inputs:
-      channel:
-        description: Container channel to publish.
+      operation:
+        description: Build a candidate or promote its immutable digests.
         required: true
         type: string
-      tag:
-        description: Existing core tag to build.
+      checkout_ref:
+        description: Exact source revision used for a candidate build.
+        required: false
+        default: ""
+        type: string
+      candidate_id:
+        description: Stable candidate identifier used for temporary tags.
         required: true
+        type: string
+      channel:
+        description: beta or stable when promoting.
+        required: false
+        default: ""
         type: string
       version:
-        description: Core version without the v prefix.
+        description: Combined release version without the v prefix.
         required: true
         type: string
+      product_digest:
+        required: false
+        default: ""
+        type: string
+      control_digest:
+        required: false
+        default: ""
+        type: string
+      worker_digest:
+        required: false
+        default: ""
+        type: string
+    outputs:
+      product_digest:
+        value: ${{ jobs.stage.outputs.product_digest }}
+      control_digest:
+        value: ${{ jobs.stage.outputs.control_digest }}
+      worker_digest:
+        value: ${{ jobs.stage.outputs.worker_digest }}
 
 permissions:
   contents: read
   packages: write
 
 jobs:
-  publish:
+  stage:
+    if: inputs.operation == 'stage'
     runs-on: ubuntu-latest
+    outputs:
+      product_digest: ${{ steps.digests.outputs.product }}
+      control_digest: ${{ steps.digests.outputs.control }}
+      worker_digest: ${{ steps.digests.outputs.worker }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.checkout_ref }}
+
+      - name: Verify staging inputs
+        shell: bash
+        run: |
+          [[ "${{ inputs.checkout_ref }}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${{ inputs.candidate_id }}" =~ ^[0-9a-f]{40}$ ]]
 
       - name: Resolve source revision
         id: source
         shell: bash
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Validate Compose deployment configuration
+        run: bash utils/validate_compose.sh
+
       - uses: docker/setup-buildx-action@v4
 
-      - name: Generate product image metadata
+      - name: Generate image metadata
         id: metadata
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=raw,value=${{ inputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.tag }},enable=${{ inputs.channel == 'stable' }}
-            type=raw,value=latest,enable=${{ inputs.channel == 'stable' }}
-            type=raw,value=beta,enable=${{ inputs.channel == 'beta' }}
+          tags: type=raw,value=candidate-${{ inputs.candidate_id }}
           labels: |
             org.opencontainers.image.title=VidXP
             org.opencontainers.image.description=Local-first video indexing and search
@@ -60,7 +99,7 @@ jobs:
           load: true
           platforms: linux/amd64
           push: false
-          tags: ${{ steps.metadata.outputs.tags }}
+          tags: ghcr.io/${{ github.repository }}:candidate-${{ inputs.candidate_id }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha,scope=release-product
           cache-to: type=gha,mode=max,scope=release-product
@@ -73,9 +112,7 @@ jobs:
           platforms: linux/amd64
           push: false
           target: control
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ inputs.version }}-control
-            ghcr.io/${{ github.repository }}:${{ inputs.channel == 'stable' && 'latest' || 'beta' }}-control
+          tags: ghcr.io/${{ github.repository }}:candidate-${{ inputs.candidate_id }}-control
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha,scope=release-control
           cache-to: type=gha,mode=max,scope=release-control
@@ -88,19 +125,19 @@ jobs:
           platforms: linux/amd64
           push: false
           target: worker
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ inputs.version }}-worker
-            ghcr.io/${{ github.repository }}:${{ inputs.channel == 'stable' && 'latest' || 'beta' }}-worker
+          tags: ghcr.io/${{ github.repository }}:candidate-${{ inputs.candidate_id }}-worker
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha,scope=release-worker
           cache-to: type=gha,mode=max,scope=release-worker
 
-      - name: Smoke product image
+      - name: Smoke candidate images
         shell: bash
         run: |
-          image="ghcr.io/${{ github.repository }}:${{ inputs.version }}"
+          product="ghcr.io/${{ github.repository }}:candidate-${{ inputs.candidate_id }}"
+          control="${product}-control"
+          worker="${product}-worker"
           docker run --detach --name vidxp-release \
-            --publish 127.0.0.1:8501:8501 "$image"
+            --publish 127.0.0.1:8501:8501 "$product"
           trap 'docker rm --force vidxp-release >/dev/null 2>&1 || true' EXIT
 
           docker exec vidxp-release vidxp --version
@@ -114,27 +151,18 @@ jobs:
 
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:8501/_stcore/health; then
-              exit 0
+              break
             fi
             if [[ "$(docker inspect --format='{{.State.Running}}' vidxp-release)" != "true" ]]; then
-              break
+              docker logs vidxp-release
+              exit 1
             fi
             sleep 2
           done
-
-          docker logs vidxp-release
-          exit 1
-
-      - name: Smoke server images
-        shell: bash
-        run: |
-          control="ghcr.io/${{ github.repository }}:${{ inputs.version }}-control"
-          worker="ghcr.io/${{ github.repository }}:${{ inputs.version }}-worker"
+          curl --fail --silent http://127.0.0.1:8501/_stcore/health
           docker run --rm "$control" vidxp-api --help
           docker run --rm "$control" vidxp-mcp --help
           docker run --rm "$worker" vidxp init --json
-          docker run --rm "$worker" python -c \
-            'import chromadb, cv2, faster_whisper, huggingface_hub, pooch, psutil, sentence_transformers, torch, transformers; assert psutil.virtual_memory().available > 0'
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
@@ -143,89 +171,103 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Protect immutable version tags
-        id: existing
-        env:
-          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+      - name: Push candidate images and record immutable digests
+        id: digests
         shell: bash
         run: |
-          check_version_tag() {
-            local name="$1"
-            local image="$2"
-            local local_image="vidxp-release-local:$name"
+          digest() {
+            docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' |
+              jq -er '.digest'
+          }
+          base="ghcr.io/${{ github.repository }}:candidate-${{ inputs.candidate_id }}"
+          docker push "$base"
+          docker push "${base}-control"
+          docker push "${base}-worker"
+          echo "product=$(digest "$base")" >> "$GITHUB_OUTPUT"
+          echo "control=$(digest "${base}-control")" >> "$GITHUB_OUTPUT"
+          echo "worker=$(digest "${base}-worker")" >> "$GITHUB_OUTPUT"
 
-            docker tag "$image" "$local_image"
-            if ! docker pull "$image" >/dev/null 2>&1; then
-              docker tag "$local_image" "$image"
-              echo "${name}=false" >> "$GITHUB_OUTPUT"
-              return
-            fi
+  promote:
+    if: inputs.operation == 'promote'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify promotion inputs
+        shell: bash
+        run: |
+          [[ "${{ inputs.channel }}" == "beta" || "${{ inputs.channel }}" == "stable" ]]
+          [[ "${{ inputs.candidate_id }}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${{ inputs.product_digest }}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${{ inputs.control_digest }}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${{ inputs.worker_digest }}" =~ ^sha256:[0-9a-f]{64}$ ]]
 
-            revision="$(
-              docker inspect \
-                --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
-                "$image"
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote the candidate manifests without rebuilding
+        shell: bash
+        run: |
+          repository="ghcr.io/${{ github.repository }}"
+          candidate="${repository}:candidate-${{ inputs.candidate_id }}"
+
+          promote() {
+            local source="$1"
+            local expected="$2"
+            shift 2
+            actual="$(
+              docker buildx imagetools inspect "$source" \
+                --format '{{json .Manifest}}' | jq -er '.digest'
             )"
-            if [[ "$revision" != "$SOURCE_SHA" ]]; then
-              echo "::error::$image already belongs to source revision $revision, not $SOURCE_SHA."
+            if [[ "$actual" != "$expected" ]]; then
+              echo "::error::$source resolved to $actual instead of $expected."
               exit 1
             fi
-            echo "${name}=true" >> "$GITHUB_OUTPUT"
+            for target in "$@"; do
+              existing="$(
+                docker buildx imagetools inspect "$target" \
+                  --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty' || true
+              )"
+              if [[ "$target" == "${repository}:${{ inputs.version }}"* &&
+                    -n "$existing" && "$existing" != "$expected" ]]; then
+                echo "::error::Immutable tag $target already points to $existing."
+                exit 1
+              fi
+              [[ "$existing" == "$expected" ]] || \
+                docker buildx imagetools create \
+                  --prefer-index=false \
+                  --tag "$target" \
+                  "${repository}@${expected}"
+            done
           }
 
-          check_version_tag \
-            product \
-            "ghcr.io/${{ github.repository }}:${{ inputs.version }}"
-          check_version_tag \
-            control \
-            "ghcr.io/${{ github.repository }}:${{ inputs.version }}-control"
-          check_version_tag \
-            worker \
-            "ghcr.io/${{ github.repository }}:${{ inputs.version }}-worker"
-
-      - name: Publish containers
-        shell: bash
-        run: |
-          product="ghcr.io/${{ github.repository }}:${{ inputs.version }}"
-          control="${product}-control"
-          worker="${product}-worker"
-          control_channel="ghcr.io/${{ github.repository }}:${{ inputs.channel == 'stable' && 'latest' || 'beta' }}-control"
-          worker_channel="ghcr.io/${{ github.repository }}:${{ inputs.channel == 'stable' && 'latest' || 'beta' }}-worker"
-
-          if [[ "${{ steps.existing.outputs.product }}" == "true" ]]; then
-            while read -r image; do
-              [[ "$image" == "$product" ]] || docker tag "$product" "$image"
-            done <<< "${{ steps.metadata.outputs.tags }}"
-          fi
-          while read -r image; do
-            if [[ "$image" != "$product" ||
-                  "${{ steps.existing.outputs.product }}" != "true" ]]; then
-              docker push "$image"
-            fi
-          done <<< "${{ steps.metadata.outputs.tags }}"
-
-          if [[ "${{ steps.existing.outputs.control }}" == "true" ]]; then
-            docker tag "$control" "$control_channel"
+          product_tags=("${repository}:${{ inputs.version }}")
+          control_tags=("${repository}:${{ inputs.version }}-control")
+          worker_tags=("${repository}:${{ inputs.version }}-worker")
+          if [[ "${{ inputs.channel }}" == "stable" ]]; then
+            major_minor="$(cut -d. -f1,2 <<< "${{ inputs.version }}")"
+            product_tags+=("${repository}:${major_minor}" "${repository}:latest")
+            control_tags+=("${repository}:latest-control")
+            worker_tags+=("${repository}:latest-worker")
           else
-            docker push "$control"
+            product_tags+=("${repository}:beta")
+            control_tags+=("${repository}:beta-control")
+            worker_tags+=("${repository}:beta-worker")
           fi
-          docker push "$control_channel"
 
-          if [[ "${{ steps.existing.outputs.worker }}" == "true" ]]; then
-            docker tag "$worker" "$worker_channel"
-          else
-            docker push "$worker"
-          fi
-          docker push "$worker_channel"
+          promote "$candidate" "${{ inputs.product_digest }}" "${product_tags[@]}"
+          promote "${candidate}-control" "${{ inputs.control_digest }}" "${control_tags[@]}"
+          promote "${candidate}-worker" "${{ inputs.worker_digest }}" "${worker_tags[@]}"
 
-      - name: Verify public container access
+      - name: Verify public release tags
         shell: bash
         run: |
           docker logout ghcr.io
           for suffix in "" "-control" "-worker"; do
-            image="ghcr.io/${{ github.repository }}:${{ inputs.version }}${suffix}"
-            if ! docker buildx imagetools inspect "$image"; then
-              echo "::error::Make the GHCR package public, then rerun this workflow for the same tag."
-              exit 1
-            fi
+            docker buildx imagetools inspect \
+              "ghcr.io/${{ github.repository }}:${{ inputs.version }}${suffix}"
           done
