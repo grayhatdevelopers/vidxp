@@ -963,6 +963,35 @@ def create_mcp_server(
             return compact
         return f"{compact[: limit - 1].rstrip()}…"
 
+    def presentation_target(delivery: ArtifactDownload | None) -> str | None:
+        if delivery is None:
+            return None
+        if delivery.local_path is not None:
+            return f"local_path={delivery.local_path}"
+        if delivery.download_url is not None:
+            return f"download_url={delivery.download_url}"
+        if delivery.resource_uri is not None:
+            return f"resource_uri={delivery.resource_uri}"
+        return None
+
+    def presentation_artifacts(delivery: EvidenceDeliveryResult) -> list[str]:
+        artifacts: list[str] = []
+        if delivery.board is not None:
+            for page in delivery.board.pages:
+                target = presentation_target(page.artifact.delivery)
+                if target is not None:
+                    artifacts.append(f"- board page {page.page_number} | {target}")
+        for item in delivery.items:
+            if item.keyframe is not None:
+                target = presentation_target(item.keyframe.artifact.delivery)
+                if target is not None:
+                    artifacts.append(f"- evidence {item.evidence_id} frame | {target}")
+            if item.clip is not None:
+                target = presentation_target(item.clip.delivery)
+                if target is not None:
+                    artifacts.append(f"- evidence {item.evidence_id} clip | {target}")
+        return artifacts
+
     def evidence_index(
         *,
         source_job_id: JobId,
@@ -1016,6 +1045,14 @@ def create_mcp_server(
                 line += f" | {label}"
             lines.append(line)
 
+        artifacts = presentation_artifacts(delivery)
+        if artifacts:
+            lines.append(
+                "User-presentable artifacts (embed local_path or link download_url; "
+                "do not invent an unlinked evidence label):"
+            )
+            lines.extend(artifacts)
+
         if board is not None and board.next_start_rank is not None:
             lines.append(f"More candidates start at rank {board.next_start_rank}.")
         lines.append(
@@ -1039,21 +1076,21 @@ def create_mcp_server(
                 )
             if job.kind == JobKind.query:
                 query_result = result
-            _, blocks = await project_evidence_delivery(delivery)
+            projected_delivery, blocks = await project_evidence_delivery(delivery)
             index = evidence_index(
                 source_job_id=job.job_id,
-                delivery=delivery,
+                delivery=projected_delivery,
                 query_result=query_result,
             )
         else:
             board = job.result.result
-            _, blocks = await project_evidence_board(board)
+            projected_board, blocks = await project_evidence_board(board)
             index = evidence_index(
                 source_job_id=board.source_job_id,
                 delivery=EvidenceDeliveryResult(
                     policy=EvidenceDeliveryPolicy(mode=EvidenceDeliveryMode.none),
                     items=(),
-                    board=board,
+                    board=projected_board,
                 ),
             )
         return [TextContent(type="text", text=index), *blocks]
@@ -1463,7 +1500,8 @@ def create_mcp_server(
         title="Query video",
         description=(
             "Submit a durable grounded natural-language query over indexed "
-            "moments and actor evidence. Set command.media_id for one video, "
+            "moments and actor evidence. Put the question in command.question. "
+            "Set command.media_id for one video, "
             "or omit it to query across every media item in the active index "
             "snapshot. MCP returns an annotated board of ranked evidence by "
             "default. Set command.evidence_delivery.mode to keyframes or "
@@ -1652,14 +1690,14 @@ def create_mcp_server(
             ),
             operation=materialize,
         )
-        _, blocks = await project_evidence_delivery(delivery)
+        projected_delivery, blocks = await project_evidence_delivery(delivery)
         blocks.insert(
             0,
             TextContent(
                 type="text",
                 text=evidence_index(
                     source_job_id=source_job_id,
-                    delivery=delivery,
+                    delivery=projected_delivery,
                 ),
             ),
         )

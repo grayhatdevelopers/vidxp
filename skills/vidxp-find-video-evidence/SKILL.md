@@ -10,7 +10,9 @@ description: Use VidXP to search indexed videos, answer grounded questions about
 1. Resolve the `vidxp` MCP tools, then call `get_workspace`. If the requested
    video is not indexed, explain that it must be indexed first.
 2. Use `search_moments` to locate moments or `query_video` for a synthesized,
-   grounded answer. Set `command.media_id` when the user means one video.
+   grounded answer. Use `command.query` with `search_moments` and
+   `command.question` with `query_video`. Set `command.media_id` when the user
+   means one video.
 3. Omit `command.evidence_delivery` for the normal path. The completed job
    includes an annotated board covering the ranked results.
 4. Call `wait_job` for bounded waits. Pass its `observation_token` as
@@ -44,9 +46,9 @@ description: Use VidXP to search indexed videos, answer grounded questions about
 ## Output
 
 - The final response must visibly embed a returned board or frame, or include a
-  working downloadable resource link—not timestamps alone. If a host does not
-  render a link, use
-  `get_artifact_download`.
+  working downloadable resource link—not timestamps alone. Use the returned
+  `local_path` or `download_url`; never write an unlinked label such as “View
+  evidence board.” Use `get_artifact_download` only if neither is returned.
 - Preserve the source job and evidence IDs. Describe scores as retrieval scores,
   and distinguish a visible appearance from a dialogue or caption mention.
 - Stop waiting on success, failure, or cancellation. An empty result means no

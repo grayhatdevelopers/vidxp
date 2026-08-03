@@ -456,9 +456,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(all(tool.title for tool in discovered.tools))
         self.assertEqual(
-            tools["wait_job"].input_schema["properties"]["timeout_seconds"][
-                "default"
-            ],
+            tools["wait_job"].input_schema["properties"]["timeout_seconds"]["default"],
             30,
         )
         for name in ("get_job_status", "wait_job"):
@@ -1533,6 +1531,15 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsNone(result.structured_content)
                     self.assertIn(evidence_id := "e" * 64, result.content[0].text)
                     self.assertIn("1.000-2.000", result.content[0].text)
+                    if transport == "local_stdio":
+                        self.assertIn(str(frame_path.resolve()), result.content[0].text)
+                    elif configured:
+                        self.assertIn(
+                            "https://public.example/artifact-download",
+                            result.content[0].text,
+                        )
+                    else:
+                        self.assertIn(uri, result.content[0].text)
                     self.assertTrue(
                         any(isinstance(block, ImageContent) for block in result.content)
                     )
@@ -1751,6 +1758,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(result.structured_content)
             self.assertIn("1.000-2.000", result.content[0].text)
             self.assertIn("e" * 64, result.content[0].text)
+            self.assertIn(
+                f"vidxp://artifacts/{ARTIFACT_ID}/content.png",
+                result.content[0].text,
+            )
             call = evidence_delivery.deliver_selected.call_args
             self.assertEqual(call.args[0], source.result.result)
             self.assertEqual(call.args[1], ("e" * 64,))
@@ -1927,6 +1938,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Board: 1/1 candidates", result.content[0].text)
             self.assertIn("1.000-2.000", result.content[0].text)
             self.assertIn("e" * 64, result.content[0].text)
+            self.assertIn(
+                f"vidxp://artifacts/{ARTIFACT_ID}/content.jpg",
+                result.content[0].text,
+            )
             self.assertTrue(
                 any(isinstance(block, ImageContent) for block in result.content)
             )
