@@ -5,13 +5,7 @@
 
 ### Features
 
-* add youtube video to readme ([#67](https://github.com/grayhatdevelopers/vidxp/issues/67)) ([2785578](https://github.com/grayhatdevelopers/vidxp/commit/2785578bab0a5a5209b387615309ebb261f7258d))
-* **mcp:** compact job waiting and evidence delivery ([#70](https://github.com/grayhatdevelopers/vidxp/issues/70)) ([7ff1dd1](https://github.com/grayhatdevelopers/vidxp/commit/7ff1dd1aae0902de43514e08c8214b2c2822c914))
-
-
-### Documentation
-
-* **release:** use uv in install instructions ([#66](https://github.com/grayhatdevelopers/vidxp/issues/66)) ([19902ad](https://github.com/grayhatdevelopers/vidxp/commit/19902ad451c74142b0839ec4e06c6331be4f85e1))
+* **mcp:** wait efficiently for long-running jobs and return compact, shareable evidence results ([#70](https://github.com/grayhatdevelopers/vidxp/issues/70)) ([7ff1dd1](https://github.com/grayhatdevelopers/vidxp/commit/7ff1dd1aae0902de43514e08c8214b2c2822c914))
 
 ## [0.4.0-b.1](https://github.com/grayhatdevelopers/vidxp/compare/v0.4.0-b...v0.4.0-b.1) (2026-08-03)
 
