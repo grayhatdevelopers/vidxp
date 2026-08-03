@@ -186,31 +186,10 @@ Run `vidxp --help` or `vidxp <command> --help` for the full command reference.
 Use the Python package to add selected VidXP capabilities directly to an
 application, or use the HTTP API when VidXP runs as a service.
 
-MCP clients can add and discover videos, start indexing, search dialogue and
-scenes, ask questions about a library, and create clips or actor overlays.
-Local agents can connect over stdio; remote agents can connect to a
-self-hosted VidXP server.
-
-Search and question results can include directly inspectable frames and clips, so
-agents can show the evidence behind an answer without making users translate raw
-timestamps. Evidence rendering is best-effort: a result can still be useful when
-an individual frame or clip cannot be produced. Agents can request additional
-ranked evidence in small batches without rerunning the search.
-For broader result sets, an agent can first show bounded evidence-board pages
-with a tile-to-evidence map, then fetch exact frames or clips only for the
-selected tiles.
-
-Remote agents can hand users a short-lived page for selecting and uploading
-multiple videos. Local agents can ingest approved filesystem paths without moving
-video bytes through MCP. VidXP normally indexes successful imports automatically;
-registration-only ingestion stops at `registered`, and indexing failures can be
-retried without uploading the video again.
-
-Agents can call `get_workspace` before acting to inspect registered media,
-active-index coverage, model readiness, and the searchable, queryable,
-inspectable, or renderable roles available for each video. Invalid capability
-or media selections are rejected before a durable job is queued and include an
-actionable next step.
+MCP lets AI clients add and index videos, search dialogue and scenes, ask
+questions about a library, and return inspectable evidence such as boards,
+frames, and clips. Clients can connect locally over stdio or to a self-hosted
+VidXP server.
 
 ### ChatGPT and Codex skills
 
