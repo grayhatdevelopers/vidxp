@@ -43,8 +43,9 @@ description: Use VidXP to search indexed videos, answer grounded questions about
 
 ## Output
 
-- Present returned board images, frames, clips, or working resource links—not
-  timestamps alone. If a host does not render a link, use
+- The final response must visibly embed a returned board or frame, or include a
+  working downloadable resource link—not timestamps alone. If a host does not
+  render a link, use
   `get_artifact_download`.
 - Preserve the source job and evidence IDs. Describe scores as retrieval scores,
   and distinguish a visible appearance from a dialogue or caption mention.

@@ -574,9 +574,11 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(summary.status_code, 200)
         self.assertNotIn("result", summary.json())
+        self.assertNotIn("poll_after_seconds", summary.json())
         self.assertEqual(summary.json()["observation_token"], compact.observation_token)
         self.assertEqual(waited.status_code, 200)
         self.assertTrue(waited.json()["timed_out"])
+        self.assertNotIn("poll_after_seconds", waited.json()["job"])
         context.jobs.summary.assert_called_once_with(JOB_ID)
         context.jobs.wait_for_change.assert_called_once_with(
             JOB_ID,

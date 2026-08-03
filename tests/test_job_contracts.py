@@ -106,6 +106,10 @@ class JobContractTests(unittest.TestCase):
         later_summary = JobService._summary(later)
 
         self.assertNotIn("result", first_summary.model_dump(mode="json"))
+        self.assertNotIn(
+            "poll_after_seconds",
+            first_summary.model_dump(mode="json"),
+        )
         self.assertFalse(first_summary.result_available)
         self.assertEqual(
             first_summary.observation_token,
@@ -156,6 +160,34 @@ class JobContractTests(unittest.TestCase):
         self.assertFalse(waited.timed_out)
         self.assertEqual(waited.job.progress.stage, "embeddings")
         self.assertNotIn("result", waited.model_dump(mode="json")["job"])
+
+    def test_job_summary_coalesces_evidence_artifact_stages(self):
+        now = datetime.now(timezone.utc)
+        summaries = [
+            JobService._summary(
+                Job(
+                    job_id=JOB_ID,
+                    kind=JobKind.search,
+                    state=JobState.running,
+                    queue=JobQueue.cpu,
+                    progress=JobProgress(
+                        stage=stage,
+                        message=f"{stage} an evidence frame.",
+                        updated_at=now,
+                    ),
+                )
+            )
+            for stage in ("rendering", "validating", "publishing")
+        ]
+
+        self.assertEqual(
+            len({summary.observation_token for summary in summaries}),
+            1,
+        )
+        self.assertEqual(
+            [summary.progress.stage for summary in summaries],
+            ["rendering", "validating", "publishing"],
+        )
 
     def test_wait_for_change_times_out_without_fabricating_a_change(self):
         running = Job(

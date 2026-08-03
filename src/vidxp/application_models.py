@@ -1305,7 +1305,7 @@ JOB_SCHEMA_VERSION = 2
 JOB_PROGRESS_SCHEMA_VERSION = 1
 JOB_SUMMARY_SCHEMA_VERSION = 1
 JOB_WAIT_RESULT_SCHEMA_VERSION = 1
-DEFAULT_JOB_WAIT_SECONDS = 20
+DEFAULT_JOB_WAIT_SECONDS = 30
 MAX_JOB_WAIT_SECONDS = 30
 
 
@@ -1523,7 +1523,6 @@ class JobSummary(ApplicationModel):
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
     terminal: bool
-    poll_after_seconds: int = Field(ge=0, le=60)
     result_available: bool
     observation_token: Sha256
 

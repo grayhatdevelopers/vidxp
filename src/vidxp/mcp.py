@@ -1845,7 +1845,9 @@ def create_mcp_server(
         description=(
             "Wait up to 30 seconds for a durable job to change stage or reach a "
             "terminal state. Pass the previous observation token on subsequent "
-            "calls. Returns compact status only; after completion use "
+            "calls. Evidence rendering is treated as one observable phase "
+            "rather than waking once per artifact. Returns compact status only; "
+            "after completion use "
             "get_job_evidence for visual search/query output, or get_job when "
             "the full machine record is needed."
         ),

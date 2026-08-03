@@ -60,6 +60,16 @@ class ReadJobPlanner(Protocol):
     ) -> ActorOverlayJobRequest: ...
 
 
+_EVIDENCE_JOB_KINDS = frozenset(
+    {
+        JobKind.search,
+        JobKind.query,
+        JobKind.evidence_board,
+    }
+)
+_RETRIEVAL_STAGES = frozenset({"querying", "searching"})
+
+
 def job_boundary(handler: Callable) -> Callable:
     """Translate job-backend failures once for every adapter."""
 
@@ -459,12 +469,19 @@ class JobService:
     def _summary(job: Job) -> JobSummary:
         progress = job.progress
         error = job.error
+        observation_stage = None if progress is None else progress.stage
+        if (
+            not job.terminal
+            and job.kind in _EVIDENCE_JOB_KINDS
+            and observation_stage not in _RETRIEVAL_STAGES
+        ):
+            observation_stage = "rendering_evidence"
         observation = {
             "job_id": job.job_id,
             "kind": job.kind.value,
             "state": job.state.value,
             "queue": job.queue.value,
-            "stage": None if progress is None else progress.stage,
+            "stage": observation_stage,
             "total": None if progress is None else progress.total,
             "error_code": None if error is None else error.code,
             "recovery_attempts": job.recovery_attempts,
@@ -489,7 +506,6 @@ class JobService:
             created_at=job.created_at,
             updated_at=job.updated_at,
             terminal=job.terminal,
-            poll_after_seconds=job.poll_after_seconds,
             result_available=job.result is not None,
             observation_token=token,
         )

@@ -455,6 +455,17 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertTrue(all(tool.title for tool in discovered.tools))
+        self.assertEqual(
+            tools["wait_job"].input_schema["properties"]["timeout_seconds"][
+                "default"
+            ],
+            30,
+        )
+        for name in ("get_job_status", "wait_job"):
+            self.assertNotIn(
+                '"poll_after_seconds"',
+                json.dumps(tools[name].output_schema),
+            )
         self.assertFalse(tools["create_media_upload"].annotations.read_only_hint)
         self.assertTrue(tools["create_media_upload"].annotations.idempotent_hint)
         self.assertTrue(tools["get_media_upload"].annotations.read_only_hint)
@@ -1436,12 +1447,17 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(summary.is_error)
         self.assertNotIn("result", summary.structured_content)
+        self.assertNotIn("poll_after_seconds", summary.structured_content)
         self.assertEqual(
             summary.structured_content["observation_token"],
             compact.observation_token,
         )
         self.assertFalse(waited.is_error)
         self.assertTrue(waited.structured_content["timed_out"])
+        self.assertNotIn(
+            "poll_after_seconds",
+            waited.structured_content["job"],
+        )
         context.jobs.get.assert_not_called()
 
     async def test_completed_search_projects_inline_frame_and_readable_resource(self):

@@ -312,8 +312,10 @@ def get_job_status(
     operation_id="waitForJobChange",
     summary="Wait for a job change",
     description=(
-        "Wait up to 30 seconds for a job to change stage or become terminal. "
-        "Pass the previous observation token on subsequent requests."
+        "Wait up to 30 seconds for a job to change public stage or become "
+        "terminal. Evidence rendering is treated as one observable phase "
+        "rather than one change per artifact. Pass the previous observation "
+        "token on subsequent requests."
     ),
     dependencies=[Depends(read_principal)],
 )
