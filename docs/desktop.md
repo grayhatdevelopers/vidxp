@@ -127,10 +127,11 @@ Windows and Linux resolve CPU-only PyTorch wheels using uv's
 `--torch-backend cpu`; macOS uses native PyPI wheels. The custom PyTorch index
 is therefore a resolver input and is not embedded as a package URL, avoiding
 the prior package-publication failure mode. Every selected profile is also
-constrained by `desktop/runtime-constraints.txt`, exported from the repository
-lock for the complete local-worker and frontend dependency set. Capability
-selection controls which packages are installed; the constraints prevent those
-packages from drifting independently after the desktop binary is published.
+constrained by a requirements snapshot exported from `uv.lock` and embedded
+during the desktop build for the complete local-worker and frontend dependency
+set. Capability selection controls which packages are installed; the constraints
+prevent those packages from drifting independently after the desktop binary is
+published.
 
 FFmpeg and ffprobe are host prerequisites. When WinGet is available, Windows
 can show and run the supported FFmpeg install command after consent. When

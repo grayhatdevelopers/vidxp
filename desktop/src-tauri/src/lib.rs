@@ -39,8 +39,10 @@ use lifecycle::{
 };
 use media_setup::{SystemInstallPlan, display_command, required_encoder_missing};
 
-const RUNTIME_MANIFEST_BYTES: &[u8] = include_bytes!("../../runtime-manifest.json");
-const RUNTIME_CONSTRAINTS_BYTES: &[u8] = include_bytes!("../../runtime-constraints.txt");
+const RUNTIME_MANIFEST_BYTES: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/runtime-manifest.json"));
+const RUNTIME_CONSTRAINTS_BYTES: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/runtime-constraints.txt"));
 const MODEL_CACHE_CATALOG_BYTES: &[u8] = include_bytes!("../../model-cache-catalog.json");
 const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
 const MAX_SETUP_OUTPUT_BYTES: usize = 4 * 1024 * 1024;

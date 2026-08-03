@@ -101,22 +101,6 @@ jobs:
           npm run notices:check
         working-directory: desktop
 
-      - name: Verify the desktop runtime constraints
-        shell: bash
-        run: |
-          generated="$RUNNER_TEMP/runtime-constraints.txt"
-          uv export \
-            --frozen \
-            --extra local-worker \
-            --extra frontend \
-            --no-dev \
-            --no-emit-project \
-            --no-hashes \
-            --format requirements-txt \
-            --output-file "$generated"
-          git diff --no-index --ignore-matching-lines='^#' -- \
-            desktop/runtime-constraints.txt "$generated"
-
       - name: Restore the pinned uv sidecar
         id: uv-sidecar-cache
         uses: actions/cache@v6

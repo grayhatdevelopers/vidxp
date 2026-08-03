@@ -1,5 +1,9 @@
 fn main() {
-    let manifest: serde_json::Value =
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write;
+    use std::path::{Path, PathBuf};
+
+    let mut manifest: serde_json::Value =
         serde_json::from_slice(include_bytes!("../runtime-manifest.json"))
             .expect("desktop/runtime-manifest.json must be valid JSON");
     let expected = manifest["uv_version"]
@@ -11,7 +15,7 @@ fn main() {
     } else {
         ""
     };
-    let sidecar = std::path::PathBuf::from("binaries").join(format!("uv-{target}{suffix}"));
+    let sidecar = PathBuf::from("binaries").join(format!("uv-{target}{suffix}"));
     let output = std::process::Command::new(&sidecar)
         .arg("--version")
         .output()
@@ -29,5 +33,62 @@ fn main() {
         actual.trim(),
         expected
     );
+
+    let constraints =
+        PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo must provide OUT_DIR"))
+            .join("runtime-constraints.txt");
+    let project = Path::new("../..");
+    let export = std::process::Command::new(&sidecar)
+        .args([
+            "export",
+            "--frozen",
+            "--extra",
+            "local-worker",
+            "--extra",
+            "frontend",
+            "--no-dev",
+            "--no-emit-project",
+            "--no-hashes",
+            "--format",
+            "requirements-txt",
+            "--project",
+        ])
+        .arg(project)
+        .output()
+        .unwrap_or_else(|error| {
+            panic!(
+                "{} could not export the desktop runtime constraints: {error}",
+                sidecar.display()
+            )
+        });
+    assert!(
+        export.status.success(),
+        "{} failed to export the desktop runtime constraints: {}",
+        sidecar.display(),
+        String::from_utf8_lossy(&export.stderr).trim()
+    );
+    let normalized = String::from_utf8(export.stdout)
+        .expect("the desktop runtime constraints must be UTF-8")
+        .replace("\r\n", "\n");
+    std::fs::write(&constraints, normalized.as_bytes())
+        .expect("Cargo must be able to normalize the desktop runtime constraints");
+    let digest = Sha256::digest(normalized.as_bytes()).iter().fold(
+        String::with_capacity(64),
+        |mut encoded, byte| {
+            write!(&mut encoded, "{byte:02x}").expect("writing to a string cannot fail");
+            encoded
+        },
+    );
+    manifest["dependency_constraints_sha256"] = serde_json::Value::String(digest);
+    let embedded_manifest = constraints.with_file_name("runtime-manifest.json");
+    let mut serialized = serde_json::to_vec_pretty(&manifest)
+        .expect("desktop/runtime-manifest.json must be serializable");
+    serialized.push(b'\n');
+    std::fs::write(&embedded_manifest, serialized)
+        .expect("Cargo must be able to write the embedded runtime manifest");
+    println!("cargo:rerun-if-changed=../../pyproject.toml");
+    println!("cargo:rerun-if-changed=../../uv.lock");
+    println!("cargo:rerun-if-changed=../runtime-manifest.json");
+
     tauri_build::build()
 }
