@@ -13,6 +13,10 @@
     ".": {
       "extra-files": [
         {
+          "path": "uv.lock",
+          "type": "generic"
+        },
+        {
           "path": "desktop/src-tauri/Cargo.toml",
           "type": "generic"
         },

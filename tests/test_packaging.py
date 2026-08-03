@@ -583,6 +583,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_combined_release_version_contract(self):
         expected_extra_files = {
+            "uv.lock",
             "desktop/src-tauri/Cargo.toml",
             "desktop/src-tauri/Cargo.lock",
             "desktop/package.json",
@@ -618,6 +619,7 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(
                 generic_files,
                 {
+                    "uv.lock",
                     "desktop/src-tauri/Cargo.toml",
                     "desktop/src-tauri/Cargo.lock",
                 },
@@ -682,6 +684,11 @@ class PackagingTests(unittest.TestCase):
                 ).read_text(encoding="utf-8"),
                 filename,
             )
+        self.assertIn(
+            version_marker,
+            (ROOT / "uv.lock").read_text(encoding="utf-8"),
+            "uv.lock",
+        )
         self.assertNotIn(
             f"vidxp=={version}",
             (
