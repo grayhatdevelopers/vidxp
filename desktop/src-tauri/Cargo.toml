@@ -1,6 +1,6 @@
 [package]
 name = "vidxp-desktop"
-version = "0.4.0-b.1" # x-release-please-version
+version = "0.4.0-b.2" # x-release-please-version
 description = "The VidXP desktop launcher and local runtime supervisor"
 edition = "2024"
 rust-version = "1.97"
