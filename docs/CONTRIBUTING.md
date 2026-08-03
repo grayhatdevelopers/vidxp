@@ -149,6 +149,12 @@ npm --prefix desktop run check
 docker compose config --quiet
 ```
 
+Pull-request CI treats Markdown and the documentation directory as
+documentation-only. Tests and Desktop-only changes run the code suite without
+building a container; product, tooling, workflow, and unknown new paths default
+to the code suite plus container validation. Desktop and CodeQL triggers use
+directory or language globs rather than enumerating individual source files.
+
 Desktop validation requires the pinned uv sidecar before Rust tests:
 
 ```bash

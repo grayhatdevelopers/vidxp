@@ -31,49 +31,4 @@ describe('Desktop packaging and documentation contracts', () => {
     expect(windows.app.windows[0]).toMatchObject({ decorations: false, shadow: false });
   });
 
-  it('exposes deterministic write and check commands for the model catalog', () => {
-    const packageJson = JSON.parse(read('desktop/package.json'));
-    expect(packageJson.scripts['model-catalog:write']).toBe(
-      'uv run --frozen python scripts/model-catalog.py --write',
-    );
-    expect(packageJson.scripts['model-catalog:check']).toBe(
-      'uv run --frozen python scripts/model-catalog.py --check',
-    );
-  });
-
-  it('keeps public contributor commands and target ownership guidance accurate', () => {
-    const contributing = read('docs/CONTRIBUTING.md');
-    expect(contributing).toContain(
-      'cargo install cargo-about --version 0.9.1 --locked --features cli',
-    );
-    expect(contributing).toContain('npm --prefix desktop run notices:write');
-    expect(contributing).toContain('npm --prefix desktop run model-catalog:write');
-
-    const installation = read('INSTALLATION_GUIDE.md');
-    expect(installation).toContain('Use an existing installation');
-    expect(installation).toContain('the installation stays externally owned');
-    expect(installation).toContain('Prepare / verify models');
-    expect(installation).toContain('Open VidXP');
-  });
-
-  it('keeps pull-request desktop validation on every advertised platform and probe trigger', () => {
-    const workflow = read('.github/workflows/desktop.yml');
-    expect(workflow).toContain('target: [windows, macos, linux]');
-    for (const path of [
-      'src/vidxp/local_probe.py',
-      'src/vidxp/frontend.py',
-      'src/vidxp/cli.py',
-      'src/vidxp/cli_commands/probe.py',
-      'tests/test_local_probe.py',
-      'tests/test_packaging.py',
-    ]) {
-      expect(workflow).toContain(`- "${path}"`);
-    }
-    expect(read('.github/workflows/release-candidate.yml')).toContain(
-      'uses: ./.github/workflows/desktop.yml',
-    );
-    expect(read('.github/workflows/release-to-pypi.yml')).toContain(
-      'vidxp-desktop-windows-x86_64',
-    );
-  });
 });

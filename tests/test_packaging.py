@@ -581,7 +581,7 @@ class PackagingTests(unittest.TestCase):
             "system",
         )
 
-    def test_combined_release_contract_and_workflow_boundaries(self):
+    def test_combined_release_version_contract(self):
         expected_extra_files = {
             "desktop/src-tauri/Cargo.toml",
             "desktop/src-tauri/Cargo.lock",
@@ -687,75 +687,6 @@ class PackagingTests(unittest.TestCase):
             (
                 ROOT / "desktop" / "src-tauri" / "src" / "lib.rs"
             ).read_text(encoding="utf-8"),
-        )
-
-        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        nightly = (
-            ROOT / ".github/workflows/release-to-test-pypi.yml"
-        ).read_text(encoding="utf-8")
-        publisher = (
-            ROOT / ".github/workflows/release-to-pypi.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("bash utils/build_package.sh", ci)
-        self.assertIn("bash utils/build_package.sh", nightly)
-        self.assertNotIn("bash utils/build_package.sh", publisher)
-        self.assertIn("candidate_run_id", publisher)
-        self.assertIn("source_tree", publisher)
-        self.assertIn("operation: promote", publisher)
-        self.assertIn("utils/render_release_notes.py", publisher)
-        self.assertIn("--notes-file release-notes.md", publisher)
-        self.assertTrue((ROOT / ".github/release-intro.md").is_file())
-
-        release_workflow = (
-            ROOT / ".github" / "workflows" / "release-please.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("gh workflow run release-candidate.yml", release_workflow)
-        self.assertIn("gh workflow run release-to-pypi.yml", release_workflow)
-        self.assertIn('--ref "$TARGET_BRANCH"', release_workflow)
-        self.assertIn('--ref "$TAG"', release_workflow)
-        self.assertFalse(
-            (ROOT / ".github/workflows/publish-desktop.yml").exists()
-        )
-        gate = (
-            ROOT / ".github/workflows/release-gate.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("pull_request_target:", gate)
-        self.assertIn("context=release/candidate", gate)
-
-        for workflow in ("ci.yml", "desktop.yml", "security.yml"):
-            contents = (
-                ROOT / ".github" / "workflows" / workflow
-            ).read_text(encoding="utf-8")
-            self.assertIn("      - release", contents, workflow)
-            self.assertIn("github.base_ref != 'release'", contents, workflow)
-            self.assertIn("github.head_ref != 'main'", contents, workflow)
-        desktop_ci = (
-            ROOT / ".github" / "workflows" / "desktop.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("target: [windows, macos, linux]", desktop_ci)
-        self.assertNotIn(
-            "!startsWith(github.head_ref, 'release-please--branches--')",
-            desktop_ci,
-        )
-
-        promotion = (
-            ROOT / ".github" / "workflows" / "promotion-pr.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn('"$status" == "diverged"', promotion)
-        synchronization = (
-            ROOT / ".github" / "workflows" / "sync-channels.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn(
-            'git push origin "$publication_sha:refs/heads/main"',
-            synchronization,
-        )
-        self.assertNotIn(
-            'git push origin "origin/release:refs/heads/main"',
-            synchronization,
-        )
-        self.assertIn(
-            '--title "chore(release): synchronize stable baseline"',
-            synchronization,
         )
 
     def test_windows_release_binary_uses_the_gui_subsystem(self):

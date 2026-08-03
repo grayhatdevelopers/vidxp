@@ -136,33 +136,7 @@ jobs:
           product="ghcr.io/${{ github.repository }}:candidate-${{ inputs.candidate_id }}"
           control="${product}-control"
           worker="${product}-worker"
-          docker run --detach --name vidxp-release \
-            --publish 127.0.0.1:8501:8501 "$product"
-          trap 'docker rm --force vidxp-release >/dev/null 2>&1 || true' EXIT
-
-          docker exec vidxp-release vidxp --version
-          docker exec vidxp-release vidxp init --json
-          docker exec vidxp-release python -c \
-            'import chromadb, cv2, faster_whisper, huggingface_hub, pooch, psutil, sentence_transformers, torch, transformers; assert psutil.virtual_memory().available > 0'
-          docker exec vidxp-release python -c \
-            'import importlib.metadata as m; assert not any(d.metadata["Name"].lower().startswith("nvidia-") for d in m.distributions())'
-          docker exec vidxp-release sh -c \
-            'test ! -d "$HOME/.cache/huggingface" && test ! -d "$HOME/.cache/clip"'
-
-          for _ in {1..30}; do
-            if curl --fail --silent http://127.0.0.1:8501/_stcore/health; then
-              break
-            fi
-            if [[ "$(docker inspect --format='{{.State.Running}}' vidxp-release)" != "true" ]]; then
-              docker logs vidxp-release
-              exit 1
-            fi
-            sleep 2
-          done
-          curl --fail --silent http://127.0.0.1:8501/_stcore/health
-          docker run --rm "$control" vidxp-api --help
-          docker run --rm "$control" vidxp-mcp --help
-          docker run --rm "$worker" vidxp init --json
+          bash utils/smoke_container.sh "$product" "$control" "$worker"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4

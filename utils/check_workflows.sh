@@ -13,3 +13,4 @@ curl --fail --location --silent --show-error \
 echo "$checksum  $temporary/$archive" | sha256sum --check --status
 tar -xzf "$temporary/$archive" -C "$temporary" actionlint
 "$temporary/actionlint"
+shellcheck utils/*.sh desktop/scripts/*.sh
