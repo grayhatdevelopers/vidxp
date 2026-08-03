@@ -57,7 +57,7 @@ jobs:
             fi
           fi
 
-          for attempt in {1..45}; do
+          for _ in {1..45}; do
             pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")"
             head="$(jq -r .head.sha <<< "$pr")"
             base="$(jq -r .base.sha <<< "$pr")"

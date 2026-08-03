@@ -149,7 +149,7 @@ jobs:
           docker exec vidxp-release sh -c \
             'test ! -d "$HOME/.cache/huggingface" && test ! -d "$HOME/.cache/clip"'
 
-          for attempt in {1..30}; do
+          for _ in {1..30}; do
             if curl --fail --silent http://127.0.0.1:8501/_stcore/health; then
               break
             fi
@@ -183,9 +183,11 @@ jobs:
           docker push "$base"
           docker push "${base}-control"
           docker push "${base}-worker"
-          echo "product=$(digest "$base")" >> "$GITHUB_OUTPUT"
-          echo "control=$(digest "${base}-control")" >> "$GITHUB_OUTPUT"
-          echo "worker=$(digest "${base}-worker")" >> "$GITHUB_OUTPUT"
+          {
+            echo "product=$(digest "$base")"
+            echo "control=$(digest "${base}-control")"
+            echo "worker=$(digest "${base}-worker")"
+          } >> "$GITHUB_OUTPUT"
 
   promote:
     if: inputs.operation == 'promote'

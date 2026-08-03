@@ -103,7 +103,7 @@ jobs:
       - name: Download and install the exact TestPyPI artifact
         shell: bash
         run: |
-          for attempt in {1..30}; do
+          for _ in {1..30}; do
             state="$(
               python utils/verify_published_distribution.py \
                 --repository https://test.pypi.org \

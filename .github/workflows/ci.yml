@@ -134,9 +134,11 @@ jobs:
           else
             needs_python=false
           fi
-          echo "run_suite=$run_suite" >> "$GITHUB_OUTPUT"
-          echo "run_container=$run_container" >> "$GITHUB_OUTPUT"
-          echo "needs_python=$needs_python" >> "$GITHUB_OUTPUT"
+          {
+            echo "run_suite=$run_suite"
+            echo "run_container=$run_container"
+            echo "needs_python=$needs_python"
+          } >> "$GITHUB_OUTPUT"
 
   validate:
     if: needs.scope.outputs.needs_python == 'true'
@@ -288,7 +290,7 @@ jobs:
           docker exec vidxp-ci sh -c \
             'test ! -d "$HOME/.cache/huggingface" && test ! -d "$HOME/.cache/clip"'
 
-          for attempt in {1..30}; do
+          for _ in {1..30}; do
             if curl --fail --silent http://127.0.0.1:8501/_stcore/health; then
               exit 0
             fi

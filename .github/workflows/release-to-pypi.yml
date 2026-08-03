@@ -104,9 +104,11 @@ jobs:
           [[ "$candidate_tree" == "$release_tree" ]]
           [[ "$recorded_tree" == "$release_tree" ]]
 
-          echo "product_digest=$(jq -r .containers.product "$candidate")" >> "$GITHUB_OUTPUT"
-          echo "control_digest=$(jq -r .containers.control "$candidate")" >> "$GITHUB_OUTPUT"
-          echo "worker_digest=$(jq -r .containers.worker "$candidate")" >> "$GITHUB_OUTPUT"
+          {
+            echo "product_digest=$(jq -r .containers.product "$candidate")"
+            echo "control_digest=$(jq -r .containers.control "$candidate")"
+            echo "worker_digest=$(jq -r .containers.worker "$candidate")"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Prepare release assets and checksums
         id: source
@@ -121,7 +123,7 @@ jobs:
           [[ "$(find release-assets -maxdepth 1 -name '*.exe' | wc -l)" == 1 ]]
           [[ "$(find release-assets -maxdepth 1 -name '*.dmg' | wc -l)" == 1 ]]
           [[ "$(find release-assets -maxdepth 1 -name '*.AppImage' | wc -l)" == 1 ]]
-          (cd release-assets && sha256sum * > SHA256SUMS)
+          (cd release-assets && sha256sum -- ./* > SHA256SUMS)
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
