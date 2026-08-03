@@ -82,14 +82,11 @@ permissions:
 
 jobs:
   scope:
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.base_ref != 'release' ||
-      github.head_ref != 'main'
     runs-on: ubuntu-latest
     outputs:
       needs_python: ${{ steps.scope.outputs.needs_python }}
       run_container: ${{ steps.scope.outputs.run_container }}
+      run_desktop: ${{ steps.scope.outputs.run_desktop }}
       run_suite: ${{ steps.scope.outputs.run_suite }}
     steps:
       - uses: actions/checkout@v7
@@ -105,21 +102,18 @@ jobs:
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.base_ref }}
           FORCE_VALIDATION: ${{ inputs.force_validation || false }}
+          HEAD_REF: ${{ github.head_ref }}
           RUN_CONTAINERS: ${{ inputs.run_containers || false }}
         run: |
-          if [[ "$FORCE_VALIDATION" == "true" ]]; then
-            {
-              echo "run_suite=true"
-              echo "run_container=$RUN_CONTAINERS"
-              echo "needs_python=true"
-            } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           python utils/ci_scope.py \
             --base "$BASE_SHA" \
-            --github-output "$GITHUB_OUTPUT"
+            --base-ref "$BASE_REF" \
+            --force-validation "$FORCE_VALIDATION" \
+            --github-output "$GITHUB_OUTPUT" \
+            --head-ref "$HEAD_REF" \
+            --run-containers "$RUN_CONTAINERS"
 
   validate:
     if: needs.scope.outputs.needs_python == 'true'
@@ -269,3 +263,39 @@ jobs:
 
       - name: Verify platform and CPU runtime
         run: uv run --no-sync python utils/verify_runtime.py cpu
+
+  desktop:
+    if: >-
+      github.event_name == 'pull_request' &&
+      needs.scope.outputs.run_desktop == 'true'
+    needs: scope
+    uses: ./.github/workflows/desktop.yml
+    with:
+      checkout_ref: ${{ github.sha }}
+
+  required:
+    if: always() && github.event_name == 'pull_request'
+    needs:
+      - scope
+      - validate
+      - provider-platform-smoke
+      - desktop
+    name: validation/required
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every applicable validation job
+        env:
+          DESKTOP_RESULT: ${{ needs.desktop.result }}
+          PROVIDER_RESULT: ${{ needs.provider-platform-smoke.result }}
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+        shell: bash
+        run: |
+          [[ "$SCOPE_RESULT" == "success" ]]
+          for result in \
+            "$DESKTOP_RESULT" \
+            "$PROVIDER_RESULT" \
+            "$VALIDATE_RESULT"
+          do
+            [[ "$result" == "success" || "$result" == "skipped" ]]
+          done

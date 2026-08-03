@@ -32,10 +32,21 @@ Merging a Release Please PR is allowed only when `release/candidate` succeeds.
 The lightweight **Release gate** marks that same context successful for ordinary
 PRs, so the rule does not add release builds to normal development changes.
 
-Configure `release/candidate` as a required status on both channel branches.
-Roll this out in order: merge the workflow changes to `main`, enable the rule on
-`main`, promote those workflows to `release`, then enable the rule on `release`.
-Do not enable the `release` rule before its base branch contains Release gate.
+Require these GitHub Actions statuses on both channel branches:
+
+- `validation/required` aggregates the applicable Python, provider, container,
+  and Desktop checks. It reports without heavy builds for documentation-only
+  changes and Release Please PRs.
+- `dependency-review` rejects newly introduced high-severity dependencies.
+- `release/candidate` stays pending on Release Please PRs until the complete
+  retained candidate succeeds; ordinary PRs receive an immediate success.
+
+Require pull-request branches to be up to date before merging so the checked
+tree cannot differ from the eventual merge. Roll the rules out in order: merge
+the workflow changes to `main`, observe all three statuses on a new or refreshed
+PR, enable them on `main`, promote the workflow baseline to `release`, and then
+enable the same requirements there. Do not enable the `release` rules before
+its base branch contains the validation and release-gate workflows.
 
 ## Publication after merge
 
