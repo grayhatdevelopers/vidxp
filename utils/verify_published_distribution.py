@@ -24,11 +24,23 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def is_distribution_file(filename: str) -> bool:
+    return not filename.endswith(_PUBLISH_ATTESTATION_SUFFIX)
+
+
+def local_distribution_files(directory: Path) -> dict[str, str]:
+    return {
+        path.name: sha256(path)
+        for path in directory.iterdir()
+        if path.is_file() and is_distribution_file(path.name)
+    }
+
+
 def distribution_files(payload: dict[str, object]) -> dict[str, str]:
     return {
         file["filename"]: file["digests"]["sha256"]
         for file in payload.get("urls", [])
-        if not file["filename"].endswith(_PUBLISH_ATTESTATION_SUFFIX)
+        if is_distribution_file(file["filename"])
     }
 
 
@@ -40,11 +52,7 @@ def main() -> int:
     parser.add_argument("--dist", type=Path, default=Path("dist"))
     args = parser.parse_args()
 
-    local = {
-        path.name: sha256(path)
-        for path in args.dist.iterdir()
-        if path.is_file()
-    }
+    local = local_distribution_files(args.dist)
     if not local:
         raise SystemExit(f"No distribution files found in {args.dist}")
 
