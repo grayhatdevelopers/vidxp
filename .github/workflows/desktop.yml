@@ -70,7 +70,7 @@ jobs:
           enable-cache: false
 
       - id: rust-toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Install locked license tooling
         run: cargo install cargo-about --version 0.9.1 --locked --features cli
