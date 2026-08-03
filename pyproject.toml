@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vidxp"
-version = "0.4.0-b"
+version = "0.4.0-b.1"
 authors = [
   { name = "Muhammad Haroon" },
   { name = "Talha Momin" },

@@ -4126,7 +4126,7 @@ wheels = [
 
 [[package]]
 name = "vidxp"
-version = "0.4.0-b" # x-release-please-version
+version = "0.4.0-b.1" # x-release-please-version
 source = { editable = "." }
 dependencies = [
     { name = "dbos" },
