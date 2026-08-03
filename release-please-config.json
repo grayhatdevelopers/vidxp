@@ -21,8 +21,9 @@
           "type": "generic"
         },
         {
+          "jsonpath": "$.package[?(@.name.value==\"vidxp-desktop\")].version",
           "path": "desktop/src-tauri/Cargo.lock",
-          "type": "generic"
+          "type": "toml"
         },
         {
           "jsonpath": "$.version",

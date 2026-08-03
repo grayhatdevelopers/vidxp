@@ -621,7 +621,20 @@ class PackagingTests(unittest.TestCase):
                 {
                     "uv.lock",
                     "desktop/src-tauri/Cargo.toml",
-                    "desktop/src-tauri/Cargo.lock",
+                },
+                filename,
+            )
+            toml_files = {
+                extra["path"]: extra["jsonpath"]
+                for extra in root_package["extra-files"]
+                if extra["type"] == "toml"
+            }
+            self.assertEqual(
+                toml_files,
+                {
+                    "desktop/src-tauri/Cargo.lock": (
+                        '$.package[?(@.name.value=="vidxp-desktop")].version'
+                    )
                 },
                 filename,
             )
@@ -676,14 +689,24 @@ class PackagingTests(unittest.TestCase):
         version_marker = (
             f'version = "{version}" # x-release-please-version'
         )
-        for filename in ("Cargo.toml", "Cargo.lock"):
-            self.assertIn(
-                version_marker,
-                (
-                    ROOT / "desktop" / "src-tauri" / filename
-                ).read_text(encoding="utf-8"),
-                filename,
-            )
+        self.assertIn(
+            version_marker,
+            (
+                ROOT / "desktop" / "src-tauri" / "Cargo.toml"
+            ).read_text(encoding="utf-8"),
+            "Cargo.toml",
+        )
+        cargo_lock = tomllib.loads(
+            (
+                ROOT / "desktop" / "src-tauri" / "Cargo.lock"
+            ).read_text(encoding="utf-8")
+        )
+        desktop_lock = next(
+            package
+            for package in cargo_lock["package"]
+            if package["name"] == "vidxp-desktop"
+        )
+        self.assertEqual(desktop_lock["version"], version)
         self.assertIn(
             version_marker,
             (ROOT / "uv.lock").read_text(encoding="utf-8"),
