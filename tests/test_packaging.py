@@ -702,6 +702,9 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("candidate_run_id", publisher)
         self.assertIn("source_tree", publisher)
         self.assertIn("operation: promote", publisher)
+        self.assertIn("utils/render_release_notes.py", publisher)
+        self.assertIn("--notes-file release-notes.md", publisher)
+        self.assertTrue((ROOT / ".github/release-intro.md").is_file())
 
         release_workflow = (
             ROOT / ".github" / "workflows" / "release-please.yml"

@@ -196,6 +196,10 @@ jobs:
       actions: write
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+
       - uses: actions/download-artifact@v8
         with:
           name: vidxp-release-assets
@@ -206,19 +210,35 @@ jobs:
           CHANNEL: ${{ needs.resolve.outputs.channel }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
         shell: bash
         run: |
+          gh release view "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json body \
+            --jq .body > release-please-notes.md
+          python utils/render_release_notes.py \
+            --assets release-assets \
+            --channel "$CHANNEL" \
+            --existing release-please-notes.md \
+            --output release-notes.md \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$TAG" \
+            --template .github/release-intro.md \
+            --version "$VERSION"
           gh release upload "$TAG" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
           if [[ "$CHANNEL" == "beta" ]]; then
             gh release edit "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
+              --notes-file release-notes.md \
               --draft=false \
               --prerelease
           else
             gh release edit "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
+              --notes-file release-notes.md \
               --draft=false \
               --latest
           fi

@@ -48,7 +48,14 @@ a draft GitHub release. **Publish combined release** then:
 4. promotes the recorded container digests to public version/channel tags
    without rebuilding; and
 5. uploads the Python and desktop artifacts plus checksums to the same GitHub
-   release before making it public.
+   release, prepends the product download/install guide to Release Please's
+   generated changes, and then makes the complete release public.
+
+The product-facing introduction is maintained once in
+`.github/release-intro.md`. The publisher fills it with the exact installer
+filenames from the validated candidate and preserves the generated changelog
+below it. Re-running publication updates the same marked section instead of
+duplicating release notes.
 
 Beta packages intentionally use real PyPI so the desktop-managed runtime can
 resolve its pinned prerelease and normal dependencies from one index. TestPyPI
