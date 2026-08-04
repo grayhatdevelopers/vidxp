@@ -32,19 +32,17 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Refresh and validate the open release candidate
-        if: steps.release.outputs.release_created != 'true'
+        if: steps.release.outputs.release_created != 'true' && steps.release.outputs.prs_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PRS: ${{ steps.release.outputs.prs }}
           TARGET_BRANCH: ${{ github.ref_name }}
         shell: bash
         run: |
-          pr="$(
-            gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$TARGET_BRANCH&per_page=100" \
-              --jq '[.[] | select(.head.ref | startswith("release-please--branches--"))][0]'
-          )"
-          [[ "$pr" != "null" ]] || exit 0
-
-          number="$(jq -r .number <<< "$pr")"
+          number="$(jq -er '.[0].number' <<< "$RELEASE_PRS")"
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")"
+          [[ "$(jq -r .base.ref <<< "$pr")" == "$TARGET_BRANCH" ]]
+          [[ "$(jq -r .head.ref <<< "$pr")" == release-please--branches--* ]]
           head="$(jq -r .head.sha <<< "$pr")"
           base="$(jq -r .base.sha <<< "$pr")"
           update_log="$RUNNER_TEMP/update-branch.log"
