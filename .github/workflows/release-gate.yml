@@ -11,6 +11,7 @@ on:
       - reopened
 
 permissions:
+  actions: write
   contents: none
   statuses: write
 
@@ -20,9 +21,13 @@ jobs:
     steps:
       - name: Classify the pull request without checking out its code
         env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
           TARGET_URL: ${{ github.event.pull_request.html_url }}
         shell: bash
         run: |
@@ -38,3 +43,15 @@ jobs:
             -f context=release/candidate \
             -f description="$description" \
             -f target_url="$TARGET_URL"
+
+          if [[ "$state" == "pending" &&
+                "$HEAD_REPOSITORY" == "$GITHUB_REPOSITORY" &&
+                "$GITHUB_ACTOR" != "github-actions[bot]" ]]; then
+            gh workflow run release-candidate.yml \
+              --repo "$GITHUB_REPOSITORY" \
+              --ref "$BASE_REF" \
+              -f pull_request="$PULL_REQUEST" \
+              -f target_branch="$BASE_REF" \
+              -f base_sha="$BASE_SHA" \
+              -f head_sha="$HEAD_SHA"
+          fi
