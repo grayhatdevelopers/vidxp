@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -196,6 +196,8 @@ pub struct ValidatedTarget {
     pub repository_root: PathBuf,
     pub model_root: PathBuf,
     pub frontend: FrontendCapability,
+    pub capabilities: Vec<String>,
+    pub surfaces: Vec<String>,
     pub validated_at: u64,
 }
 
@@ -262,6 +264,10 @@ struct ProbeDocument {
     model_root: PathBuf,
     #[serde(default)]
     capabilities: ProbeCapabilities,
+    #[serde(default)]
+    search_capabilities: Vec<String>,
+    #[serde(default)]
+    surfaces: BTreeMap<String, FrontendCapability>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -537,6 +543,12 @@ fn validate_probe_document(
             ));
         }
     }
+    let surfaces = document
+        .surfaces
+        .iter()
+        .filter(|(_, capability)| capability.available)
+        .map(|(name, _)| name.clone())
+        .collect();
     Ok(ValidatedTarget {
         executable: canonical.to_path_buf(),
         product_version: document.product_version,
@@ -554,6 +566,8 @@ fn validate_probe_document(
         repository_root: document.repository_root,
         model_root: document.model_root,
         frontend: document.capabilities.frontend,
+        capabilities: document.search_capabilities,
+        surfaces,
         validated_at: now,
     })
 }
@@ -817,8 +831,8 @@ fn local_profile(validated: ValidatedTarget, display_name: Option<String>) -> Ta
         last_successful_validation_at: Some(validated.validated_at),
         validation_error: None,
         managed_runtime_profile: None,
-        capabilities: Vec::new(),
-        surfaces: Vec::new(),
+        capabilities: validated.capabilities,
+        surfaces: validated.surfaces,
         model_directory: None,
     }
 }
@@ -1175,6 +1189,10 @@ fn apply_validation(profile: &mut TargetProfile, validated: ValidatedTarget) {
     profile.launch_protocol_version = validated.launch_protocol_version;
     profile.runtime = Some(validated.runtime);
     profile.frontend = validated.frontend;
+    if profile.kind == TargetKind::ExistingLocal {
+        profile.capabilities = validated.capabilities;
+    }
+    profile.surfaces = validated.surfaces;
     profile.last_successful_validation_at = Some(validated.validated_at);
     profile.validation_error = None;
 }
@@ -1576,6 +1594,8 @@ mod tests {
             repository_root: root.join("data").join("repositories").join("default"),
             model_root: root.join("data").join("models"),
             capabilities: ProbeCapabilities::default(),
+            search_capabilities: Vec::new(),
+            surfaces: BTreeMap::new(),
         }
     }
 
@@ -1589,6 +1609,36 @@ mod tests {
 
         assert!(!validated.frontend.available);
         assert!(!validated.frontend.launchable);
+    }
+
+    #[test]
+    fn probe_projects_installed_product_surfaces() {
+        let executable = std::env::current_exe().expect("current executable");
+        let canonical = fs::canonicalize(executable).expect("canonical executable");
+        let mut probe = document(&canonical, "nonce");
+        probe.search_capabilities = vec!["scene".into()];
+        probe.surfaces.insert(
+            "mcp".into(),
+            FrontendCapability {
+                available: true,
+                launchable: false,
+                optional: true,
+                code: "mcp_available".into(),
+                message: "Available".into(),
+                remediation: String::new(),
+            },
+        );
+        probe
+            .surfaces
+            .insert("server".into(), FrontendCapability::default());
+
+        let validated =
+            validate_probe_document(&canonical, "nonce", probe, 100).expect("valid probe");
+
+        assert_eq!(validated.surfaces, ["mcp"]);
+        let profile = local_profile(validated, None);
+        assert_eq!(profile.capabilities, ["scene"]);
+        assert_eq!(profile.surfaces, ["mcp"]);
     }
 
     #[test]
@@ -2010,6 +2060,8 @@ mod tests {
                 message: "Available".into(),
                 remediation: String::new(),
             },
+            capabilities: vec!["scene".into()],
+            surfaces: vec!["browser".into(), "mcp".into(), "server".into()],
             validated_at: 200,
         }
     }

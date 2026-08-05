@@ -47,17 +47,19 @@ def _publish_desktop_readiness() -> None:
     path = Path(destination).expanduser().resolve(strict=False)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    payload = {
+        "product": "dev.grayhat.vidxp",
+        "protocol_version": 1,
+        "nonce": nonce,
+        "port": int(port),
+        "pid": os.getpid(),
+    }
+    if os.environ.get("VIDXP_DESKTOP_UI_SHARED") == "1":
+        from vidxp.network_share import primary_lan_address
+
+        payload["network_url"] = f"http://{primary_lan_address()}:{port}"
     temporary.write_text(
-        json.dumps(
-            {
-                "product": "dev.grayhat.vidxp",
-                "protocol_version": 1,
-                "nonce": nonce,
-                "port": int(port),
-                "pid": os.getpid(),
-            },
-            sort_keys=True,
-        ),
+        json.dumps(payload, sort_keys=True),
         encoding="utf-8",
     )
     os.replace(temporary, path)

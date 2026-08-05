@@ -565,6 +565,10 @@ def ui(
             fg=typer.colors.YELLOW,
             err=True,
         )
+    if share:
+        from vidxp.network_share import primary_lan_address
+
+        typer.echo(f"Browser UI: http://{primary_lan_address()}:{port or 8501}")
     if show_progress:
         emit_progress("Starting the browser interface...")
     try:

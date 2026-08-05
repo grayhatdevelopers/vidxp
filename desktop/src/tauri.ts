@@ -98,6 +98,7 @@ interface WireValidatedTarget {
   data_root: string;
   repository_root: string;
   frontend: FrontendCapability;
+  surfaces: string[];
   validated_at: number;
 }
 
@@ -122,6 +123,7 @@ export interface LocalTargetValidation {
   display_data_root: string;
   can_launch_frontend: boolean;
   frontend: FrontendCapability;
+  surfaces: string[];
 }
 
 export interface LocalTargetInspection extends Omit<WireTargetInspection, 'validated'> {
@@ -197,6 +199,49 @@ export interface InstallTransitionResult {
   setup: TargetSetupState;
 }
 
+export interface DoctorCheck {
+  capability: string;
+  kind: 'distribution' | 'model' | string;
+  name: string;
+  installed_version?: string | null;
+  download_size_bytes?: number | null;
+  ok: boolean;
+  error?: string | null;
+}
+
+export interface DoctorReport {
+  ok: boolean;
+  modalities: string[];
+  checks: DoctorCheck[];
+}
+
+export interface LocalServerStatus {
+  state: 'stopped' | 'starting' | 'ready';
+  running: boolean;
+  shared: boolean;
+  port: number | null;
+  origin: string | null;
+  health_url: string | null;
+  mcp_url: string | null;
+  bearer_token: string | null;
+  detail: string;
+}
+
+export interface BrowserServiceStatus {
+  state: 'stopped' | 'ready';
+  running: boolean;
+  shared: boolean;
+  port: number | null;
+  local_url: string | null;
+  network_url: string | null;
+  detail: string;
+}
+
+export interface LocalWorkerStatus {
+  running: boolean;
+  detail: string;
+}
+
 interface WireInstallTransitionResult {
   install: InstallRuntimeResult;
   setup: WireTargetState;
@@ -255,6 +300,7 @@ export function inspectLocalTarget(executable: string): Promise<LocalTargetInspe
           display_data_root: displayPath(result.validated.data_root),
           can_launch_frontend: result.validated.frontend.launchable,
           frontend: result.validated.frontend,
+          surfaces: result.validated.surfaces,
         }
       : null,
   }));
@@ -306,6 +352,21 @@ export function prepareManagedModels(draftId: string): Promise<TargetSetupState>
   return invoke<WireTargetState>('prepare_managed_models', { draftId }).then(normalizeState);
 }
 export function launchUi(): Promise<void> { return invoke('launch_ui'); }
+export function targetDoctor(): Promise<DoctorReport> { return invoke('target_doctor'); }
+export function configureExternalInstallation(capabilities: string[], surfaces: string[]): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('configure_external_installation', { capabilities, surfaces }).then(normalizeState);
+}
+export function mcpClientConfig(): Promise<string> { return invoke('mcp_client_config'); }
+export function localWorkerStatus(): Promise<LocalWorkerStatus> { return invoke('local_worker_status'); }
+export function startLocalWorker(): Promise<LocalWorkerStatus> { return invoke('start_local_worker'); }
+export function stopLocalWorker(): Promise<LocalWorkerStatus> { return invoke('stop_local_worker'); }
+export function browserServiceStatus(): Promise<BrowserServiceStatus> { return invoke('browser_service_status'); }
+export function startSharedBrowser(): Promise<BrowserServiceStatus> { return invoke('start_shared_browser'); }
+export function stopBrowserService(): Promise<BrowserServiceStatus> { return invoke('stop_browser_service'); }
+export function localServerStatus(): Promise<LocalServerStatus> { return invoke('local_server_status'); }
+export function startLocalServer(): Promise<LocalServerStatus> { return invoke('start_local_server'); }
+export function startSharedServer(): Promise<LocalServerStatus> { return invoke('start_shared_server'); }
+export function stopLocalServer(): Promise<LocalServerStatus> { return invoke('stop_local_server'); }
 
 export function selectedProfile(state: TargetSetupState): TargetProfile | null {
   return state.profiles.find((profile) => profile.id === state.selected_profile_id) ?? null;

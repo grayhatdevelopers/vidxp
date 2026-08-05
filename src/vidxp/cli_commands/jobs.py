@@ -6,7 +6,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from vidxp.application_models import ListJobsCommand
+from vidxp.application_models import ApplicationError, ListJobsCommand
 from vidxp.cli_support import (
     OutputFormat,
     effective_output_format,
@@ -102,4 +102,49 @@ def stop_worker(ctx: typer.Context) -> None:
 
     state = state_from_context(ctx)
     stopped = state.jobs.stop_worker()
-    emit_json({"stopped": stopped})
+    emit_json(
+        {
+            "running": False,
+            "stopped": stopped,
+            "detail": "Local video processing is stopped.",
+        }
+    )
+
+
+@app.command("start-worker")
+def start_worker(ctx: typer.Context) -> None:
+    """Start or reconnect to the repository's local background worker."""
+
+    state = state_from_context(ctx)
+    state.jobs.start()
+    state.jobs.readiness()
+    emit_json(
+        {
+            "running": True,
+            "detail": "Local video processing is ready.",
+        }
+    )
+
+
+@app.command("worker-status")
+def worker_status(ctx: typer.Context) -> None:
+    """Report whether the repository's local background worker is ready."""
+
+    state = state_from_context(ctx)
+    try:
+        state.jobs.readiness()
+    except ApplicationError as exc:
+        emit_json(
+            {
+                "running": False,
+                "detail": "Local video processing is stopped.",
+                "technical_detail": str(exc),
+            }
+        )
+        return
+    emit_json(
+        {
+            "running": True,
+            "detail": "Local video processing is ready.",
+        }
+    )

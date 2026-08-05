@@ -46,6 +46,8 @@ fn main() {
             "local-worker",
             "--extra",
             "frontend",
+            "--extra",
+            "server",
             "--no-dev",
             "--no-emit-project",
             "--no-hashes",

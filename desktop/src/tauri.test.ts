@@ -8,7 +8,20 @@ import {
   beginManagedSetup,
   displayPath,
   installRuntime,
+  configureExternalInstallation,
+  browserServiceStatus,
+  localServerStatus,
+  localWorkerStatus,
+  mcpClientConfig,
   recheckTargetState,
+  startLocalServer,
+  startSharedBrowser,
+  startSharedServer,
+  startLocalWorker,
+  stopLocalServer,
+  stopBrowserService,
+  stopLocalWorker,
+  targetDoctor,
   targetSetupState,
 } from './tauri';
 
@@ -69,5 +82,43 @@ describe('desktop IPC adapter', () => {
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'begin_managed_setup');
     expect(invoke).toHaveBeenNthCalledWith(2, 'install_runtime', { request });
+  });
+
+  it('maps runtime health, MCP configuration, and service lifecycle commands', async () => {
+    invoke.mockResolvedValue({});
+
+    await targetDoctor();
+    await mcpClientConfig();
+    await localWorkerStatus();
+    await startLocalWorker();
+    await stopLocalWorker();
+    await browserServiceStatus();
+    await startSharedBrowser();
+    await stopBrowserService();
+    await localServerStatus();
+    await startLocalServer();
+    await startSharedServer();
+    await stopLocalServer();
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'target_doctor');
+    expect(invoke).toHaveBeenNthCalledWith(2, 'mcp_client_config');
+    expect(invoke).toHaveBeenNthCalledWith(3, 'local_worker_status');
+    expect(invoke).toHaveBeenNthCalledWith(4, 'start_local_worker');
+    expect(invoke).toHaveBeenNthCalledWith(5, 'stop_local_worker');
+    expect(invoke).toHaveBeenNthCalledWith(6, 'browser_service_status');
+    expect(invoke).toHaveBeenNthCalledWith(7, 'start_shared_browser');
+    expect(invoke).toHaveBeenNthCalledWith(8, 'stop_browser_service');
+    expect(invoke).toHaveBeenNthCalledWith(9, 'local_server_status');
+    expect(invoke).toHaveBeenNthCalledWith(10, 'start_local_server');
+    expect(invoke).toHaveBeenNthCalledWith(11, 'start_shared_server');
+    expect(invoke).toHaveBeenNthCalledWith(12, 'stop_local_server');
+  });
+
+  it('adds optional surfaces to the selected existing installation', async () => {
+    invoke.mockResolvedValue({ profiles: [], selected_profile_id: null, issues: [] });
+
+    await configureExternalInstallation(['scene'], ['mcp', 'server']);
+
+    expect(invoke).toHaveBeenCalledWith('configure_external_installation', { capabilities: ['scene'], surfaces: ['mcp', 'server'] });
   });
 });

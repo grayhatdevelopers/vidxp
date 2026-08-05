@@ -108,7 +108,7 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
       )));
     } catch (error) {
       if (candidateGeneration.current.get(path) !== generation) return;
-      const message = errorMessage(error, 'This executable could not be inspected.');
+      const message = errorMessage(error, 'This VidXP installation could not be checked.');
       setCandidates((current) => current.map((candidate) => (
         candidatePath(candidate) === path
           ? { ...candidate, checking: false, inspection: undefined, inspectionError: message }
@@ -134,7 +134,7 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
       setSelectedPath(path);
       void checkCandidate(path);
     } catch (error) {
-      setFailure(errorMessage(error, 'The selected executable could not be opened.'));
+      setFailure(errorMessage(error, 'The selected VidXP installation could not be opened.'));
     } finally {
       setBusy(null);
     }
@@ -151,7 +151,7 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
       );
       onActivated(setup);
     } catch (error) {
-      setFailure(errorMessage(error, 'The inspected target could not be activated.'));
+      setFailure(errorMessage(error, 'This VidXP installation could not be connected.'));
     } finally {
       setBusy(null);
     }
@@ -163,29 +163,29 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
       <div className="sectionHeading compactHeading">
         <Text className="eyebrow">EXISTING INSTALLATION</Text>
         <Title id="local-setup-title" order={1} className="pageTitle">Connect this desktop to VidXP</Title>
-        <Text className="lede">Choose an installation to check whether it supports this Desktop. Checking and connecting it will not modify it.</Text>
+        <Text className="lede">Choose the VidXP installation you already use. Connecting it here will not change or update it.</Text>
       </div>
 
       <div className="setupPanel">
         <Group justify="space-between" align="flex-start" mb="md">
           <div>
             <Title order={2} className="panelTitle">Found on this computer</Title>
-            <Text className="mutedText" size="sm">Select one candidate to check it, or browse to another executable.</Text>
+            <Text className="mutedText" size="sm">Select an installation, or browse if yours is not listed.</Text>
           </div>
           <Button variant="default" leftSection={<IconRefresh aria-hidden="true" size={16} />} loading={busy === 'discover'} disabled={busy !== null} onClick={() => void discover()}>Scan again</Button>
         </Group>
 
         {busy === 'discover' && candidates.length === 0 ? (
-          <div className="emptyState" role="status" aria-live="polite"><Loader size="sm" /> Looking for VidXP executables…</div>
+          <div className="emptyState" role="status" aria-live="polite"><Loader size="sm" /> Looking for VidXP installations…</div>
         ) : candidates.length > 0 ? (
-          <Radio.Group value={selectedPath} onChange={selectCandidate} aria-label="Discovered VidXP executables" readOnly={busy !== null}>
+          <Radio.Group value={selectedPath} onChange={selectCandidate} aria-label="Discovered VidXP installations" readOnly={busy !== null}>
             <Stack gap="xs">
               {candidates.map((candidate) => {
                 const path = candidatePath(candidate);
                 const selected = selectedPath === path;
                 const inspection = candidate.inspection;
                 const validation = inspection?.validation;
-                const title = inspection?.reported_version ? `VidXP ${inspection.reported_version}` : 'VidXP executable';
+                const title = inspection?.reported_version ? `VidXP ${inspection.reported_version}` : 'VidXP installation';
                 const color = inspection?.state === 'ready_to_use' ? 'teal' : inspection?.state === 'update_required' ? 'yellow' : inspection?.state === 'cannot_start' || candidate.inspectionError ? 'red' : 'gray';
                 return (
                   <div className="candidateWrapper" key={path}>
@@ -199,43 +199,44 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
                               {candidate.checking ? 'Checking…' : inspection ? stateLabel[inspection.state] : candidate.inspectionError ? 'Cannot start' : 'Found'}
                             </Badge>
                           </Group>
-                          <Code className="pathCode">{candidateDisplayPath(candidate)}</Code>
-                          <Text size="xs" className="mutedText">{candidate.checking ? 'Checking compatibility…' : inspection || candidate.inspectionError ? candidate.source && `Discovered via ${candidate.source}` : 'Not checked'}</Text>
+                          <Text size="xs" className="mutedText">{candidate.checking ? 'Checking installed features…' : inspection || candidate.inspectionError ? candidate.source && `Found on this computer` : 'Select to check'}</Text>
                         </div>
                       </Group>
                     </Radio.Card>
 
                     {selected && candidate.checking && (
-                      <div className="inlineInspection" role="status" aria-live="polite"><Loader size="xs" /> Checking identity, probe, and launch compatibility…</div>
+                      <div className="inlineInspection" role="status" aria-live="polite"><Loader size="xs" /> Checking this VidXP installation…</div>
                     )}
                     {selected && candidate.inspectionError && (
                       <Alert m="sm" color="red" icon={<IconAlertCircle aria-hidden="true" />} title="Cannot start">{candidate.inspectionError}</Alert>
                     )}
                     {selected && inspection && (
                       <div className="inlineInspection">
-                        <Text size="sm">{inspection.message}</Text>
-                        <div className="validationGrid">
-                          <span>Desktop probe</span><strong>{inspection.probe_compatible ? `Compatible · protocol ${validation?.protocol_version ?? 'supported'}` : 'Unavailable or incompatible'}</strong>
-                          <span>Launch contract</span><strong>{inspection.launch_compatible ? `Compatible · protocol ${validation?.launch_protocol_version ?? 'supported'}` : 'Not accepted'}</strong>
-                          {validation?.python_version && <><span>Python</span><strong>{validation.python_version}</strong></>}
-                          {validation?.display_data_root && <><span>Data root</span><Code className="pathCode">{validation.display_data_root}</Code></>}
-                          {validation?.frontend && <><span>Browser interface</span><strong>{validation.frontend.launchable ? 'Available' : 'Unavailable'}</strong></>}
-                        </div>
+                        <Text size="sm">{inspection.adoptable ? 'This VidXP installation is ready to connect.' : inspection.message}</Text>
+                        {validation?.surfaces && <Group gap="xs" mt="sm">{validation.surfaces.map((surface) => <Badge key={surface} variant="light">{surface === 'worker' ? 'Local video processing' : surface === 'browser' ? 'Browser interface' : surface === 'mcp' ? 'AI assistant integration' : surface === 'server' ? 'App integration service' : surface}</Badge>)}</Group>}
+                        <details className="technicalDetails">
+                          <summary>Technical details</summary>
+                          <Code className="pathCode">{candidateDisplayPath(candidate)}</Code>
+                          <div className="validationGrid">
+                            <span>Compatibility check</span><strong>{inspection.probe_compatible ? `Supported · version ${validation?.protocol_version ?? 'current'}` : 'Not supported'}</strong>
+                            <span>App connection</span><strong>{inspection.launch_compatible ? `Supported · version ${validation?.launch_protocol_version ?? 'current'}` : 'Not supported'}</strong>
+                            {validation?.python_version && <><span>Python</span><strong>{validation.python_version}</strong></>}
+                            {validation?.display_data_root && <><span>Data location</span><Code className="pathCode">{validation.display_data_root}</Code></>}
+                          </div>
+                          {inspection.technical_details && <Code block>{inspection.technical_details}</Code>}
+                        </details>
                         {inspection.remediation && <Text size="sm" mt="sm"><strong>What to do:</strong> {inspection.remediation}</Text>}
                         {validation?.can_launch_frontend === false && (
-                          <Alert mt="sm" color="yellow" title="Desktop action required">
-                            <Text size="sm"><strong>Usable:</strong> This installation remains available through its own command-line workflows.</Text>
-                            <Text size="sm" mt="xs"><strong>Missing:</strong> {validation.frontend?.message}</Text>
-                            <Text size="sm" mt="xs"><strong>Enable it:</strong> {validation.frontend?.remediation}</Text>
+                          <Alert mt="sm" color="yellow" title="The browser interface is not enabled">
+                            <Text size="sm">You can still connect this installation and use its other features. After connecting, open Setup options to add the browser interface.</Text>
                           </Alert>
                         )}
-                        {inspection.technical_details && <details className="technicalDetails"><summary>Technical details</summary><Code block>{inspection.technical_details}</Code></details>}
                         {inspection.adoptable && validation && (
                           <Stack gap="sm" mt="md">
-                            <TextInput label="Target name" description="Used only to identify this connection in VidXP Desktop." value={displayName} onChange={(event) => setDisplayName(event.currentTarget.value)} />
+                            <TextInput label="Connection name" description="Used only to identify this installation in VidXP Desktop." value={displayName} onChange={(event) => setDisplayName(event.currentTarget.value)} />
                             <Group justify="flex-end">
                               <Button color={validation.can_launch_frontend === false ? 'yellow' : 'teal'} leftSection={validation.can_launch_frontend === false ? <IconAlertCircle size={16} /> : <IconCheck size={16} />} loading={busy === 'activate'} onClick={() => void activate(inspection)}>
-                                {validation.can_launch_frontend === false ? 'Save external target' : 'Use this installation'}
+                                Use this installation
                               </Button>
                             </Group>
                           </Stack>
@@ -248,13 +249,13 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
             </Stack>
           </Radio.Group>
         ) : (
-          <div className="emptyState"><IconFileSearch aria-hidden="true" size={22} /><span>No candidates were found automatically. Your installation may still be usable.</span></div>
+          <div className="emptyState"><IconFileSearch aria-hidden="true" size={22} /><span>No VidXP installations were found automatically. You can still choose one below.</span></div>
         )}
 
-        <Button mt="md" variant="light" leftSection={<IconFolderOpen aria-hidden="true" size={17} />} loading={busy === 'browse'} disabled={busy !== null} onClick={() => void browse()}>Browse for an executable…</Button>
+        <Button mt="md" variant="light" leftSection={<IconFolderOpen aria-hidden="true" size={17} />} loading={busy === 'browse'} disabled={busy !== null} onClick={() => void browse()}>Choose a VidXP installation…</Button>
       </div>
 
-      {busy === 'activate' && <div className="statusRegion" role="status" aria-live="polite"><Loader size="xs" /> Saving and activating this target…</div>}
+      {busy === 'activate' && <div className="statusRegion" role="status" aria-live="polite"><Loader size="xs" /> Connecting this VidXP installation…</div>}
       {failure && <Alert icon={<IconAlertCircle aria-hidden="true" />} color="red" title="Could not continue" role="alert">{failure}</Alert>}
     </section>
   );

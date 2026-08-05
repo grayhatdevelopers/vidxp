@@ -570,8 +570,14 @@ class PackagingTests(unittest.TestCase):
         dynamic_extras = project["tool"]["setuptools"]["dynamic"][
             "optional-dependencies"
         ]
-        self.assertEqual(set(manifest["surfaces"]), {"browser"})
+        self.assertEqual(
+            set(manifest["surfaces"]),
+            {"worker", "browser", "mcp", "server"},
+        )
+        self.assertTrue(manifest["surfaces"]["worker"]["default"])
         self.assertTrue(manifest["surfaces"]["browser"]["default"])
+        self.assertFalse(manifest["surfaces"]["mcp"]["default"])
+        self.assertFalse(manifest["surfaces"]["server"]["default"])
         for surface in manifest["surfaces"].values():
             self.assertIn(surface["extra"], dynamic_extras)
         for capability in manifest["capabilities"].values():

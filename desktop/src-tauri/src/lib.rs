@@ -2,14 +2,15 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    io::{self, Write},
-    net::TcpListener,
+    io::{self, Read, Write},
+    net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::Command,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -355,12 +356,68 @@ struct RuntimeReconciliation {
 
 struct ManagedUi {
     process: background_process::OwnedChild,
-    url: String,
+    port: u16,
+    local_url: String,
+    network_url: Option<String>,
+    shared: bool,
     profile_id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct BrowserServiceStatus {
+    state: &'static str,
+    running: bool,
+    shared: bool,
+    port: Option<u16>,
+    local_url: Option<String>,
+    network_url: Option<String>,
+    detail: String,
+}
+
+struct ManagedApiService {
+    process: background_process::OwnedChild,
+    port: u16,
+    health_host: String,
+    origin: String,
+    health_url: String,
+    mcp_url: String,
+    bearer_token: Option<String>,
+    shared: bool,
+    profile_id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct LocalServerStatus {
+    state: &'static str,
+    running: bool,
+    shared: bool,
+    port: Option<u16>,
+    origin: Option<String>,
+    health_url: Option<String>,
+    mcp_url: Option<String>,
+    bearer_token: Option<String>,
+    detail: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiShareDetails {
+    origin: String,
+    host: String,
+    port: u16,
+    health_url: String,
+    mcp_url: String,
+    bearer_token: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct LocalWorkerStatus {
+    running: bool,
+    detail: String,
 }
 
 struct DesktopState {
     ui_process: Mutex<Option<ManagedUi>>,
+    api_process: Mutex<Option<ManagedApiService>>,
     worker_stop: Arc<WorkerStopSupervisor>,
     operation_cancellation: Arc<Mutex<Option<background_process::CancellationToken>>>,
     transition: Arc<Mutex<TransitionState>>,
@@ -374,6 +431,7 @@ impl Default for DesktopState {
     fn default() -> Self {
         Self {
             ui_process: Mutex::new(None),
+            api_process: Mutex::new(None),
             worker_stop: Arc::new(WorkerStopSupervisor::default()),
             operation_cancellation: Arc::new(Mutex::new(None)),
             transition: Arc::new(Mutex::new(TransitionState::default())),
@@ -407,6 +465,7 @@ enum TransitionKind {
     Delete,
     InstallMedia,
     InstallRuntime,
+    ConfigureExternalInstallation,
     PrepareModels,
     RecoverActivation,
     OpenBrowser,
@@ -989,6 +1048,16 @@ fn package_specification(
     capabilities: &[String],
     surfaces: &[String],
 ) -> String {
+    package_specification_for_version(manifest, capabilities, surfaces, &manifest.package_version)
+}
+
+fn package_specification_for_version(
+    manifest: &RuntimeManifest,
+    capabilities: &[String],
+    surfaces: &[String],
+    version: &str,
+) -> String {
+    let local_worker_selected = surfaces.iter().any(|name| name == "worker");
     let extras: BTreeSet<_> = manifest
         .surfaces
         .iter()
@@ -997,15 +1066,45 @@ fn package_specification(
         .chain(
             capabilities
                 .iter()
+                .filter(|_| !local_worker_selected)
                 .map(|name| manifest.capabilities[name].extra.clone()),
         )
         .collect();
-    format!(
-        "{}[{}]=={}",
-        manifest.package_name,
-        extras.into_iter().collect::<Vec<_>>().join(","),
-        manifest.package_version
-    )
+    let extras = extras.into_iter().collect::<Vec<_>>().join(",");
+    if extras.is_empty() {
+        format!("{}=={}", manifest.package_name, version)
+    } else {
+        format!("{}[{}]=={}", manifest.package_name, extras, version)
+    }
+}
+
+fn external_installation_arguments(
+    manifest: &RuntimeManifest,
+    capabilities: &[String],
+    surfaces: &[String],
+    python_version: &str,
+    version: &str,
+) -> Result<Vec<String>, String> {
+    if version.is_empty()
+        || !version
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || ".!+_-".contains(character))
+    {
+        return Err("The selected installation reported an invalid package version.".into());
+    }
+    Ok(vec![
+        "tool".into(),
+        "install".into(),
+        "--force".into(),
+        "--python".into(),
+        python_version.into(),
+        "--no-config".into(),
+        "--default-index".into(),
+        manifest.dependency_index.clone(),
+        "--index-strategy".into(),
+        "first-index".into(),
+        package_specification_for_version(manifest, capabilities, surfaces, version),
+    ])
 }
 
 fn base_package_specification(manifest: &RuntimeManifest) -> String {
@@ -1816,6 +1915,31 @@ async fn uv_output(
     Ok(())
 }
 
+async fn uv_captured_output(
+    app: &AppHandle,
+    paths: &DesktopPaths,
+    arguments: Vec<String>,
+    cancellation: background_process::CancellationToken,
+    operation: &str,
+) -> Result<background_process::BackgroundOutput, String> {
+    let mut command = app
+        .shell()
+        .sidecar("uv")
+        .map_err(|error| format!("The bundled uv sidecar is unavailable: {error}"))?
+        .args(arguments)
+        .env_clear();
+    for (key, value) in clean_environment(paths) {
+        command = command.env(key, value);
+    }
+    command = command
+        .env("UV_CACHE_DIR", paths.cache.join("uv"))
+        .env("UV_PYTHON_INSTALL_DIR", &paths.python)
+        .env("UV_NO_CONFIG", "1")
+        .env("UV_MANAGED_PYTHON", "1");
+    let command: Command = command.into();
+    supervised_output(command, cancellation, operation).await
+}
+
 fn run_vidxp(
     runtime: &Path,
     paths: &DesktopPaths,
@@ -2013,6 +2137,7 @@ async fn adopt_local_target(
         )?;
         let setup = target_profiles::adopt_validated(&app, validated, display_name)?;
         stop_ui_process(&app.state::<DesktopState>());
+        stop_api_process(&app.state::<DesktopState>());
         Ok(setup)
     })
     .await
@@ -2081,6 +2206,7 @@ async fn select_target_profile(
             target_profiles::select_profile(&app, &profile_id, &desktop_version)?
         };
         stop_ui_process(&app.state::<DesktopState>());
+        stop_api_process(&app.state::<DesktopState>());
         Ok(setup)
     })
     .await
@@ -2106,6 +2232,7 @@ async fn delete_target_profile(
         let result = target_profiles::delete_profile(&app, &profile_id)?;
         if selected.as_deref() == Some(&profile_id) {
             stop_ui_process(&app.state::<DesktopState>());
+            stop_api_process(&app.state::<DesktopState>());
         }
         Ok(result)
     })
@@ -2733,6 +2860,7 @@ async fn install_runtime(
     .await
     .map_err(|error| format!("Managed activation stopped unexpectedly: {error}"))??;
     stop_ui_process(&state);
+    stop_api_process(&state);
     transition.commit_draft();
 
     Ok(InstallTransitionResult {
@@ -2750,7 +2878,39 @@ async fn install_runtime(
     })
 }
 
-fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
+fn stopped_browser_status(detail: impl Into<String>) -> BrowserServiceStatus {
+    BrowserServiceStatus {
+        state: "stopped",
+        running: false,
+        shared: false,
+        port: None,
+        local_url: None,
+        network_url: None,
+        detail: detail.into(),
+    }
+}
+
+fn running_browser_status(ui: &ManagedUi) -> BrowserServiceStatus {
+    BrowserServiceStatus {
+        state: "ready",
+        running: true,
+        shared: ui.shared,
+        port: Some(ui.port),
+        local_url: Some(ui.local_url.clone()),
+        network_url: ui.network_url.clone(),
+        detail: if ui.shared {
+            "The browser interface is available on this local network.".into()
+        } else {
+            "The browser interface is available only on this computer.".into()
+        },
+    }
+}
+
+fn start_ui(
+    app: &AppHandle,
+    state: &DesktopState,
+    shared: bool,
+) -> Result<BrowserServiceStatus, String> {
     let manifest = manifest()?;
     let selected = target_profiles::selected_profile(app).map_err(|error| error.to_string())?;
     let mut paths = desktop_paths(app)?;
@@ -2801,8 +2961,10 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
             .map_err(|error| format!("Could not inspect the interface process: {error}"))?
             .is_none();
         match ui_process_action(running, &ui.profile_id, &profile.id) {
-            UiProcessAction::Reuse => return Ok(ui.url.clone()),
-            UiProcessAction::Replace => {
+            UiProcessAction::Reuse if ui.shared == shared => {
+                return Ok(running_browser_status(ui));
+            }
+            UiProcessAction::Reuse | UiProcessAction::Replace => {
                 ui.process.terminate_and_reap();
             }
             UiProcessAction::Start => {}
@@ -2810,7 +2972,7 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
         *active_process = None;
     }
 
-    let listener = TcpListener::bind(("127.0.0.1", 0))
+    let listener = TcpListener::bind((if shared { "0.0.0.0" } else { "127.0.0.1" }, 0))
         .map_err(|error| format!("Could not reserve a local interface port: {error}"))?;
     let port = listener
         .local_addr()
@@ -2829,29 +2991,18 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
         ));
     }
 
-    let mut command = match profile.kind {
-        target_profiles::TargetKind::Managed => {
-            let active = active_runtime(&paths)?;
-            if profile.managed_runtime_profile.as_deref() != Some(active.profile.as_str()) {
-                return Err(
-                    "The selected managed target no longer matches the active desktop runtime."
-                        .into(),
-                );
-            }
-            configured_command(&profile.executable, &paths)
-        }
-        target_profiles::TargetKind::ExistingLocal => Command::new(&profile.executable),
-    };
+    let mut command = target_command(&profile, &paths, &profile.executable);
     configure_ui_service_command(
         &mut command,
         &profile.repository_root,
         port,
         &readiness_file,
         &nonce,
+        shared,
     );
     let mut process = background_process::spawn_service(command)
         .map_err(|error| format!("Could not start the VidXP interface: {}", error.detail))?;
-    browser_readiness::wait_for_browser_readiness(
+    let network_url = browser_readiness::wait_for_browser_readiness(
         &mut process,
         &readiness_file,
         &nonce,
@@ -2859,13 +3010,22 @@ fn start_ui(app: &AppHandle, state: &DesktopState) -> Result<String, String> {
         Instant::now() + Duration::from_secs(30),
         &state.shutdown,
     )?;
-    let url = format!("http://127.0.0.1:{port}");
-    *active_process = Some(ManagedUi {
+    if shared && network_url.is_none() {
+        process.terminate_and_reap();
+        return Err("The browser interface started, but VidXP could not determine its local-network address.".into());
+    }
+    let local_url = format!("http://127.0.0.1:{port}");
+    let ui = ManagedUi {
         process,
-        url: url.clone(),
+        port,
+        local_url,
+        network_url,
+        shared,
         profile_id: profile.id.clone(),
-    });
-    Ok(url)
+    };
+    let status = running_browser_status(&ui);
+    *active_process = Some(ui);
+    Ok(status)
 }
 
 fn stop_ui_process(state: &DesktopState) {
@@ -2875,6 +3035,579 @@ fn stop_ui_process(state: &DesktopState) {
     if let Some(mut ui) = active.take() {
         ui.process.terminate_and_reap();
     }
+}
+
+#[tauri::command]
+fn browser_service_status(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<BrowserServiceStatus, String> {
+    let _active = state.active_operations.register()?;
+    let mut active = state
+        .ui_process
+        .lock()
+        .map_err(|_| "The browser process supervisor is unavailable.".to_string())?;
+    let Some(ui) = active.as_mut() else {
+        return Ok(stopped_browser_status("The browser interface is stopped."));
+    };
+    if ui
+        .process
+        .try_wait()
+        .map_err(|error| format!("Could not inspect the browser interface: {error}"))?
+        .is_some()
+    {
+        *active = None;
+        return Ok(stopped_browser_status("The browser interface exited."));
+    }
+    Ok(running_browser_status(ui))
+}
+
+#[tauri::command]
+async fn start_shared_browser(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<BrowserServiceStatus, String> {
+    let _active = state.active_operations.register()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<DesktopState>();
+        start_ui(&app, &state, true)
+    })
+    .await
+    .map_err(|error| format!("Browser sharing startup stopped unexpectedly: {error}"))?
+}
+
+#[tauri::command]
+fn stop_browser_service(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<BrowserServiceStatus, String> {
+    let _active = state.active_operations.register()?;
+    stop_ui_process(&state);
+    Ok(stopped_browser_status("The browser interface was stopped."))
+}
+
+fn target_companion_executable(profile: &target_profiles::TargetProfile, name: &str) -> PathBuf {
+    let filename = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_owned()
+    };
+    profile
+        .executable
+        .parent()
+        .map_or_else(|| PathBuf::from(&filename), |parent| parent.join(&filename))
+}
+
+fn target_command(
+    profile: &target_profiles::TargetProfile,
+    paths: &DesktopPaths,
+    executable_path: &Path,
+) -> Command {
+    match profile.kind {
+        target_profiles::TargetKind::Managed => configured_command(executable_path, paths),
+        target_profiles::TargetKind::ExistingLocal => Command::new(executable_path),
+    }
+}
+
+fn selected_target_context(
+    app: &AppHandle,
+) -> Result<(target_profiles::TargetProfile, DesktopPaths), String> {
+    let profile = target_profiles::selected_profile(app).map_err(|error| error.to_string())?;
+    let mut paths = desktop_paths(app)?;
+    paths.data = profile.data_root.clone();
+    paths.repository = profile.repository_root.clone();
+    if let Some(model_directory) = &profile.model_directory {
+        paths.models = model_directory.clone();
+    }
+    Ok((profile, paths))
+}
+
+fn execute_target_json(command: Command, operation: &str) -> Result<serde_json::Value, String> {
+    let output = background_process::run(
+        command,
+        background_process::BackgroundPolicy {
+            timeout: Duration::from_secs(120),
+            max_output_bytes: MAX_SETUP_OUTPUT_BYTES,
+        },
+        None,
+    )
+    .map_err(|error| format!("{operation} failed: {}", error.detail))?;
+    let payload = serde_json::from_slice(&output.stdout).map_err(|error| {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        format!(
+            "{operation} did not return valid JSON: {error}{}",
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(". {stderr}")
+            }
+        )
+    })?;
+    Ok(payload)
+}
+
+#[tauri::command]
+async fn target_doctor(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<serde_json::Value, String> {
+    let _active = state.active_operations.register()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (profile, paths) = selected_target_context(&app)?;
+        let mut command = target_command(&profile, &paths, &profile.executable);
+        command
+            .arg("--data-dir")
+            .arg(&profile.data_root)
+            .arg("--index-dir")
+            .arg(&profile.repository_root)
+            .args(["doctor", "--json"]);
+        execute_target_json(command, "VidXP doctor")
+    })
+    .await
+    .map_err(|error| format!("VidXP doctor stopped unexpectedly: {error}"))?
+}
+
+#[tauri::command]
+async fn configure_external_installation(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    capabilities: Vec<String>,
+    surfaces: Vec<String>,
+) -> Result<target_profiles::TargetState, String> {
+    let cancellation = OperationCancellationGuard::register(&state)?;
+    let _transition =
+        TargetTransitionCoordinator::begin(&state, TransitionKind::ConfigureExternalInstallation)
+            .map_err(|error| error.to_string())?;
+    let manifest = manifest()?;
+    let selected_surfaces = selected_surfaces(&manifest, &surfaces)?;
+    let selected_capabilities: Vec<_> = capabilities
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if let Some(unknown) = selected_capabilities
+        .iter()
+        .find(|name| !manifest.capabilities.contains_key(*name))
+    {
+        return Err(format!("Unknown VidXP search feature: {unknown}"));
+    }
+    let (profile, paths) = selected_target_context(&app)?;
+    if profile.kind != target_profiles::TargetKind::ExistingLocal
+        || profile.lifecycle_ownership != target_profiles::LifecycleOwnership::External
+    {
+        return Err("Use the managed setup screen to change this VidXP installation.".into());
+    }
+    if selected_surfaces == profile.surfaces && selected_capabilities == profile.capabilities {
+        return Ok(target_profiles::current_state(&app).map_err(|error| error.to_string())?);
+    }
+    let runtime = profile.runtime.as_ref().ok_or_else(|| {
+        "The selected installation did not report its Python environment.".to_string()
+    })?;
+    if !runtime.python_executable.is_file() {
+        return Err(
+            "The selected installation's Python environment is no longer available.".into(),
+        );
+    }
+    let tool_directory_output = uv_captured_output(
+        &app,
+        &paths,
+        vec!["tool".into(), "dir".into()],
+        cancellation.token(),
+        "VidXP installation lookup",
+    )
+    .await?;
+    let tool_directory = PathBuf::from(
+        String::from_utf8_lossy(&tool_directory_output.stdout)
+            .trim()
+            .to_owned(),
+    );
+    let expected_environment = tool_directory.join(&manifest.package_name);
+    if !same_path(&runtime.prefix, &expected_environment) {
+        return Err(
+            "This VidXP installation is not an isolated uv tool installation. Use its package manager to change installed features, then check it again."
+                .into(),
+        );
+    }
+    stop_ui_process(&state);
+    stop_api_process(&state);
+    let arguments = external_installation_arguments(
+        &manifest,
+        &selected_capabilities,
+        &selected_surfaces,
+        &runtime.python_version,
+        &profile.observed_vidxp_version,
+    )?;
+    uv_output(
+        &app,
+        &paths,
+        arguments,
+        cancellation.token(),
+        "VidXP feature update",
+    )
+    .await?;
+    target_profiles::validated_selected_profile_with_cancellation(
+        &app,
+        &manifest.desktop_version,
+        Some(&state.shutdown),
+    )
+    .map_err(|error| error.to_string())?;
+    target_profiles::current_state(&app).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn mcp_client_config(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<String, String> {
+    let _active = state.active_operations.register()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (profile, paths) = selected_target_context(&app)?;
+        if !profile
+            .surfaces
+            .iter()
+            .any(|surface| surface == "mcp" || surface == "server")
+        {
+            return Err(
+                "The selected VidXP installation does not expose an installed MCP surface.".into(),
+            );
+        }
+        let executable_path = target_companion_executable(&profile, "vidxp-mcp");
+        if !executable_path.is_file() {
+            return Err(format!(
+                "The selected installation did not provide {}.",
+                executable_path.display()
+            ));
+        }
+        let mut command = target_command(&profile, &paths, &executable_path);
+        command
+            .arg("--print-config")
+            .arg("--repository")
+            .arg("default")
+            .arg("--index-directory")
+            .arg(&profile.repository_root)
+            .arg("--data-dir")
+            .arg(&profile.data_root);
+        let output = checked_output(command, "VidXP MCP configuration")?;
+        let payload: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("VidXP returned invalid MCP configuration JSON: {error}"))?;
+        serde_json::to_string_pretty(&payload)
+            .map_err(|error| format!("Could not format the MCP configuration: {error}"))
+    })
+    .await
+    .map_err(|error| format!("MCP configuration stopped unexpectedly: {error}"))?
+}
+
+fn execute_worker_action(app: &AppHandle, action: &str) -> Result<LocalWorkerStatus, String> {
+    let (profile, paths) = selected_target_context(app)?;
+    if !profile.surfaces.iter().any(|surface| surface == "worker") {
+        return Err("Local video processing is not installed for this VidXP setup.".into());
+    }
+    let mut command = target_command(&profile, &paths, &profile.executable);
+    command
+        .arg("--data-dir")
+        .arg(&profile.data_root)
+        .arg("--index-dir")
+        .arg(&profile.repository_root)
+        .args(["jobs", action]);
+    let payload = execute_target_json(command, "VidXP local processing")?;
+    serde_json::from_value(payload)
+        .map_err(|error| format!("VidXP returned an invalid processing status: {error}"))
+}
+
+#[tauri::command]
+async fn local_worker_status(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<LocalWorkerStatus, String> {
+    let _active = state.active_operations.register()?;
+    tauri::async_runtime::spawn_blocking(move || execute_worker_action(&app, "worker-status"))
+        .await
+        .map_err(|error| format!("Local processing status stopped unexpectedly: {error}"))?
+}
+
+#[tauri::command]
+async fn start_local_worker(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<LocalWorkerStatus, String> {
+    let _active = state.active_operations.register()?;
+    tauri::async_runtime::spawn_blocking(move || execute_worker_action(&app, "start-worker"))
+        .await
+        .map_err(|error| format!("Local processing startup stopped unexpectedly: {error}"))?
+}
+
+#[tauri::command]
+async fn stop_local_worker(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<LocalWorkerStatus, String> {
+    let _active = state.active_operations.register()?;
+    tauri::async_runtime::spawn_blocking(move || execute_worker_action(&app, "stop-worker"))
+        .await
+        .map_err(|error| format!("Local processing shutdown stopped unexpectedly: {error}"))?
+}
+
+fn http_health_is_ready(host: &str, port: u16) -> bool {
+    let Ok(address) = format!("{host}:{port}").parse::<SocketAddr>() else {
+        return false;
+    };
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(200)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(300)));
+    if stream
+        .write_all(
+            format!("GET /health HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").as_bytes(),
+        )
+        .is_err()
+    {
+        return false;
+    }
+    let mut response = [0_u8; 128];
+    stream
+        .read(&mut response)
+        .is_ok_and(|read| String::from_utf8_lossy(&response[..read]).starts_with("HTTP/1.1 200"))
+}
+
+fn stopped_server_status(detail: impl Into<String>) -> LocalServerStatus {
+    LocalServerStatus {
+        state: "stopped",
+        running: false,
+        shared: false,
+        port: None,
+        origin: None,
+        health_url: None,
+        mcp_url: None,
+        bearer_token: None,
+        detail: detail.into(),
+    }
+}
+
+fn running_server_status(service: &ManagedApiService, healthy: bool) -> LocalServerStatus {
+    LocalServerStatus {
+        state: if healthy { "ready" } else { "starting" },
+        running: true,
+        shared: service.shared,
+        port: Some(service.port),
+        health_url: Some(service.health_url.clone()),
+        mcp_url: Some(service.mcp_url.clone()),
+        origin: Some(service.origin.clone()),
+        bearer_token: service.bearer_token.clone(),
+        detail: if healthy {
+            if service.shared {
+                "The API and MCP service is available on this local network.".into()
+            } else {
+                "The API and MCP service is available only on this computer.".into()
+            }
+        } else {
+            "The service process is running but its health endpoint is not ready.".into()
+        },
+    }
+}
+
+fn stop_api_process(state: &DesktopState) {
+    let Ok(mut active) = state.api_process.lock() else {
+        return;
+    };
+    if let Some(mut service) = active.take() {
+        service.process.terminate_and_reap();
+    }
+}
+
+#[tauri::command]
+fn local_server_status(state: tauri::State<'_, DesktopState>) -> Result<LocalServerStatus, String> {
+    let _active = state.active_operations.register()?;
+    let mut active = state
+        .api_process
+        .lock()
+        .map_err(|_| "The API process supervisor is unavailable.".to_string())?;
+    let Some(service) = active.as_mut() else {
+        return Ok(stopped_server_status(
+            "The local API and MCP service is stopped.",
+        ));
+    };
+    if service
+        .process
+        .try_wait()
+        .map_err(|error| format!("Could not inspect the local service process: {error}"))?
+        .is_some()
+    {
+        *active = None;
+        return Ok(stopped_server_status(
+            "The local API and MCP service exited.",
+        ));
+    }
+    let healthy = http_health_is_ready(&service.health_host, service.port);
+    Ok(running_server_status(service, healthy))
+}
+
+fn api_service_command(
+    profile: &target_profiles::TargetProfile,
+    paths: &DesktopPaths,
+    executable_path: &Path,
+    port: u16,
+    shared: bool,
+) -> Command {
+    let mut command = target_command(profile, paths, executable_path);
+    command
+        .env("VIDXP_REPOSITORY_ROOT", &profile.repository_root)
+        .env("VIDXP_MODEL_CACHE", &paths.models)
+        .arg("--data-dir")
+        .arg(&profile.data_root)
+        .arg("--port")
+        .arg(port.to_string());
+    if shared {
+        command.arg("--share");
+    }
+    command
+}
+
+fn start_server_mode(
+    app: &AppHandle,
+    state: &DesktopState,
+    shared: bool,
+) -> Result<LocalServerStatus, String> {
+    let (profile, paths) = selected_target_context(app)?;
+    if !profile.surfaces.iter().any(|surface| surface == "server") {
+        return Err(
+            "The selected VidXP installation does not include the app integration service.".into(),
+        );
+    }
+    let mut active = state
+        .api_process
+        .lock()
+        .map_err(|_| "The API process supervisor is unavailable.".to_string())?;
+    if let Some(service) = active.as_mut() {
+        let running = service
+            .process
+            .try_wait()
+            .map_err(|error| format!("Could not inspect the local service process: {error}"))?
+            .is_none();
+        if running && service.profile_id == profile.id && service.shared == shared {
+            let healthy = http_health_is_ready(&service.health_host, service.port);
+            return Ok(running_server_status(service, healthy));
+        }
+        service.process.terminate_and_reap();
+        *active = None;
+    }
+    let listener = TcpListener::bind((if shared { "0.0.0.0" } else { "127.0.0.1" }, 0))
+        .map_err(|error| format!("Could not reserve a local API port: {error}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| format!("Could not identify the local API port: {error}"))?
+        .port();
+    drop(listener);
+    let executable_path = target_companion_executable(&profile, "vidxp-api");
+    if !executable_path.is_file() {
+        return Err(format!(
+            "The selected installation did not provide {}.",
+            executable_path.display()
+        ));
+    }
+    let (health_host, origin, health_url, mcp_url, bearer_token) = if shared {
+        let mut details_command =
+            api_service_command(&profile, &paths, &executable_path, port, true);
+        details_command.arg("--print-share-details");
+        let output = checked_output(details_command, "VidXP network sharing setup")?;
+        let details: ApiShareDetails = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("VidXP returned invalid network sharing details: {error}"))?;
+        if details.port != port {
+            return Err("VidXP reported the wrong network sharing port.".into());
+        }
+        (
+            details.host,
+            details.origin,
+            details.health_url,
+            details.mcp_url,
+            Some(details.bearer_token),
+        )
+    } else {
+        let origin = format!("http://127.0.0.1:{port}");
+        (
+            "127.0.0.1".into(),
+            origin.clone(),
+            format!("{origin}/health"),
+            format!("{origin}/mcp"),
+            None,
+        )
+    };
+    let command = api_service_command(&profile, &paths, &executable_path, port, shared);
+    let mut process = background_process::spawn_service(command).map_err(|error| {
+        format!(
+            "Could not start the local API and MCP service: {}",
+            error.detail
+        )
+    })?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if http_health_is_ready(&health_host, port) {
+            break;
+        }
+        if process
+            .try_wait()
+            .map_err(|error| format!("Could not inspect the local service: {error}"))?
+            .is_some()
+        {
+            return Err("The local API and MCP service exited before becoming healthy.".into());
+        }
+        if Instant::now() >= deadline {
+            return Err(
+                "The local API and MCP service did not become healthy within 30 seconds.".into(),
+            );
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    let service = ManagedApiService {
+        process,
+        port,
+        health_host,
+        origin,
+        health_url,
+        mcp_url,
+        bearer_token,
+        shared,
+        profile_id: profile.id,
+    };
+    let status = running_server_status(&service, true);
+    *active = Some(service);
+    Ok(status)
+}
+
+async fn start_server(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    shared: bool,
+) -> Result<LocalServerStatus, String> {
+    let _active = state.active_operations.register()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<DesktopState>();
+        start_server_mode(&app, &state, shared)
+    })
+    .await
+    .map_err(|error| format!("Local service startup stopped unexpectedly: {error}"))?
+}
+
+#[tauri::command]
+async fn start_local_server(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<LocalServerStatus, String> {
+    start_server(app, state, false).await
+}
+
+#[tauri::command]
+async fn start_shared_server(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<LocalServerStatus, String> {
+    start_server(app, state, true).await
+}
+
+#[tauri::command]
+fn stop_local_server(state: tauri::State<'_, DesktopState>) -> Result<LocalServerStatus, String> {
+    let _active = state.active_operations.register()?;
+    stop_api_process(&state);
+    Ok(stopped_server_status(
+        "The Desktop-owned API and MCP service was stopped.",
+    ))
 }
 
 fn browser_readiness_nonce() -> String {
@@ -2895,6 +3628,7 @@ fn configure_ui_service_command(
     port: u16,
     readiness_file: &Path,
     nonce: &str,
+    shared: bool,
 ) {
     command
         // The desktop owns the one intentional browser open after readiness. Without
@@ -2904,9 +3638,16 @@ fn configure_ui_service_command(
         .env("VIDXP_DESKTOP_READINESS_FILE", readiness_file)
         .env("VIDXP_DESKTOP_READINESS_NONCE", nonce)
         .env("VIDXP_DESKTOP_UI_PORT", port.to_string())
+        .env("VIDXP_DESKTOP_UI_SHARED", if shared { "1" } else { "0" })
         .arg("--index-dir")
         .arg(repository_root)
-        .args(["ui", "--host", "127.0.0.1", "--port", &port.to_string()]);
+        .arg("ui");
+    if shared {
+        command.arg("--share");
+    } else {
+        command.args(["--host", "127.0.0.1"]);
+    }
+    command.args(["--port", &port.to_string()]);
 }
 
 fn hide_main_window(app: &AppHandle) -> Result<(), String> {
@@ -2970,13 +3711,16 @@ async fn open_ui_in_browser(app: AppHandle) -> Result<(), String> {
     let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::OpenBrowser)
         .map_err(|error| error.to_string())?;
     let worker_app = app.clone();
-    let url = tauri::async_runtime::spawn_blocking(move || {
+    let status = tauri::async_runtime::spawn_blocking(move || {
         let _transition = transition;
         let state = worker_app.state::<DesktopState>();
-        start_ui(&worker_app, &state)
+        start_ui(&worker_app, &state, false)
     })
     .await
     .map_err(|error| format!("VidXP interface startup stopped unexpectedly: {error}"))??;
+    let url = status
+        .local_url
+        .ok_or_else(|| "VidXP did not report its local browser address.".to_string())?;
     app.opener()
         .open_url(&url, None::<&str>)
         .map_err(|error| format!("Could not open VidXP in the default browser: {error}"))?;
@@ -3021,6 +3765,7 @@ fn begin_shutdown(app: &AppHandle) {
     cancel_active_operation(&state);
     log::info!("VidXP supervised shutdown requested");
     stop_ui_process(&state);
+    stop_api_process(&state);
     let app = app.clone();
     let operations = state.active_operations.clone();
     tauri::async_runtime::spawn(async move {
@@ -3097,6 +3842,7 @@ fn shutdown(app: &AppHandle, deadline: Instant) {
     let state = app.state::<DesktopState>();
     cancel_active_operation(&state);
     stop_ui_process(&state);
+    stop_api_process(&state);
     let Ok(mut paths) = desktop_paths(app) else {
         log::warn!("Could not resolve desktop paths during shutdown");
         return;
@@ -3182,7 +3928,20 @@ pub fn run() {
             model_directory_inventory,
             prepare_managed_models,
             install_runtime,
-            launch_ui
+            launch_ui,
+            target_doctor,
+            configure_external_installation,
+            mcp_client_config,
+            local_worker_status,
+            start_local_worker,
+            stop_local_worker,
+            browser_service_status,
+            start_shared_browser,
+            stop_browser_service,
+            local_server_status,
+            start_local_server,
+            start_shared_server,
+            stop_local_server
         ]);
     let app = builder
         .build(tauri::generate_context!())
@@ -3224,11 +3983,12 @@ mod tests {
         base_package_specification, capability_command_arguments, claim_browser_open,
         clean_environment_from, close_action, configure_ui_service_command,
         configured_runtime_status, dependency_installation_arguments, desktop_paths_from_roots,
-        display_command, inventory_model_directory, manifest, manifest_digest,
-        normalize_line_endings, normalized_runtime_constraints, package_acquisition_arguments,
-        package_specification, read_active_runtime_snapshot, reconcile_managed_runtime_storage,
-        required_encoder_missing, restore_active_runtime, selected_capabilities, selected_surfaces,
-        ui_process_action, write_activation_journal, write_active_runtime,
+        display_command, external_installation_arguments, inventory_model_directory, manifest,
+        manifest_digest, normalize_line_endings, normalized_runtime_constraints,
+        package_acquisition_arguments, package_specification, read_active_runtime_snapshot,
+        reconcile_managed_runtime_storage, required_encoder_missing, restore_active_runtime,
+        selected_capabilities, selected_surfaces, ui_process_action, write_activation_journal,
+        write_active_runtime,
     };
     use std::{
         ffi::OsStr,
@@ -3772,11 +4532,53 @@ mod tests {
             format!("vidxp[scene]=={version}")
         );
         assert_eq!(
+            package_specification(
+                &manifest,
+                &["actor".into(), "dialogue".into(), "scene".into()],
+                &["worker".into()],
+            ),
+            format!("vidxp[local-worker]=={version}")
+        );
+        assert_eq!(
             selected_surfaces(&manifest, &["browser".into(), "browser".into()])
                 .expect("surface selection"),
             ["browser"]
         );
         assert!(selected_surfaces(&manifest, &["unknown".into()]).is_err());
+    }
+
+    #[test]
+    fn external_install_recreates_the_reported_version_with_the_selected_features() {
+        let manifest = manifest().expect("manifest");
+        let arguments = external_installation_arguments(
+            &manifest,
+            &["scene".into()],
+            &["server".into(), "mcp".into()],
+            "3.14.6",
+            "0.4.0-b.1",
+        )
+        .expect("external surface arguments");
+
+        assert_eq!(&arguments[..3], ["tool", "install", "--force"]);
+        assert!(
+            arguments
+                .windows(2)
+                .any(|items| items == ["--python", "3.14.6"])
+        );
+        assert_eq!(
+            arguments.last().expect("package"),
+            "vidxp[mcp,scene,server]==0.4.0-b.1"
+        );
+        assert!(
+            external_installation_arguments(
+                &manifest,
+                &[],
+                &["mcp".into()],
+                "3.14.6",
+                "0.4.0 @ https://example.invalid/package.whl",
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -3846,6 +4648,7 @@ mod tests {
             43123,
             Path::new("readiness.json"),
             "nonce",
+            false,
         );
 
         assert!(command.get_envs().any(|(key, value)| {
@@ -3867,6 +4670,33 @@ mod tests {
                 "127.0.0.1",
                 "--port",
                 "43123",
+            ]
+        );
+
+        let mut shared = Command::new("vidxp");
+        configure_ui_service_command(
+            &mut shared,
+            Path::new("repository"),
+            43124,
+            Path::new("shared-readiness.json"),
+            "shared-nonce",
+            true,
+        );
+        assert!(shared.get_envs().any(|(key, value)| {
+            key == OsStr::new("VIDXP_DESKTOP_UI_SHARED") && value == Some(OsStr::new("1"))
+        }));
+        assert_eq!(
+            shared
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "--index-dir",
+                "repository",
+                "ui",
+                "--share",
+                "--port",
+                "43124"
             ]
         );
     }

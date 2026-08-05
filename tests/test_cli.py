@@ -19,6 +19,7 @@ from vidxp.media_runtime import (
 )
 from vidxp.settings import ApplicationMode
 from vidxp.application_models import (
+    ApplicationError,
     Artifact,
     ArtifactJobResult,
     CapabilityDependencyCheck,
@@ -353,11 +354,54 @@ class CliTests(unittest.TestCase):
         )
         self.jobs.stop_worker.assert_called_once_with()
 
+    def test_worker_lifecycle_commands_use_the_existing_job_service(self):
+        started = self.invoke(["jobs", "start-worker"])
+
+        self.assertEqual(started.exit_code, 0, started.output)
+        self.assertTrue(json.loads(started.output)["running"])
+        self.jobs.start.assert_called_once_with()
+        self.jobs.readiness.assert_called_once_with()
+
+        self.jobs.reset_mock()
+        status = self.invoke(["jobs", "worker-status"])
+        self.assertEqual(status.exit_code, 0, status.output)
+        self.assertTrue(json.loads(status.output)["running"])
+        self.jobs.readiness.assert_called_once_with()
+
+        self.jobs.reset_mock()
+        self.jobs.readiness.side_effect = ApplicationError(
+            "job_backend_unavailable",
+            ErrorCategory.unavailable,
+            "The worker is not running.",
+        )
+        stopped = self.invoke(["jobs", "worker-status"])
+        self.assertEqual(stopped.exit_code, 0, stopped.output)
+        self.assertFalse(json.loads(stopped.output)["running"])
+
+        self.jobs.reset_mock()
+        self.jobs.stop_worker.return_value = True
+        stopped = self.invoke(["jobs", "stop-worker"])
+        self.assertEqual(stopped.exit_code, 0, stopped.output)
+        self.assertEqual(
+            json.loads(stopped.output),
+            {
+                "running": False,
+                "stopped": True,
+                "detail": "Local video processing is stopped.",
+            },
+        )
+
     def test_ui_share_uses_streamlit_wildcard_bind_and_warns(self):
-        with patch(
-            "vidxp.frontend.main",
-            side_effect=SystemExit(0),
-        ) as frontend:
+        with (
+            patch(
+                "vidxp.frontend.main",
+                side_effect=SystemExit(0),
+            ) as frontend,
+            patch(
+                "vidxp.network_share.primary_lan_address",
+                return_value="192.168.100.131",
+            ),
+        ):
             result = self.invoke(["ui", "--share"])
 
         self.assertEqual(result.exit_code, 0, result.output)
@@ -366,7 +410,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("--server.showEmailPrompt=false", arguments)
         self.assertIn("--browser.gatherUsageStats=false", arguments)
         self.assertIn("has no authentication", result.output)
-        self.assertNotIn("Browser UI:", result.output)
+        self.assertIn("Browser UI: http://192.168.100.131:8501", result.output)
 
     def test_snippet_rejects_an_inverted_time_range_before_submission(self):
         result = self.invoke(

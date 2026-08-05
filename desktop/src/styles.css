@@ -116,6 +116,11 @@ button, [role='radio'], [role='checkbox'], input { -webkit-tap-highlight-color: 
 .managedAttention { margin-top: 1rem; border-color: rgba(255, 212, 59, .3); background: rgba(255, 212, 59, .09); }
 .neutralSetupNote, .runtimeSummary { margin-top: 1rem; padding: .9rem 1rem; border: 1px solid rgba(139,124,255,.22); border-radius: .75rem; background: rgba(35,31,65,.3); color: var(--mantine-color-dimmed); }
 .runtimeSummary { color: inherit; }
+.runtimeControlPanel { margin-top: 1rem; }
+.runtimeControlRow { gap: 1rem; padding: .9rem 0; border-top: 1px solid rgba(255,255,255,.08); }
+.runtimeControlRow > div:first-child { min-width: 0; flex: 1; }
+.connectionDetails { display: grid; gap: .25rem; margin-top: .65rem; }
+.mcpConfigCode { max-height: 22rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .confirmationPanel { max-width: 42rem; margin: .75rem auto 0; padding: clamp(1.25rem, 3dvh, 2.25rem); border-radius: 1.25rem; text-align: center; }
 .ownershipNote { display: grid; grid-template-columns: auto 1fr; gap: .35rem 1rem; margin-top: 1.5rem; padding: 1rem; border-radius: .75rem; background: rgba(121,80,242,.12); text-align: left; }
 .ownershipNote span { color: #aeb5c4; }
