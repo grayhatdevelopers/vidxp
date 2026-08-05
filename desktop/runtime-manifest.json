@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "desktop_version": "0.4.0-b.2",
+  "desktop_version": "0.4.0-b.3",
   "package_name": "vidxp",
-  "package_version": "0.4.0-b.2",
+  "package_version": "0.4.0-b.3",
   "dependency_index": "https://pypi.org/simple",
   "python_version": "3.14.6",
   "uv_version": "0.12.0",

@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## [0.4.0-b.3](https://github.com/grayhatdevelopers/vidxp/compare/v0.4.0-b.2...v0.4.0-b.3) (2026-08-05)
+
+
+### Features
+
+* **desktop:** add guided setup and local service management ([#97](https://github.com/grayhatdevelopers/vidxp/issues/97)) ([8e779a3](https://github.com/grayhatdevelopers/vidxp/commit/8e779a3364670aab833668956a289415eac8652b))
+
+
+### Bug Fixes
+
+* **desktop:** install managed runtimes from macOS Application Support paths ([f5187b7](https://github.com/grayhatdevelopers/vidxp/commit/f5187b7905c3dde27863c0ef9659909dc04000c7))
+* **desktop:** provide a signed and notarized macOS installer ([4074332](https://github.com/grayhatdevelopers/vidxp/commit/40743321907c5393dc66a7e7d21a95e8dc3e602e))
+
 ## [0.4.0-b.2](https://github.com/grayhatdevelopers/vidxp/compare/v0.4.0-b.1...v0.4.0-b.2) (2026-08-03)
 
 
