@@ -46,6 +46,7 @@ const RUNTIME_CONSTRAINTS_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/runtime-constraints.txt"));
 const MODEL_CACHE_CATALOG_BYTES: &[u8] = include_bytes!("../../model-cache-catalog.json");
 const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
+const RUNTIME_CONSTRAINTS_FILE_NAME: &str = "runtime-constraints.txt";
 const MAX_SETUP_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 static READINESS_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1166,14 +1167,28 @@ fn package_acquisition_arguments(manifest: &RuntimeManifest, python: &Path) -> V
     ]
 }
 
-fn dependency_installation_arguments(
+struct UvInvocation {
+    arguments: Vec<String>,
+    working_directory: PathBuf,
+}
+
+fn dependency_installation_invocation(
     manifest: &RuntimeManifest,
     capabilities: &[String],
     surfaces: &[String],
     python: &Path,
     constraints: &Path,
     cpu_torch: bool,
-) -> Vec<String> {
+) -> Result<UvInvocation, String> {
+    // uv 0.12 splits each --constraints value on spaces even when the operating system supplied
+    // it as one argument. Keep macOS "Application Support" paths in the working directory and
+    // pass only the staged file name.
+    let working_directory = constraints.parent().ok_or_else(|| {
+        "The staged runtime constraints path has no parent directory.".to_string()
+    })?;
+    let constraints_file_name = constraints
+        .file_name()
+        .ok_or_else(|| "The staged runtime constraints path has no file name.".to_string())?;
     let mut arguments = vec![
         "pip".into(),
         "install".into(),
@@ -1185,13 +1200,16 @@ fn dependency_installation_arguments(
         "--index-strategy".into(),
         "first-index".into(),
         "--constraints".into(),
-        constraints.to_string_lossy().into_owned(),
+        constraints_file_name.to_string_lossy().into_owned(),
     ];
     if cpu_torch {
         arguments.extend(["--torch-backend".into(), "cpu".into()]);
     }
     arguments.push(package_specification(manifest, capabilities, surfaces));
-    arguments
+    Ok(UvInvocation {
+        arguments,
+        working_directory: working_directory.to_path_buf(),
+    })
 }
 
 fn capability_command_arguments(
@@ -1932,6 +1950,7 @@ async fn uv_output(
     app: &AppHandle,
     paths: &DesktopPaths,
     arguments: Vec<String>,
+    working_directory: Option<&Path>,
     cancellation: background_process::CancellationToken,
     operation: &str,
 ) -> Result<(), String> {
@@ -1941,6 +1960,9 @@ async fn uv_output(
         .map_err(|error| format!("The bundled uv sidecar is unavailable: {error}"))?
         .args(arguments)
         .env_clear();
+    if let Some(working_directory) = working_directory {
+        command = command.current_dir(working_directory);
+    }
     for (key, value) in clean_environment(paths) {
         command = command.env(key, value);
     }
@@ -2663,7 +2685,7 @@ async fn install_runtime(
         .as_nanos();
     let staging_name = format!(".staging-{profile_hash}-{timestamp}-{}", std::process::id());
     let staging = paths.runtimes.join(&staging_name);
-    let constraints = staging.join("runtime-constraints.txt");
+    let constraints = staging.join(RUNTIME_CONSTRAINTS_FILE_NAME);
 
     let install_result = async {
         uv_output(
@@ -2677,6 +2699,7 @@ async fn install_runtime(
                 "--managed-python".into(),
                 "--no-config".into(),
             ],
+            None,
             cancellation.token(),
             "Managed Python setup",
         )
@@ -2694,22 +2717,25 @@ async fn install_runtime(
             &app,
             &paths,
             package_acquisition_arguments(&manifest, &executable(&staging, "python")),
+            None,
             cancellation.token(),
             "VidXP package acquisition",
         )
         .await?;
 
+        let dependency_installation = dependency_installation_invocation(
+            &manifest,
+            &capabilities,
+            &surfaces,
+            &executable(&staging, "python"),
+            &constraints,
+            !cfg!(target_os = "macos"),
+        )?;
         uv_output(
             &app,
             &paths,
-            dependency_installation_arguments(
-                &manifest,
-                &capabilities,
-                &surfaces,
-                &executable(&staging, "python"),
-                &constraints,
-                !cfg!(target_os = "macos"),
-            ),
+            dependency_installation.arguments,
+            Some(&dependency_installation.working_directory),
             cancellation.token(),
             "VidXP package installation",
         )
@@ -3326,6 +3352,7 @@ async fn configure_external_installation(
         &app,
         &paths,
         arguments,
+        None,
         cancellation.token(),
         "VidXP feature update",
     )
@@ -4390,11 +4417,11 @@ mod tests {
     use super::{
         ActivationJournal, ActivationRecovery, ActivationStage, ActiveRuntime, DesktopAction,
         DesktopActivation, DesktopCloseAction, DesktopState, DraftPhase, DraftRecord,
-        ManagedSetupDraft, TargetTransitionCoordinator, TransitionKind, UiProcessAction,
-        WorkerStopSupervisor, action_for_activation, activation_recovery,
-        base_package_specification, capability_command_arguments, claim_browser_open,
-        clean_environment_from, close_action, configure_ui_service_command,
-        configured_runtime_status, dependency_installation_arguments, desktop_paths_from_roots,
+        ManagedSetupDraft, RUNTIME_CONSTRAINTS_FILE_NAME, TargetTransitionCoordinator,
+        TransitionKind, UiProcessAction, WorkerStopSupervisor, action_for_activation,
+        activation_recovery, base_package_specification, capability_command_arguments,
+        claim_browser_open, clean_environment_from, close_action, configure_ui_service_command,
+        configured_runtime_status, dependency_installation_invocation, desktop_paths_from_roots,
         display_command, external_installation_arguments, external_installation_version,
         inventory_model_directory, manifest, manifest_digest, normalize_line_endings,
         normalized_runtime_constraints, package_acquisition_arguments, package_specification,
@@ -5023,17 +5050,19 @@ mod tests {
     fn package_and_dependencies_use_channel_specific_indexes() {
         let manifest = manifest().expect("manifest");
         let python = Path::new("managed-python");
-        let constraints = Path::new("runtime-constraints.txt");
+        let constraints = Path::new("staging").join(RUNTIME_CONSTRAINTS_FILE_NAME);
         let selected_package_index = manifest.dependency_index.as_str();
         let acquisition = package_acquisition_arguments(&manifest, python);
-        let dependencies = dependency_installation_arguments(
+        let dependency_installation = dependency_installation_invocation(
             &manifest,
             &["scene".into()],
             &[],
             python,
-            constraints,
+            &constraints,
             true,
-        );
+        )
+        .expect("dependency installation");
+        let dependencies = dependency_installation.arguments;
 
         assert_eq!(selected_package_index, "https://pypi.org/simple");
         assert_eq!(manifest.dependency_index, "https://pypi.org/simple");
@@ -5055,6 +5084,42 @@ mod tests {
                 .windows(2)
                 .any(|items| items == ["--constraints", "runtime-constraints.txt"])
         );
+        assert_eq!(
+            dependency_installation.working_directory,
+            Path::new("staging")
+        );
+    }
+
+    #[test]
+    fn dependency_constraints_with_spaced_parent_use_a_local_file_name() {
+        let manifest = manifest().expect("manifest");
+        let constraints = Path::new("Users")
+            .join("grayhat")
+            .join("Library")
+            .join("Application Support")
+            .join("dev.grayhat.vidxp")
+            .join("runtimes")
+            .join("staging")
+            .join(RUNTIME_CONSTRAINTS_FILE_NAME);
+
+        let invocation = dependency_installation_invocation(
+            &manifest,
+            &["scene".into()],
+            &[],
+            Path::new("managed-python"),
+            &constraints,
+            false,
+        )
+        .expect("dependency installation");
+
+        assert_eq!(
+            invocation
+                .arguments
+                .windows(2)
+                .find(|items| items[0] == "--constraints"),
+            Some(&["--constraints".into(), RUNTIME_CONSTRAINTS_FILE_NAME.into()][..])
+        );
+        assert_eq!(invocation.working_directory, constraints.parent().unwrap());
     }
 
     #[test]
