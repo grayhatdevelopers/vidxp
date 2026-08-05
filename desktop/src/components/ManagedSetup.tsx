@@ -49,7 +49,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
   const [modelDirectory, setModelDirectory] = useState('');
   const [inventory, setInventory] = useState<ModelDirectoryInventory | null>(null);
   const [operation, setOperation] = useState<ManagedOperation | null>('load');
-  const [message, setMessage] = useState('Loading managed runtime options…');
+  const [message, setMessage] = useState('Loading VidXP options…');
   const [failure, setFailure] = useState<string | null>(null);
   const operations = useExclusiveOperation<ManagedOperation>();
   const initialLoad = useRef<Promise<{
@@ -98,7 +98,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
       setModelDirectory(nextStatus.model_directory);
       setPrepareDuringInstall(!recoverable);
       setInventory(nextInventory);
-      setMessage(nextStatus.ready ? 'The managed runtime is ready.' : nextStatus.detail);
+      setMessage(nextStatus.ready ? 'VidXP is ready.' : nextStatus.detail);
     } catch (error) {
       if (operations.current(operationId)) {
         setFailure(errorMessage(error, 'Managed setup could not be loaded.'));
@@ -128,6 +128,20 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
     setter(checked ? [...current, value] : current.filter((item) => item !== value));
   }
 
+  function toggleSurface(id: string, checked: boolean) {
+    toggleValue(id, checked, setSurfaces, surfaces);
+    if (id === 'worker' && checked && manifest) {
+      setCapabilities(Object.keys(manifest.capabilities));
+    }
+  }
+
+  function toggleCapability(id: string, checked: boolean) {
+    toggleValue(id, checked, setCapabilities, capabilities);
+    if (!checked && surfaces.includes('worker')) {
+      setSurfaces(surfaces.filter((surface) => surface !== 'worker'));
+    }
+  }
+
   async function chooseFolder() {
     const operationId = beginOperation('folder');
     if (operationId === null) return;
@@ -146,7 +160,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
 
   async function install() {
     if (capabilities.length === 0) {
-      setFailure('Select at least one capability.');
+      setFailure('Select at least one search feature.');
       return;
     }
     const operationId = beginOperation('install');
@@ -166,20 +180,20 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
         const repaired = await runtimeStatus();
         if (repaired.ready) {
           setStatus(repaired);
-          setMessage('The managed runtime is ready.');
+          setMessage('VidXP is ready.');
           return;
         }
       }
       setMessage(
         captured.prepare_models
-          ? 'Creating the managed runtime, verifying cached models, and downloading anything missing…'
-          : 'Creating the managed runtime…',
+          ? 'Installing VidXP and preparing the selected search features…'
+          : 'Installing VidXP…',
       );
       const result = await installRuntime(captured);
-      setMessage(result.install.prepared ? 'Runtime and selected models are ready.' : 'Runtime ready. Model downloads were deferred.');
+      setMessage(result.install.prepared ? 'VidXP and the selected search features are ready.' : 'VidXP is installed. Search files can be downloaded later.');
       onCommitted(result.setup);
     } catch (error) {
-      setFailure(errorMessage(error, 'Managed setup failed. The previous target remains authoritative; any completed replacement runtime is retained for recovery.'));
+      setFailure(errorMessage(error, 'Setup did not finish. Your previous VidXP installation is unchanged.'));
     } finally {
       settleOperation(operationId);
     }
@@ -211,7 +225,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
         setFailure('Models were prepared, but the cache inventory could not be refreshed.');
       }
     } catch (error) {
-      setFailure(errorMessage(error, 'Model preparation failed. The installed runtime remains active.'));
+      setFailure(errorMessage(error, 'The search files could not be prepared. Your installed VidXP remains available.'));
     } finally {
       settleOperation(operationId);
     }
@@ -248,7 +262,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
   }
 
   const isBusy = operation !== null;
-  const attentionTitle = /ffmpeg|ffprobe/i.test(message) ? 'Media tools required' : 'Managed runtime needs attention';
+  const attentionTitle = /ffmpeg|ffprobe/i.test(message) ? 'Video tools need attention' : 'VidXP needs attention';
 
   function formatBytes(bytes: number) {
     if (bytes < 1024) return `${bytes} B`;
@@ -266,9 +280,9 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
     <section aria-labelledby="managed-setup-title">
       <Button variant="subtle" leftSection={<IconArrowLeft aria-hidden="true" size={17} />} onClick={() => void onBack()} disabled={isBusy}>Back</Button>
       <div className="sectionHeading compactHeading">
-        <Text className="eyebrow">DESKTOP-MANAGED RUNTIME</Text>
-        <Title id="managed-setup-title" order={1} className="pageTitle">Set up local processing</Title>
-        <Text className="lede">VidXP Desktop owns this private runtime. Installation starts only when you confirm below.</Text>
+        <Text className="eyebrow">SETUP OPTIONS</Text>
+        <Title id="managed-setup-title" order={1} className="pageTitle">Choose your VidXP features</Title>
+        <Text className="lede">Choose what VidXP can search, where video work runs, and how you want to open or connect to it. You can change these later.</Text>
       </div>
 
       {!manifest ? (
@@ -276,7 +290,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
       ) : (
         <Stack gap="md">
           <div className="setupPanel">
-            <Title order={2} className="panelTitle" mb="md">Capabilities</Title>
+            <Title order={2} className="panelTitle" mb="md">Search features</Title>
             <div className="optionGrid">
               {Object.entries(manifest.capabilities).map(([id, capability]) => (
                 <Checkbox.Card
@@ -284,27 +298,36 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
                   key={id}
                   checked={capabilities.includes(id)}
                   disabled={isBusy}
-                  onClick={() => { if (!isBusy) toggleValue(id, !capabilities.includes(id), setCapabilities, capabilities); }}
+                  onClick={() => { if (!isBusy) toggleCapability(id, !capabilities.includes(id)); }}
                 >
-                  <Group wrap="nowrap" align="flex-start"><Checkbox.Indicator aria-hidden="true" /><div><Text fw={650}>{capability.label}</Text><Text size="sm" className="mutedText">{capability.description || `Installs the ${capability.extra} capability.`}</Text></div></Group>
+                  <Group wrap="nowrap" align="flex-start"><Checkbox.Indicator aria-hidden="true" /><div><Text fw={650}>{capability.label}</Text>{capability.description && <Text size="sm" className="mutedText">{capability.description}</Text>}</div></Group>
                 </Checkbox.Card>
               ))}
             </div>
           </div>
 
           <div className="setupPanel">
-            <Title order={2} className="panelTitle" mb="md">Interface</Title>
+            <Title order={2} className="panelTitle" mb="md">Video processing</Title>
             <Stack gap="xs">
-              {Object.entries(manifest.surfaces).map(([id, surface]) => (
-                <Checkbox key={id} checked={surfaces.includes(id)} disabled={isBusy} onChange={(event) => toggleValue(id, event.currentTarget.checked, setSurfaces, surfaces)} label={surface.label} description={surface.description} />
+              {Object.entries(manifest.surfaces).filter(([id]) => id === 'worker').map(([id, surface]) => (
+                <Checkbox key={id} checked={surfaces.includes(id)} disabled={isBusy} onChange={(event) => toggleSurface(id, event.currentTarget.checked)} label={surface.label} description={surface.description} />
+              ))}
+            </Stack>
+          </div>
+
+          <div className="setupPanel">
+            <Title order={2} className="panelTitle" mb="md">Interfaces and integrations</Title>
+            <Stack gap="xs">
+              {Object.entries(manifest.surfaces).filter(([id]) => id !== 'worker').map(([id, surface]) => (
+                <Checkbox key={id} checked={surfaces.includes(id)} disabled={isBusy} onChange={(event) => toggleSurface(id, event.currentTarget.checked)} label={surface.label} description={surface.description} />
               ))}
             </Stack>
           </div>
 
           <div className="setupPanel">
             <Group justify="space-between" align="center" wrap="nowrap">
-              <div className="folderCopy"><Text fw={650}>Model storage</Text><Text size="sm" className="pathText">{modelDirectory ? displayPath(modelDirectory) : 'Using the default location'}</Text></div>
-              <Button variant="default" leftSection={<IconFolderOpen aria-hidden="true" size={16} />} loading={operation === 'folder'} disabled={isBusy} onClick={() => void chooseFolder()}>Choose folder…</Button>
+              <div className="folderCopy"><Text fw={650}>Downloaded model storage</Text><Text size="sm" className="mutedText">VidXP keeps the files needed by your selected search features here.</Text>{modelDirectory && <details className="technicalDetails"><summary>Storage location</summary><Text size="sm" className="pathText">{displayPath(modelDirectory)}</Text></details>}</div>
+              <Button variant="default" leftSection={<IconFolderOpen aria-hidden="true" size={16} />} loading={operation === 'folder'} disabled={isBusy} onClick={() => void chooseFolder()}>Change location…</Button>
             </Group>
             <div className="cacheInventory" aria-live="polite">
               {operation === 'load' || operation === 'folder' || operation === 'reset' ? (
@@ -326,7 +349,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
                   {inventory.recognized_models.length > 0 && (
                     <Group gap="xs" mt="xs">{inventory.recognized_models.map((model) => <Badge key={model.id} variant="light">{model.label}</Badge>)}</Group>
                   )}
-                  <Text size="sm" mt="xs">Cached files detected; verification required. VidXP will reuse valid cached files and download only missing material.</Text>
+                  <Text size="sm" mt="xs">VidXP will reuse files that are ready and download only what is missing.</Text>
                 </>
               ) : null}
             </div>
@@ -344,26 +367,26 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
           className="managedAttention"
           icon={<IconAlertCircle aria-hidden="true" />}
           color="yellow"
-          title={corruptPointer ? 'Managed runtime configuration is unreadable' : attentionTitle}
+          title={corruptPointer ? 'VidXP could not read the saved setup' : attentionTitle}
           role="alert"
         >
           {corruptPointer
-            ? `${message} Choose a new managed configuration below. The unreadable pointer remains unchanged until the replacement is fully installed, validated, and activated.`
-            : message}
+            ? 'Review the options above and rebuild VidXP. Your saved setup is not changed until the new one is ready.'
+            : <><Text size="sm">Use the repair action below to check and restore this installation.</Text><details className="technicalDetails"><summary>Technical details</summary>{message}</details></>}
         </Alert>
       )}
 
       {status?.state === 'ready' && (
         <div className="runtimeSummary">
-          <Text fw={700}>Installed managed runtime</Text>
-          <Text size="sm">VidXP {status.package_version} · Capabilities: {status.capabilities.join(', ') || 'none'} · Interfaces: {status.surfaces.join(', ') || 'processing only'}</Text>
-          <Text size="sm" className="pathText">Models: {displayPath(status.model_directory)}</Text>
+          <Text fw={700}>VidXP is installed</Text>
+          <Text size="sm">Search: {status.capabilities.map((id) => manifest?.capabilities[id]?.label || id).join(', ') || 'none selected'}</Text>
+          <Text size="sm">Processing and access: {status.surfaces.map((id) => manifest?.surfaces[id]?.label || id).join(', ') || 'command line only'}</Text>
+          <details className="technicalDetails"><summary>Technical details</summary><Text size="xs">Version {status.package_version}</Text><Text size="xs" className="pathText">Models: {displayPath(status.model_directory)}</Text></details>
         </div>
       )}
 
-      {recoverableConfiguration && (dirty || status?.state === 'broken') && <Alert color="yellow" title={dirty ? 'Update creates a replacement runtime' : 'Repair keeps the current configuration'}>{dirty ? 'The installed runtime remains active while Desktop creates and validates this draft. It is replaced only after activation succeeds.' : 'Desktop will repair media tools first. It replaces the managed runtime only if the installed runtime is still damaged, preserving its capabilities, browser surface, and model folder.'}</Alert>}
-      {corruptPointer && <Alert color="yellow" title="Replacement becomes authoritative only after activation">Desktop cannot recover settings from the unreadable pointer. Review the default capabilities, browser surface, and model folder above before configuring a replacement.</Alert>}
-      {status?.ready && !displayedRuntimeSelected && <Alert color="yellow" title="Select this managed target to use it">Prepare and Open are unavailable because another target is currently selected. Return to Manage targets and select this managed runtime first.</Alert>}
+      {recoverableConfiguration && (dirty || status?.state === 'broken') && <Alert color="yellow" title={dirty ? 'Your current setup stays available during the update' : 'Repair keeps your selected features'}>{dirty ? 'VidXP switches to the updated setup only after it has been installed and checked.' : 'VidXP first repairs the video tools, then restores this installation only if needed.'}</Alert>}
+      {status?.ready && !displayedRuntimeSelected && <Alert color="yellow" title="This is not your active installation">Switch back to this installation before preparing models or opening VidXP.</Alert>}
 
       <div className="managedFooter">
         <div className="statusRegion" role="status" aria-live="polite" aria-atomic="true">{isBusy && <Loader size="xs" />}{(isBusy || status?.ready) && message}</div>
@@ -371,11 +394,11 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
           <Group>
             <Button variant="default" disabled={!dirty || isBusy} onClick={() => void resetDraft()}>Reset changes</Button>
             <Button loading={operation === 'install'} disabled={(!dirty && status?.state !== 'broken') || !manifest || isBusy} onClick={() => void install()}>{status?.state === 'broken' && !dirty ? 'Repair VidXP' : 'Apply update'}</Button>
-            <Button variant="light" loading={operation === 'prepare'} disabled={!status?.ready || dirty || !displayedRuntimeSelected || isBusy} onClick={() => void prepareModels()}>Prepare / verify models</Button>
+            <Button variant="light" loading={operation === 'prepare'} disabled={!status?.ready || dirty || !displayedRuntimeSelected || isBusy} onClick={() => void prepareModels()}>Check downloaded models</Button>
             <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={operation === 'launch'} disabled={!status?.ready || dirty || !displayedRuntimeSelected || isBusy} onClick={() => void launch()}>Open VidXP</Button>
           </Group>
         ) : (
-          <Button loading={operation === 'install'} disabled={!manifest || isBusy} onClick={() => void install()}>{corruptPointer ? 'Configure replacement' : 'Configure VidXP'}</Button>
+          <Button loading={operation === 'install'} disabled={!manifest || isBusy} onClick={() => void install()}>{corruptPointer ? 'Rebuild VidXP' : 'Install VidXP'}</Button>
         )}
       </div>
       {failure && <Alert mt="md" icon={<IconAlertCircle aria-hidden="true" />} color="red" title="Could not continue" role="alert">{failure}</Alert>}

@@ -36,6 +36,10 @@ class LocalProbeTests(unittest.TestCase):
             patch("vidxp.local_probe.__version__", "0.4.0b0"),
             patch("vidxp.local_probe._module_available", return_value=True),
             patch(
+                "vidxp.local_probe._installed_search_capabilities",
+                return_value=["actor", "dialogue", "scene"],
+            ),
+            patch(
                 "vidxp.local_probe.media_runtime_is_initialized",
                 return_value=True,
             ),
@@ -75,6 +79,15 @@ class LocalProbeTests(unittest.TestCase):
             },
         )
         self.assertTrue(payload["capabilities"]["frontend"]["launchable"])
+        self.assertEqual(
+            set(payload["surfaces"]),
+            {"worker", "browser", "mcp", "server"},
+        )
+        self.assertEqual(
+            payload["search_capabilities"],
+            ["actor", "dialogue", "scene"],
+        )
+        self.assertTrue(all(surface["launchable"] for surface in payload["surfaces"].values()))
 
     def test_differing_package_versions_remain_contract_compatible(self):
         payload = self.build(desktop_version="0.5.0")
@@ -91,6 +104,10 @@ class LocalProbeTests(unittest.TestCase):
         with (
             patch("vidxp.local_probe.__version__", "0.4.0b0"),
             patch("vidxp.local_probe._module_available", return_value=False),
+            patch(
+                "vidxp.local_probe._installed_search_capabilities",
+                return_value=[],
+            ),
             patch(
                 "vidxp.local_probe.media_runtime_is_initialized",
                 return_value=False,
@@ -110,6 +127,9 @@ class LocalProbeTests(unittest.TestCase):
         self.assertIn("command-line installation is usable", frontend["message"])
         self.assertIn("package manager", frontend["remediation"])
         self.assertIn("'frontend' extra", frontend["remediation"])
+        self.assertFalse(payload["surfaces"]["mcp"]["launchable"])
+        self.assertFalse(payload["surfaces"]["server"]["launchable"])
+        self.assertFalse(payload["surfaces"]["worker"]["launchable"])
 
     def test_command_bypasses_composition_and_does_not_create_roots(self):
         with TemporaryDirectory() as directory:
@@ -121,6 +141,10 @@ class LocalProbeTests(unittest.TestCase):
                 patch(
                     "vidxp.local_probe._module_available",
                     return_value=False,
+                ),
+                patch(
+                    "vidxp.local_probe._installed_search_capabilities",
+                    return_value=[],
                 ),
                 patch(
                     "vidxp.local_probe.media_runtime_is_initialized",

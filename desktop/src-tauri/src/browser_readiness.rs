@@ -22,6 +22,8 @@ struct ReadinessMarker {
     port: u16,
     #[serde(rename = "pid")]
     _pid: u32,
+    #[serde(default)]
+    network_url: Option<String>,
 }
 
 fn marker_matches(contents: &[u8], nonce: &str, port: u16) -> bool {
@@ -66,7 +68,7 @@ pub fn wait_for_browser_readiness(
     port: u16,
     deadline: Instant,
     cancellation: &CancellationToken,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let address = SocketAddr::from(([127, 0, 0, 1], port));
     while Instant::now() < deadline {
         if cancellation.is_cancelled() {
@@ -83,11 +85,14 @@ pub fn wait_for_browser_readiness(
                 "The VidXP interface exited during startup ({status})."
             ));
         }
-        if fs::read(marker_path).is_ok_and(|contents| {
-            marker_matches(&contents, nonce, port) && streamlit_health_is_ready(address)
-        }) {
+        if let Ok(contents) = fs::read(marker_path)
+            && marker_matches(&contents, nonce, port)
+            && streamlit_health_is_ready(address)
+        {
+            let marker = serde_json::from_slice::<ReadinessMarker>(&contents)
+                .map_err(|error| format!("The interface readiness marker is invalid: {error}"))?;
             let _ = fs::remove_file(marker_path);
-            return Ok(());
+            return Ok(marker.network_url);
         }
         thread::sleep(Duration::from_millis(50));
     }
@@ -231,11 +236,12 @@ mod tests {
                 "nonce": "launch",
                 "port": port,
                 "pid": process.id() + 1,
+                "network_url": format!("http://192.168.1.20:{port}"),
             })
             .to_string(),
         )
         .expect("marker");
-        wait_for_browser_readiness(
+        let network_url = wait_for_browser_readiness(
             &mut process,
             &marker,
             "launch",
@@ -244,6 +250,7 @@ mod tests {
             &CancellationToken::default(),
         )
         .expect("ready");
+        assert_eq!(network_url, Some(format!("http://192.168.1.20:{port}")));
         assert!(!marker.exists());
         server.join().expect("server");
     }

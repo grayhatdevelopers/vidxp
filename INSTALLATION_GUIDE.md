@@ -26,7 +26,7 @@ Local model work requires a capability or worker extra.
 |---|---|---|
 | CLI or MCP | [uv 0.12+](https://docs.astral.sh/uv/getting-started/installation/) | Python and the isolated VidXP environment |
 | Desktop-managed target | A supported OS, internet access for first setup, FFmpeg, ffprobe, `libx264`, and `aac` | uv, Python, VidXP, and selected model files |
-| Desktop with existing target | A compatible local `vidxp` executable and that installation's own media-runtime setup | Target discovery and launch coordination only |
+| Desktop with existing target | A compatible local `vidxp` executable and that installation's own media-runtime setup | Target discovery, service controls, and feature reinstallation for isolated uv tools |
 | Docker | Docker Engine or Docker Desktop | Python, VidXP, and FFmpeg inside the image |
 
 Native CLI and desktop processing require FFmpeg, ffprobe, `libx264`, and
@@ -354,27 +354,49 @@ does not install anything before that choice:
 
 - **Use an existing installation** discovers compatible `vidxp` executables or
   lets you browse to one. Desktop validates the versioned probe and launch
-  contracts, but the installation stays externally owned. Desktop never
-  installs, repairs, updates, removes, or broadly stops it. If its browser
-  surface is missing, enable the `frontend` extra with that installation's own
-  package-management workflow before Desktop can open it.
+  contracts, and the installation stays selected and externally owned.
+  For an isolated uv-tool installation, **Setup options** can change its search,
+  local-processing, browser, AI-assistant, or app-integration features. Desktop recreates that app environment at
+  its compatible VidXP and Python versions with the complete selected extra set,
+  then rechecks it. If the saved installation predates the required management
+  contract, Desktop offers to update that same uv-tool environment to the runtime
+  version bundled with the Desktop release before applying the chosen features.
+  It does not interpret fields missing from an older probe as disabled features.
+  Other environment types stay with their original package
+  manager. Desktop does not broadly stop an external installation. The
+  compatibility probe reports installed search, processing, and integration features.
 - **Set up VidXP for me** creates a private Python and VidXP runtime owned by
   Desktop. Python and uv do not need to be installed separately. Capability
-  code, the optional browser interface, model storage, and initial model
-  preparation are selected before applying the draft.
+  code, optional local video processing, browser interface, AI-assistant
+  integration, and app integration service,
+  model storage, and initial model preparation are selected before applying
+  the draft.
 
 A managed setup or update remains a draft until its candidate runtime passes
 the Desktop probe and launch contracts. Activation then replaces the previous
 managed target atomically; failed or cancelled work leaves the previous target
-authoritative. For an unchanged ready runtime, **Prepare / verify models**
+authoritative. For an unchanged ready runtime, **Check downloaded models**
 checks cached files and downloads only missing selected model material without
 requiring a configuration change.
+
+The active-target panel can run the selected installation's read-only
+`vidxp doctor --json` check, start/monitor/stop local video processing through
+the existing worker supervisor, generate `mcpServers` JSON bound to that exact
+installation and repository, and start/monitor/stop a Desktop-owned loopback
+`vidxp-api` process when the app integration service is installed. These controls remain
+available after installation; Desktop is not only a first-run installer or a
+browser launcher. It broadly stops only a Desktop-owned target and only
+reinstalls an existing isolated tool after the user confirms the feature change.
+Browser and app-service processes start private to the current computer.
+Desktop can also invoke each service's existing `--share` mode: it shows the
+resolved LAN port and URLs, warns that the shared browser has no authentication,
+and exposes the API/MCP bearer token behind the connection details.
 
 Starting Desktop, or starting it a second time, shows and focuses the control
 panel without opening a browser. **Open VidXP** explicitly starts or reuses the
 loopback browser service and opens one tab. Closing a configured window hides
 it to the tray. Tray actions are **Manage VidXP**, **Open VidXP**, and **Quit
-VidXP**. Quit stops the exact browser service Desktop launched; broad worker
+VidXP**. Quit stops the exact browser and API services Desktop launched; broad worker
 shutdown is limited to a Desktop-owned runtime.
 
 The NSIS, DMG, and AppImage packages do not bundle FFmpeg. Managed setup can

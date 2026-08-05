@@ -13,13 +13,16 @@ from typing import Any, Sequence
 def mcp_executable() -> str:
     """Return the most reliable executable path for desktop MCP clients."""
 
-    discovered = shutil.which("vidxp-mcp")
-    if discovered is not None:
-        return str(Path(discovered).resolve())
     executable_name = "vidxp-mcp.exe" if os.name == "nt" else "vidxp-mcp"
     sibling = Path(sys.executable).with_name(executable_name)
     if sibling.is_file():
         return str(sibling.resolve())
+    invoked = Path(sys.argv[0])
+    if invoked.name.casefold() in {"vidxp-mcp", "vidxp-mcp.exe"} and invoked.is_file():
+        return str(invoked.resolve())
+    discovered = shutil.which("vidxp-mcp")
+    if discovered is not None:
+        return str(Path(discovered).resolve())
     return "vidxp-mcp"
 
 

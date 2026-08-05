@@ -7,11 +7,29 @@
   "python_version": "3.14.6",
   "uv_version": "0.12.0",
   "surfaces": {
+    "worker": {
+      "extra": "local-worker",
+      "label": "Process videos on this computer",
+      "description": "Run background indexing, search, and grounded questions locally. This includes all built-in search features and is the normal desktop setup.",
+      "default": true
+    },
     "browser": {
       "extra": "frontend",
       "label": "Browser interface",
-      "description": "Installs the local browser interface. Leave this off for a processing-only runtime.",
+      "description": "Use VidXP's visual workspace in your default browser. It stays private to this computer unless you explicitly share it without authentication.",
       "default": true
+    },
+    "mcp": {
+      "extra": "mcp",
+      "label": "AI assistant integration",
+      "description": "Use VidXP from an MCP-compatible AI assistant installed on this computer.",
+      "default": false
+    },
+    "server": {
+      "extra": "server",
+      "label": "App integration service",
+      "description": "Run an API and network-style MCP connection for other software. It is private by default and can be shared on your local network with bearer-token authentication.",
+      "default": false
     }
   },
   "capabilities": {

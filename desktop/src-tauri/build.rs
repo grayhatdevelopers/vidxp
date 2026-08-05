@@ -46,6 +46,8 @@ fn main() {
             "local-worker",
             "--extra",
             "frontend",
+            "--extra",
+            "server",
             "--no-dev",
             "--no-emit-project",
             "--no-hashes",
@@ -90,5 +92,23 @@ fn main() {
     println!("cargo:rerun-if-changed=../../uv.lock");
     println!("cargo:rerun-if-changed=../runtime-manifest.json");
 
-    tauri_build::build()
+    let mut attributes = tauri_build::Attributes::new();
+    #[cfg(windows)]
+    {
+        attributes = attributes
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+        add_windows_manifest();
+    }
+    tauri_build::try_build(attributes).expect("Tauri build configuration must be valid")
+}
+
+#[cfg(windows)]
+fn add_windows_manifest() {
+    let manifest = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo must provide CARGO_MANIFEST_DIR"),
+    )
+    .join("windows-app-manifest.xml");
+    println!("cargo:rerun-if-changed={}", manifest.display());
+    println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+    println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
 }

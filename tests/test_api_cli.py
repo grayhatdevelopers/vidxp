@@ -1,5 +1,6 @@
 import unittest
 import asyncio
+import json
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -133,6 +134,37 @@ class ApiCliTests(unittest.TestCase):
             create_app.return_value,
             host="127.0.0.1",
             port=32192,
+        )
+
+    def test_share_details_can_be_resolved_without_starting_the_server(self):
+        import uvicorn
+
+        output = StringIO()
+        with (
+            patch.object(uvicorn, "run") as run,
+            patch(
+                "vidxp.api_cli.primary_lan_address",
+                return_value="192.168.100.131",
+            ),
+            patch(
+                "vidxp.api_cli.load_or_create_api_share_token",
+                return_value="x" * 43,
+            ),
+            redirect_stdout(output),
+        ):
+            main(["--share", "--port", "32192", "--print-share-details"])
+
+        run.assert_not_called()
+        self.assertEqual(
+            json.loads(output.getvalue()),
+            {
+                "origin": "http://192.168.100.131:32192",
+                "host": "192.168.100.131",
+                "port": 32192,
+                "health_url": "http://192.168.100.131:32192/health",
+                "mcp_url": "http://192.168.100.131:32192/mcp",
+                "bearer_token": "x" * 43,
+            },
         )
 
 

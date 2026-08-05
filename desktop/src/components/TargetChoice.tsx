@@ -21,8 +21,8 @@ const targets = [
   {
     value: 'managed' as const,
     title: 'Set up VidXP for me',
-    description: 'Create a private runtime managed by this desktop app.',
-    detail: 'Downloads Python, VidXP, and only the capabilities you choose.',
+    description: 'Install VidXP here and let the desktop app keep it ready.',
+    detail: 'Downloads only what your selected features need.',
     icon: IconDownload,
   },
 ];
@@ -32,10 +32,10 @@ export function TargetChoice({ value, disabled, onChange, onContinue }: TargetCh
     <section aria-labelledby="target-choice-title">
       <div className="sectionHeading">
         <Title id="target-choice-title" order={1} className="displayTitle">
-          Where should VidXP run?
+          How would you like to set up VidXP?
         </Title>
         <Text className="lede">
-          Choose before anything is installed. You can change the selected target later.
+          Choose before anything is installed. You can switch installations later.
         </Text>
       </div>
 

@@ -8,16 +8,20 @@ implementation:
 - an existing compatible `vidxp` executable can be adopted without downloading
   Python, VidXP, FFmpeg, models, or another environment;
 - executable discovery never selects a candidate without user confirmation;
-- adopted installations remain externally owned and cannot be installed,
-  repaired, removed, or broadly stopped by the desktop;
-- the selected capability extras are installed from the exact configured
-  package release only after the managed target is explicitly chosen;
-- the Streamlit browser interface is an optional installation surface;
+- adopted isolated uv-tool installations remain externally owned, but an
+  explicit setup action can reinstall their exact reported package version
+  with a changed search, local-processing, or integration feature set; the desktop does not
+  broadly stop them or silently rebuild them;
+- both Desktop-managed and adopted isolated uv-tool installations can add or
+  remove features by reinstalling the complete selected feature set;
+- local video processing installs the existing `local-worker` extra and is
+  separate from the browser interface, AI-assistant integration, and app
+  integration service;
 - managed repositories and models use the same platform VidXP data directory
   as the CLI; adopted targets retain their reported roots, while managed Python
   and package environments use private desktop application-data directories;
 - the existing DBOS worker remains the durable execution boundary; and
-- closing the desktop process stops the exact interface process it launched,
+- closing the desktop process stops the exact browser and API processes it launched,
   while broad worker shutdown remains limited to desktop-owned runtimes.
 
 The desktop separates shared product data from its private implementation
@@ -102,10 +106,23 @@ The target-first screen offers two paths:
   its canonical path and runs `vidxp desktop-probe --json` before activation.
   The probe is side-effect free and reports its raw launcher identity, package
   version, probe and launch contract metadata, Python identity, local data
-  roots, and browser-interface availability. Desktop compares that report with
+  roots, media initialization, and installed search, processing, and integration
+  availability. Desktop compares that report with
   the exact executable the user selected and decides compatibility. Reopening
   Desktop restores the selected profile immediately and rechecks it once in the
   background.
+  After activation, **Setup options** can change search, local-processing,
+  browser, AI-assistant, or app-integration features. For an isolated uv-tool
+  installation, the bundled `uv` uses
+  `uv tool install --force` to recreate the tool environment from the complete
+  selected extra set while retaining its compatible VidXP and Python versions.
+  If its probe contract predates the Desktop management contract, Desktop stops
+  presenting the missing fields as disabled features and instead offers an
+  explicit in-place update to the package version in the bundled runtime
+  manifest. A newer, unsupported probe requires a Desktop update. The
+  target is stopped only if Desktop launched its UI/API child, then re-probed
+  after the package operation. Other external environment types remain under
+  their original package manager.
 - **Desktop-managed runtime** reveals the existing capability, model, and media
   setup only after explicit confirmation. The staged installation and activation
   boundary is unchanged.
@@ -114,22 +131,31 @@ Target profiles use a versioned desktop-private schema. Profile content and the
 selected profile identity are stored separately. No credentials or remote tokens
 are stored; remote targets are intentionally outside this release.
 
-Users select dialogue, scene, and actor capabilities independently. Interfaces
-are selected separately: the browser interface adds the `frontend` extra only
-when selected. Model preparation can be deferred, and a native folder picker
+Users select dialogue, scene, and actor search features independently. Product
+choices map to package extras as follows: **Local video processing** adds
+`local-worker` and includes all built-in search features, **Browser interface**
+adds `frontend`, **AI assistant integration** adds the stdio `mcp` transport,
+and **App integration service** adds the loopback API plus Streamable HTTP MCP
+through `server`. These package names stay out of the normal product flow. Model preparation
+can be deferred, and a native folder picker
 can select a model-cache directory before any model is downloaded.
 The managed runtime acquires the exact VidXP package with dependency resolution
 disabled, then resolves that package's selected extras. Beta and stable desktop
 releases use production PyPI for both steps, so a pinned prerelease and its
 normal dependencies come from one authoritative index. TestPyPI is used only
 for package-only nightly validation and is never a desktop runtime source.
+The release contract classifies prerelease versions as beta and ordinary
+versions as stable, and the bundled manifest pins the matching Python runtime.
+This release does not include an automatic Desktop updater, so there is not yet
+a user-facing update-channel enrollment preference; adding one belongs with the
+signed updater rather than the Python runtime selector.
 Windows and Linux resolve CPU-only PyTorch wheels using uv's
 `--torch-backend cpu`; macOS uses native PyPI wheels. The custom PyTorch index
 is therefore a resolver input and is not embedded as a package URL, avoiding
 the prior package-publication failure mode. Every selected profile is also
 constrained by a requirements snapshot exported from `uv.lock` and embedded
-during the desktop build for the complete local-worker and frontend dependency
-set. Capability selection controls which packages are installed; the constraints
+during the desktop build for the complete local-worker, frontend, MCP, and
+server dependency set. Capability selection controls which packages are installed; the constraints
 prevent those packages from drifting independently after the desktop binary is
 published.
 
@@ -144,8 +170,8 @@ responsible for their own media-runtime setup.
 
 Optional model preparation invokes the shared `vidxp prepare` command for only
 the selected modalities. A ready managed runtime also exposes a separate
-**Prepare / verify models** action, so verification does not require a fake
-configuration change. Setup, probe, worker-stop, and browser-service children
+**Check downloaded models** action, so verification does not require a fake
+configuration change. Setup, probe, worker lifecycle, and browser-service children
 share one process ownership policy: null stdin, bounded captured output where
 applicable, cancellation and timeouts, and whole-tree termination/reaping.
 Closing the app cancels an active managed operation and stops the exact browser
@@ -157,7 +183,16 @@ VidXP** explicitly starts or reuses the supervised loopback service and opens
 one browser tab. Closing a configured control panel hides it to the tray.
 **Manage VidXP** shows the panel, **Open VidXP** performs the separate browser
 action, and **Quit VidXP** runs supervised shutdown for the interface and any
-Desktop-owned repository worker.
+Desktop-owned repository worker. The active-target panel also reports and
+controls local video processing through the existing `JobService` worker
+lifecycle, reports the app integration service, creates AI-assistant MCP config,
+and presents the existing doctor result as product health rather than raw output.
+The browser and app integration service remain loopback-only by default.
+Explicit sharing controls compose their existing `--share` modes: browser
+sharing reports its LAN URL and warns that it is unauthenticated, while API/MCP
+sharing reports its LAN origin, health URL, MCP URL, selected port, and
+app-managed bearer token. Switching sharing modes replaces only the exact
+Desktop-supervised child process.
 
 ## Implementation dependencies
 
@@ -172,7 +207,11 @@ post-spawn failure path. The loopback UI uses the same ownership abstraction as
 a long-lived service.
 
 React's reducer plus the local async-action helper is sufficient for the finite
-setup lifecycle, so no state framework was added. Generated IPC was evaluated:
+setup lifecycle, so no state framework was added. The active-target screen
+reuses `vidxp doctor --json`, exact-target `vidxp-mcp --print-config`, and the
+`vidxp-api` `/health` endpoint. Desktop supervises only processes it starts;
+external environments retain broad-process ownership; package changes require
+the dedicated, user-confirmed feature update. Generated IPC was evaluated:
 `tauri-specta` would require replacing command macros and build integration
 while the transition service is still changing, and `ts-rs` generates DTOs but
 not the command calls. The current adapter is therefore limited to exact,

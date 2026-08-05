@@ -60,21 +60,21 @@ def _module_available(name: str) -> bool:
         return False
 
 
-def _frontend_capability() -> dict[str, Any]:
-    installed = _module_available("vidxp.frontend") and _module_available("streamlit")
-    media_ready = media_runtime_is_initialized()
+def _surface_capability(
+    *,
+    installed: bool,
+    media_ready: bool,
+    unavailable_code: str,
+    available_code: str,
+    unavailable_message: str,
+    unavailable_remediation: str,
+    available_message: str,
+) -> dict[str, Any]:
     launchable = installed and media_ready
     if not installed:
-        code = "frontend_unavailable"
-        message = (
-            "The VidXP command-line installation is usable, but its optional "
-            "browser interface is not installed."
-        )
-        remediation = (
-            "Use the environment or package manager that owns this executable "
-            "to install VidXP with the 'frontend' extra, initialize its media "
-            "runtime if needed, then return to VidXP Desktop and revalidate."
-        )
+        code = unavailable_code
+        message = unavailable_message
+        remediation = unavailable_remediation
     elif not media_ready:
         code = "media_runtime_uninitialized"
         message = (
@@ -87,8 +87,8 @@ def _frontend_capability() -> dict[str, Any]:
             "up its media runtime, then return to VidXP Desktop and revalidate."
         )
     else:
-        code = "frontend_available"
-        message = "The browser interface can be launched."
+        code = available_code
+        message = available_message
         remediation = ""
     return {
         "available": installed,
@@ -98,6 +98,103 @@ def _frontend_capability() -> dict[str, Any]:
         "message": message,
         "remediation": remediation,
     }
+
+
+def _surface_capabilities(
+    search_capabilities: list[str],
+) -> dict[str, dict[str, Any]]:
+    media_ready = media_runtime_is_initialized()
+    owner_instruction = (
+        "Use the environment or package manager that owns this executable"
+    )
+    return {
+        "worker": _surface_capability(
+            installed=(
+                {"dialogue", "scene", "actor"}.issubset(search_capabilities)
+                and _module_available("pydantic_ai")
+            ),
+            media_ready=media_ready,
+            unavailable_code="local_worker_unavailable",
+            available_code="local_worker_available",
+            unavailable_message=(
+                "Local background video processing is not installed in this "
+                "VidXP environment."
+            ),
+            unavailable_remediation=(
+                f"{owner_instruction} to install VidXP with the "
+                "'local-worker' extra, then return to VidXP Desktop and "
+                "revalidate."
+            ),
+            available_message="Local background video processing is available.",
+        ),
+        "browser": _surface_capability(
+            installed=(
+                _module_available("vidxp.frontend")
+                and _module_available("streamlit")
+            ),
+            media_ready=media_ready,
+            unavailable_code="frontend_unavailable",
+            available_code="frontend_available",
+            unavailable_message=(
+                "The VidXP command-line installation is usable, but its "
+                "optional browser interface is not installed."
+            ),
+            unavailable_remediation=(
+                f"{owner_instruction} to install VidXP with the 'frontend' "
+                "extra, initialize its media runtime if needed, then return "
+                "to VidXP Desktop and revalidate."
+            ),
+            available_message="The browser interface can be launched.",
+        ),
+        "mcp": _surface_capability(
+            installed=(
+                _module_available("vidxp.mcp") and _module_available("mcp")
+            ),
+            media_ready=media_ready,
+            unavailable_code="mcp_unavailable",
+            available_code="mcp_available",
+            unavailable_message=(
+                "The local stdio MCP server is not installed in this VidXP "
+                "environment."
+            ),
+            unavailable_remediation=(
+                f"{owner_instruction} to install VidXP with the 'mcp' extra, "
+                "then return to VidXP Desktop and revalidate."
+            ),
+            available_message="The local stdio MCP server is available.",
+        ),
+        "server": _surface_capability(
+            installed=all(
+                _module_available(name)
+                for name in ("vidxp.api", "mcp", "fastapi", "uvicorn")
+            ),
+            media_ready=media_ready,
+            unavailable_code="server_unavailable",
+            available_code="server_available",
+            unavailable_message=(
+                "The local HTTP API and remote MCP server are not installed "
+                "in this VidXP environment."
+            ),
+            unavailable_remediation=(
+                f"{owner_instruction} to install VidXP with the 'server' "
+                "extra, then return to VidXP Desktop and revalidate."
+            ),
+            available_message="The local API and remote MCP server are available.",
+        ),
+    }
+
+
+def _installed_search_capabilities() -> list[str]:
+    from vidxp.capabilities.registry import create_capability_registry
+    from vidxp.dependencies import inspect_requirement
+
+    registry = create_capability_registry()
+    installed = []
+    for name in registry.definitions:
+        requirements = registry.requirements_for((name,))
+        if requirements and all(inspect_requirement(item)["ok"] for item in requirements):
+            installed.append(name)
+    return sorted(installed)
 
 
 def build_desktop_probe(
@@ -136,6 +233,8 @@ def build_desktop_probe(
     )
     resolved_launcher = launcher if launcher is not None else sys.argv[0]
 
+    search_capabilities = _installed_search_capabilities()
+    surfaces = _surface_capabilities(search_capabilities)
     return {
         "product": PRODUCT_ID,
         "product_version": __version__,
@@ -167,5 +266,8 @@ def build_desktop_probe(
             ),
             "desktop_version": desktop_version,
         },
-        "capabilities": {"frontend": _frontend_capability()},
+        # ``capabilities.frontend`` is retained for Desktop protocol v1 clients.
+        "capabilities": {"frontend": surfaces["browser"]},
+        "search_capabilities": search_capabilities,
+        "surfaces": surfaces,
     }

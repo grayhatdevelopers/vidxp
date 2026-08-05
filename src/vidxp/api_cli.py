@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -46,6 +47,11 @@ def _arguments(values: Sequence[str] | None = None) -> argparse.Namespace:
             "app-managed bearer token."
         ),
     )
+    parser.add_argument(
+        "--print-share-details",
+        action="store_true",
+        help="Print the resolved LAN connection details as JSON and exit.",
+    )
     return parser.parse_args(values)
 
 
@@ -79,11 +85,23 @@ def _shared_settings(settings, *, host: str, token: str):
     return VidXPSettings.model_validate(payload), active_token
 
 
-def _print_share_details(settings, token: str) -> None:
+def _share_details(settings, token: str) -> dict[str, str | int]:
     origin = f"http://{settings.http_bind_host}:{settings.http_port}"
+    return {
+        "origin": origin,
+        "host": settings.http_bind_host,
+        "port": settings.http_port,
+        "health_url": f"{origin}/health",
+        "mcp_url": f"{origin}/mcp",
+        "bearer_token": token,
+    }
+
+
+def _print_share_details(settings, token: str) -> None:
+    details = _share_details(settings, token)
     print("VidXP network sharing is enabled.", flush=True)
-    print(f"Health: {origin}/health", flush=True)
-    print(f"MCP: {origin}/mcp", flush=True)
+    print(f"Health: {details['health_url']}", flush=True)
+    print(f"MCP: {details['mcp_url']}", flush=True)
     print(f"Bearer token: {token}", flush=True)
     print(
         "Keep this token private. LAN traffic uses HTTP and is not encrypted.",
@@ -99,6 +117,9 @@ def _print_share_details(settings, token: str) -> None:
 
 def main(arguments: Sequence[str] | None = None) -> None:
     options = _arguments(arguments)
+
+    if options.print_share_details and not options.share:
+        raise ValueError("--print-share-details requires --share.")
 
     import uvicorn
 
@@ -132,6 +153,10 @@ def main(arguments: Sequence[str] | None = None) -> None:
             token=configured_token or load_or_create_api_share_token(),
         )
     settings.validate_http_server()
+    if options.print_share_details:
+        assert share_token is not None
+        print(json.dumps(_share_details(settings, share_token), sort_keys=True))
+        return
     if share_token is not None:
         _print_share_details(settings, share_token)
     uvicorn.run(
