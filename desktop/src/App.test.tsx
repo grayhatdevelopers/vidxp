@@ -213,6 +213,63 @@ describe('desktop target lifecycle', () => {
     expect(await screen.findByRole('button', { name: 'Set up connection' })).toBeVisible();
   });
 
+  it('offers an in-place manifest update when the selected runtime contract is too old', async () => {
+    const updateRequired = {
+      ...localProfile,
+      observed_vidxp_version: 'installed-release',
+      probe_protocol_version: 1,
+      capabilities: [],
+      surfaces: [],
+      validation_error: {
+        code: 'runtime_update_required',
+        message: 'This VidXP installation must be updated before Desktop can manage it.',
+      },
+    };
+    const state = { profiles: [updateRequired], selected_profile_id: updateRequired.id, issues: [] };
+    mocks.targetSetupState.mockResolvedValue(state);
+    mocks.recheckTargetState.mockResolvedValue(state);
+    mocks.runtimeManifest.mockResolvedValue({
+      package_version: 'required-release',
+      capabilities: { scene: { extra: 'scene', label: 'Visual scene search' } },
+      surfaces: {
+        worker: { extra: 'local-worker', label: 'Process videos on this computer', description: 'Run video work locally.', default: true },
+        browser: { extra: 'frontend', label: 'Browser interface', description: 'Open VidXP in your browser.', default: true },
+        mcp: { extra: 'mcp', label: 'AI assistant integration', description: 'Connect a compatible AI app.', default: false },
+        server: { extra: 'server', label: 'App integration service', description: 'Let other local apps connect.', default: false },
+      },
+    });
+    mocks.configureExternalInstallation.mockResolvedValue(localState);
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(await screen.findByRole('button', { name: 'Update this installation' }));
+    expect(await screen.findByText(/from installed-release to required-release/i)).toBeVisible();
+    expect(screen.getByRole('checkbox', { name: /Visual scene search/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Process videos on this computer/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Browser interface/i })).toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Update and apply' }));
+
+    await waitFor(() => expect(mocks.configureExternalInstallation).toHaveBeenCalledWith(['scene'], ['worker', 'browser']));
+  });
+
+  it('shows readiness progress and names the scope returned by doctor', async () => {
+    const report = deferred<{ ok: boolean; modalities: string[]; checks: { capability: string; kind: string; name: string; ok: boolean }[] }>();
+    mocks.targetSetupState.mockResolvedValue(localState);
+    mocks.recheckTargetState.mockResolvedValue(localState);
+    mocks.targetDoctor.mockReturnValue(report.promise);
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(await screen.findByRole('button', { name: 'Check readiness' }));
+    expect(await screen.findByRole('heading', { name: 'Checking VidXP readiness' })).toBeVisible();
+    expect(screen.getByText(/does not download or change anything/i)).toBeVisible();
+    report.resolve({ ok: true, modalities: [], checks: [{ capability: 'media', kind: 'distribution', name: 'FFmpeg', ok: true }] });
+
+    expect(await screen.findByText('No search features were checked')).toBeVisible();
+    expect(screen.getByText('FFmpeg')).toBeVisible();
+    expect(screen.getByText('Video tools are ready')).toBeVisible();
+  });
+
   it('uses the parent exclusive operation while browser startup is pending', async () => {
     const browserManaged = {
       ...managedProfile,

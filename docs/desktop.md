@@ -115,7 +115,11 @@ The target-first screen offers two paths:
   browser, AI-assistant, or app-integration features. For an isolated uv-tool
   installation, the bundled `uv` uses
   `uv tool install --force` to recreate the tool environment from the complete
-  selected extra set while pinning its reported VidXP and Python versions. The
+  selected extra set while retaining its compatible VidXP and Python versions.
+  If its probe contract predates the Desktop management contract, Desktop stops
+  presenting the missing fields as disabled features and instead offers an
+  explicit in-place update to the package version in the bundled runtime
+  manifest. A newer, unsupported probe requires a Desktop update. The
   target is stopped only if Desktop launched its UI/API child, then re-probed
   after the package operation. Other external environment types remain under
   their original package manager.
@@ -140,6 +144,11 @@ disabled, then resolves that package's selected extras. Beta and stable desktop
 releases use production PyPI for both steps, so a pinned prerelease and its
 normal dependencies come from one authoritative index. TestPyPI is used only
 for package-only nightly validation and is never a desktop runtime source.
+The release contract classifies prerelease versions as beta and ordinary
+versions as stable, and the bundled manifest pins the matching Python runtime.
+This release does not include an automatic Desktop updater, so there is not yet
+a user-facing update-channel enrollment preference; adding one belongs with the
+signed updater rather than the Python runtime selector.
 Windows and Linux resolve CPU-only PyTorch wheels using uv's
 `--torch-backend cpu`; macOS uses native PyPI wheels. The custom PyTorch index
 is therefore a resolver input and is not embedded as a package URL, avoiding

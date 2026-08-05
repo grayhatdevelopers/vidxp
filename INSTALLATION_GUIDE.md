@@ -357,8 +357,12 @@ does not install anything before that choice:
   contracts, and the installation stays selected and externally owned.
   For an isolated uv-tool installation, **Setup options** can change its search,
   local-processing, browser, AI-assistant, or app-integration features. Desktop recreates that app environment at
-  its reported VidXP and Python versions with the complete selected extra set,
-  then rechecks it. Other environment types stay with their original package
+  its compatible VidXP and Python versions with the complete selected extra set,
+  then rechecks it. If the saved installation predates the required management
+  contract, Desktop offers to update that same uv-tool environment to the runtime
+  version bundled with the Desktop release before applying the chosen features.
+  It does not interpret fields missing from an older probe as disabled features.
+  Other environment types stay with their original package
   manager. Desktop does not broadly stop an external installation. The
   compatibility probe reports installed search, processing, and integration features.
 - **Set up VidXP for me** creates a private Python and VidXP runtime owned by

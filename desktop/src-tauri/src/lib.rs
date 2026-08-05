@@ -1107,6 +1107,25 @@ fn external_installation_arguments(
     ])
 }
 
+fn external_installation_version<'a>(
+    manifest: &'a RuntimeManifest,
+    runtime_update_required: bool,
+    reported_protocol_version: u32,
+    observed_package_version: &'a str,
+) -> Result<&'a str, String> {
+    if runtime_update_required {
+        return Ok(&manifest.package_version);
+    }
+    match reported_protocol_version.cmp(&target_profiles::SUPPORTED_PROBE_PROTOCOL_VERSION) {
+        std::cmp::Ordering::Less => Ok(&manifest.package_version),
+        std::cmp::Ordering::Equal => Ok(observed_package_version),
+        std::cmp::Ordering::Greater => Err(
+            "This VidXP installation is newer than this Desktop version. Update VidXP Desktop before changing its features."
+                .into(),
+        ),
+    }
+}
+
 fn base_package_specification(manifest: &RuntimeManifest) -> String {
     format!("{}=={}", manifest.package_name, manifest.package_version)
 }
@@ -3120,11 +3139,15 @@ fn selected_target_context(
     Ok((profile, paths))
 }
 
-fn execute_target_json(command: Command, operation: &str) -> Result<serde_json::Value, String> {
+fn execute_target_json(
+    command: Command,
+    operation: &str,
+    timeout: Duration,
+) -> Result<serde_json::Value, String> {
     let output = background_process::run(
         command,
         background_process::BackgroundPolicy {
-            timeout: Duration::from_secs(120),
+            timeout,
             max_output_bytes: MAX_SETUP_OUTPUT_BYTES,
         },
         None,
@@ -3159,7 +3182,7 @@ async fn target_doctor(
             .arg("--index-dir")
             .arg(&profile.repository_root)
             .args(["doctor", "--json"]);
-        execute_target_json(command, "VidXP doctor")
+        execute_target_json(command, "VidXP doctor", Duration::from_secs(180))
     })
     .await
     .map_err(|error| format!("VidXP doctor stopped unexpectedly: {error}"))?
@@ -3195,7 +3218,15 @@ async fn configure_external_installation(
     {
         return Err("Use the managed setup screen to change this VidXP installation.".into());
     }
-    if selected_surfaces == profile.surfaces && selected_capabilities == profile.capabilities {
+    let runtime_update_required = profile
+        .validation_error
+        .as_ref()
+        .is_some_and(|error| error.code == target_profiles::TargetErrorCode::RuntimeUpdateRequired);
+    if !runtime_update_required
+        && profile.probe_protocol_version == target_profiles::SUPPORTED_PROBE_PROTOCOL_VERSION
+        && selected_surfaces == profile.surfaces
+        && selected_capabilities == profile.capabilities
+    {
         return Ok(target_profiles::current_state(&app).map_err(|error| error.to_string())?);
     }
     let runtime = profile.runtime.as_ref().ok_or_else(|| {
@@ -3228,12 +3259,18 @@ async fn configure_external_installation(
     }
     stop_ui_process(&state);
     stop_api_process(&state);
+    let target_version = external_installation_version(
+        &manifest,
+        runtime_update_required,
+        profile.probe_protocol_version,
+        &profile.observed_vidxp_version,
+    )?;
     let arguments = external_installation_arguments(
         &manifest,
         &selected_capabilities,
         &selected_surfaces,
         &runtime.python_version,
-        &profile.observed_vidxp_version,
+        target_version,
     )?;
     uv_output(
         &app,
@@ -3307,7 +3344,7 @@ fn execute_worker_action(app: &AppHandle, action: &str) -> Result<LocalWorkerSta
         .arg("--index-dir")
         .arg(&profile.repository_root)
         .args(["jobs", action]);
-    let payload = execute_target_json(command, "VidXP local processing")?;
+    let payload = execute_target_json(command, "VidXP local processing", Duration::from_secs(120))?;
     serde_json::from_value(payload)
         .map_err(|error| format!("VidXP returned an invalid processing status: {error}"))
 }
@@ -3983,12 +4020,12 @@ mod tests {
         base_package_specification, capability_command_arguments, claim_browser_open,
         clean_environment_from, close_action, configure_ui_service_command,
         configured_runtime_status, dependency_installation_arguments, desktop_paths_from_roots,
-        display_command, external_installation_arguments, inventory_model_directory, manifest,
-        manifest_digest, normalize_line_endings, normalized_runtime_constraints,
-        package_acquisition_arguments, package_specification, read_active_runtime_snapshot,
-        reconcile_managed_runtime_storage, required_encoder_missing, restore_active_runtime,
-        selected_capabilities, selected_surfaces, ui_process_action, write_activation_journal,
-        write_active_runtime,
+        display_command, external_installation_arguments, external_installation_version,
+        inventory_model_directory, manifest, manifest_digest, normalize_line_endings,
+        normalized_runtime_constraints, package_acquisition_arguments, package_specification,
+        read_active_runtime_snapshot, reconcile_managed_runtime_storage, required_encoder_missing,
+        restore_active_runtime, selected_capabilities, selected_surfaces, ui_process_action,
+        write_activation_journal, write_active_runtime,
     };
     use std::{
         ffi::OsStr,
@@ -4578,6 +4615,32 @@ mod tests {
                 "0.4.0 @ https://example.invalid/package.whl",
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn external_install_updates_old_contracts_and_preserves_compatible_versions() {
+        let manifest = manifest().expect("manifest");
+        let supported = crate::target_profiles::SUPPORTED_PROBE_PROTOCOL_VERSION;
+
+        assert_eq!(
+            external_installation_version(&manifest, false, supported - 1, "older-release")
+                .expect("older contract"),
+            manifest.package_version
+        );
+        assert_eq!(
+            external_installation_version(&manifest, true, supported, "older-release")
+                .expect("missing management contract"),
+            manifest.package_version
+        );
+        assert_eq!(
+            external_installation_version(&manifest, false, supported, "compatible-release")
+                .expect("compatible contract"),
+            "compatible-release"
+        );
+        assert!(
+            external_installation_version(&manifest, false, supported + 1, "newer-release")
+                .is_err()
         );
     }
 

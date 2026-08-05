@@ -41,6 +41,13 @@ interface TargetSummaryProps {
   onOpen: () => Promise<void>;
 }
 
+const CAPABILITY_LABELS: Record<string, string> = {
+  actor: 'Actor recognition',
+  dialogue: 'Dialogue search',
+  media: 'Video tools',
+  scene: 'Visual scene search',
+};
+
 export function TargetSummary({ profile, validationError, checking, operationPending, opening, onRecheck, onManageManaged, onSetupChanged, onChooseAnother, onOpen }: TargetSummaryProps) {
   const executable = profile.display_executable;
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
@@ -58,12 +65,18 @@ export function TargetSummary({ profile, validationError, checking, operationPen
   const [externalSurfaces, setExternalSurfaces] = useState<string[]>([]);
   const [externalFailure, setExternalFailure] = useState<string | null>(null);
   const [externalTechnical, setExternalTechnical] = useState<string | null>(null);
-  const desktopSurfaceUnavailable = !profile.frontend.launchable;
-  const browserAvailable = profile.surfaces.includes('browser');
-  const workerAvailable = profile.surfaces.includes('worker');
-  const mcpAvailable = profile.surfaces.includes('mcp') || profile.surfaces.includes('server');
-  const serverAvailable = profile.surfaces.includes('server');
+  const [readinessOpened, setReadinessOpened] = useState(false);
+  const [readinessElapsed, setReadinessElapsed] = useState(0);
+  const needsRuntimeUpdate = validationError?.code === 'runtime_update_required';
+  const runtimeCompatible = !validationError;
+  const desktopSurfaceUnavailable = !runtimeCompatible || !profile.frontend.launchable;
+  const browserAvailable = runtimeCompatible && profile.surfaces.includes('browser');
+  const workerAvailable = runtimeCompatible && profile.surfaces.includes('worker');
+  const mcpAvailable = runtimeCompatible && (profile.surfaces.includes('mcp') || profile.surfaces.includes('server'));
+  const serverAvailable = runtimeCompatible && profile.surfaces.includes('server');
   const failedChecks = doctor?.checks.filter((check) => !check.ok) ?? [];
+
+  const capabilityLabel = (capability: string) => CAPABILITY_LABELS[capability] ?? capability;
 
   useEffect(() => {
     setDoctor(null);
@@ -130,9 +143,19 @@ export function TargetSummary({ profile, validationError, checking, operationPen
     return () => { active = false; clearInterval(timer); };
   }, [profile.id, workerAvailable]);
 
+  useEffect(() => {
+    if (busy !== 'doctor') return;
+    setReadinessElapsed(0);
+    const started = Date.now();
+    const timer = setInterval(() => setReadinessElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [busy]);
+
   async function runDoctor() {
     setBusy('doctor');
     setRuntimeFailure(null);
+    setDoctor(null);
+    setReadinessOpened(true);
     try {
       setDoctor(await targetDoctor());
     } catch (error) {
@@ -163,8 +186,14 @@ export function TargetSummary({ profile, validationError, checking, operationPen
     try {
       const manifest = await runtimeManifest();
       setExternalManifest(manifest);
-      setExternalCapabilities(profile.capabilities.filter((capability) => capability in manifest.capabilities));
-      setExternalSurfaces([...profile.surfaces]);
+      if (needsRuntimeUpdate) {
+        const defaultSurfaces = Object.entries(manifest.surfaces).filter(([, surface]) => surface.default).map(([id]) => id);
+        setExternalSurfaces(defaultSurfaces);
+        setExternalCapabilities(defaultSurfaces.includes('worker') ? Object.keys(manifest.capabilities) : []);
+      } else {
+        setExternalCapabilities(profile.capabilities.filter((capability) => capability in manifest.capabilities));
+        setExternalSurfaces([...profile.surfaces]);
+      }
       setExternalSetupOpened(true);
     } catch (error) {
       setRuntimeFailure(errorMessage(error, 'VidXP could not load the available setup options.'));
@@ -260,12 +289,18 @@ export function TargetSummary({ profile, validationError, checking, operationPen
         </Group>
       </div>
 
-      {desktopSurfaceUnavailable && (
+      {needsRuntimeUpdate && (
+        <Alert color="yellow" mb="md" title="Update this VidXP installation to continue">
+          <Text size="sm">This Desktop version cannot safely read or manage the features in the selected Python installation.</Text>
+          <Button mt="md" variant="light" loading={busy === 'features'} disabled={operationPending || busy !== null} onClick={() => void openExternalSetup()}>Update this installation</Button>
+        </Alert>
+      )}
+      {!needsRuntimeUpdate && desktopSurfaceUnavailable && (
         <Alert color="yellow" mb="md" title="The browser interface is not enabled">
           <Text size="sm">Other installed features are still available. Open Setup options to add the browser interface.</Text>
         </Alert>
       )}
-      {validationError && (
+      {validationError && !needsRuntimeUpdate && (
         <Alert color="red" title="This setup needs attention" role="alert" mb="md">
           {validationError.message}
           <details className="technicalDetails"><summary>Technical details</summary><Code>{validationError.code}</Code></details>
@@ -276,12 +311,13 @@ export function TargetSummary({ profile, validationError, checking, operationPen
       <div className="summaryPanel">
         <div className="summaryGrid">
           <Text>Status</Text><strong>{validationError ? 'Needs attention' : 'Connected'}</strong>
-          <Text>Available</Text><strong>{[
+          <Text>Available</Text><strong>{runtimeCompatible ? [
             workerAvailable && 'local video processing',
             !desktopSurfaceUnavailable && 'browser interface',
             mcpAvailable && 'AI assistant integration',
             serverAvailable && 'app integration service',
-          ].filter(Boolean).join(', ') || 'Command-line tools'}</strong>
+          ].filter(Boolean).join(', ') || 'Command-line tools' : 'Available after the installation is updated'}</strong>
+          <Text>Search features</Text><strong>{runtimeCompatible ? profile.capabilities.map(capabilityLabel).join(', ') || 'None installed' : 'Unknown until the installation is updated'}</strong>
           {profile.last_validated_at && <><Text>Last checked</Text><strong>{new Date(profile.last_validated_at).toLocaleString()}</strong></>}
         </div>
         <details className="technicalDetails">
@@ -310,13 +346,13 @@ export function TargetSummary({ profile, validationError, checking, operationPen
 
         <Stack gap="sm" mt="lg">
           <Group justify="space-between" className="runtimeControlRow">
-            <div><Text fw={650}>Readiness check</Text><Text size="sm" className="mutedText">Make sure video tools, search features, and downloaded models are ready to use.</Text></div>
-            <Button variant="light" leftSection={<IconActivityHeartbeat size={17} />} loading={busy === 'doctor'} disabled={operationPending || busy !== null} onClick={() => void runDoctor()}>Check readiness</Button>
+            <div><Text fw={650}>Readiness check</Text><Text size="sm" className="mutedText">Checks FFmpeg plus the packages and downloaded models required by each installed search feature.</Text></div>
+            <Button variant="light" leftSection={<IconActivityHeartbeat size={17} />} loading={busy === 'doctor'} disabled={!runtimeCompatible || operationPending || busy !== null} onClick={() => void runDoctor()}>Check readiness</Button>
           </Group>
           {doctor && (
-            <Alert color={doctor.ok ? 'teal' : 'yellow'} title={doctor.ok ? 'VidXP is ready' : `${failedChecks.length} item${failedChecks.length === 1 ? '' : 's'} need attention`}>
+            <Alert color={doctor.ok && doctor.modalities.length > 0 ? 'teal' : 'yellow'} title={doctor.ok ? doctor.modalities.length > 0 ? 'VidXP is ready' : 'Video tools are ready' : `${failedChecks.length} item${failedChecks.length === 1 ? '' : 's'} need attention`}>
               {doctor.ok
-                ? 'Your installed search features and media tools are ready.'
+                ? doctor.modalities.length > 0 ? `Ready search features: ${doctor.modalities.map(capabilityLabel).join(', ')}.` : 'No search features were reported, so this result covers only the shared video tools.'
                 : <><Text size="sm">Open setup to repair a managed installation, or use your installer to repair an external one.</Text><details className="technicalDetails"><summary>See check details</summary>{failedChecks.map((check) => <Text size="xs" key={`${check.capability}-${check.name}`}>{check.error || `${check.name} is unavailable.`}</Text>)}</details></>}
             </Alert>
           )}
@@ -372,8 +408,26 @@ export function TargetSummary({ profile, validationError, checking, operationPen
         <Group justify="flex-end" mt="md"><Button leftSection={<IconCopy size={17} />} onClick={() => void copyMcpConfig()}>{copied ? 'Copied' : 'Copy setup'}</Button></Group>
       </Modal>
 
+      <Modal opened={readinessOpened} onClose={() => { if (busy !== 'doctor') setReadinessOpened(false); }} title={busy === 'doctor' ? 'Checking VidXP readiness' : 'VidXP readiness'} size="lg" closeOnClickOutside={busy !== 'doctor'} closeOnEscape={busy !== 'doctor'}>
+        {busy === 'doctor' ? <Stack gap="md">
+          <Group><Loader size="sm" /><Text>Checking the selected installation… {readinessElapsed}s</Text></Group>
+          <Text size="sm" className="mutedText">VidXP is inspecting video tools, installed search packages, and model files. It does not download or change anything, and stops after three minutes if it cannot finish.</Text>
+          <div><Text size="sm" fw={650}>Search features expected from this installation</Text><Text size="sm">{profile.capabilities.map(capabilityLabel).join(', ') || 'The installed runtime will report these as part of the check.'}</Text></div>
+        </Stack> : doctor ? <Stack gap="sm">
+          {doctor.modalities.length > 0
+            ? <Alert color={doctor.ok ? 'teal' : 'yellow'} title={doctor.ok ? 'Ready to use' : 'Some items need attention'}>Search features checked: {doctor.modalities.map(capabilityLabel).join(', ')}.</Alert>
+            : <Alert color="yellow" title="No search features were checked">Only the shared video tools were reported by this installation.</Alert>}
+          {doctor.checks.map((check) => <Group key={`${check.capability}-${check.kind}-${check.name}`} justify="space-between" className="runtimeControlRow" wrap="nowrap">
+            <div><Text fw={650}>{check.name}</Text><Text size="xs" className="mutedText">{capabilityLabel(check.capability)} · {check.kind === 'model' ? 'Downloaded model' : 'Installed package or video tool'}</Text>{check.error && <Text size="xs" c="red">{check.error}</Text>}</div>
+            <Badge color={check.ok ? 'teal' : 'yellow'} variant="light">{check.ok ? 'Ready' : 'Needs attention'}</Badge>
+          </Group>)}
+          <Group justify="flex-end"><Button onClick={() => setReadinessOpened(false)}>Done</Button></Group>
+        </Stack> : null}
+      </Modal>
+
       <Modal opened={externalSetupOpened} onClose={() => { if (busy === null) setExternalSetupOpened(false); }} title="Change features for this installation" size="lg" closeOnClickOutside={busy === null} closeOnEscape={busy === null}>
         <Text size="sm" mb="md">Choose what VidXP can search, where video work runs, and how other apps can connect.</Text>
+        {needsRuntimeUpdate && externalManifest && <Alert color="yellow" title="This update is required" mb="md">VidXP will update this same installation from {profile.observed_vidxp_version} to {externalManifest.package_version}, then apply the selected features. It will not create a Desktop-managed copy.</Alert>}
         {externalFailure && <Alert color="red" title="Features could not be updated" mb="md">{externalFailure}{externalTechnical && <details className="technicalDetails"><summary>Technical details</summary><Code block>{externalTechnical}</Code></details>}</Alert>}
         {!externalManifest ? <Loader size="sm" /> : <Stack gap="sm">
           <Text fw={650}>Search features</Text>
@@ -389,10 +443,10 @@ export function TargetSummary({ profile, validationError, checking, operationPen
             return <Checkbox key={id} checked={externalSurfaces.includes(id)} disabled={busy !== null} onChange={(event) => { const checked = event.currentTarget.checked; setExternalSurfaces((current) => checked ? [...current, id] : current.filter((value) => value !== id)); }} label={surface.label} description={surface.description} />;
           })}
         </Stack>}
-        <Alert color="blue" mt="md" title="Your existing installation stays selected">VidXP reinstalls this isolated app environment at its current version with the selected features. It does not replace it with a Desktop-managed copy.</Alert>
+        {!needsRuntimeUpdate && <Alert color="blue" mt="md" title="Your existing installation stays selected">VidXP reinstalls this isolated app environment at its current compatible version with the selected features. It does not replace it with a Desktop-managed copy.</Alert>}
         <Group justify="flex-end" mt="md">
           <Button variant="default" disabled={busy !== null} onClick={() => setExternalSetupOpened(false)}>Cancel</Button>
-          <Button loading={busy === 'features'} disabled={busy !== null || ([...externalCapabilities].sort().join(',') === [...profile.capabilities].sort().join(',') && [...externalSurfaces].sort().join(',') === [...profile.surfaces].sort().join(','))} onClick={() => void applyExternalFeatures()}>Apply changes</Button>
+          <Button loading={busy === 'features'} disabled={busy !== null || (!needsRuntimeUpdate && [...externalCapabilities].sort().join(',') === [...profile.capabilities].sort().join(',') && [...externalSurfaces].sort().join(',') === [...profile.surfaces].sort().join(','))} onClick={() => void applyExternalFeatures()}>{needsRuntimeUpdate ? 'Update and apply' : 'Apply changes'}</Button>
         </Group>
       </Modal>
     </section>

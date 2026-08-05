@@ -23,7 +23,7 @@ const SELECTED_PROFILE_KEY: &str = "selected_profile_id";
 const CURRENT_STORE_SCHEMA_VERSION: u32 = 1;
 pub const CURRENT_PROFILE_SCHEMA_VERSION: u32 = 1;
 const SUPPORTED_PROBE_SCHEMA_VERSION: u32 = 1;
-const SUPPORTED_PROBE_PROTOCOL_VERSION: u32 = 1;
+pub const SUPPORTED_PROBE_PROTOCOL_VERSION: u32 = 1;
 const SUPPORTED_LAUNCH_PROTOCOL_VERSION: u32 = 2;
 const PRODUCT_ID: &str = "dev.grayhat.vidxp";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -67,6 +67,7 @@ pub enum TargetErrorCode {
     LauncherIdentityMismatch,
     UnsupportedProbeSchema,
     UnsupportedProbeProtocol,
+    RuntimeUpdateRequired,
     UnsupportedLaunchProtocol,
     UnsupportedLaunchContract,
     InvalidDataRoot,
@@ -264,10 +265,8 @@ struct ProbeDocument {
     model_root: PathBuf,
     #[serde(default)]
     capabilities: ProbeCapabilities,
-    #[serde(default)]
-    search_capabilities: Vec<String>,
-    #[serde(default)]
-    surfaces: BTreeMap<String, FrontendCapability>,
+    search_capabilities: Option<Vec<String>>,
+    surfaces: Option<BTreeMap<String, FrontendCapability>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -503,13 +502,16 @@ fn validate_probe_document(
             ),
         ));
     }
-    if document.protocol_version != SUPPORTED_PROBE_PROTOCOL_VERSION {
+    if document.protocol_version < SUPPORTED_PROBE_PROTOCOL_VERSION {
+        return Err(TargetError::new(
+            TargetErrorCode::RuntimeUpdateRequired,
+            "This VidXP installation must be updated before this Desktop version can manage its features and services.",
+        ));
+    }
+    if document.protocol_version > SUPPORTED_PROBE_PROTOCOL_VERSION {
         return Err(TargetError::new(
             TargetErrorCode::UnsupportedProbeProtocol,
-            format!(
-                "This executable uses desktop probe protocol {}; VidXP desktop supports protocol {}.",
-                document.protocol_version, SUPPORTED_PROBE_PROTOCOL_VERSION
-            ),
+            "This VidXP installation is newer than this Desktop version. Update VidXP Desktop before connecting it.",
         ));
     }
     if document.launch_contract.protocol_version != SUPPORTED_LAUNCH_PROTOCOL_VERSION {
@@ -543,8 +545,19 @@ fn validate_probe_document(
             ));
         }
     }
-    let surfaces = document
-        .surfaces
+    let search_capabilities = document.search_capabilities.ok_or_else(|| {
+        TargetError::new(
+            TargetErrorCode::RuntimeUpdateRequired,
+            "This VidXP installation must be updated before this Desktop version can manage its features and services.",
+        )
+    })?;
+    let surface_capabilities = document.surfaces.ok_or_else(|| {
+        TargetError::new(
+            TargetErrorCode::RuntimeUpdateRequired,
+            "This VidXP installation must be updated before this Desktop version can manage its features and services.",
+        )
+    })?;
+    let surfaces = surface_capabilities
         .iter()
         .filter(|(_, capability)| capability.available)
         .map(|(name, _)| name.clone())
@@ -566,7 +579,7 @@ fn validate_probe_document(
         repository_root: document.repository_root,
         model_root: document.model_root,
         frontend: document.capabilities.frontend,
-        capabilities: document.search_capabilities,
+        capabilities: search_capabilities,
         surfaces,
         validated_at: now,
     })
@@ -1575,7 +1588,7 @@ mod tests {
             product: PRODUCT_ID.into(),
             product_version: "0.4.0-b".into(),
             schema_version: 1,
-            protocol_version: 1,
+            protocol_version: SUPPORTED_PROBE_PROTOCOL_VERSION,
             launch_contract: ProbeLaunchContract {
                 protocol_version: 2,
                 surface: "browser".into(),
@@ -1594,8 +1607,8 @@ mod tests {
             repository_root: root.join("data").join("repositories").join("default"),
             model_root: root.join("data").join("models"),
             capabilities: ProbeCapabilities::default(),
-            search_capabilities: Vec::new(),
-            surfaces: BTreeMap::new(),
+            search_capabilities: Some(Vec::new()),
+            surfaces: Some(BTreeMap::new()),
         }
     }
 
@@ -1616,8 +1629,8 @@ mod tests {
         let executable = std::env::current_exe().expect("current executable");
         let canonical = fs::canonicalize(executable).expect("canonical executable");
         let mut probe = document(&canonical, "nonce");
-        probe.search_capabilities = vec!["scene".into()];
-        probe.surfaces.insert(
+        probe.search_capabilities = Some(vec!["scene".into()]);
+        probe.surfaces.as_mut().expect("surfaces").insert(
             "mcp".into(),
             FrontendCapability {
                 available: true,
@@ -1630,6 +1643,8 @@ mod tests {
         );
         probe
             .surfaces
+            .as_mut()
+            .expect("surfaces")
             .insert("server".into(), FrontendCapability::default());
 
         let validated =
@@ -1639,6 +1654,22 @@ mod tests {
         let profile = local_profile(validated, None);
         assert_eq!(profile.capabilities, ["scene"]);
         assert_eq!(profile.surfaces, ["mcp"]);
+    }
+
+    #[test]
+    fn probe_requires_feature_and_service_inventory() {
+        let executable = std::env::current_exe().expect("current executable");
+        let canonical = fs::canonicalize(executable).expect("canonical executable");
+        let mut probe = document(&canonical, "nonce");
+        probe.search_capabilities = None;
+        probe.surfaces = None;
+
+        assert_eq!(
+            validate_probe_document(&canonical, "nonce", probe, 100)
+                .expect_err("older management contract")
+                .code,
+            TargetErrorCode::RuntimeUpdateRequired
+        );
     }
 
     #[test]
@@ -1729,10 +1760,19 @@ mod tests {
         );
 
         let mut wrong_protocol = document(&canonical, "nonce");
-        wrong_protocol.protocol_version = 2;
+        wrong_protocol.protocol_version = SUPPORTED_PROBE_PROTOCOL_VERSION - 1;
         assert_eq!(
             validate_probe_document(&canonical, "nonce", wrong_protocol, 100)
                 .expect_err("protocol")
+                .code,
+            TargetErrorCode::RuntimeUpdateRequired
+        );
+
+        let mut newer_protocol = document(&canonical, "nonce");
+        newer_protocol.protocol_version = SUPPORTED_PROBE_PROTOCOL_VERSION + 1;
+        assert_eq!(
+            validate_probe_document(&canonical, "nonce", newer_protocol, 100)
+                .expect_err("newer protocol")
                 .code,
             TargetErrorCode::UnsupportedProbeProtocol
         );
@@ -1950,8 +1990,20 @@ mod tests {
 
         assert_eq!(inspected.state, InspectionState::ReadyToUse);
         assert!(inspected.adoptable);
-        assert_eq!(validated.product_version, "0.4.0b0");
-        assert_eq!(validated.probe_protocol_version, 1);
+        if let Some(expected_version) =
+            std::env::var_os("VIDXP_DESKTOP_INTEGRATION_EXPECTED_VERSION")
+        {
+            assert_eq!(
+                validated.product_version,
+                expected_version.to_string_lossy()
+            );
+        } else {
+            assert!(!validated.product_version.trim().is_empty());
+        }
+        assert_eq!(
+            validated.probe_protocol_version,
+            SUPPORTED_PROBE_PROTOCOL_VERSION
+        );
         assert_eq!(validated.launch_protocol_version, 2);
         assert_eq!(validated.runtime.python_version, "3.14.0");
         assert!(validated.frontend.launchable);
@@ -2040,7 +2092,7 @@ mod tests {
             executable: PathBuf::from("/runtime/bin/vidxp"),
             product_version: "0.5.0".into(),
             probe_schema_version: 1,
-            probe_protocol_version: 1,
+            probe_protocol_version: SUPPORTED_PROBE_PROTOCOL_VERSION,
             launch_protocol_version: 2,
             runtime: RuntimeIdentity {
                 python_executable: PathBuf::from("/runtime/bin/python"),
