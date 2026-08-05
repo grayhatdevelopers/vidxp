@@ -159,17 +159,21 @@ jobs:
         working-directory: desktop
         shell: bash
         run: |
-          app="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -n1)"
           dmg="$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' | head -n1)"
-          [[ -n "$app" && -n "$dmg" ]]
+          [[ -n "$dmg" ]]
+          # Tauri removes the intermediate .app after packaging the DMG.
+          codesign --verify --strict --verbose=2 "$dmg"
+          mountpoint="$(mktemp -d "$RUNNER_TEMP/vidxp-dmg.XXXXXX")"
+          trap 'hdiutil detach "$mountpoint" -quiet >/dev/null 2>&1 || true; rmdir "$mountpoint" >/dev/null 2>&1 || true' EXIT
+          hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mountpoint"
+          app="$(find "$mountpoint" -maxdepth 1 -name '*.app' | head -n1)"
+          [[ -n "$app" ]]
           # The .app is signed (Developer ID), hardened-runtime, notarized + stapled.
           codesign --verify --strict --verbose=2 "$app"
           codesign -dvv "$app" 2>&1 | grep -i 'Authority=Developer ID Application'
           codesign -dvv "$app" 2>&1 | grep -iE 'flags=.*runtime'
           xcrun stapler validate "$app"
           spctl -a -t exec -vv "$app"
-          # Tauri staples the .app, not the .dmg container; assert the dmg is signed.
-          codesign --verify --strict --verbose=2 "$dmg"
 
       - name: Verify the Windows app uses the GUI subsystem
         if: runner.os == 'Windows'

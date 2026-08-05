@@ -207,14 +207,12 @@ boundary, say so.
 The repository's
 [pull request template](../.github/pull_request_template.md) is the required
 starting point. GitHub loads it automatically for new pull requests. Complete
-all three sections:
+both sections:
 
 - **Summary:** describe the user-facing outcome and important compatibility or
-  migration behavior.
+  migration behavior. Say explicitly when a change is internal-only.
 - **Validation:** list the exact commands and real boundaries exercised. Do not
   replace results with “tests passed.”
-- **Changelog:** add the correct fragment, or explain why the change is
-  dependency-only/internal and should receive `skip-changelog`.
 
 Keep the description compact, but include:
 
@@ -225,29 +223,56 @@ Keep the description compact, but include:
 - validation actually performed; and
 - screenshots or sample output for user-interface changes.
 
-Use Conventional Commit prefixes for commits, for example:
+Use Conventional Commit prefixes for PR titles and commits that will land on a
+release channel, for example:
 
 ```text
 feat(mcp): add clip artifact discovery
 fix(frontend): keep search form submittable
 docs: clarify local installation profiles
+ci(release): verify signed macOS installers
 ```
 
 ## Release notes and versions
 
-Release Please derives versions and changelog entries from Conventional
-Commits. Make the squash-merge commit or the commits retained by a regular
-merge describe the public change accurately:
+Both release channels use Release Please's Python strategy. Release Please
+reads the Conventional Commits that land on `main` or `release`. `main`
+produces prereleases and `release` produces stable releases; both use the same
+commit-type and changelog rules.
 
-- `feat` creates a feature release.
-- `fix` and `perf` create a patch release.
-- `!` or a `BREAKING CHANGE:` footer creates a breaking release.
-- `docs`, `test`, `ci`, `build`, `refactor`, and `chore` do not publish by
-  themselves.
+| Landed commit | Changelog | Version effect |
+|---|---|---|
+| `feat(scope): ...` | Included | Minor |
+| `fix`, `perf`, `deps`, `revert`, or `docs` | Included | Patch |
+| `<type>(scope)!: ...` or a `BREAKING CHANGE:` footer | Included as breaking | Major |
+| `style`, `chore`, `refactor`, `test`, `build`, or `ci` | Hidden | None by itself |
+| Unrecognized type | Omitted | None |
 
-Write user-visible `feat`, `fix`, and `perf` subjects for users, not for the
-implementation history. Internal corrections to an unreleased feature should
-remain part of that feature rather than appear as fictional public bug fixes.
+For example, a breaking API change uses:
+
+```text
+feat(api)!: replace the legacy search response
+```
+
+Use a hidden type only for work with no user-visible release impact. A public
+fix implemented in CI or packaging still needs `fix` or `feat`, not `ci` or
+`build`.
+
+For squash merges, the final squash subject—normally the PR title—must be the
+intended Conventional Commit. To keep an internal-facing PR title or describe
+multiple release entries, add this block to the PR description:
+
+```text
+BEGIN_COMMIT_OVERRIDE
+feat(desktop): sign and notarize macOS installers
+
+fix(desktop): preserve the signed installer artifact
+END_COMMIT_OVERRIDE
+```
+
+Release Please uses the block instead of the squash commit message. It does not
+rename the PR, and the override does not work with plain merges.
+
 Release Please prepares the combined version and changelog in a pull request;
 do not edit released changelog sections by hand.
 
