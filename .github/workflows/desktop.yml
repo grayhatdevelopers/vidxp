@@ -12,6 +12,11 @@ on:
         required: false
         default: 14
         type: number
+      sign:
+        description: Sign and notarize the macOS build (requires Apple secrets).
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       checkout_ref:
@@ -24,6 +29,11 @@ on:
         required: false
         default: 14
         type: number
+      sign:
+        description: Sign and notarize the macOS build (requires Apple secrets).
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 
@@ -116,9 +126,50 @@ jobs:
       - name: Test the locked desktop crate
         run: cargo test --release --locked --manifest-path desktop/src-tauri/Cargo.toml
 
-      - name: Build the unsigned desktop installer
-        run: npm run desktop:build
+      - name: Prepare the Apple notarization key
+        id: apple_key
+        if: runner.os == 'macOS' && inputs.sign
+        shell: bash
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [[ -z "$APPLE_API_KEY_P8" ]]; then
+            echo "::error::inputs.sign is true but Apple signing secrets are missing." >&2
+            exit 1
+          fi
+          key_path="$RUNNER_TEMP/apple_api_key.p8"
+          printf '%s' "$APPLE_API_KEY_P8" | openssl base64 -d -A > "$key_path"
+          echo "path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Build the desktop installer
         working-directory: desktop
+        env:
+          VIDXP_DESKTOP_SIGN: ${{ (runner.os == 'macOS' && inputs.sign) && '1' || '' }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ steps.apple_key.outputs.path }}
+        run: npm run desktop:build
+
+      - name: Verify signing and notarization
+        if: runner.os == 'macOS' && inputs.sign
+        working-directory: desktop
+        shell: bash
+        run: |
+          app="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -n1)"
+          dmg="$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' | head -n1)"
+          [[ -n "$app" && -n "$dmg" ]]
+          # The .app is signed (Developer ID), hardened-runtime, notarized + stapled.
+          codesign --verify --strict --verbose=2 "$app"
+          codesign -dvv "$app" 2>&1 | grep -i 'Authority=Developer ID Application'
+          codesign -dvv "$app" 2>&1 | grep -iE 'flags=.*runtime'
+          xcrun stapler validate "$app"
+          spctl -a -t exec -vv "$app"
+          # Tauri staples the .app, not the .dmg container; assert the dmg is signed.
+          codesign --verify --strict --verbose=2 "$dmg"
 
       - name: Verify the Windows app uses the GUI subsystem
         if: runner.os == 'Windows'

@@ -39,11 +39,21 @@ const executable = resolve(
   ".bin",
   process.platform === "win32" ? "tauri.cmd" : "tauri",
 );
-const result = spawnSync(
-  executable,
-  ["build", "--bundles", bundleSpec.bundle, "--ci", "--no-sign", "--", "--locked"],
-  { shell: process.platform === "win32", stdio: "inherit" },
-);
+
+// Sign + notarize only when explicitly requested on macOS (release builds).
+const signMacos =
+  process.platform === "darwin" && process.env.VIDXP_DESKTOP_SIGN === "1";
+
+const buildArgs = ["build", "--bundles", bundleSpec.bundle, "--ci"];
+if (!signMacos) {
+  buildArgs.push("--no-sign");
+}
+buildArgs.push("--", "--locked");
+
+const result = spawnSync(executable, buildArgs, {
+  shell: process.platform === "win32",
+  stdio: "inherit",
+});
 
 if (result.error) {
   throw result.error;

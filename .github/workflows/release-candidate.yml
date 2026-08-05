@@ -111,6 +111,8 @@ jobs:
     with:
       artifact_retention_days: 30
       checkout_ref: ${{ inputs.head_sha }}
+      sign: true
+    secrets: inherit
 
   containers:
     needs: contract
