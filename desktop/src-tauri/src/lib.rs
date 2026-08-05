@@ -3251,13 +3251,14 @@ async fn target_doctor(
     let _active = state.active_operations.register()?;
     tauri::async_runtime::spawn_blocking(move || {
         let (profile, paths) = selected_target_context(&app)?;
+        let arguments = capability_command_arguments(&manifest()?, "doctor", &profile.capabilities);
         let mut command = target_command(&profile, &paths, &profile.executable);
         command
             .arg("--data-dir")
             .arg(&profile.data_root)
             .arg("--index-dir")
             .arg(&profile.repository_root)
-            .args(["doctor", "--json"]);
+            .args(arguments);
         execute_target_json(command, "VidXP doctor", Duration::from_secs(180))
     })
     .await
@@ -5129,6 +5130,16 @@ mod tests {
         assert_eq!(
             capability_command_arguments(&manifest, "doctor", &["dialogue".into(), "scene".into()]),
             ["doctor", "--json", "--modalities", "dialogue,scene"]
+        );
+    }
+
+    #[test]
+    fn capability_commands_pass_an_explicit_empty_option() {
+        let manifest = manifest().expect("manifest");
+
+        assert_eq!(
+            capability_command_arguments(&manifest, "doctor", &[]),
+            ["doctor", "--json", "--modalities", ""]
         );
     }
 
