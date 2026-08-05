@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{
     AppHandle, Manager, RunEvent, WindowEvent,
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -415,6 +415,22 @@ struct LocalWorkerStatus {
     detail: String,
 }
 
+#[derive(Clone)]
+struct TrayMenuItems {
+    installation: MenuItem<tauri::Wry>,
+    browser: Submenu<tauri::Wry>,
+    open_browser: MenuItem<tauri::Wry>,
+    share_browser: MenuItem<tauri::Wry>,
+    stop_browser: MenuItem<tauri::Wry>,
+    worker: Submenu<tauri::Wry>,
+    start_worker: MenuItem<tauri::Wry>,
+    stop_worker: MenuItem<tauri::Wry>,
+    server: Submenu<tauri::Wry>,
+    start_server: MenuItem<tauri::Wry>,
+    share_server: MenuItem<tauri::Wry>,
+    stop_server: MenuItem<tauri::Wry>,
+}
+
 struct DesktopState {
     ui_process: Mutex<Option<ManagedUi>>,
     api_process: Mutex<Option<ManagedApiService>>,
@@ -425,6 +441,8 @@ struct DesktopState {
     shutdown: background_process::CancellationToken,
     shutdown_started: AtomicBool,
     active_operations: Arc<ActiveOperations>,
+    worker_status: Mutex<Option<(String, Result<LocalWorkerStatus, String>)>>,
+    tray_menu: Mutex<Option<TrayMenuItems>>,
 }
 
 impl Default for DesktopState {
@@ -439,6 +457,8 @@ impl Default for DesktopState {
             shutdown: background_process::CancellationToken::default(),
             shutdown_started: AtomicBool::new(false),
             active_operations: Arc::new(ActiveOperations::default()),
+            worker_status: Mutex::new(None),
+            tray_menu: Mutex::new(None),
         }
     }
 }
@@ -2017,13 +2037,14 @@ async fn refresh_target_state(
     let desktop_version = manifest.desktop_version;
     let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::Revalidate)?;
     let cancellation = state.shutdown.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let _transition = transition;
-        match target_profiles::selected_profile(&app) {
+        match target_profiles::selected_profile(&worker_app) {
             Ok(profile) => {
                 if profile.kind == target_profiles::TargetKind::Managed {
                     let validation = (|| {
-                        let paths = desktop_paths(&app).map_err(|message| {
+                        let paths = desktop_paths(&worker_app).map_err(|message| {
                             transition_error(
                                 target_profiles::TargetErrorCode::ManagedRuntimeUnavailable,
                                 message,
@@ -2051,10 +2072,10 @@ async fn refresh_target_state(
                             Some(&cancellation),
                         )
                     })();
-                    let _ = target_profiles::persist_selected_validation(&app, validation);
+                    let _ = target_profiles::persist_selected_validation(&worker_app, validation);
                 } else {
                     let _ = target_profiles::validated_selected_profile_with_cancellation(
-                        &app,
+                        &worker_app,
                         &desktop_version,
                         Some(&cancellation),
                     );
@@ -2064,13 +2085,15 @@ async fn refresh_target_state(
                 if error.code == target_profiles::TargetErrorCode::SelectedProfileMissing => {}
             Err(error) => return Err(error),
         }
-        target_profiles::current_state(&app)
+        target_profiles::current_state(&worker_app)
     })
     .await
     .map_err(|error| target_profiles::TargetError {
         code: target_profiles::TargetErrorCode::ValidationRequired,
         message: format!("Target revalidation stopped unexpectedly: {error}"),
-    })?
+    })??;
+    refresh_tray_for_selected_target(&app);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -2144,7 +2167,8 @@ async fn adopt_local_target(
     let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::Adopt)?;
     let desktop_version = manifest.desktop_version;
     let cancellation = state.shutdown.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let _transition = transition;
         let canonical =
             fs::canonicalize(Path::new(&executable)).unwrap_or_else(|_| PathBuf::from(&executable));
@@ -2154,9 +2178,9 @@ async fn adopt_local_target(
             Some(&cancellation),
             |path| Command::new(path),
         )?;
-        let setup = target_profiles::adopt_validated(&app, validated, display_name)?;
-        stop_ui_process(&app.state::<DesktopState>());
-        stop_api_process(&app.state::<DesktopState>());
+        let setup = target_profiles::adopt_validated(&worker_app, validated, display_name)?;
+        stop_ui_process(&worker_app.state::<DesktopState>());
+        stop_api_process(&worker_app.state::<DesktopState>());
         Ok(setup)
     })
     .await
@@ -2165,7 +2189,9 @@ async fn adopt_local_target(
             target_profiles::TargetErrorCode::ValidationRequired,
             format!("Target adoption stopped unexpectedly: {error}"),
         )
-    })?
+    })??;
+    refresh_tray_for_selected_target(&app);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -2182,9 +2208,10 @@ async fn select_target_profile(
     let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::Select)?;
     let desktop_version = manifest.desktop_version;
     let cancellation = state.shutdown.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let _transition = transition;
-        let candidate = target_profiles::current_state(&app)?
+        let candidate = target_profiles::current_state(&worker_app)?
             .profiles
             .into_iter()
             .find(|profile| profile.id == profile_id)
@@ -2195,7 +2222,7 @@ async fn select_target_profile(
                 )
             })?;
         let setup = if candidate.kind == target_profiles::TargetKind::Managed {
-            let paths = desktop_paths(&app).map_err(|message| {
+            let paths = desktop_paths(&worker_app).map_err(|message| {
                 transition_error(
                     target_profiles::TargetErrorCode::ManagedRuntimeUnavailable,
                     message,
@@ -2220,12 +2247,12 @@ async fn select_target_profile(
                 &desktop_version,
                 Some(&cancellation),
             )?;
-            target_profiles::select_validated_profile(&app, &profile_id, validated)?
+            target_profiles::select_validated_profile(&worker_app, &profile_id, validated)?
         } else {
-            target_profiles::select_profile(&app, &profile_id, &desktop_version)?
+            target_profiles::select_profile(&worker_app, &profile_id, &desktop_version)?
         };
-        stop_ui_process(&app.state::<DesktopState>());
-        stop_api_process(&app.state::<DesktopState>());
+        stop_ui_process(&worker_app.state::<DesktopState>());
+        stop_api_process(&worker_app.state::<DesktopState>());
         Ok(setup)
     })
     .await
@@ -2234,7 +2261,9 @@ async fn select_target_profile(
             target_profiles::TargetErrorCode::ValidationRequired,
             format!("Target selection stopped unexpectedly: {error}"),
         )
-    })?
+    })??;
+    refresh_tray_for_selected_target(&app);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -2245,13 +2274,14 @@ async fn delete_target_profile(
 ) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
     let _active = track_target_operation(&state)?;
     let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::Delete)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let _transition = transition;
-        let selected = target_profiles::current_state(&app)?.selected_profile_id;
-        let result = target_profiles::delete_profile(&app, &profile_id)?;
+        let selected = target_profiles::current_state(&worker_app)?.selected_profile_id;
+        let result = target_profiles::delete_profile(&worker_app, &profile_id)?;
         if selected.as_deref() == Some(&profile_id) {
-            stop_ui_process(&app.state::<DesktopState>());
-            stop_api_process(&app.state::<DesktopState>());
+            stop_ui_process(&worker_app.state::<DesktopState>());
+            stop_api_process(&worker_app.state::<DesktopState>());
         }
         Ok(result)
     })
@@ -2261,7 +2291,9 @@ async fn delete_target_profile(
             target_profiles::TargetErrorCode::ValidationRequired,
             format!("Target deletion stopped unexpectedly: {error}"),
         )
-    })?
+    })??;
+    refresh_tray_for_selected_target(&app);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -2881,6 +2913,7 @@ async fn install_runtime(
     stop_ui_process(&state);
     stop_api_process(&state);
     transition.commit_draft();
+    refresh_tray_for_selected_target(&app);
 
     Ok(InstallTransitionResult {
         install: InstallResult {
@@ -3056,11 +3089,7 @@ fn stop_ui_process(state: &DesktopState) {
     }
 }
 
-#[tauri::command]
-fn browser_service_status(
-    state: tauri::State<'_, DesktopState>,
-) -> Result<BrowserServiceStatus, String> {
-    let _active = state.active_operations.register()?;
+fn inspect_browser_service(state: &DesktopState) -> Result<BrowserServiceStatus, String> {
     let mut active = state
         .ui_process
         .lock()
@@ -3081,25 +3110,46 @@ fn browser_service_status(
 }
 
 #[tauri::command]
-async fn start_shared_browser(
+fn browser_service_status(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
 ) -> Result<BrowserServiceStatus, String> {
     let _active = state.active_operations.register()?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<DesktopState>();
-        start_ui(&app, &state, true)
+    let status = inspect_browser_service(&state)?;
+    refresh_tray_menu(&app);
+    Ok(status)
+}
+
+async fn start_browser_mode(app: AppHandle, shared: bool) -> Result<BrowserServiceStatus, String> {
+    let state = app.state::<DesktopState>();
+    let _active = state.active_operations.register()?;
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app.state::<DesktopState>();
+        start_ui(&worker_app, &state, shared)
     })
     .await
-    .map_err(|error| format!("Browser sharing startup stopped unexpectedly: {error}"))?
+    .map_err(|error| format!("Browser sharing startup stopped unexpectedly: {error}"))?;
+    refresh_tray_menu(&app);
+    result
+}
+
+#[tauri::command]
+async fn start_shared_browser(
+    app: AppHandle,
+    _state: tauri::State<'_, DesktopState>,
+) -> Result<BrowserServiceStatus, String> {
+    start_browser_mode(app, true).await
 }
 
 #[tauri::command]
 fn stop_browser_service(
+    app: AppHandle,
     state: tauri::State<'_, DesktopState>,
 ) -> Result<BrowserServiceStatus, String> {
     let _active = state.active_operations.register()?;
     stop_ui_process(&state);
+    refresh_tray_menu(&app);
     Ok(stopped_browser_status("The browser interface was stopped."))
 }
 
@@ -3227,7 +3277,7 @@ async fn configure_external_installation(
         && selected_surfaces == profile.surfaces
         && selected_capabilities == profile.capabilities
     {
-        return Ok(target_profiles::current_state(&app).map_err(|error| error.to_string())?);
+        return target_profiles::current_state(&app).map_err(|error| error.to_string());
     }
     let runtime = profile.runtime.as_ref().ok_or_else(|| {
         "The selected installation did not report its Python environment.".to_string()
@@ -3286,7 +3336,9 @@ async fn configure_external_installation(
         Some(&state.shutdown),
     )
     .map_err(|error| error.to_string())?;
-    target_profiles::current_state(&app).map_err(|error| error.to_string())
+    let result = target_profiles::current_state(&app).map_err(|error| error.to_string())?;
+    refresh_tray_for_selected_target(&app);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -3349,37 +3401,57 @@ fn execute_worker_action(app: &AppHandle, action: &str) -> Result<LocalWorkerSta
         .map_err(|error| format!("VidXP returned an invalid processing status: {error}"))
 }
 
+fn remember_worker_status(
+    state: &DesktopState,
+    profile_id: String,
+    status: &Result<LocalWorkerStatus, String>,
+) {
+    if let Ok(mut current) = state.worker_status.lock() {
+        *current = Some((profile_id, status.clone()));
+    }
+}
+
+async fn run_worker_action(
+    app: AppHandle,
+    action: &'static str,
+) -> Result<LocalWorkerStatus, String> {
+    let state = app.state::<DesktopState>();
+    let _active = state.active_operations.register()?;
+    let profile_id = target_profiles::selected_profile(&app)
+        .map_err(|error| error.to_string())?
+        .id;
+    let worker_app = app.clone();
+    let result =
+        tauri::async_runtime::spawn_blocking(move || execute_worker_action(&worker_app, action))
+            .await
+            .map_err(|error| format!("Local processing action stopped unexpectedly: {error}"))?;
+    remember_worker_status(&state, profile_id, &result);
+    refresh_tray_menu(&app);
+    result
+}
+
 #[tauri::command]
 async fn local_worker_status(
     app: AppHandle,
-    state: tauri::State<'_, DesktopState>,
+    _state: tauri::State<'_, DesktopState>,
 ) -> Result<LocalWorkerStatus, String> {
-    let _active = state.active_operations.register()?;
-    tauri::async_runtime::spawn_blocking(move || execute_worker_action(&app, "worker-status"))
-        .await
-        .map_err(|error| format!("Local processing status stopped unexpectedly: {error}"))?
+    run_worker_action(app, "worker-status").await
 }
 
 #[tauri::command]
 async fn start_local_worker(
     app: AppHandle,
-    state: tauri::State<'_, DesktopState>,
+    _state: tauri::State<'_, DesktopState>,
 ) -> Result<LocalWorkerStatus, String> {
-    let _active = state.active_operations.register()?;
-    tauri::async_runtime::spawn_blocking(move || execute_worker_action(&app, "start-worker"))
-        .await
-        .map_err(|error| format!("Local processing startup stopped unexpectedly: {error}"))?
+    run_worker_action(app, "start-worker").await
 }
 
 #[tauri::command]
 async fn stop_local_worker(
     app: AppHandle,
-    state: tauri::State<'_, DesktopState>,
+    _state: tauri::State<'_, DesktopState>,
 ) -> Result<LocalWorkerStatus, String> {
-    let _active = state.active_operations.register()?;
-    tauri::async_runtime::spawn_blocking(move || execute_worker_action(&app, "stop-worker"))
-        .await
-        .map_err(|error| format!("Local processing shutdown stopped unexpectedly: {error}"))?
+    run_worker_action(app, "stop-worker").await
 }
 
 fn http_health_is_ready(host: &str, port: u16) -> bool {
@@ -3449,9 +3521,7 @@ fn stop_api_process(state: &DesktopState) {
     }
 }
 
-#[tauri::command]
-fn local_server_status(state: tauri::State<'_, DesktopState>) -> Result<LocalServerStatus, String> {
-    let _active = state.active_operations.register()?;
+fn inspect_local_server(state: &DesktopState) -> Result<LocalServerStatus, String> {
     let mut active = state
         .api_process
         .lock()
@@ -3474,6 +3544,17 @@ fn local_server_status(state: tauri::State<'_, DesktopState>) -> Result<LocalSer
     }
     let healthy = http_health_is_ready(&service.health_host, service.port);
     Ok(running_server_status(service, healthy))
+}
+
+#[tauri::command]
+fn local_server_status(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<LocalServerStatus, String> {
+    let _active = state.active_operations.register()?;
+    let status = inspect_local_server(&state)?;
+    refresh_tray_menu(&app);
+    Ok(status)
 }
 
 fn api_service_command(
@@ -3608,40 +3689,44 @@ fn start_server_mode(
     Ok(status)
 }
 
-async fn start_server(
-    app: AppHandle,
-    state: tauri::State<'_, DesktopState>,
-    shared: bool,
-) -> Result<LocalServerStatus, String> {
+async fn start_server(app: AppHandle, shared: bool) -> Result<LocalServerStatus, String> {
+    let state = app.state::<DesktopState>();
     let _active = state.active_operations.register()?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<DesktopState>();
-        start_server_mode(&app, &state, shared)
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app.state::<DesktopState>();
+        start_server_mode(&worker_app, &state, shared)
     })
     .await
-    .map_err(|error| format!("Local service startup stopped unexpectedly: {error}"))?
+    .map_err(|error| format!("Local service startup stopped unexpectedly: {error}"))?;
+    refresh_tray_menu(&app);
+    result
 }
 
 #[tauri::command]
 async fn start_local_server(
     app: AppHandle,
-    state: tauri::State<'_, DesktopState>,
+    _state: tauri::State<'_, DesktopState>,
 ) -> Result<LocalServerStatus, String> {
-    start_server(app, state, false).await
+    start_server(app, false).await
 }
 
 #[tauri::command]
 async fn start_shared_server(
     app: AppHandle,
-    state: tauri::State<'_, DesktopState>,
+    _state: tauri::State<'_, DesktopState>,
 ) -> Result<LocalServerStatus, String> {
-    start_server(app, state, true).await
+    start_server(app, true).await
 }
 
 #[tauri::command]
-fn stop_local_server(state: tauri::State<'_, DesktopState>) -> Result<LocalServerStatus, String> {
+fn stop_local_server(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<LocalServerStatus, String> {
     let _active = state.active_operations.register()?;
     stop_api_process(&state);
+    refresh_tray_menu(&app);
     Ok(stopped_server_status(
         "The Desktop-owned API and MCP service was stopped.",
     ))
@@ -3747,20 +3832,26 @@ async fn open_ui_in_browser(app: AppHandle) -> Result<(), String> {
     let _active = state.active_operations.register()?;
     let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::OpenBrowser)
         .map_err(|error| error.to_string())?;
-    let worker_app = app.clone();
-    let status = tauri::async_runtime::spawn_blocking(move || {
-        let _transition = transition;
-        let state = worker_app.state::<DesktopState>();
-        start_ui(&worker_app, &state, false)
-    })
-    .await
-    .map_err(|error| format!("VidXP interface startup stopped unexpectedly: {error}"))??;
+    let current = inspect_browser_service(&state)?;
+    let status = if current.running {
+        current
+    } else {
+        let worker_app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _transition = transition;
+            let state = worker_app.state::<DesktopState>();
+            start_ui(&worker_app, &state, false)
+        })
+        .await
+        .map_err(|error| format!("VidXP interface startup stopped unexpectedly: {error}"))??
+    };
     let url = status
         .local_url
         .ok_or_else(|| "VidXP did not report its local browser address.".to_string())?;
     app.opener()
         .open_url(&url, None::<&str>)
         .map_err(|error| format!("Could not open VidXP in the default browser: {error}"))?;
+    refresh_tray_menu(&app);
     hide_main_window(&app)
 }
 
@@ -3782,10 +3873,208 @@ fn open_browser_or_show_manager(app: &AppHandle) {
     });
 }
 
+fn current_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(u64::MAX)
+}
+
+fn tray_installation_label(profile: Option<&target_profiles::TargetProfile>, now: u64) -> String {
+    let Some(profile) = profile else {
+        return "No VidXP installation selected".into();
+    };
+    let state = match profile.validation_error.as_ref().map(|error| &error.code) {
+        Some(target_profiles::TargetErrorCode::RuntimeUpdateRequired) => "Update required",
+        Some(_) => "Needs attention",
+        None if !profile.is_ready(now) => "Check required",
+        None => "Ready",
+    };
+    format!("{} · {state}", profile.display_name)
+}
+
+fn tray_browser_label(status: &BrowserServiceStatus) -> String {
+    if !status.running {
+        return "Browser interface · Stopped".into();
+    }
+    if status.shared {
+        return format!(
+            "Browser interface · Shared · {}",
+            status
+                .network_url
+                .as_deref()
+                .unwrap_or("address unavailable")
+        );
+    }
+    format!(
+        "Browser interface · Private · {}",
+        status.local_url.as_deref().unwrap_or("address unavailable")
+    )
+}
+
+fn tray_server_label(status: &LocalServerStatus) -> String {
+    if !status.running {
+        return "App integration service · Stopped".into();
+    }
+    format!(
+        "App integration service · {} · {}",
+        if status.shared { "Shared" } else { "Private" },
+        status.origin.as_deref().unwrap_or("address unavailable")
+    )
+}
+
+fn refresh_tray_menu(app: &AppHandle) {
+    let state = app.state::<DesktopState>();
+    let items = state.tray_menu.lock().ok().and_then(|items| items.clone());
+    let Some(items) = items else {
+        return;
+    };
+    let target_state = target_profiles::current_state(app).ok();
+    let profile = target_state
+        .as_ref()
+        .and_then(target_profiles::TargetState::selected_profile);
+    let ready = profile.is_some_and(|profile| profile.is_ready(current_unix_seconds()));
+    let browser_available = ready && profile.is_some_and(|profile| profile.frontend.launchable);
+    let worker_available = ready
+        && profile
+            .is_some_and(|profile| profile.surfaces.iter().any(|surface| surface == "worker"));
+    let server_available = ready
+        && profile
+            .is_some_and(|profile| profile.surfaces.iter().any(|surface| surface == "server"));
+    let browser = inspect_browser_service(&state)
+        .unwrap_or_else(|error| stopped_browser_status(format!("Status unavailable: {error}")));
+    let server = inspect_local_server(&state)
+        .unwrap_or_else(|error| stopped_server_status(format!("Status unavailable: {error}")));
+    let worker = profile.and_then(|profile| {
+        state.worker_status.lock().ok().and_then(|cached| {
+            cached
+                .as_ref()
+                .filter(|(profile_id, _)| profile_id == &profile.id)
+                .map(|(_, status)| status.clone())
+        })
+    });
+
+    let _ = items
+        .installation
+        .set_text(tray_installation_label(profile, current_unix_seconds()));
+    let _ = items.browser.set_text(tray_browser_label(&browser));
+    let _ = items.browser.set_enabled(browser_available);
+    let _ = items.open_browser.set_enabled(browser_available);
+    let _ = items
+        .share_browser
+        .set_enabled(browser_available && !browser.shared);
+    let _ = items.stop_browser.set_enabled(browser.running);
+
+    let worker_label = match worker.as_ref() {
+        Some(Ok(status)) if status.running => "Local video processing · Running",
+        Some(Ok(_)) => "Local video processing · Stopped",
+        Some(Err(_)) => "Local video processing · Needs attention",
+        None => "Local video processing · Checking…",
+    };
+    let _ = items.worker.set_text(worker_label);
+    let _ = items.worker.set_enabled(worker_available);
+    let _ = items.start_worker.set_enabled(
+        worker_available
+            && worker
+                .as_ref()
+                .is_some_and(|status| status.as_ref().is_ok_and(|status| !status.running)),
+    );
+    let _ = items.stop_worker.set_enabled(
+        worker
+            .as_ref()
+            .is_some_and(|status| status.as_ref().is_ok_and(|status| status.running)),
+    );
+
+    let _ = items.server.set_text(tray_server_label(&server));
+    let _ = items.server.set_enabled(server_available);
+    let _ = items.start_server.set_text(if server.shared {
+        "Make private"
+    } else {
+        "Start privately"
+    });
+    let _ = items
+        .start_server
+        .set_enabled(server_available && (!server.running || server.shared));
+    let _ = items
+        .share_server
+        .set_enabled(server_available && !server.shared);
+    let _ = items.stop_server.set_enabled(server.running);
+}
+
+fn refresh_tray_for_selected_target(app: &AppHandle) {
+    let state = app.state::<DesktopState>();
+    if let Ok(mut worker) = state.worker_status.lock() {
+        *worker = None;
+    }
+    refresh_tray_menu(app);
+    let profile = target_profiles::selected_profile(app).ok();
+    if profile.is_some_and(|profile| {
+        profile.is_ready(current_unix_seconds())
+            && profile.surfaces.iter().any(|surface| surface == "worker")
+    }) {
+        let status_app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = run_worker_action(status_app, "worker-status").await;
+        });
+    }
+}
+
+fn show_tray_action_error(app: &AppHandle, error: String) {
+    show_main_window(app);
+    app.dialog()
+        .message(error)
+        .title("VidXP action could not complete")
+        .kind(MessageDialogKind::Error)
+        .blocking_show();
+}
+
+fn perform_service_action(app: &AppHandle, action: DesktopAction) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let result = match action {
+            DesktopAction::ShareBrowser => start_browser_mode(app.clone(), true).await.map(|_| ()),
+            DesktopAction::StopBrowser => {
+                let state = app.state::<DesktopState>();
+                state.active_operations.register().map(|_active| {
+                    stop_ui_process(&state);
+                    refresh_tray_menu(&app);
+                })
+            }
+            DesktopAction::StartWorker => run_worker_action(app.clone(), "start-worker")
+                .await
+                .map(|_| ()),
+            DesktopAction::StopWorker => run_worker_action(app.clone(), "stop-worker")
+                .await
+                .map(|_| ()),
+            DesktopAction::StartServer => start_server(app.clone(), false).await.map(|_| ()),
+            DesktopAction::ShareServer => start_server(app.clone(), true).await.map(|_| ()),
+            DesktopAction::StopServer => {
+                let state = app.state::<DesktopState>();
+                state.active_operations.register().map(|_active| {
+                    stop_api_process(&state);
+                    refresh_tray_menu(&app);
+                })
+            }
+            DesktopAction::Manage | DesktopAction::OpenBrowser | DesktopAction::Quit => Ok(()),
+        };
+        if let Err(error) = result {
+            refresh_tray_menu(&app);
+            show_tray_action_error(&app, error);
+        }
+    });
+}
+
 fn perform_desktop_action(app: &AppHandle, action: DesktopAction) {
     match action {
         DesktopAction::Manage => show_main_window(app),
         DesktopAction::OpenBrowser => open_browser_or_show_manager(app),
+        DesktopAction::ShareBrowser
+        | DesktopAction::StopBrowser
+        | DesktopAction::StartWorker
+        | DesktopAction::StopWorker
+        | DesktopAction::StartServer
+        | DesktopAction::ShareServer
+        | DesktopAction::StopServer => perform_service_action(app, action),
         DesktopAction::Quit => begin_shutdown(app),
     }
 }
@@ -3831,10 +4120,95 @@ async fn launch_ui(app: AppHandle) -> Result<(), String> {
 }
 
 fn create_tray(app: &tauri::App) -> tauri::Result<()> {
+    let installation = MenuItem::with_id(
+        app,
+        "installation-status",
+        "VidXP installation",
+        false,
+        None::<&str>,
+    )?;
     let open = MenuItem::with_id(app, "open", "Open VidXP", true, None::<&str>)?;
+    let share_browser = MenuItem::with_id(
+        app,
+        "share-browser",
+        "Share on local network",
+        true,
+        None::<&str>,
+    )?;
+    let stop_browser = MenuItem::with_id(
+        app,
+        "stop-browser",
+        "Stop browser interface",
+        false,
+        None::<&str>,
+    )?;
+    let browser = Submenu::with_items(
+        app,
+        "Browser interface",
+        true,
+        &[&share_browser, &stop_browser],
+    )?;
+    let start_worker =
+        MenuItem::with_id(app, "start-worker", "Start processing", false, None::<&str>)?;
+    let stop_worker =
+        MenuItem::with_id(app, "stop-worker", "Stop processing", false, None::<&str>)?;
+    let worker = Submenu::with_items(
+        app,
+        "Local video processing",
+        true,
+        &[&start_worker, &stop_worker],
+    )?;
+    let start_server =
+        MenuItem::with_id(app, "start-server", "Start privately", true, None::<&str>)?;
+    let share_server = MenuItem::with_id(
+        app,
+        "share-server",
+        "Share on local network",
+        true,
+        None::<&str>,
+    )?;
+    let stop_server = MenuItem::with_id(app, "stop-server", "Stop service", false, None::<&str>)?;
+    let server = Submenu::with_items(
+        app,
+        "App integration service",
+        true,
+        &[&start_server, &share_server, &stop_server],
+    )?;
     let manage = MenuItem::with_id(app, "manage", "Manage VidXP", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit VidXP", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &manage, &quit])?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let separator_two = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &installation,
+            &separator,
+            &open,
+            &browser,
+            &worker,
+            &server,
+            &separator_two,
+            &manage,
+            &quit,
+        ],
+    )?;
+    let items = TrayMenuItems {
+        installation,
+        browser,
+        open_browser: open,
+        share_browser,
+        stop_browser,
+        worker,
+        start_worker,
+        stop_worker,
+        server,
+        start_server,
+        share_server,
+        stop_server,
+    };
+    if let Ok(mut current) = app.state::<DesktopState>().tray_menu.lock() {
+        *current = Some(items);
+    }
     let mut tray = TrayIconBuilder::with_id("vidxp")
         .tooltip("VidXP")
         .menu(&menu)
@@ -3850,6 +4224,7 @@ fn create_tray(app: &tauri::App) -> tauri::Result<()> {
         tray = tray.icon(icon.clone());
     }
     tray.build(app)?;
+    refresh_tray_for_selected_target(app.handle());
     Ok(())
 }
 
@@ -4777,7 +5152,7 @@ mod tests {
     }
 
     #[test]
-    fn tray_manage_browser_and_quit_actions_are_unambiguous() {
+    fn tray_service_actions_are_unambiguous() {
         assert_eq!(
             action_for_activation(DesktopActivation::Tray("manage")),
             Some(DesktopAction::Manage)
@@ -4786,6 +5161,20 @@ mod tests {
             action_for_activation(DesktopActivation::Tray("open")),
             Some(DesktopAction::OpenBrowser)
         );
+        for (id, expected) in [
+            ("share-browser", DesktopAction::ShareBrowser),
+            ("stop-browser", DesktopAction::StopBrowser),
+            ("start-worker", DesktopAction::StartWorker),
+            ("stop-worker", DesktopAction::StopWorker),
+            ("start-server", DesktopAction::StartServer),
+            ("share-server", DesktopAction::ShareServer),
+            ("stop-server", DesktopAction::StopServer),
+        ] {
+            assert_eq!(
+                action_for_activation(DesktopActivation::Tray(id)),
+                Some(expected)
+            );
+        }
         assert_eq!(
             action_for_activation(DesktopActivation::Tray("quit")),
             Some(DesktopAction::Quit)
@@ -4793,6 +5182,43 @@ mod tests {
         assert_eq!(
             action_for_activation(DesktopActivation::Tray("other")),
             None
+        );
+    }
+
+    #[test]
+    fn tray_service_labels_surface_scope_and_addresses() {
+        let browser = super::BrowserServiceStatus {
+            state: "ready",
+            running: true,
+            shared: true,
+            port: Some(43124),
+            local_url: Some("http://127.0.0.1:43124".into()),
+            network_url: Some("http://192.168.1.20:43124".into()),
+            detail: String::new(),
+        };
+        let server = super::LocalServerStatus {
+            state: "ready",
+            running: true,
+            shared: false,
+            port: Some(43125),
+            origin: Some("http://127.0.0.1:43125".into()),
+            health_url: Some("http://127.0.0.1:43125/health".into()),
+            mcp_url: Some("http://127.0.0.1:43125/mcp".into()),
+            bearer_token: None,
+            detail: String::new(),
+        };
+
+        assert_eq!(
+            super::tray_browser_label(&browser),
+            "Browser interface · Shared · http://192.168.1.20:43124"
+        );
+        assert_eq!(
+            super::tray_server_label(&server),
+            "App integration service · Private · http://127.0.0.1:43125"
+        );
+        assert_eq!(
+            super::tray_installation_label(None, 0),
+            "No VidXP installation selected"
         );
     }
 

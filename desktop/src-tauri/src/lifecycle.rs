@@ -14,6 +14,13 @@ pub(crate) enum UiProcessAction {
 pub(crate) enum DesktopAction {
     Manage,
     OpenBrowser,
+    ShareBrowser,
+    StopBrowser,
+    StartWorker,
+    StopWorker,
+    StartServer,
+    ShareServer,
+    StopServer,
     Quit,
 }
 
@@ -37,6 +44,13 @@ pub(crate) fn action_for_activation(activation: DesktopActivation<'_>) -> Option
         }
         DesktopActivation::Tray("manage") => Some(DesktopAction::Manage),
         DesktopActivation::Tray("open") => Some(DesktopAction::OpenBrowser),
+        DesktopActivation::Tray("share-browser") => Some(DesktopAction::ShareBrowser),
+        DesktopActivation::Tray("stop-browser") => Some(DesktopAction::StopBrowser),
+        DesktopActivation::Tray("start-worker") => Some(DesktopAction::StartWorker),
+        DesktopActivation::Tray("stop-worker") => Some(DesktopAction::StopWorker),
+        DesktopActivation::Tray("start-server") => Some(DesktopAction::StartServer),
+        DesktopActivation::Tray("share-server") => Some(DesktopAction::ShareServer),
+        DesktopActivation::Tray("stop-server") => Some(DesktopAction::StopServer),
         DesktopActivation::Tray("quit") => Some(DesktopAction::Quit),
         DesktopActivation::Tray(_) => None,
     }
