@@ -465,7 +465,7 @@ fn collect_probe_output(
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 fn collect_version_output(executable: &Path) -> Result<ProbeOutput, TargetError> {
     collect_command_output(executable, &["--version"], "The VidXP version check", None)
 }
@@ -680,7 +680,7 @@ pub fn validate_executable(
     validate_executable_with(path, desktop_version, collect_probe_output)
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 fn inspect_executable(path: &Path, desktop_version: &str) -> Result<TargetInspection, TargetError> {
     inspect_executable_with(
         path,
