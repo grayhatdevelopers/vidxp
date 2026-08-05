@@ -103,6 +103,7 @@ jobs:
       - name: Download and install the exact TestPyPI artifact
         shell: bash
         run: |
+          download_succeeded=false
           for _ in {1..30}; do
             state="$(
               python utils/verify_published_distribution.py \
@@ -111,17 +112,18 @@ jobs:
                 --version "${{ needs.build.outputs.version }}" \
                 --dist dist
             )"
-            [[ "$state" == "identical" ]] && break
+            if [[ "$state" == "identical" ]] && python -m pip download \
+              --index-url https://test.pypi.org/simple \
+              --no-deps \
+              --no-cache-dir \
+              --dest downloaded \
+              "vidxp==${{ needs.build.outputs.version }}"; then
+              download_succeeded=true
+              break
+            fi
             sleep 10
           done
-          [[ "$state" == "identical" ]]
-
-          python -m pip download \
-            --index-url https://test.pypi.org/simple \
-            --no-deps \
-            --no-cache-dir \
-            --dest downloaded \
-            "vidxp==${{ needs.build.outputs.version }}"
+          [[ "$download_succeeded" == "true" ]]
           [[ "$(sha256sum dist/*.whl | cut -d' ' -f1)" == \
               "$(sha256sum downloaded/*.whl | cut -d' ' -f1)" ]]
           python -m venv .testpypi-smoke
