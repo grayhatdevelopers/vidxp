@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from importlib import import_module
+import json
+import subprocess
+import sys
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
@@ -295,12 +297,27 @@ def module_import_check(
     *attributes: str,
 ) -> RuntimeCheck:
     def check() -> None:
-        module = import_module(module_name)
-        for attribute in attributes:
-            if not hasattr(module, attribute):
-                raise AttributeError(
-                    f"{module_name} does not expose {attribute}."
-                )
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import importlib,json,sys;"
+                    "name,attrs=json.loads(sys.argv[1]);"
+                    "module=importlib.import_module(name);"
+                    "missing=[attr for attr in attrs if not hasattr(module,attr)];"
+                    "sys.exit(1 if missing else 0)"
+                ),
+                json.dumps((module_name, attributes)),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60,
+            check=False,
+        )
+        if probe.returncode != 0:
+            raise RuntimeError(f"{module_name} import probe failed.")
 
     return RuntimeCheck(label=label, check=check)
 

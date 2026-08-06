@@ -1150,8 +1150,9 @@ uncancellable model thread inside the UI process.
 
 The Phase 11 adapter is a small Tauri v2 shell. Its first-run configuration
 selects capability extras, optional interfaces, model preparation, and model
-storage, while the processing application is the exact published VidXP package
-installed into a versioned uv-managed environment. When selected, the Streamlit
+storage, while the processing application is the exact release VidXP wheel
+embedded in the installer and installed into a versioned uv-managed
+environment. When selected, the Streamlit
 adapter is the local human interface on a random loopback port; remote loopback
 content receives no Tauri IPC access. Runtime activation is atomic and a failed
 configuration retains the prior environment. Tauri owns the Streamlit process

@@ -206,10 +206,11 @@ jobs:
         if: >-
           needs.scope.outputs.run_suite == 'true' &&
           matrix.python-version == '3.14' &&
-          inputs.package_artifact_name != ''
+          (needs.scope.outputs.run_desktop == 'true' ||
+          inputs.package_artifact_name != '')
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ inputs.package_artifact_name }}
+          name: ${{ inputs.package_artifact_name || 'vidxp-python-dist' }}
           path: dist/
           if-no-files-found: error
           retention-days: 30
@@ -268,10 +269,13 @@ jobs:
     if: >-
       github.event_name == 'pull_request' &&
       needs.scope.outputs.run_desktop == 'true'
-    needs: scope
+    needs:
+      - scope
+      - validate
     uses: ./.github/workflows/desktop.yml
     with:
       checkout_ref: ${{ github.sha }}
+      package_artifact_name: ${{ inputs.package_artifact_name || 'vidxp-python-dist' }}
 
   required:
     if: always() && github.event_name == 'pull_request'

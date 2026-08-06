@@ -16,6 +16,7 @@ from vidxp.capabilities.contracts import (
     CapabilityProvenance,
     OperationDefinition,
     RuntimeCheck,
+    module_import_check,
 )
 from vidxp.capabilities.dialogue.config import DialogueConfig
 from vidxp.capabilities.registry import (
@@ -39,6 +40,23 @@ class ExampleOutput(CapabilityOutput):
 class CapabilityTests(unittest.TestCase):
     def setUp(self):
         self.registry = create_capability_registry()
+
+    def test_module_import_checks_run_in_an_isolated_process(self):
+        with patch(
+            "vidxp.capabilities.contracts.subprocess.run",
+            return_value=SimpleNamespace(returncode=0),
+        ) as run:
+            result = module_import_check(
+                "OpenCV import",
+                "cv2",
+                "VideoCapture",
+            ).inspect()
+
+        self.assertTrue(result["ok"])
+        command = run.call_args.args[0]
+        self.assertEqual(command[1], "-c")
+        self.assertIn('"cv2"', command[3])
+        self.assertIn('"VideoCapture"', command[3])
 
     def test_registry_drives_capability_metadata(self):
         self.assertEqual(

@@ -9,6 +9,53 @@ fn main() {
     let expected = manifest["uv_version"]
         .as_str()
         .expect("runtime manifest must contain uv_version");
+    let package_name = manifest["package_name"]
+        .as_str()
+        .expect("runtime manifest must contain package_name");
+    let package_version = manifest["package_version"]
+        .as_str()
+        .expect("runtime manifest must contain package_version");
+    let wheel_version = package_version.replace("-b.", "b").replace("-b", "b");
+    let wheel_prefix = format!("{}-{wheel_version}-", package_name.replace('-', "_"));
+    let distribution_directory = Path::new("../..").join("dist");
+    let wheels = std::fs::read_dir(&distribution_directory)
+        .unwrap_or_else(|error| {
+            panic!(
+                "{} is unavailable; build the Python distribution before Desktop: {error}",
+                distribution_directory.display()
+            )
+        })
+        .map(|entry| {
+            entry
+                .expect("the distribution directory must be readable")
+                .path()
+        })
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(&wheel_prefix) && name.ends_with(".whl"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        wheels.len(),
+        1,
+        "Desktop requires exactly one {package_name} {package_version} wheel in {}; found {}",
+        distribution_directory.display(),
+        wheels.len()
+    );
+    let wheel = &wheels[0];
+    let wheel_name = wheel
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("the runtime wheel name must be valid UTF-8");
+    let wheel_bytes = std::fs::read(wheel).expect("the runtime wheel must be readable");
+    let wheel_digest =
+        Sha256::digest(&wheel_bytes)
+            .iter()
+            .fold(String::with_capacity(64), |mut encoded, byte| {
+                write!(&mut encoded, "{byte:02x}").expect("writing to a string cannot fail");
+                encoded
+            });
     let target = std::env::var("TARGET").expect("Cargo must provide TARGET");
     let suffix = if target.contains("windows") {
         ".exe"
@@ -34,9 +81,22 @@ fn main() {
         expected
     );
 
-    let constraints =
-        PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo must provide OUT_DIR"))
-            .join("runtime-constraints.txt");
+    let output_directory =
+        PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo must provide OUT_DIR"));
+    let constraints = output_directory.join("runtime-constraints.txt");
+    std::fs::write(output_directory.join("runtime-package.whl"), &wheel_bytes)
+        .expect("Cargo must be able to embed the runtime wheel");
+    std::fs::write(
+        output_directory.join("runtime-package-name.txt"),
+        wheel_name,
+    )
+    .expect("Cargo must be able to embed the runtime wheel name");
+    std::fs::write(
+        output_directory.join("runtime-package-sha256.txt"),
+        &wheel_digest,
+    )
+    .expect("Cargo must be able to embed the runtime wheel digest");
+    manifest["package_wheel_sha256"] = serde_json::Value::String(wheel_digest);
     let project = Path::new("../..");
     let export = std::process::Command::new(&sidecar)
         .args([
@@ -90,6 +150,7 @@ fn main() {
         .expect("Cargo must be able to write the embedded runtime manifest");
     println!("cargo:rerun-if-changed=../../pyproject.toml");
     println!("cargo:rerun-if-changed=../../uv.lock");
+    println!("cargo:rerun-if-changed=../../dist");
     println!("cargo:rerun-if-changed=../runtime-manifest.json");
 
     let attributes = tauri_build::Attributes::new();

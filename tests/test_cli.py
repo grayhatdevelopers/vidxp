@@ -868,6 +868,21 @@ class CliTests(unittest.TestCase):
         command = self.service.check_dependencies.call_args.args[0]
         self.assertEqual(command.modalities, ("dialogue", "scene"))
 
+    def test_doctor_can_skip_model_readiness_for_install_validation(self):
+        self.service.check_dependencies.return_value = DependencyCheckResult(
+            ok=True,
+            modalities=("scene",),
+            checks=(),
+        )
+
+        result = self.invoke(
+            ["doctor", "--modalities", "scene", "--no-models", "--json"]
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        command = self.service.check_dependencies.call_args.args[0]
+        self.assertFalse(command.include_models)
+
     def test_prepare_announces_start_and_subscribes_to_job_progress(self):
         self.service.model_readiness.return_value = DependencyCheckResult(
             ok=False,

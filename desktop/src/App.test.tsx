@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   chooseLocalExecutable: vi.fn(), inspectLocalTarget: vi.fn(), activateLocalTarget: vi.fn(),
   selectTargetProfile: vi.fn(), deleteTargetProfile: vi.fn(), confirmForgetTarget: vi.fn(), beginManagedSetup: vi.fn(),
   cancelManagedSetup: vi.fn(), installMediaRuntime: vi.fn(), installRuntime: vi.fn(),
-  prepareManagedModels: vi.fn(),
+  prepareManagedModels: vi.fn(), onManagedSetupProgress: vi.fn(),
   runtimeManifest: vi.fn(), runtimeStatus: vi.fn(), launchUi: vi.fn(),
   chooseModelDirectory: vi.fn(), modelDirectoryInventory: vi.fn(),
   targetDoctor: vi.fn(), mcpClientConfig: vi.fn(), localServerStatus: vi.fn(), localWorkerStatus: vi.fn(), browserServiceStatus: vi.fn(),
@@ -98,6 +98,7 @@ describe('desktop target lifecycle', () => {
     mocks.runtimeStatus.mockResolvedValue({ state: 'never_configured', ready: false, runtime_profile: null, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'C:\\Models', detail: 'No managed runtime yet.' });
     mocks.modelDirectoryInventory.mockResolvedValue({ directory: 'C:\\Models', exists: false, readable: true, total_bytes: 0, file_count: 0, recognized_models: [], empty: true, verification_required: false, truncated: false, detail: 'Empty.' });
     mocks.installMediaRuntime.mockResolvedValue({ ready: true });
+    mocks.onManagedSetupProgress.mockResolvedValue(vi.fn());
     mocks.installRuntime.mockResolvedValue({
       install: { package_version: '0.4.0', capabilities: ['scene'], surfaces: ['worker', 'browser'], model_directory: 'C:\\Models', prepared: true },
       setup: { profiles: [managedProfile], selected_profile_id: managedProfile.id, issues: [] },
@@ -445,6 +446,28 @@ describe('desktop target lifecycle', () => {
     await waitFor(() => expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({ draft_id: 'draft-1' })));
     expect(mocks.installMediaRuntime).toHaveBeenCalledWith('draft-1');
     expect(mocks.launchUi).not.toHaveBeenCalled();
+  });
+
+  it('blocks setup interaction and reports managed installation stages', async () => {
+    const media = deferred<{ ready: boolean }>();
+    mocks.installMediaRuntime.mockReturnValue(media.promise);
+    let reportProgress: ((progress: { draft_id: string; current: number; total: number; stage: string; message: string }) => void) | undefined;
+    mocks.onManagedSetupProgress.mockImplementation(async (handler) => {
+      reportProgress = handler;
+      return vi.fn();
+    });
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+
+    await user.click(screen.getByRole('button', { name: 'Install VidXP' }));
+
+    expect(screen.getByRole('dialog', { name: 'Setting up VidXP' })).toBeVisible();
+    expect(screen.getByText('Step 1 of 8')).toBeVisible();
+    expect(screen.getByText('Checking FFmpeg and required video codecs')).toBeVisible();
+    reportProgress?.({ draft_id: 'draft-1', current: 4, total: 8, stage: 'dependencies', message: 'Installing the selected search features' });
+    expect(await screen.findByText('Step 4 of 8')).toBeVisible();
+    expect(screen.getByText('Installing the selected search features')).toBeVisible();
+
+    media.resolve({ ready: true });
   });
 
   it('coalesces duplicate managed Continue actions', async () => {

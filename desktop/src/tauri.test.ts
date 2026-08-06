@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
+const { invoke, listen } = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
+vi.mock('@tauri-apps/api/event', () => ({ listen }));
 
 import {
   beginManagedSetup,
@@ -12,6 +13,7 @@ import {
   browserServiceStatus,
   localServerStatus,
   localWorkerStatus,
+  onManagedSetupProgress,
   mcpClientConfig,
   recheckTargetState,
   startLocalServer,
@@ -25,7 +27,10 @@ import {
   targetSetupState,
 } from './tauri';
 
-beforeEach(() => invoke.mockReset());
+beforeEach(() => {
+  invoke.mockReset();
+  listen.mockReset();
+});
 
 describe('displayPath', () => {
   it('prettifies extended Windows drive and UNC paths', () => {
@@ -82,6 +87,20 @@ describe('desktop IPC adapter', () => {
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'begin_managed_setup');
     expect(invoke).toHaveBeenNthCalledWith(2, 'install_runtime', { request });
+  });
+
+  it('maps managed setup progress events to their payload', async () => {
+    const stop = vi.fn();
+    listen.mockResolvedValue(stop);
+    const handler = vi.fn();
+
+    await expect(onManagedSetupProgress(handler)).resolves.toBe(stop);
+    const listener = listen.mock.calls[0][1];
+    const payload = { draft_id: 'draft-1', current: 3, total: 8, stage: 'package', message: 'Acquiring VidXP' };
+    listener({ payload });
+
+    expect(listen).toHaveBeenCalledWith('managed-setup-progress', expect.any(Function));
+    expect(handler).toHaveBeenCalledWith(payload);
   });
 
   it('maps runtime health, MCP configuration, and service lifecycle commands', async () => {

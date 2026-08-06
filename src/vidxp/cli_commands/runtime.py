@@ -197,6 +197,13 @@ def doctor(
         bool,
         typer.Option("--json", help="Emit machine-readable JSON."),
     ] = False,
+    include_models: Annotated[
+        bool,
+        typer.Option(
+            "--models/--no-models",
+            help="Include downloaded model artifacts in the readiness check.",
+        ),
+    ] = True,
 ) -> None:
     """Validate selected indexing dependencies without downloading models."""
 
@@ -247,7 +254,7 @@ def doctor(
     result = state.service.check_dependencies(
         DependencyCheckCommand(
             modalities=selected,
-            include_models=True,
+            include_models=include_models,
         ),
         on_check_start=(
             show_check_start if output_format == OutputFormat.rich else None

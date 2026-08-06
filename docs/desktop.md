@@ -139,11 +139,13 @@ and **App integration service** adds the loopback API plus Streamable HTTP MCP
 through `server`. These package names stay out of the normal product flow. Model preparation
 can be deferred, and a native folder picker
 can select a model-cache directory before any model is downloaded.
-The managed runtime acquires the exact VidXP package with dependency resolution
-disabled, then resolves that package's selected extras. Beta and stable desktop
-releases use production PyPI for both steps, so a pinned prerelease and its
-normal dependencies come from one authoritative index. TestPyPI is used only
-for package-only nightly validation and is never a desktop runtime source.
+The managed runtime acquires the exact VidXP package from the wheel embedded in
+the Desktop installer with dependency resolution disabled, then resolves that
+local package's selected extras and constrained dependencies from production
+PyPI. Release candidates embed the same already-smoke-tested wheel retained for
+publication, so fresh managed setup can be validated before that version exists
+on the public index. TestPyPI is used only for package-only nightly validation
+and is never a desktop runtime source.
 The release contract classifies prerelease versions as beta and ordinary
 versions as stable, and the bundled manifest pins the matching Python runtime.
 This release does not include an automatic Desktop updater, so there is not yet

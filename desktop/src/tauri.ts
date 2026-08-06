@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export type TargetKind = 'existing_local' | 'managed';
 export type LifecycleOwnership = 'external' | 'desktop';
@@ -186,6 +187,14 @@ export interface InstallRuntimeRequest {
   draft_id: string;
 }
 
+export interface ManagedSetupProgress {
+  draft_id: string;
+  current: number;
+  total: number;
+  stage: string;
+  message: string;
+}
+
 export interface InstallRuntimeResult {
   package_version: string;
   capabilities: string[];
@@ -347,6 +356,11 @@ export function installRuntime(request: InstallRuntimeRequest): Promise<InstallT
     install: result.install,
     setup: normalizeState(result.setup),
   }));
+}
+export function onManagedSetupProgress(
+  handler: (progress: ManagedSetupProgress) => void,
+): Promise<() => void> {
+  return listen<ManagedSetupProgress>('managed-setup-progress', (event) => handler(event.payload));
 }
 export function prepareManagedModels(draftId: string): Promise<TargetSetupState> {
   return invoke<WireTargetState>('prepare_managed_models', { draftId }).then(normalizeState);

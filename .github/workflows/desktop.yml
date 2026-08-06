@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      package_artifact_name:
+        description: Validated Python distribution to embed in every installer.
+        required: false
+        default: ""
+        type: string
   workflow_dispatch:
     inputs:
       checkout_ref:
@@ -34,6 +39,11 @@ on:
         required: false
         default: false
         type: boolean
+      package_artifact_name:
+        description: Existing Python distribution artifact; otherwise build from checkout.
+        required: false
+        default: ""
+        type: string
 permissions:
   contents: read
 
@@ -54,6 +64,30 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.checkout_ref || github.event.inputs.checkout_ref || github.sha }}
+
+      - uses: actions/download-artifact@v8
+        if: inputs.package_artifact_name != ''
+        with:
+          name: ${{ inputs.package_artifact_name }}
+          path: dist/
+
+      - uses: actions/setup-python@v7
+        if: inputs.package_artifact_name == ''
+        with:
+          python-version: "3.14"
+
+      - name: Build the Python distribution for a standalone Desktop build
+        if: inputs.package_artifact_name == ''
+        shell: bash
+        run: |
+          python -m pip install -r utils/build-requirements.txt
+          bash utils/build_package.sh
+
+      - name: Verify the embedded Python package input
+        shell: bash
+        run: |
+          [[ "$(find dist -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" == "1" ]]
+          [[ "$(find dist -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')" == "1" ]]
 
       - name: Install Linux desktop build dependencies
         if: runner.os == 'Linux'

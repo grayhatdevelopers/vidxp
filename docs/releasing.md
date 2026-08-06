@@ -23,7 +23,8 @@ The candidate reuses the normal CI, desktop, and container workflows. It:
 
 1. validates the exact Release Please head against the current target branch;
 2. runs the full Python/provider suite and retains its tested wheel and sdist;
-3. builds and tests all three desktop installers and retains them;
+3. embeds that exact tested wheel into, builds, and tests all three desktop
+   installers, then retains them;
 4. builds and smokes the three container targets once, pushes temporary
    candidate tags, and records their immutable digests; and
 5. records a `release/candidate` commit status linked to the Actions run.
@@ -68,9 +69,12 @@ filenames from the validated candidate and preserves the generated changelog
 below it. Re-running publication updates the same marked section instead of
 duplicating release notes.
 
-Beta packages intentionally use real PyPI so the desktop-managed runtime can
-resolve its pinned prerelease and normal dependencies from one index. TestPyPI
-is reserved for unique nightly package validation.
+Desktop-managed setup installs its pinned VidXP package from the exact candidate
+wheel embedded in the installer, so an unpublished candidate can complete a
+fresh setup before the release PR is merged. Beta and stable packages are still
+published to real PyPI, and selected extras plus their normal dependencies
+resolve from that production index. TestPyPI is reserved for unique nightly
+package validation.
 
 Publication is resumable. An existing Python version must have the exact same
 filenames and SHA-256 values; immutable container tags must resolve to the

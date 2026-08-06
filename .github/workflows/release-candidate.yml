@@ -106,11 +106,14 @@ jobs:
       run_containers: false
 
   desktop:
-    needs: contract
+    needs:
+      - contract
+      - core
     uses: ./.github/workflows/desktop.yml
     with:
       artifact_retention_days: 30
       checkout_ref: ${{ inputs.head_sha }}
+      package_artifact_name: vidxp-python-dist
       sign: true
     secrets: inherit
 

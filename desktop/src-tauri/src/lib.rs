@@ -18,7 +18,7 @@ use atomic_write_file::AtomicWriteFile;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{
-    AppHandle, Manager, RunEvent, WindowEvent,
+    AppHandle, Emitter, Manager, RunEvent, WindowEvent,
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
 };
@@ -44,6 +44,12 @@ const RUNTIME_MANIFEST_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/runtime-manifest.json"));
 const RUNTIME_CONSTRAINTS_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/runtime-constraints.txt"));
+const RUNTIME_PACKAGE_WHEEL_BYTES: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/runtime-package.whl"));
+const RUNTIME_PACKAGE_WHEEL_NAME: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/runtime-package-name.txt"));
+const RUNTIME_PACKAGE_WHEEL_SHA256: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/runtime-package-sha256.txt"));
 const MODEL_CACHE_CATALOG_BYTES: &[u8] = include_bytes!("../../model-cache-catalog.json");
 const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
 const RUNTIME_CONSTRAINTS_FILE_NAME: &str = "runtime-constraints.txt";
@@ -115,6 +121,35 @@ struct InstallResult {
 struct InstallTransitionResult {
     install: InstallResult,
     setup: target_profiles::TargetState,
+}
+
+#[derive(Clone, Serialize)]
+struct ManagedSetupProgress {
+    draft_id: String,
+    current: u8,
+    total: u8,
+    stage: String,
+    message: String,
+}
+
+fn emit_managed_setup_progress(
+    app: &AppHandle,
+    draft_id: &str,
+    current: u8,
+    total: u8,
+    stage: &str,
+    message: &str,
+) {
+    let _ = app.emit(
+        "managed-setup-progress",
+        ManagedSetupProgress {
+            draft_id: draft_id.into(),
+            current,
+            total,
+            stage: stage.into(),
+            message: message.into(),
+        },
+    );
 }
 
 #[derive(Serialize)]
@@ -1064,6 +1099,7 @@ fn selected_surfaces(
     Ok(selected.into_iter().collect())
 }
 
+#[cfg(test)]
 fn package_specification(
     manifest: &RuntimeManifest,
     capabilities: &[String],
@@ -1078,6 +1114,19 @@ fn package_specification_for_version(
     surfaces: &[String],
     version: &str,
 ) -> String {
+    let extras = package_extras(manifest, capabilities, surfaces);
+    if extras.is_empty() {
+        format!("{}=={}", manifest.package_name, version)
+    } else {
+        format!("{}[{}]=={}", manifest.package_name, extras, version)
+    }
+}
+
+fn package_extras(
+    manifest: &RuntimeManifest,
+    capabilities: &[String],
+    surfaces: &[String],
+) -> String {
     let local_worker_selected = surfaces.iter().any(|name| name == "worker");
     let extras: BTreeSet<_> = manifest
         .surfaces
@@ -1091,11 +1140,21 @@ fn package_specification_for_version(
                 .map(|name| manifest.capabilities[name].extra.clone()),
         )
         .collect();
-    let extras = extras.into_iter().collect::<Vec<_>>().join(",");
+    extras.into_iter().collect::<Vec<_>>().join(",")
+}
+
+fn bundled_package_specification(
+    manifest: &RuntimeManifest,
+    capabilities: &[String],
+    surfaces: &[String],
+    wheel: &Path,
+) -> String {
+    let wheel = wheel.to_string_lossy();
+    let extras = package_extras(manifest, capabilities, surfaces);
     if extras.is_empty() {
-        format!("{}=={}", manifest.package_name, version)
+        wheel.into_owned()
     } else {
-        format!("{}[{}]=={}", manifest.package_name, extras, version)
+        format!("{wheel}[{extras}]")
     }
 }
 
@@ -1147,11 +1206,12 @@ fn external_installation_version<'a>(
     }
 }
 
+#[cfg(test)]
 fn base_package_specification(manifest: &RuntimeManifest) -> String {
     format!("{}=={}", manifest.package_name, manifest.package_version)
 }
 
-fn package_acquisition_arguments(manifest: &RuntimeManifest, python: &Path) -> Vec<String> {
+fn package_acquisition_arguments(python: &Path, wheel: &Path) -> Vec<String> {
     vec![
         "pip".into(),
         "install".into(),
@@ -1159,12 +1219,25 @@ fn package_acquisition_arguments(manifest: &RuntimeManifest, python: &Path) -> V
         python.to_string_lossy().into_owned(),
         "--no-config".into(),
         "--no-deps".into(),
-        "--default-index".into(),
-        manifest.dependency_index.clone(),
-        "--index-strategy".into(),
-        "first-index".into(),
-        base_package_specification(manifest),
+        wheel.to_string_lossy().into_owned(),
     ]
+}
+
+fn stage_runtime_package_wheel(runtime: &Path) -> Result<PathBuf, String> {
+    let wheel_name = Path::new(RUNTIME_PACKAGE_WHEEL_NAME);
+    if wheel_name.file_name().and_then(|name| name.to_str()) != Some(RUNTIME_PACKAGE_WHEEL_NAME) {
+        return Err("The embedded runtime wheel name is invalid.".into());
+    }
+    let actual = hex::encode(Sha256::digest(RUNTIME_PACKAGE_WHEEL_BYTES));
+    if actual != RUNTIME_PACKAGE_WHEEL_SHA256 {
+        return Err(format!(
+            "The embedded runtime wheel has digest {actual}; expected {RUNTIME_PACKAGE_WHEEL_SHA256}."
+        ));
+    }
+    let wheel = runtime.join(wheel_name);
+    fs::write(&wheel, RUNTIME_PACKAGE_WHEEL_BYTES)
+        .map_err(|error| format!("Could not stage the embedded VidXP package: {error}"))?;
+    Ok(wheel)
 }
 
 struct UvInvocation {
@@ -1178,6 +1251,7 @@ fn dependency_installation_invocation(
     surfaces: &[String],
     python: &Path,
     constraints: &Path,
+    wheel: &Path,
     cpu_torch: bool,
 ) -> Result<UvInvocation, String> {
     // uv 0.12 splits each --constraints value on spaces even when the operating system supplied
@@ -1205,7 +1279,12 @@ fn dependency_installation_invocation(
     if cpu_torch {
         arguments.extend(["--torch-backend".into(), "cpu".into()]);
     }
-    arguments.push(package_specification(manifest, capabilities, surfaces));
+    arguments.push(bundled_package_specification(
+        manifest,
+        capabilities,
+        surfaces,
+        wheel,
+    ));
     Ok(UvInvocation {
         arguments,
         working_directory: working_directory.to_path_buf(),
@@ -1942,7 +2021,12 @@ async fn supervised_output(
     }
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let detail = if stderr.is_empty() { stdout } else { stderr };
+    let detail = match (stdout.is_empty(), stderr.is_empty()) {
+        (false, false) => format!("{stdout}\n\nAdditional diagnostics:\n{stderr}"),
+        (false, true) => stdout,
+        (true, false) => stderr,
+        (true, true) => "The process did not return an error message.".into(),
+    };
     Err(format!("{operation} failed ({}): {detail}", output.status))
 }
 
@@ -2686,8 +2770,17 @@ async fn install_runtime(
     let staging_name = format!(".staging-{profile_hash}-{timestamp}-{}", std::process::id());
     let staging = paths.runtimes.join(&staging_name);
     let constraints = staging.join(RUNTIME_CONSTRAINTS_FILE_NAME);
+    let progress_total = if request.prepare_models { 8 } else { 7 };
 
     let install_result = async {
+        emit_managed_setup_progress(
+            &app,
+            &request.draft_id,
+            2,
+            progress_total,
+            "python",
+            "Preparing an isolated Python runtime",
+        );
         uv_output(
             &app,
             &paths,
@@ -2706,17 +2799,27 @@ async fn install_runtime(
         .await?;
 
         let constraints_path = constraints.clone();
-        tauri::async_runtime::spawn_blocking(move || {
+        let wheel_runtime = staging.clone();
+        let runtime_wheel = tauri::async_runtime::spawn_blocking(move || {
             fs::write(&constraints_path, normalized_runtime_constraints().as_ref())
-                .map_err(|error| format!("Could not write runtime constraints: {error}"))
+                .map_err(|error| format!("Could not write runtime constraints: {error}"))?;
+            stage_runtime_package_wheel(&wheel_runtime)
         })
         .await
         .map_err(|error| format!("Runtime constraint staging stopped unexpectedly: {error}"))??;
 
+        emit_managed_setup_progress(
+            &app,
+            &request.draft_id,
+            3,
+            progress_total,
+            "package",
+            "Acquiring the VidXP package",
+        );
         uv_output(
             &app,
             &paths,
-            package_acquisition_arguments(&manifest, &executable(&staging, "python")),
+            package_acquisition_arguments(&executable(&staging, "python"), &runtime_wheel),
             None,
             cancellation.token(),
             "VidXP package acquisition",
@@ -2729,8 +2832,17 @@ async fn install_runtime(
             &surfaces,
             &executable(&staging, "python"),
             &constraints,
+            &runtime_wheel,
             !cfg!(target_os = "macos"),
         )?;
+        emit_managed_setup_progress(
+            &app,
+            &request.draft_id,
+            4,
+            progress_total,
+            "dependencies",
+            "Installing the selected search features",
+        );
         uv_output(
             &app,
             &paths,
@@ -2740,7 +2852,20 @@ async fn install_runtime(
             "VidXP package installation",
         )
         .await?;
+        if let Err(error) = fs::remove_file(&runtime_wheel) {
+            log::warn!(
+                "Installed the embedded VidXP package, but could not remove its staged wheel: {error}"
+            );
+        }
 
+        emit_managed_setup_progress(
+            &app,
+            &request.draft_id,
+            5,
+            progress_total,
+            "media",
+            "Configuring FFmpeg and video codecs",
+        );
         run_vidxp_supervised(
             &staging,
             &paths,
@@ -2757,7 +2882,16 @@ async fn install_runtime(
         )
         .await?;
 
-        let doctor_arguments = capability_command_arguments(&manifest, "doctor", &capabilities);
+        emit_managed_setup_progress(
+            &app,
+            &request.draft_id,
+            6,
+            progress_total,
+            "validation",
+            "Validating installed packages and video tools",
+        );
+        let mut doctor_arguments = capability_command_arguments(&manifest, "doctor", &capabilities);
+        doctor_arguments.push("--no-models".into());
         run_vidxp_supervised(
             &staging,
             &paths,
@@ -2768,6 +2902,14 @@ async fn install_runtime(
         .await?;
 
         if request.prepare_models {
+            emit_managed_setup_progress(
+                &app,
+                &request.draft_id,
+                7,
+                progress_total,
+                "models",
+                "Verifying and downloading selected model files",
+            );
             let prepare_arguments =
                 capability_command_arguments(&manifest, "prepare", &capabilities);
             let mut worker = state.worker_stop.register(staging.clone(), paths.clone())?;
@@ -2808,6 +2950,14 @@ async fn install_runtime(
         });
     }
 
+    emit_managed_setup_progress(
+        &app,
+        &request.draft_id,
+        progress_total,
+        progress_total,
+        "activation",
+        "Activating the validated installation",
+    );
     let profile = format!("{profile_hash}-{timestamp}");
     let runtime = paths.runtimes.join(&profile);
     let active = ActiveRuntime {
@@ -4418,17 +4568,18 @@ mod tests {
     use super::{
         ActivationJournal, ActivationRecovery, ActivationStage, ActiveRuntime, DesktopAction,
         DesktopActivation, DesktopCloseAction, DesktopState, DraftPhase, DraftRecord,
-        ManagedSetupDraft, RUNTIME_CONSTRAINTS_FILE_NAME, TargetTransitionCoordinator,
-        TransitionKind, UiProcessAction, WorkerStopSupervisor, action_for_activation,
-        activation_recovery, base_package_specification, capability_command_arguments,
-        claim_browser_open, clean_environment_from, close_action, configure_ui_service_command,
-        configured_runtime_status, dependency_installation_invocation, desktop_paths_from_roots,
-        display_command, external_installation_arguments, external_installation_version,
-        inventory_model_directory, manifest, manifest_digest, normalize_line_endings,
-        normalized_runtime_constraints, package_acquisition_arguments, package_specification,
-        read_active_runtime_snapshot, reconcile_managed_runtime_storage, required_encoder_missing,
-        restore_active_runtime, selected_capabilities, selected_surfaces, ui_process_action,
-        write_activation_journal, write_active_runtime,
+        ManagedSetupDraft, RUNTIME_CONSTRAINTS_FILE_NAME, RUNTIME_PACKAGE_WHEEL_NAME,
+        TargetTransitionCoordinator, TransitionKind, UiProcessAction, WorkerStopSupervisor,
+        action_for_activation, activation_recovery, base_package_specification,
+        capability_command_arguments, claim_browser_open, clean_environment_from, close_action,
+        configure_ui_service_command, configured_runtime_status,
+        dependency_installation_invocation, desktop_paths_from_roots, display_command,
+        external_installation_arguments, external_installation_version, inventory_model_directory,
+        manifest, manifest_digest, normalize_line_endings, normalized_runtime_constraints,
+        package_acquisition_arguments, package_specification, read_active_runtime_snapshot,
+        reconcile_managed_runtime_storage, required_encoder_missing, restore_active_runtime,
+        selected_capabilities, selected_surfaces, ui_process_action, write_activation_journal,
+        write_active_runtime,
     };
     use std::{
         ffi::OsStr,
@@ -5048,18 +5199,20 @@ mod tests {
     }
 
     #[test]
-    fn package_and_dependencies_use_channel_specific_indexes() {
+    fn managed_install_uses_the_bundled_package_and_public_dependency_index() {
         let manifest = manifest().expect("manifest");
         let python = Path::new("managed-python");
         let constraints = Path::new("staging").join(RUNTIME_CONSTRAINTS_FILE_NAME);
+        let wheel = Path::new("staging").join(RUNTIME_PACKAGE_WHEEL_NAME);
         let selected_package_index = manifest.dependency_index.as_str();
-        let acquisition = package_acquisition_arguments(&manifest, python);
+        let acquisition = package_acquisition_arguments(python, &wheel);
         let dependency_installation = dependency_installation_invocation(
             &manifest,
             &["scene".into()],
             &[],
             python,
             &constraints,
+            &wheel,
             true,
         )
         .expect("dependency installation");
@@ -5068,8 +5221,12 @@ mod tests {
         assert_eq!(selected_package_index, "https://pypi.org/simple");
         assert_eq!(manifest.dependency_index, "https://pypi.org/simple");
         assert!(acquisition.iter().any(|item| item == "--no-deps"));
+        assert_eq!(
+            acquisition.last(),
+            Some(&wheel.to_string_lossy().into_owned())
+        );
         assert!(
-            acquisition
+            !acquisition
                 .iter()
                 .any(|item| item == selected_package_index)
         );
@@ -5084,6 +5241,10 @@ mod tests {
             dependencies
                 .windows(2)
                 .any(|items| items == ["--constraints", "runtime-constraints.txt"])
+        );
+        assert_eq!(
+            dependencies.last(),
+            Some(&format!("{}[scene]", wheel.to_string_lossy()))
         );
         assert_eq!(
             dependency_installation.working_directory,
@@ -5102,6 +5263,10 @@ mod tests {
             .join("runtimes")
             .join("staging")
             .join(RUNTIME_CONSTRAINTS_FILE_NAME);
+        let wheel = constraints
+            .parent()
+            .unwrap()
+            .join(RUNTIME_PACKAGE_WHEEL_NAME);
 
         let invocation = dependency_installation_invocation(
             &manifest,
@@ -5109,6 +5274,7 @@ mod tests {
             &[],
             Path::new("managed-python"),
             &constraints,
+            &wheel,
             false,
         )
         .expect("dependency installation");

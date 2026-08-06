@@ -162,6 +162,7 @@ npm --prefix desktop ci
 npm --prefix desktop run model-catalog:check
 npm --prefix desktop run notices:check
 npm --prefix desktop run check
+python -m build
 npm --prefix desktop run sidecar:windows
 cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
 ```
