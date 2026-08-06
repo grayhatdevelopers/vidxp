@@ -2907,9 +2907,9 @@ async fn install_runtime(
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("The system clock is invalid: {error}"))?
         .as_nanos();
-    let staging_name = format!(".staging-{profile_hash}-{timestamp}-{}", std::process::id());
-    let staging = paths.runtimes.join(&staging_name);
-    let constraints = staging.join(RUNTIME_CONSTRAINTS_FILE_NAME);
+    let profile = format!("{profile_hash}-{timestamp}");
+    let runtime = paths.runtimes.join(&profile);
+    let constraints = runtime.join(RUNTIME_CONSTRAINTS_FILE_NAME);
     let progress_total = if request.prepare_models { 8 } else { 7 };
 
     let install_result = async {
@@ -2926,7 +2926,7 @@ async fn install_runtime(
             &paths,
             vec![
                 "venv".into(),
-                staging.to_string_lossy().into_owned(),
+                runtime.to_string_lossy().into_owned(),
                 "--python".into(),
                 manifest.python_version.clone(),
                 "--managed-python".into(),
@@ -2939,7 +2939,7 @@ async fn install_runtime(
         .await?;
 
         let constraints_path = constraints.clone();
-        let wheel_runtime = staging.clone();
+        let wheel_runtime = runtime.clone();
         let runtime_wheel = tauri::async_runtime::spawn_blocking(move || {
             fs::write(&constraints_path, normalized_runtime_constraints().as_ref())
                 .map_err(|error| format!("Could not write runtime constraints: {error}"))?;
@@ -2961,7 +2961,7 @@ async fn install_runtime(
             &paths,
             package_acquisition_arguments(
                 &manifest,
-                &executable(&staging, "python"),
+                &executable(&runtime, "python"),
                 &runtime_wheel,
             ),
             None,
@@ -2974,7 +2974,7 @@ async fn install_runtime(
             &manifest,
             &capabilities,
             &surfaces,
-            &executable(&staging, "python"),
+            &executable(&runtime, "python"),
             &constraints,
             !cfg!(target_os = "macos"),
         )?;
@@ -3010,7 +3010,7 @@ async fn install_runtime(
             "Configuring FFmpeg and video codecs",
         );
         run_vidxp_supervised(
-            &staging,
+            &runtime,
             &paths,
             &[
                 "init".into(),
@@ -3036,7 +3036,7 @@ async fn install_runtime(
         let mut doctor_arguments = capability_command_arguments(&manifest, "doctor", &capabilities);
         doctor_arguments.push("--no-models".into());
         run_vidxp_supervised(
-            &staging,
+            &runtime,
             &paths,
             &doctor_arguments,
             cancellation.token(),
@@ -3055,10 +3055,10 @@ async fn install_runtime(
             );
             let prepare_arguments =
                 capability_command_arguments(&manifest, "prepare", &capabilities);
-            let mut worker = state.worker_stop.register(staging.clone(), paths.clone())?;
+            let mut worker = state.worker_stop.register(runtime.clone(), paths.clone())?;
             let preparation_app = app.clone();
             let preparation_draft_id = request.draft_id.clone();
-            let preparation_runtime = staging.clone();
+            let preparation_runtime = runtime.clone();
             let preparation_paths = paths.clone();
             let preparation_cancellation = cancellation.token();
             let preparation = tauri::async_runtime::spawn_blocking(move || {
@@ -3083,23 +3083,25 @@ async fn install_runtime(
     }
     .await;
     if let Err(error) = install_result {
-        let failed_staging = staging.clone();
+        let failed_runtime = runtime.clone();
         let cleanup_error = tauri::async_runtime::spawn_blocking(move || {
-            if failed_staging.exists() {
-                fs::remove_dir_all(&failed_staging).err()
+            if failed_runtime.exists() {
+                fs::remove_dir_all(&failed_runtime).err()
             } else {
                 None
             }
         })
         .await
-        .map_err(|join| format!("{error}. Staged-runtime cleanup stopped unexpectedly: {join}"))?;
+        .map_err(|join| {
+            format!("{error}. Candidate-runtime cleanup stopped unexpectedly: {join}")
+        })?;
         return Err(match cleanup_error {
             Some(cleanup_error) => format!(
-                "{error}. The previous active runtime was not changed. VidXP could not remove the failed staged runtime at {}: {cleanup_error}",
-                staging.display()
+                "{error}. The previous active runtime was not changed. VidXP could not remove the failed candidate runtime at {}: {cleanup_error}",
+                runtime.display()
             ),
             None => format!(
-                "{error}. The previous active runtime was not changed, and the failed staged runtime was removed."
+                "{error}. The previous active runtime was not changed, and the failed candidate runtime was removed."
             ),
         });
     }
@@ -3112,8 +3114,6 @@ async fn install_runtime(
         "activation",
         "Activating VidXP and cleaning up installation files",
     );
-    let profile = format!("{profile_hash}-{timestamp}");
-    let runtime = paths.runtimes.join(&profile);
     let active = ActiveRuntime {
         schema_version: 2,
         manifest_sha256: manifest_digest(),
@@ -3132,17 +3132,6 @@ async fn install_runtime(
         let previous_active_bytes = read_active_runtime_snapshot(&activation_paths)?;
         let previous_targets =
             target_profiles::current_state(&activation_app).map_err(|error| error.to_string())?;
-        if let Err(error) = fs::rename(&staging, &runtime) {
-            let cleanup = fs::remove_dir_all(&staging);
-            return Err(match cleanup {
-                Ok(()) => format!("Could not finalize the validated runtime: {error}"),
-                Err(cleanup) => format!(
-                    "Could not finalize the validated runtime: {error}. The staging directory at {} could not be removed: {cleanup}",
-                    staging.display()
-                ),
-            });
-        }
-
         let projection = managed_runtime_projection_for(&activation_paths, &active);
         let validated = validate_managed_projection(
             &activation_paths,

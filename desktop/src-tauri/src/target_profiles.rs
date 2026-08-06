@@ -594,9 +594,14 @@ fn validate_executable_with(
     let request_id = challenge_for(&canonical)?;
     let output = run_probe(&canonical, desktop_version, &request_id)?;
     if !output.success {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(TargetError::new(
             TargetErrorCode::ProbeFailed,
-            "The selected executable rejected the VidXP compatibility probe.",
+            if detail.is_empty() {
+                "The selected executable rejected the VidXP compatibility probe.".into()
+            } else {
+                format!("The compatibility probe failed: {detail}")
+            },
         ));
     }
     let document: ProbeDocument = serde_json::from_slice(&output.stdout).map_err(|_| {
@@ -1705,18 +1710,16 @@ mod tests {
             .code,
             TargetErrorCode::ProbeTimeout
         );
-        assert_eq!(
-            validate_executable_with(&executable, "0.4.0-b", |_, _, _| {
-                Ok(ProbeOutput {
-                    success: false,
-                    stdout: Vec::new(),
-                    stderr: Vec::new(),
-                })
+        let failed = validate_executable_with(&executable, "0.4.0-b", |_, _, _| {
+            Ok(ProbeOutput {
+                success: false,
+                stdout: Vec::new(),
+                stderr: b"embedded interpreter path is unavailable".to_vec(),
             })
-            .expect_err("failed")
-            .code,
-            TargetErrorCode::ProbeFailed
-        );
+        })
+        .expect_err("failed");
+        assert_eq!(failed.code, TargetErrorCode::ProbeFailed);
+        assert!(failed.message.contains("embedded interpreter path"));
     }
 
     #[test]
