@@ -1099,7 +1099,6 @@ fn selected_surfaces(
     Ok(selected.into_iter().collect())
 }
 
-#[cfg(test)]
 fn package_specification(
     manifest: &RuntimeManifest,
     capabilities: &[String],
@@ -1141,21 +1140,6 @@ fn package_extras(
         )
         .collect();
     extras.into_iter().collect::<Vec<_>>().join(",")
-}
-
-fn bundled_package_specification(
-    manifest: &RuntimeManifest,
-    capabilities: &[String],
-    surfaces: &[String],
-    wheel: &Path,
-) -> String {
-    let wheel = wheel.to_string_lossy();
-    let extras = package_extras(manifest, capabilities, surfaces);
-    if extras.is_empty() {
-        wheel.into_owned()
-    } else {
-        format!("{wheel}[{extras}]")
-    }
 }
 
 fn external_installation_arguments(
@@ -1206,12 +1190,16 @@ fn external_installation_version<'a>(
     }
 }
 
-#[cfg(test)]
 fn base_package_specification(manifest: &RuntimeManifest) -> String {
     format!("{}=={}", manifest.package_name, manifest.package_version)
 }
 
-fn package_acquisition_arguments(python: &Path, wheel: &Path) -> Vec<String> {
+fn package_acquisition_arguments(
+    manifest: &RuntimeManifest,
+    python: &Path,
+    wheel: &Path,
+) -> Vec<String> {
+    let wheel_directory = wheel.parent().unwrap_or_else(|| Path::new("."));
     vec![
         "pip".into(),
         "install".into(),
@@ -1219,7 +1207,10 @@ fn package_acquisition_arguments(python: &Path, wheel: &Path) -> Vec<String> {
         python.to_string_lossy().into_owned(),
         "--no-config".into(),
         "--no-deps".into(),
-        wheel.to_string_lossy().into_owned(),
+        "--no-index".into(),
+        "--find-links".into(),
+        wheel_directory.to_string_lossy().into_owned(),
+        base_package_specification(manifest),
     ]
 }
 
@@ -1251,7 +1242,6 @@ fn dependency_installation_invocation(
     surfaces: &[String],
     python: &Path,
     constraints: &Path,
-    wheel: &Path,
     cpu_torch: bool,
 ) -> Result<UvInvocation, String> {
     // uv 0.12 splits each --constraints value on spaces even when the operating system supplied
@@ -1273,18 +1263,15 @@ fn dependency_installation_invocation(
         manifest.dependency_index.clone(),
         "--index-strategy".into(),
         "first-index".into(),
+        "--find-links".into(),
+        ".".into(),
         "--constraints".into(),
         constraints_file_name.to_string_lossy().into_owned(),
     ];
     if cpu_torch {
         arguments.extend(["--torch-backend".into(), "cpu".into()]);
     }
-    arguments.push(bundled_package_specification(
-        manifest,
-        capabilities,
-        surfaces,
-        wheel,
-    ));
+    arguments.push(package_specification(manifest, capabilities, surfaces));
     Ok(UvInvocation {
         arguments,
         working_directory: working_directory.to_path_buf(),
@@ -2819,7 +2806,11 @@ async fn install_runtime(
         uv_output(
             &app,
             &paths,
-            package_acquisition_arguments(&executable(&staging, "python"), &runtime_wheel),
+            package_acquisition_arguments(
+                &manifest,
+                &executable(&staging, "python"),
+                &runtime_wheel,
+            ),
             None,
             cancellation.token(),
             "VidXP package acquisition",
@@ -2832,7 +2823,6 @@ async fn install_runtime(
             &surfaces,
             &executable(&staging, "python"),
             &constraints,
-            &runtime_wheel,
             !cfg!(target_os = "macos"),
         )?;
         emit_managed_setup_progress(
@@ -5205,14 +5195,13 @@ mod tests {
         let constraints = Path::new("staging").join(RUNTIME_CONSTRAINTS_FILE_NAME);
         let wheel = Path::new("staging").join(RUNTIME_PACKAGE_WHEEL_NAME);
         let selected_package_index = manifest.dependency_index.as_str();
-        let acquisition = package_acquisition_arguments(python, &wheel);
+        let acquisition = package_acquisition_arguments(&manifest, python, &wheel);
         let dependency_installation = dependency_installation_invocation(
             &manifest,
             &["scene".into()],
             &[],
             python,
             &constraints,
-            &wheel,
             true,
         )
         .expect("dependency installation");
@@ -5221,9 +5210,15 @@ mod tests {
         assert_eq!(selected_package_index, "https://pypi.org/simple");
         assert_eq!(manifest.dependency_index, "https://pypi.org/simple");
         assert!(acquisition.iter().any(|item| item == "--no-deps"));
+        assert!(acquisition.iter().any(|item| item == "--no-index"));
+        assert!(
+            acquisition
+                .windows(2)
+                .any(|items| items == ["--find-links", "staging"])
+        );
         assert_eq!(
             acquisition.last(),
-            Some(&wheel.to_string_lossy().into_owned())
+            Some(&base_package_specification(&manifest))
         );
         assert!(
             !acquisition
@@ -5242,9 +5237,14 @@ mod tests {
                 .windows(2)
                 .any(|items| items == ["--constraints", "runtime-constraints.txt"])
         );
+        assert!(
+            dependencies
+                .windows(2)
+                .any(|items| items == ["--find-links", "."])
+        );
         assert_eq!(
             dependencies.last(),
-            Some(&format!("{}[scene]", wheel.to_string_lossy()))
+            Some(&package_specification(&manifest, &["scene".into()], &[]))
         );
         assert_eq!(
             dependency_installation.working_directory,
@@ -5263,18 +5263,12 @@ mod tests {
             .join("runtimes")
             .join("staging")
             .join(RUNTIME_CONSTRAINTS_FILE_NAME);
-        let wheel = constraints
-            .parent()
-            .unwrap()
-            .join(RUNTIME_PACKAGE_WHEEL_NAME);
-
         let invocation = dependency_installation_invocation(
             &manifest,
             &["scene".into()],
             &[],
             Path::new("managed-python"),
             &constraints,
-            &wheel,
             false,
         )
         .expect("dependency installation");
