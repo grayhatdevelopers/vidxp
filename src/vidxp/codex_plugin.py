@@ -6,9 +6,10 @@ import os
 import shutil
 import subprocess
 import tempfile
+import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from vidxp import __version__
 from vidxp.mcp_cli import stdio_client_config
@@ -218,6 +219,78 @@ def _run_codex_json(
     return payload
 
 
+def _configured_codex_command(
+    environment: Mapping[str, str],
+) -> str | None:
+    codex_home = Path(
+        environment.get("CODEX_HOME", str(Path.home() / ".codex"))
+    ).expanduser()
+    try:
+        config = tomllib.loads(
+            (codex_home / "config.toml").read_text(encoding="utf-8")
+        )
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    servers = config.get("mcp_servers")
+    node_repl = servers.get("node_repl") if isinstance(servers, dict) else None
+    node_repl_environment = (
+        node_repl.get("env") if isinstance(node_repl, dict) else None
+    )
+    policy = config.get("shell_environment_policy")
+    policy_environment = policy.get("set") if isinstance(policy, dict) else None
+    for configured in (node_repl_environment, policy_environment):
+        command = (
+            configured.get("CODEX_CLI_PATH")
+            if isinstance(configured, dict)
+            else None
+        )
+        if isinstance(command, str) and command.strip():
+            return command
+    return None
+
+
+def resolve_codex_command(
+    *,
+    environment: Mapping[str, str] | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+) -> str | None:
+    """Locate the current CLI bundled with Codex or available on PATH."""
+    current_environment = os.environ if environment is None else environment
+    candidates: list[str] = []
+    environment_command = current_environment.get("CODEX_CLI_PATH")
+    if environment_command:
+        candidates.append(environment_command)
+    configured_command = _configured_codex_command(current_environment)
+    if configured_command:
+        candidates.append(configured_command)
+
+    local_app_data = current_environment.get("LOCALAPPDATA")
+    if local_app_data:
+        bin_directory = Path(local_app_data) / "OpenAI" / "Codex" / "bin"
+        if bin_directory.is_dir():
+            versioned = sorted(
+                bin_directory.glob("*/codex.exe"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            candidates.extend(str(path) for path in versioned)
+        candidates.append(str(bin_directory / "codex.exe"))
+
+    path_command = which("codex")
+    if path_command:
+        candidates.append(path_command)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = os.path.normcase(os.path.abspath(os.path.expanduser(candidate)))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if Path(candidate).expanduser().is_file():
+            return str(Path(candidate).expanduser())
+    return None
+
+
 def install_codex_plugin(
     marketplace_root: Path,
     *,
@@ -239,7 +312,7 @@ def install_codex_plugin(
         data_directory=data_directory,
         device=device,
     )
-    command = codex_command or shutil.which("codex")
+    command = codex_command or resolve_codex_command()
     if command is None:
         raise CodexPluginInstallError(
             "The Codex CLI was not found. Install or update the ChatGPT desktop "

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,6 +12,7 @@ from vidxp.codex_plugin import (
     CodexPluginInstallError,
     export_codex_plugin,
     install_codex_plugin,
+    resolve_codex_command,
 )
 
 
@@ -112,3 +114,87 @@ def test_export_refuses_to_replace_an_unmanaged_marketplace() -> None:
             export_codex_plugin(root)
 
         assert (root / "keep.txt").read_text(encoding="utf-8") == "user data"
+
+
+def test_resolve_codex_command_prefers_desktop_configured_cli() -> None:
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        codex_home = root / ".codex"
+        configured = root / "current" / "codex.exe"
+        stale = root / "OpenAI" / "Codex" / "bin" / "codex.exe"
+        configured.parent.mkdir(parents=True)
+        stale.parent.mkdir(parents=True)
+        configured.touch()
+        stale.touch()
+        codex_home.mkdir()
+        escaped_command = str(configured).replace("\\", "\\\\")
+        (codex_home / "config.toml").write_text(
+            "[mcp_servers.node_repl.env]\n"
+            f'CODEX_CLI_PATH = "{escaped_command}"\n',
+            encoding="utf-8",
+        )
+
+        resolved = resolve_codex_command(
+            environment={
+                "CODEX_HOME": str(codex_home),
+                "LOCALAPPDATA": str(root),
+            },
+            which=lambda _: None,
+        )
+
+    assert resolved == str(configured)
+
+
+def test_resolve_codex_command_uses_desktop_environment_path() -> None:
+    with TemporaryDirectory() as directory:
+        command = Path(directory) / "codex.exe"
+        command.touch()
+
+        resolved = resolve_codex_command(
+            environment={"CODEX_CLI_PATH": str(command)},
+            which=lambda _: None,
+        )
+
+    assert resolved == str(command)
+
+
+def test_resolve_codex_command_falls_back_to_local_app_install() -> None:
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        command = root / "OpenAI" / "Codex" / "bin" / "codex.exe"
+        command.parent.mkdir(parents=True)
+        command.touch()
+
+        resolved = resolve_codex_command(
+            environment={
+                "CODEX_HOME": str(root / "missing-codex-home"),
+                "LOCALAPPDATA": str(root),
+            },
+            which=lambda _: None,
+        )
+
+    assert resolved == str(command)
+
+
+def test_resolve_codex_command_prefers_newest_versioned_local_cli() -> None:
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        bin_directory = root / "OpenAI" / "Codex" / "bin"
+        stable = bin_directory / "codex.exe"
+        older = bin_directory / "old" / "codex.exe"
+        current = bin_directory / "current" / "codex.exe"
+        for command in (stable, older, current):
+            command.parent.mkdir(parents=True, exist_ok=True)
+            command.touch()
+        os.utime(older, (1, 1))
+        os.utime(current, (2, 2))
+
+        resolved = resolve_codex_command(
+            environment={
+                "CODEX_HOME": str(root / "missing-codex-home"),
+                "LOCALAPPDATA": str(root),
+            },
+            which=lambda _: None,
+        )
+
+    assert resolved == str(current)
