@@ -2950,7 +2950,7 @@ async fn install_runtime(
         progress_total,
         progress_total,
         "activation",
-        "Activating the validated installation",
+        "Activating VidXP and cleaning up installation files",
     );
     let profile = format!("{profile_hash}-{timestamp}");
     let runtime = paths.runtimes.join(&profile);
@@ -2964,6 +2964,8 @@ async fn install_runtime(
         model_directory: paths.models.clone(),
     };
     let activation_app = app.clone();
+    let activation_cancellation = cancellation.token();
+    let cache_paths = paths.clone();
     let activation_paths = paths;
     let activation_manifest_version = manifest.desktop_version.clone();
     let activation = tauri::async_runtime::spawn_blocking(move || {
@@ -2986,7 +2988,7 @@ async fn install_runtime(
             &activation_paths,
             &projection,
             &activation_manifest_version,
-            Some(&cancellation.token()),
+            Some(&activation_cancellation),
         );
         let candidate_targets = match validated.and_then(|validated| {
             target_profiles::prepare_managed_activation(
@@ -3080,6 +3082,18 @@ async fn install_runtime(
     })
     .await
     .map_err(|error| format!("Managed activation stopped unexpectedly: {error}"))??;
+    if let Err(error) = uv_output(
+        &app,
+        &cache_paths,
+        vec!["cache".into(), "prune".into(), "--ci".into()],
+        None,
+        cancellation.token(),
+        "VidXP installation cache cleanup",
+    )
+    .await
+    {
+        log::warn!("VidXP was activated, but its installation cache could not be pruned: {error}");
+    }
     stop_ui_process(&state);
     stop_api_process(&state);
     transition.commit_draft();

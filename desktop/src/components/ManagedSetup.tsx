@@ -370,6 +370,9 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
               <div className="folderCopy"><Text fw={650}>Downloaded model storage</Text><Text size="sm" className="mutedText">VidXP keeps the files needed by your selected search features here.</Text>{modelDirectory && <details className="technicalDetails"><summary>Storage location</summary><Text size="sm" className="pathText">{displayPath(modelDirectory)}</Text></details>}</div>
               <Button variant="default" leftSection={<IconFolderOpen aria-hidden="true" size={16} />} loading={operation === 'folder'} disabled={isBusy} onClick={() => void chooseFolder()}>Change location…</Button>
             </Group>
+            <Alert mt="md" color="blue" title="Plan for local storage">
+              The managed runtime can use approximately 3 GiB. Models add 37 MiB to 4.11 GiB depending on the selected search features. A full local setup uses approximately 7.1 GiB, plus temporary installation space, indexes, and videos.
+            </Alert>
             <div className="cacheInventory" aria-live="polite">
               {operation === 'load' || operation === 'folder' || operation === 'reset' ? (
                 <Text size="sm" mt="md"><Loader size="xs" /> Checking cached model files…</Text>

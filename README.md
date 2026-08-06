@@ -179,14 +179,18 @@ plugin packaging for additional ChatGPT surfaces will follow separately.
 First setup downloads only the models needed for the capabilities you select.
 VidXP shows the download size and destination before it starts.
 
+The Desktop-managed Python runtime and its selected dependencies can use
+approximately 3 GiB.
+
 | Capability | Approximate model download |
 |---|---:|
 | Dialogue search | 2.64 GiB |
 | Scene search | 1.43 GiB |
 | Actor matching | 37 MiB |
 
-Leave additional space for the VidXP runtime, indexes, source videos, and
-exported results.
+A full local Desktop setup with every search capability uses approximately
+7.1 GiB. Leave additional temporary space during installation and for indexes,
+source videos, and exported results.
 
 By default, the CLI and desktop app share the same VidXP data directory:
 
