@@ -13,6 +13,7 @@ from vidxp.application_models import (
     DependencyCheckCommand,
     DependencyKind,
     ErrorCategory,
+    Job,
     PrepareModelsCommand,
 )
 from vidxp.cli_support import (
@@ -26,6 +27,7 @@ from vidxp.cli_support import (
     require_media_runtime,
     state_from_context,
 )
+from vidxp.core.manifest import write_json_atomic
 from vidxp.media_runtime import (
     MediaRuntimeStatus,
     inspect_media_runtime,
@@ -413,6 +415,10 @@ def prepare(
             help="Confirm the displayed model download and cache size.",
         ),
     ] = False,
+    progress_file: Annotated[
+        Path | None,
+        typer.Option("--progress-file", hidden=True),
+    ] = None,
 ) -> None:
     """Download and cache selected runtime models before indexing."""
 
@@ -488,9 +494,21 @@ def prepare(
         )
     )
     if not detach:
+
+        def report_progress(job: Job) -> None:
+            if show_progress:
+                emit_job_progress(job)
+            if progress_file is not None and job.progress is not None:
+                write_json_atomic(
+                    progress_file,
+                    job.progress.model_dump(mode="json"),
+                )
+
         job = state.jobs.wait(
             job.job_id,
-            progress=emit_job_progress if show_progress else None,
+            progress=(
+                report_progress if show_progress or progress_file is not None else None
+            ),
         )
     if output_format == OutputFormat.json:
         emit_json(job.model_dump(mode="json"))

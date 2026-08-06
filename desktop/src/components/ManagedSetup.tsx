@@ -461,22 +461,24 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
           </Group>
           <Progress value={(progressCurrent / progressTotal) * 100} size="lg" animated />
           {setupProgress?.stage === 'models'
-            && setupProgress.model_message
-            && setupProgress.model_current != null
-            && setupProgress.model_total != null && (
+            && setupProgress.model_message && (
               <Stack gap={6}>
                 <Group justify="space-between" align="baseline" wrap="nowrap">
                   <Text size="sm" fw={650}>{setupProgress.model_message}</Text>
-                  <Text size="xs" className="mutedText" style={{ whiteSpace: 'nowrap' }}>
-                    {formatBytes(setupProgress.model_current)} of {formatBytes(setupProgress.model_total)}
-                  </Text>
+                  {setupProgress.model_current != null && setupProgress.model_total != null
+                    ? <Text size="xs" className="mutedText" style={{ whiteSpace: 'nowrap' }}>
+                        {formatBytes(setupProgress.model_current)} of {formatBytes(setupProgress.model_total)}
+                      </Text>
+                    : <Loader size="xs" />}
                 </Group>
-                <Progress
-                  aria-label="Current model download progress"
-                  value={(setupProgress.model_current / setupProgress.model_total) * 100}
-                  size="md"
-                  animated
-                />
+                {setupProgress.model_current != null && setupProgress.model_total != null && (
+                  <Progress
+                    aria-label="Current model download progress"
+                    value={(setupProgress.model_current / setupProgress.model_total) * 100}
+                    size="md"
+                    animated
+                  />
+                )}
               </Stack>
             )}
           <div>

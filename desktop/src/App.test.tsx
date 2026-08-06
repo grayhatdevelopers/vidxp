@@ -472,6 +472,15 @@ describe('desktop target lifecycle', () => {
       total: 8,
       stage: 'models',
       message: 'Verifying and downloading selected model files',
+      model_message: 'Preparing model artifacts.',
+    });
+    expect(await screen.findByText('Preparing model artifacts.')).toBeVisible();
+    reportProgress?.({
+      draft_id: 'draft-1',
+      current: 7,
+      total: 8,
+      stage: 'models',
+      message: 'Verifying and downloading selected model files',
       model_message: 'Downloading dialogue transcription model.',
       model_current: 512 * 1024 * 1024,
       model_total: 1024 * 1024 * 1024,

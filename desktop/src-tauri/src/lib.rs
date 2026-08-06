@@ -187,21 +187,6 @@ struct ManagedModelJobProgress {
     total: Option<u64>,
 }
 
-#[derive(Deserialize)]
-struct ManagedModelJobError {
-    message: String,
-}
-
-#[derive(Deserialize)]
-struct ManagedModelJob {
-    job_id: String,
-    state: String,
-    terminal: bool,
-    poll_after_seconds: u64,
-    progress: Option<ManagedModelJobProgress>,
-    error: Option<ManagedModelJobError>,
-}
-
 #[derive(Serialize)]
 struct RuntimeStatus {
     state: RuntimeState,
@@ -2057,13 +2042,6 @@ async fn supervised_output(
     )
     .await
     .map_err(|error| format!("{operation} failed: {}", error.detail))?;
-    successful_supervised_output(output, operation)
-}
-
-fn successful_supervised_output(
-    output: background_process::BackgroundOutput,
-    operation: &str,
-) -> Result<background_process::BackgroundOutput, String> {
     if output.status.success() {
         return Ok(output);
     }
@@ -2078,95 +2056,27 @@ fn successful_supervised_output(
     Err(format!("{operation} failed ({}): {detail}", output.status))
 }
 
-fn run_vidxp_supervised_blocking(
-    runtime: &Path,
-    paths: &DesktopPaths,
-    arguments: &[String],
-    cancellation: &background_process::CancellationToken,
-    operation: &str,
-) -> Result<background_process::BackgroundOutput, String> {
-    let mut command = configured_command(&executable(runtime, "vidxp"), paths);
-    command
-        .arg("--index-dir")
-        .arg(&paths.repository)
-        .args(arguments);
-    let output = background_process::run(
-        command,
-        background_process::BackgroundPolicy {
-            timeout: Duration::from_secs(30 * 60),
-            max_output_bytes: MAX_SETUP_OUTPUT_BYTES,
-        },
-        Some(cancellation),
-    )
-    .map_err(|error| format!("{operation} failed: {}", error.detail))?;
-    successful_supervised_output(output, operation)
-}
-
-fn parse_managed_model_job(
-    output: &background_process::BackgroundOutput,
-    operation: &str,
-) -> Result<ManagedModelJob, String> {
-    serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("{operation} returned an invalid progress response: {error}"))
-}
-
-fn prepare_models_with_progress(
+fn watch_managed_model_progress(
     app: &AppHandle,
     draft_id: &str,
-    runtime: &Path,
-    paths: &DesktopPaths,
-    arguments: &[String],
+    progress_path: &Path,
     current: u8,
     total: u8,
-    cancellation: &background_process::CancellationToken,
-) -> Result<(), String> {
-    let started = Instant::now();
-    let mut detached_arguments = arguments.to_vec();
-    detached_arguments.push("--detach".into());
-    let queued = run_vidxp_supervised_blocking(
-        runtime,
-        paths,
-        &detached_arguments,
-        cancellation,
-        "VidXP model preparation",
-    )?;
-    let mut job = parse_managed_model_job(&queued, "VidXP model preparation")?;
-
+    stop: &AtomicBool,
+) {
+    let mut last_contents = None;
     loop {
-        if let Some(progress) = &job.progress {
-            emit_managed_model_progress(app, draft_id, current, total, progress);
+        if let Ok(contents) = fs::read(progress_path)
+            && last_contents.as_deref() != Some(contents.as_slice())
+            && let Ok(progress) = serde_json::from_slice(&contents)
+        {
+            emit_managed_model_progress(app, draft_id, current, total, &progress);
+            last_contents = Some(contents);
         }
-        if job.terminal {
-            return if job.state == "succeeded" {
-                Ok(())
-            } else {
-                Err(format!(
-                    "VidXP model preparation failed: {}",
-                    job.error
-                        .map(|error| error.message)
-                        .unwrap_or_else(|| format!("the job ended in the {} state", job.state))
-                ))
-            };
+        if stop.load(Ordering::Acquire) {
+            break;
         }
-        if started.elapsed() >= Duration::from_secs(30 * 60) {
-            return Err("VidXP model preparation exceeded 1800 seconds".into());
-        }
-        let delay = Duration::from_secs(job.poll_after_seconds.clamp(1, 5));
-        let deadline = Instant::now() + delay;
-        while Instant::now() < deadline {
-            if cancellation.is_cancelled() {
-                return Err("VidXP model preparation failed: the operation was cancelled".into());
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-        let status = run_vidxp_supervised_blocking(
-            runtime,
-            paths,
-            &["jobs".into(), "show".into(), job.job_id.clone()],
-            cancellation,
-            "VidXP model progress",
-        )?;
-        job = parse_managed_model_job(&status, "VidXP model progress")?;
+        thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -3053,30 +2963,42 @@ async fn install_runtime(
                 "models",
                 "Verifying and downloading selected model files",
             );
-            let prepare_arguments =
+            let progress_path = runtime.join(".managed-model-progress.json");
+            let mut prepare_arguments =
                 capability_command_arguments(&manifest, "prepare", &capabilities);
+            prepare_arguments.push("--progress-file".into());
+            prepare_arguments.push(progress_path.to_string_lossy().into_owned());
             let mut worker = state.worker_stop.register(runtime.clone(), paths.clone())?;
             let preparation_app = app.clone();
             let preparation_draft_id = request.draft_id.clone();
-            let preparation_runtime = runtime.clone();
-            let preparation_paths = paths.clone();
-            let preparation_cancellation = cancellation.token();
-            let preparation = tauri::async_runtime::spawn_blocking(move || {
-                prepare_models_with_progress(
+            let monitor_stop = Arc::new(AtomicBool::new(false));
+            let monitor_stop_worker = monitor_stop.clone();
+            let progress_path_worker = progress_path.clone();
+            let progress_monitor = thread::spawn(move || {
+                watch_managed_model_progress(
                     &preparation_app,
                     &preparation_draft_id,
-                    &preparation_runtime,
-                    &preparation_paths,
-                    &prepare_arguments,
+                    &progress_path_worker,
                     7,
                     progress_total,
-                    &preparation_cancellation,
-                )
-            })
-            .await
-            .map_err(|error| format!("VidXP model progress stopped unexpectedly: {error}"))?;
+                    &monitor_stop_worker,
+                );
+            });
+            let preparation = run_vidxp_supervised(
+                &runtime,
+                &paths,
+                &prepare_arguments,
+                cancellation.token(),
+                "VidXP model preparation",
+            )
+            .await;
+            monitor_stop.store(true, Ordering::Release);
+            let monitor_result = progress_monitor.join();
+            let _ = fs::remove_file(&progress_path);
             worker.stop_before(Instant::now() + Duration::from_secs(5));
             preparation?;
+            monitor_result
+                .map_err(|_| "VidXP model progress stopped unexpectedly".to_owned())?;
         }
 
         Ok::<(), String>(())
