@@ -109,7 +109,7 @@ describe('desktop target lifecycle', () => {
     mocks.mcpClientConfig.mockResolvedValue('{"mcpServers":{"vidxp":{"command":"vidxp-mcp"}}}');
     mocks.installCodexPlugin.mockResolvedValue({
       plugin_name: 'vidxp', plugin_id: 'vidxp@vidxp-local', plugin_version: '0.4.0+codex.1234',
-      marketplace_name: 'vidxp-local', marketplace_path: 'C:\\Data\\codex-marketplace\\marketplace.json',
+      marketplace_name: 'vidxp-local', marketplace_path: 'C:\\Data\\codex-marketplace\\.agents\\plugins\\marketplace.json',
       installed_path: 'C:\\Users\\test\\.codex\\plugins\\vidxp',
       detail: 'VidXP is installed in Codex with its MCP server and skills. Start a new Codex chat to use the updated plugin.',
     });

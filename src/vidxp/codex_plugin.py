@@ -18,6 +18,7 @@ from vidxp.mcp_cli import stdio_client_config
 PLUGIN_NAME = "vidxp"
 MARKETPLACE_NAME = "vidxp-local"
 MANAGED_MARKER = ".vidxp-managed-marketplace"
+MARKETPLACE_MANIFEST = Path(".agents") / "plugins" / "marketplace.json"
 
 
 class CodexPluginInstallError(RuntimeError):
@@ -169,8 +170,12 @@ def export_codex_plugin(
             }
         ],
     }
-    marketplace_path = root / "marketplace.json"
+    marketplace_path = root / MARKETPLACE_MANIFEST
+    marketplace_path.parent.mkdir(parents=True, exist_ok=True)
     _write_json(marketplace_path, marketplace)
+    legacy_marketplace_path = root / "marketplace.json"
+    if marker.is_file() and legacy_marketplace_path.is_file():
+        legacy_marketplace_path.unlink()
     marker.write_text("Managed by VidXP Desktop.\n", encoding="utf-8")
     return CodexPluginExport(
         marketplace_root=str(root),

@@ -35,9 +35,8 @@ def test_export_codex_plugin_materializes_skills_and_target_mcp_config() -> None
             )
         )
         mcp = json.loads((plugin_root / ".mcp.json").read_text(encoding="utf-8"))
-        marketplace = json.loads(
-            (root / "marketplace.json").read_text(encoding="utf-8")
-        )
+        marketplace_path = root / ".agents" / "plugins" / "marketplace.json"
+        marketplace = json.loads(marketplace_path.read_text(encoding="utf-8"))
 
         assert manifest["name"] == "vidxp"
         assert manifest["version"] == exported.plugin_version
@@ -64,6 +63,25 @@ def test_export_codex_plugin_materializes_skills_and_target_mcp_config() -> None
             "installation": "AVAILABLE",
             "authentication": "ON_INSTALL",
         }
+        assert exported.marketplace_path == str(marketplace_path)
+        assert not (root / "marketplace.json").exists()
+
+
+def test_export_migrates_the_legacy_managed_marketplace_layout() -> None:
+    with TemporaryDirectory() as directory:
+        root = Path(directory) / "marketplace"
+        root.mkdir()
+        (root / ".vidxp-managed-marketplace").write_text(
+            "Managed by VidXP Desktop.\n",
+            encoding="utf-8",
+        )
+        legacy_path = root / "marketplace.json"
+        legacy_path.write_text("{}\n", encoding="utf-8")
+
+        exported = export_codex_plugin(root)
+
+        assert Path(exported.marketplace_path).is_file()
+        assert not legacy_path.exists()
 
 
 def test_install_codex_plugin_registers_marketplace_then_installs_bundle() -> None:

@@ -34,8 +34,11 @@ the documented JSON forms of `codex plugin marketplace add` and
 `codex plugin add`, leaves personal marketplace files and `config.toml`
 untouched, and asks the user to start a new Codex chat after installation. The
 exported marketplace lives in VidXP Desktop's private application-data
-directory; the canonical distributable bundle remains checked into this
-repository and packaged in every VidXP wheel.
+directory. Its catalog is written to the Codex marketplace contract at
+`.agents/plugins/marketplace.json`, with the plugin at `plugins/vidxp/`. The
+exporter also removes the obsolete root-level `marketplace.json` from earlier
+VidXP-managed exports. The canonical distributable bundle remains checked into
+this repository and packaged in every VidXP wheel.
 
 ## Interactive MCP App
 
