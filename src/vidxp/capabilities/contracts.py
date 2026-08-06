@@ -28,6 +28,7 @@ from vidxp.application_models import (
 
 
 CAPABILITY_CONTRACT_VERSION = 1
+MODULE_IMPORT_TIMEOUT_SECONDS = 180
 
 
 class _ContractModel(BaseModel):
@@ -313,7 +314,7 @@ def module_import_check(
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            timeout=60,
+            timeout=MODULE_IMPORT_TIMEOUT_SECONDS,
             check=False,
         )
         if probe.returncode != 0:

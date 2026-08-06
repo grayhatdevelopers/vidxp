@@ -57,6 +57,7 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(command[1], "-c")
         self.assertIn('"cv2"', command[3])
         self.assertIn('"VideoCapture"', command[3])
+        self.assertEqual(run.call_args.kwargs["timeout"], 180)
 
     def test_registry_drives_capability_metadata(self):
         self.assertEqual(
