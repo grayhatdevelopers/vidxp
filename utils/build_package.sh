@@ -33,23 +33,7 @@ echo "📦 Building package..."
 python -m build
 
 for sdist in "$DIST_DIR"/*.tar.gz; do
-  archive_listing="$(tar -tzf "$sdist")"
-  archive_root="${archive_listing%%/*}"
-  normalize_dir="$(mktemp -d)"
-  uncompressed="${sdist%.gz}"
-  tar -xzf "$sdist" -C "$normalize_dir"
-  rm -- "$sdist"
-  tar \
-    --sort=name \
-    --mtime="@${SOURCE_DATE_EPOCH}" \
-    --owner=0 \
-    --group=0 \
-    --numeric-owner \
-    -cf "$uncompressed" \
-    -C "$normalize_dir" \
-    "$archive_root"
-  gzip --no-name --best "$uncompressed"
-  rm -rf -- "$normalize_dir"
+  python utils/normalize_sdist.py "$sdist" "$SOURCE_DATE_EPOCH"
 done
 
 echo "♻️ Restoring original README..."
