@@ -9,6 +9,7 @@ import {
   beginManagedSetup,
   displayPath,
   installRuntime,
+  installCodexPlugin,
   configureExternalInstallation,
   browserServiceStatus,
   localServerStatus,
@@ -108,6 +109,7 @@ describe('desktop IPC adapter', () => {
 
     await targetDoctor();
     await mcpClientConfig();
+    await installCodexPlugin();
     await localWorkerStatus();
     await startLocalWorker();
     await stopLocalWorker();
@@ -121,16 +123,17 @@ describe('desktop IPC adapter', () => {
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'target_doctor');
     expect(invoke).toHaveBeenNthCalledWith(2, 'mcp_client_config');
-    expect(invoke).toHaveBeenNthCalledWith(3, 'local_worker_status');
-    expect(invoke).toHaveBeenNthCalledWith(4, 'start_local_worker');
-    expect(invoke).toHaveBeenNthCalledWith(5, 'stop_local_worker');
-    expect(invoke).toHaveBeenNthCalledWith(6, 'browser_service_status');
-    expect(invoke).toHaveBeenNthCalledWith(7, 'start_shared_browser');
-    expect(invoke).toHaveBeenNthCalledWith(8, 'stop_browser_service');
-    expect(invoke).toHaveBeenNthCalledWith(9, 'local_server_status');
-    expect(invoke).toHaveBeenNthCalledWith(10, 'start_local_server');
-    expect(invoke).toHaveBeenNthCalledWith(11, 'start_shared_server');
-    expect(invoke).toHaveBeenNthCalledWith(12, 'stop_local_server');
+    expect(invoke).toHaveBeenNthCalledWith(3, 'install_codex_plugin');
+    expect(invoke).toHaveBeenNthCalledWith(4, 'local_worker_status');
+    expect(invoke).toHaveBeenNthCalledWith(5, 'start_local_worker');
+    expect(invoke).toHaveBeenNthCalledWith(6, 'stop_local_worker');
+    expect(invoke).toHaveBeenNthCalledWith(7, 'browser_service_status');
+    expect(invoke).toHaveBeenNthCalledWith(8, 'start_shared_browser');
+    expect(invoke).toHaveBeenNthCalledWith(9, 'stop_browser_service');
+    expect(invoke).toHaveBeenNthCalledWith(10, 'local_server_status');
+    expect(invoke).toHaveBeenNthCalledWith(11, 'start_local_server');
+    expect(invoke).toHaveBeenNthCalledWith(12, 'start_shared_server');
+    expect(invoke).toHaveBeenNthCalledWith(13, 'stop_local_server');
   });
 
   it('adds optional surfaces to the selected existing installation', async () => {

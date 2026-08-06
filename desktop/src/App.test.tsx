@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   prepareManagedModels: vi.fn(), onManagedSetupProgress: vi.fn(),
   runtimeManifest: vi.fn(), runtimeStatus: vi.fn(), launchUi: vi.fn(),
   chooseModelDirectory: vi.fn(), modelDirectoryInventory: vi.fn(),
-  targetDoctor: vi.fn(), mcpClientConfig: vi.fn(), localServerStatus: vi.fn(), localWorkerStatus: vi.fn(), browserServiceStatus: vi.fn(),
+  targetDoctor: vi.fn(), mcpClientConfig: vi.fn(), installCodexPlugin: vi.fn(), localServerStatus: vi.fn(), localWorkerStatus: vi.fn(), browserServiceStatus: vi.fn(),
   startLocalServer: vi.fn(), startSharedServer: vi.fn(), stopLocalServer: vi.fn(), startSharedBrowser: vi.fn(), stopBrowserService: vi.fn(), startLocalWorker: vi.fn(), stopLocalWorker: vi.fn(), configureExternalInstallation: vi.fn(),
 }));
 
@@ -107,6 +107,12 @@ describe('desktop target lifecycle', () => {
     mocks.launchUi.mockResolvedValue(undefined);
     mocks.targetDoctor.mockResolvedValue({ ok: true, modalities: ['scene'], checks: [{ capability: 'media', kind: 'distribution', name: 'ffmpeg', ok: true }] });
     mocks.mcpClientConfig.mockResolvedValue('{"mcpServers":{"vidxp":{"command":"vidxp-mcp"}}}');
+    mocks.installCodexPlugin.mockResolvedValue({
+      plugin_name: 'vidxp', plugin_id: 'vidxp@vidxp-local', plugin_version: '0.4.0+codex.1234',
+      marketplace_name: 'vidxp-local', marketplace_path: 'C:\\Data\\codex-marketplace\\marketplace.json',
+      installed_path: 'C:\\Users\\test\\.codex\\plugins\\vidxp',
+      detail: 'VidXP is installed in Codex with its MCP server and skills. Start a new Codex chat to use the updated plugin.',
+    });
     mocks.browserServiceStatus.mockResolvedValue({ state: 'stopped', running: false, shared: false, port: null, local_url: null, network_url: null, detail: 'Stopped.' });
     mocks.startSharedBrowser.mockResolvedValue({ state: 'ready', running: true, shared: true, port: 8501, local_url: 'http://127.0.0.1:8501', network_url: 'http://192.168.1.20:8501', detail: 'Shared.' });
     mocks.stopBrowserService.mockResolvedValue({ state: 'stopped', running: false, shared: false, port: null, local_url: null, network_url: null, detail: 'Stopped.' });
@@ -176,7 +182,11 @@ describe('desktop target lifecycle', () => {
     expect(await screen.findByText('VidXP is ready')).toBeVisible();
     expect(mocks.targetDoctor).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole('button', { name: 'Set up connection' }));
+    await user.click(screen.getByRole('button', { name: 'Set up in Codex' }));
+    expect(await screen.findByText('VidXP is installed in Codex with its MCP server and skills. Start a new Codex chat to use the updated plugin.')).toBeVisible();
+    expect(mocks.installCodexPlugin).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'Copy MCP setup' }));
     expect(await screen.findByRole('heading', { name: 'Connect an AI assistant' })).toBeVisible();
     expect(mocks.mcpClientConfig).toHaveBeenCalledTimes(1);
 
@@ -211,7 +221,8 @@ describe('desktop target lifecycle', () => {
     await user.click(screen.getByRole('button', { name: 'Apply changes' }));
 
     await waitFor(() => expect(mocks.configureExternalInstallation).toHaveBeenCalledWith([], ['worker', 'browser', 'mcp']));
-    expect(await screen.findByRole('button', { name: 'Set up connection' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Set up in Codex' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Copy MCP setup' })).toBeVisible();
   });
 
   it('offers an in-place manifest update when the selected runtime contract is too old', async () => {

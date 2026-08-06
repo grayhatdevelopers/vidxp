@@ -171,6 +171,8 @@ shipped inside the Python package. The plugin keeps both skills and the local
 `vidxp-mcp` server definition together. Its MCP App resource also gives
 compatible hosts an interactive upload and evidence-review view; every workflow
 continues to work through ordinary MCP tool results when a host has no UI.
+When the MCP feature is installed, VidXP Desktop can configure another MCP
+client or install the complete local plugin directly into Codex.
 
 - [Python, HTTP, and MCP installation](INSTALLATION_GUIDE.md)
 - [ChatGPT and Codex plugin integration](docs/integrations/openai-plugin.md)

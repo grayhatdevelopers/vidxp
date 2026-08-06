@@ -54,6 +54,7 @@ vidxp-worker = "vidxp.workflow_worker:main"
 vidxp-database = "vidxp.database_cli:main"
 vidxp-hooks = "vidxp.hook_cli:main"
 vidxp-mcp = "vidxp.mcp_cli:main"
+vidxp-codex-plugin = "vidxp.codex_plugin_cli:main"
 
 [project.urls]
 Homepage = "https://github.com/grayhatdevelopers/vidxp"

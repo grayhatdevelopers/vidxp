@@ -16,6 +16,27 @@ The root skill folders remain the authoring source. Packaging tests require the
 bundled snapshot to match their file inventory and text exactly, and Release
 Please keeps the plugin manifest version aligned with the Python package.
 
+## Install in Codex
+
+With **AI assistant integration** enabled, VidXP Desktop shows two distinct
+actions:
+
+- **Set up in Codex** exports a target-specific copy of this bundle to a
+  Desktop-managed `vidxp-local` marketplace, registers that marketplace through
+  the Codex CLI, and installs the plugin. The generated `.mcp.json` pins the
+  selected installation's absolute `vidxp-mcp` command, repository, and data
+  paths, so Codex does not depend on its process `PATH`.
+- **Copy MCP setup** retains the transport-only JSON flow for other compatible
+  local MCP clients.
+
+The Codex action installs the MCP server and both skills as one unit. It uses
+the documented JSON forms of `codex plugin marketplace add` and
+`codex plugin add`, leaves personal marketplace files and `config.toml`
+untouched, and asks the user to start a new Codex chat after installation. The
+exported marketplace lives in VidXP Desktop's private application-data
+directory; the canonical distributable bundle remains checked into this
+repository and packaged in every VidXP wheel.
+
 ## Interactive MCP App
 
 `create_media_upload` and `get_job_evidence` advertise the same

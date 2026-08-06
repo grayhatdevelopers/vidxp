@@ -39,6 +39,12 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(len(wheels), 1)
             with zipfile.ZipFile(wheels[0]) as archive:
                 members = set(archive.namelist())
+                entry_points_name = next(
+                    name
+                    for name in members
+                    if name.endswith(".dist-info/entry_points.txt")
+                )
+                entry_points = archive.read(entry_points_name).decode("utf-8")
 
         required = {
             "vidxp/assets/mcp_app/index.html",
@@ -50,6 +56,10 @@ class PackagingTests(unittest.TestCase):
             "vidxp/bundled_plugins/vidxp/skills/vidxp-find-video-evidence/agents/openai.yaml",
         }
         self.assertLessEqual(required, members)
+        self.assertIn(
+            "vidxp-codex-plugin = vidxp.codex_plugin_cli:main",
+            entry_points,
+        )
 
     def test_bundled_plugin_is_valid_and_skills_match_canonical_sources(self):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))

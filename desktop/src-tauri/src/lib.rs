@@ -486,6 +486,17 @@ struct LocalWorkerStatus {
     detail: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct CodexPluginInstallResult {
+    plugin_name: String,
+    plugin_id: Option<String>,
+    plugin_version: String,
+    marketplace_name: String,
+    marketplace_path: String,
+    installed_path: Option<String>,
+    detail: String,
+}
+
 #[derive(Clone)]
 struct TrayMenuItems {
     installation: MenuItem<tauri::Wry>,
@@ -3641,6 +3652,49 @@ async fn mcp_client_config(
     .map_err(|error| format!("MCP configuration stopped unexpectedly: {error}"))?
 }
 
+#[tauri::command]
+async fn install_codex_plugin(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<CodexPluginInstallResult, String> {
+    let _active = state.active_operations.register()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (profile, paths) = selected_target_context(&app)?;
+        if !profile
+            .surfaces
+            .iter()
+            .any(|surface| surface == "mcp" || surface == "server")
+        {
+            return Err(
+                "The selected VidXP installation does not expose an installed MCP surface.".into(),
+            );
+        }
+        let installer_path = target_companion_executable(&profile, "vidxp-codex-plugin");
+        if !installer_path.is_file() {
+            return Err(format!(
+                "The selected installation did not provide {}. Update VidXP and try again.",
+                installer_path.display()
+            ));
+        }
+        let marketplace_root = paths.private_data.join("codex-marketplace");
+        let mut command = target_command(&profile, &paths, &installer_path);
+        command
+            .arg("--marketplace-root")
+            .arg(&marketplace_root)
+            .arg("--repository")
+            .arg("default")
+            .arg("--index-directory")
+            .arg(&profile.repository_root)
+            .arg("--data-dir")
+            .arg(&profile.data_root);
+        let output = checked_output(command, "VidXP Codex plugin setup")?;
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("VidXP returned invalid Codex setup details: {error}"))
+    })
+    .await
+    .map_err(|error| format!("Codex plugin setup stopped unexpectedly: {error}"))?
+}
+
 fn execute_worker_action(app: &AppHandle, action: &str) -> Result<LocalWorkerStatus, String> {
     let (profile, paths) = selected_target_context(app)?;
     if !profile.surfaces.iter().any(|surface| surface == "worker") {
@@ -4601,6 +4655,7 @@ pub fn run() {
             target_doctor,
             configure_external_installation,
             mcp_client_config,
+            install_codex_plugin,
             local_worker_status,
             start_local_worker,
             stop_local_worker,

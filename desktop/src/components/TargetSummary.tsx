@@ -1,11 +1,12 @@
 import { Alert, Badge, Button, Checkbox, Code, Group, Loader, Modal, Stack, Text, Title } from '@mantine/core';
-import { IconActivityHeartbeat, IconCopy, IconExternalLink, IconPlayerPlay, IconPlayerStop, IconRefresh, IconSettings, IconShare, IconTerminal2 } from '@tabler/icons-react';
+import { IconActivityHeartbeat, IconCopy, IconExternalLink, IconPlugConnected, IconPlayerPlay, IconPlayerStop, IconRefresh, IconSettings, IconShare, IconTerminal2 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 
 import {
   errorMessage,
   browserServiceStatus,
   configureExternalInstallation,
+  installCodexPlugin,
   localServerStatus,
   localWorkerStatus,
   mcpClientConfig,
@@ -20,6 +21,7 @@ import {
   targetDoctor,
   type DoctorReport,
   type BrowserServiceStatus,
+  type CodexPluginInstallResult,
   type LocalServerStatus,
   type LocalWorkerStatus,
   type RuntimeManifest,
@@ -55,7 +57,8 @@ export function TargetSummary({ profile, validationError, checking, operationPen
   const [browser, setBrowser] = useState<BrowserServiceStatus | null>(null);
   const [worker, setWorker] = useState<LocalWorkerStatus | null>(null);
   const [mcpConfig, setMcpConfig] = useState<string | null>(null);
-  const [busy, setBusy] = useState<'doctor' | 'config' | 'features' | 'worker-start' | 'worker-stop' | 'browser-share' | 'browser-stop' | 'server-start' | 'server-share' | 'server-stop' | null>(null);
+  const [codexSetup, setCodexSetup] = useState<CodexPluginInstallResult | null>(null);
+  const [busy, setBusy] = useState<'doctor' | 'config' | 'codex' | 'features' | 'worker-start' | 'worker-stop' | 'browser-share' | 'browser-stop' | 'server-start' | 'server-share' | 'server-stop' | null>(null);
   const [runtimeFailure, setRuntimeFailure] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
@@ -81,6 +84,7 @@ export function TargetSummary({ profile, validationError, checking, operationPen
   useEffect(() => {
     setDoctor(null);
     setMcpConfig(null);
+    setCodexSetup(null);
     setRuntimeFailure(null);
     if (!serverAvailable) {
       setServer(null);
@@ -173,6 +177,19 @@ export function TargetSummary({ profile, validationError, checking, operationPen
       setMcpConfig(await mcpClientConfig());
     } catch (error) {
       setRuntimeFailure(errorMessage(error, 'VidXP could not create the AI client setup.'));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function setupCodex() {
+    setBusy('codex');
+    setRuntimeFailure(null);
+    setCodexSetup(null);
+    try {
+      setCodexSetup(await installCodexPlugin());
+    } catch (error) {
+      setRuntimeFailure(errorMessage(error, 'VidXP could not install the Codex plugin.'));
     } finally {
       setBusy(null);
     }
@@ -379,9 +396,17 @@ export function TargetSummary({ profile, validationError, checking, operationPen
           </Group>}
 
           {mcpAvailable && <Group justify="space-between" className="runtimeControlRow">
-            <div><Text fw={650}>AI assistant integration</Text><Text size="sm" className="mutedText">Create the MCP setup needed to use VidXP from a compatible AI assistant.</Text></div>
-            <Button variant="light" leftSection={<IconTerminal2 size={17} />} loading={busy === 'config'} disabled={operationPending || busy !== null} onClick={() => void loadMcpConfig()}>Set up connection</Button>
+            <div><Text fw={650}>AI assistant integration</Text><Text size="sm" className="mutedText">Install VidXP's MCP server and skills in Codex, or copy the MCP setup for another compatible assistant.</Text></div>
+            <Group gap="xs" justify="flex-end">
+              <Button leftSection={<IconPlugConnected size={17} />} loading={busy === 'codex'} disabled={operationPending || busy !== null} onClick={() => void setupCodex()}>Set up in Codex</Button>
+              <Button variant="light" leftSection={<IconTerminal2 size={17} />} loading={busy === 'config'} disabled={operationPending || busy !== null} onClick={() => void loadMcpConfig()}>Copy MCP setup</Button>
+            </Group>
           </Group>}
+
+          {codexSetup && <Alert color="teal" title="VidXP is installed in Codex">
+            <Text size="sm">{codexSetup.detail}</Text>
+            <details className="technicalDetails"><summary>Installation details</summary><Text size="xs">Plugin {codexSetup.plugin_version} from {codexSetup.marketplace_name}</Text>{codexSetup.installed_path && <Code className="pathCode">{codexSetup.installed_path}</Code>}</details>
+          </Alert>}
 
           {serverAvailable && <Group justify="space-between" className="runtimeControlRow">
             <div>
