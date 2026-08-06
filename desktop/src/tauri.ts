@@ -193,6 +193,9 @@ export interface ManagedSetupProgress {
   total: number;
   stage: string;
   message: string;
+  model_message?: string | null;
+  model_current?: number | null;
+  model_total?: number | null;
 }
 
 export interface InstallRuntimeResult {

@@ -451,7 +451,7 @@ describe('desktop target lifecycle', () => {
   it('blocks setup interaction and reports managed installation stages', async () => {
     const media = deferred<{ ready: boolean }>();
     mocks.installMediaRuntime.mockReturnValue(media.promise);
-    let reportProgress: ((progress: { draft_id: string; current: number; total: number; stage: string; message: string }) => void) | undefined;
+    let reportProgress: ((progress: { draft_id: string; current: number; total: number; stage: string; message: string; model_message?: string; model_current?: number; model_total?: number }) => void) | undefined;
     mocks.onManagedSetupProgress.mockImplementation(async (handler) => {
       reportProgress = handler;
       return vi.fn();
@@ -466,6 +466,19 @@ describe('desktop target lifecycle', () => {
     reportProgress?.({ draft_id: 'draft-1', current: 4, total: 8, stage: 'dependencies', message: 'Installing the selected search features' });
     expect(await screen.findByText('Step 4 of 8')).toBeVisible();
     expect(screen.getByText('Installing the selected search features')).toBeVisible();
+    reportProgress?.({
+      draft_id: 'draft-1',
+      current: 7,
+      total: 8,
+      stage: 'models',
+      message: 'Verifying and downloading selected model files',
+      model_message: 'Downloading dialogue transcription model.',
+      model_current: 512 * 1024 * 1024,
+      model_total: 1024 * 1024 * 1024,
+    });
+    expect(await screen.findByText('Downloading dialogue transcription model.')).toBeVisible();
+    expect(screen.getByText('512.0 MiB of 1.00 GiB')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Current model download progress' })).toHaveAttribute('aria-valuenow', '50');
 
     media.resolve({ ready: true });
   });

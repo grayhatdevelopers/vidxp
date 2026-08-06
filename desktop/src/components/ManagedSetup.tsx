@@ -460,6 +460,25 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
             <Text size="sm" className="mutedText">{setupElapsed}s elapsed</Text>
           </Group>
           <Progress value={(progressCurrent / progressTotal) * 100} size="lg" animated />
+          {setupProgress?.stage === 'models'
+            && setupProgress.model_message
+            && setupProgress.model_current != null
+            && setupProgress.model_total != null && (
+              <Stack gap={6}>
+                <Group justify="space-between" align="baseline" wrap="nowrap">
+                  <Text size="sm" fw={650}>{setupProgress.model_message}</Text>
+                  <Text size="xs" className="mutedText" style={{ whiteSpace: 'nowrap' }}>
+                    {formatBytes(setupProgress.model_current)} of {formatBytes(setupProgress.model_total)}
+                  </Text>
+                </Group>
+                <Progress
+                  aria-label="Current model download progress"
+                  value={(setupProgress.model_current / setupProgress.model_total) * 100}
+                  size="md"
+                  animated
+                />
+              </Stack>
+            )}
           <div>
             <Text fw={650}>{setupProgress?.message ?? 'Starting managed setup'}</Text>
             <Text size="sm" className="mutedText" mt="xs">The existing installation remains active until every step has completed and the replacement passes validation.</Text>
