@@ -1,7 +1,7 @@
 interface:
   display_name: "Find Video Evidence with VidXP"
-  short_description: "Search indexed videos and return verifiable evidence"
-  default_prompt: "Use $vidxp-find-video-evidence to find and verify moments in my indexed videos."
+  short_description: "Surface video boards, frames, and clips first"
+  default_prompt: "Use $vidxp-find-video-evidence to surface the best board, keyframes, and clips before brief accuracy feedback."
 
 policy:
   allow_implicit_invocation: true
