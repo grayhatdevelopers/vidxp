@@ -1288,12 +1288,16 @@ fn capability_command_arguments(
         .map(|name| manifest.capabilities[name].modality.as_str())
         .collect::<Vec<_>>()
         .join(",");
-    vec![
+    let mut arguments = vec![
         operation.into(),
         "--json".into(),
         "--modalities".into(),
         modalities,
-    ]
+    ];
+    if operation == "prepare" {
+        arguments.push("--yes".into());
+    }
+    arguments
 }
 
 fn executable(runtime: &Path, name: &str) -> PathBuf {
@@ -5290,6 +5294,10 @@ mod tests {
         assert_eq!(
             capability_command_arguments(&manifest, "doctor", &["dialogue".into(), "scene".into()]),
             ["doctor", "--json", "--modalities", "dialogue,scene"]
+        );
+        assert_eq!(
+            capability_command_arguments(&manifest, "prepare", &["scene".into()]),
+            ["prepare", "--json", "--modalities", "scene", "--yes"]
         );
     }
 
