@@ -72,6 +72,7 @@ from vidxp.application_models import (
     SearchMomentsPlanStep,
     WorkspaceOverview,
 )
+from vidxp.mcp_app import MCP_APP_MIME_TYPE, MCP_APP_RESOURCE_URI
 from vidxp.authentication import (
     AuthenticatedBearer,
     OIDCBearerAuthenticator,
@@ -439,12 +440,38 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             async with Client(server) as client:
                 discovered = await client.list_tools()
                 result = await client.call_tool("list_capabilities", {})
+                app_resource = await client.read_resource(MCP_APP_RESOURCE_URI)
 
         self.assertEqual(
             [tool.name for tool in discovered.tools],
             MCP_TOOL_NAMES,
         )
         tools = {tool.name: tool for tool in discovered.tools}
+        for name in ("create_media_upload", "get_job_evidence"):
+            self.assertEqual(
+                tools[name].meta["ui"]["resourceUri"],
+                MCP_APP_RESOURCE_URI,
+            )
+            self.assertEqual(
+                tools[name].meta["openai/outputTemplate"],
+                MCP_APP_RESOURCE_URI,
+            )
+        app_contents = app_resource.contents[0]
+        self.assertEqual(app_contents.mime_type, MCP_APP_MIME_TYPE)
+        self.assertEqual(
+            app_contents.meta["ui"]["csp"],
+            {"connectDomains": [], "resourceDomains": []},
+        )
+        self.assertIn("ui/notifications/tool-result", app_contents.text)
+        self.assertIn('request("ui/initialize"', app_contents.text)
+        self.assertIn('notify("ui/notifications/initialized"', app_contents.text)
+        self.assertIn('request("tools/call"', app_contents.text)
+        self.assertIn('request("ui/open-link"', app_contents.text)
+        self.assertIn('request("ui/request-display-mode"', app_contents.text)
+        self.assertIn('request("ui/update-model-context"', app_contents.text)
+        self.assertIn("window.openai?.requestDisplayMode", app_contents.text)
+        self.assertIn("materialize_job_evidence", app_contents.text)
+        self.assertNotIn("<script src=", app_contents.text)
         self.assertIsNone(tools["get_job_evidence"].output_schema)
         self.assertIsNone(tools["materialize_job_evidence"].output_schema)
         self.assertTrue(
@@ -1528,7 +1555,17 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         resource = await client.read_resource(uri)
 
                     self.assertFalse(result.is_error)
-                    self.assertIsNone(result.structured_content)
+                    self.assertEqual(result.structured_content["view"], "evidence")
+                    self.assertEqual(
+                        result.structured_content["source_job_id"],
+                        JOB_ID,
+                    )
+                    self.assertEqual(
+                        result.structured_content["board"]["tiles"][0][
+                            "evidence_id"
+                        ],
+                        "e" * 64,
+                    )
                     self.assertIn(evidence_id := "e" * 64, result.content[0].text)
                     self.assertIn("1.000-2.000", result.content[0].text)
                     if transport == "local_stdio":
@@ -1604,7 +1641,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                             "get_job_evidence", {"job_id": JOB_ID}
                         )
                         self.assertFalse(result.is_error)
-                        self.assertIsNone(result.structured_content)
+                        self.assertEqual(
+                            result.structured_content["view"],
+                            "evidence",
+                        )
                         self.assertEqual(
                             any(
                                 isinstance(block, ImageContent)
@@ -1934,7 +1974,22 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 result = await client.call_tool("get_job_evidence", {"job_id": JOB_ID})
 
             self.assertFalse(result.is_error, result.content)
-            self.assertIsNone(result.structured_content)
+            self.assertEqual(result.structured_content["view"], "evidence")
+            self.assertEqual(result.structured_content["source_job_id"], JOB_ID)
+            self.assertEqual(
+                result.structured_content["board"]["rendered_count"],
+                1,
+            )
+            self.assertEqual(
+                result.structured_content["board"]["pages"][0]["resource_uri"],
+                f"vidxp://artifacts/{ARTIFACT_ID}/content.jpg",
+            )
+            self.assertEqual(
+                result.structured_content["board"]["tiles"][0]["evidence_id"],
+                "e" * 64,
+            )
+            serialized = json.dumps(result.structured_content)
+            self.assertNotIn("source_fingerprint", serialized)
             self.assertIn("Board: 1/1 candidates", result.content[0].text)
             self.assertIn("1.000-2.000", result.content[0].text)
             self.assertIn("e" * 64, result.content[0].text)
@@ -2105,7 +2160,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 block for block in presented.content if isinstance(block, ResourceLink)
             ]
             self.assertEqual(len(links), 2)
-            self.assertIsNone(presented.structured_content)
+            self.assertEqual(presented.structured_content["view"], "evidence")
+            self.assertIsNone(presented.structured_content["answer"])
             self.assertTrue(
                 any(isinstance(block, ImageContent) for block in presented.content)
             )
@@ -2131,7 +2187,12 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             )
             query_result = completed_query.structured_content["result"]["result"]
             cited = query_result["claims"][0]["evidence_ids"][0]
-            self.assertIsNone(presented_query.structured_content)
+            self.assertEqual(
+                presented_query.structured_content["answer"]["claims"][0][
+                    "evidence_ids"
+                ],
+                [cited],
+            )
             self.assertIn("Grounded answer:", presented_query.content[0].text)
             self.assertIn(cited, presented_query.content[0].text)
             self.assertEqual(cited, query_result["evidence"][0]["evidence_id"])

@@ -1,0 +1,13 @@
+interface:
+  display_name: "Ingest Video with VidXP"
+  short_description: "Upload or ingest videos and index them with VidXP"
+  default_prompt: "Use $vidxp-ingest-video to ingest and index my video with VidXP."
+
+policy:
+  allow_implicit_invocation: true
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "vidxp"
+      description: "VidXP video ingestion and indexing tools"

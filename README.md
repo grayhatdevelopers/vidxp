@@ -166,11 +166,14 @@ VidXP includes reusable skill source folders for the two common agent workflows:
 - [Ingest and index videos](skills/vidxp-ingest-video/SKILL.md)
 - [Find moments and return inspectable evidence](skills/vidxp-find-video-evidence/SKILL.md)
 
-Download a skill folder and add it through a supported ChatGPT desktop or Codex
-Skills surface. The skills require a connected VidXP MCP server; installable
-plugin packaging for additional ChatGPT surfaces will follow separately.
+Download a skill folder directly, or install the versioned VidXP plugin bundle
+shipped inside the Python package. The plugin keeps both skills and the local
+`vidxp-mcp` server definition together. Its MCP App resource also gives
+compatible hosts an interactive upload and evidence-review view; every workflow
+continues to work through ordinary MCP tool results when a host has no UI.
 
 - [Python, HTTP, and MCP installation](INSTALLATION_GUIDE.md)
+- [ChatGPT and Codex plugin integration](docs/integrations/openai-plugin.md)
 - [Optional capability packages](INSTALLATION_GUIDE.md#optional-dependency-extras)
 - [Coolify server setup](docs/deployment/coolify.md)
 

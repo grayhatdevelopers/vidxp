@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tarfile
 import unittest
+import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import tomllib
@@ -19,6 +20,76 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PackagingTests(unittest.TestCase):
+    def test_wheel_contains_mcp_app_and_versioned_plugin_bundle(self):
+        with TemporaryDirectory() as directory:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "setup.py",
+                    "bdist_wheel",
+                    "--dist-dir",
+                    directory,
+                ],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            wheels = tuple(Path(directory).glob("*.whl"))
+            self.assertEqual(len(wheels), 1)
+            with zipfile.ZipFile(wheels[0]) as archive:
+                members = set(archive.namelist())
+
+        required = {
+            "vidxp/assets/mcp_app/index.html",
+            "vidxp/bundled_plugins/vidxp/.mcp.json",
+            "vidxp/bundled_plugins/vidxp/.codex-plugin/plugin.json",
+            "vidxp/bundled_plugins/vidxp/skills/vidxp-ingest-video/SKILL.md",
+            "vidxp/bundled_plugins/vidxp/skills/vidxp-ingest-video/agents/openai.yaml",
+            "vidxp/bundled_plugins/vidxp/skills/vidxp-find-video-evidence/SKILL.md",
+            "vidxp/bundled_plugins/vidxp/skills/vidxp-find-video-evidence/agents/openai.yaml",
+        }
+        self.assertLessEqual(required, members)
+
+    def test_bundled_plugin_is_valid_and_skills_match_canonical_sources(self):
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        plugin_root = ROOT / "src" / "vidxp" / "bundled_plugins" / "vidxp"
+        manifest = json.loads(
+            (plugin_root / ".codex-plugin" / "plugin.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        mcp = json.loads((plugin_root / ".mcp.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["name"], "vidxp")
+        self.assertEqual(
+            Version(manifest["version"]),
+            Version(project["project"]["version"]),
+        )
+        self.assertEqual(manifest["skills"], "./skills/")
+        self.assertEqual(manifest["mcpServers"], "./.mcp.json")
+        self.assertEqual(mcp["mcpServers"]["vidxp"]["command"], "vidxp-mcp")
+
+        canonical = ROOT / "skills"
+        bundled = plugin_root / "skills"
+        canonical_files = {
+            path.relative_to(canonical)
+            for path in canonical.rglob("*")
+            if path.is_file()
+        }
+        bundled_files = {
+            path.relative_to(bundled)
+            for path in bundled.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(bundled_files, canonical_files)
+        for relative in canonical_files:
+            self.assertEqual(
+                (bundled / relative).read_text(encoding="utf-8"),
+                (canonical / relative).read_text(encoding="utf-8"),
+                relative.as_posix(),
+            )
+
     def test_sdist_contains_every_upload_page_build_input(self):
         with TemporaryDirectory() as directory:
             subprocess.run(
@@ -590,6 +661,7 @@ class PackagingTests(unittest.TestCase):
     def test_combined_release_version_contract(self):
         expected_extra_files = {
             "uv.lock",
+            "src/vidxp/bundled_plugins/vidxp/.codex-plugin/plugin.json",
             "desktop/src-tauri/Cargo.toml",
             "desktop/src-tauri/Cargo.lock",
             "desktop/package.json",

@@ -17,6 +17,11 @@
           "type": "generic"
         },
         {
+          "jsonpath": "$.version",
+          "path": "src/vidxp/bundled_plugins/vidxp/.codex-plugin/plugin.json",
+          "type": "json"
+        },
+        {
           "path": "desktop/src-tauri/Cargo.toml",
           "type": "generic"
         },

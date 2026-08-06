@@ -1,0 +1,13 @@
+interface:
+  display_name: "Find Video Evidence with VidXP"
+  short_description: "Search indexed videos and return verifiable evidence"
+  default_prompt: "Use $vidxp-find-video-evidence to find and verify moments in my indexed videos."
+
+policy:
+  allow_implicit_invocation: true
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "vidxp"
+      description: "VidXP video search and evidence tools"

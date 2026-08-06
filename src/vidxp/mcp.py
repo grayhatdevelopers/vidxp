@@ -103,6 +103,11 @@ from vidxp.idempotency import (
     scoped_job_id,
     scoped_request_key,
 )
+from vidxp.mcp_app import (
+    MCP_APP_MIME_TYPE,
+    MCP_APP_RESOURCE_URI,
+    load_mcp_app_html,
+)
 from vidxp.core.identifiers import ArtifactId
 from vidxp.evidence_delivery import (
     EvidenceDeliveryService,
@@ -147,6 +152,15 @@ _CANCEL = ToolAnnotations(
     idempotent_hint=True,
     open_world_hint=False,
 )
+
+
+def _mcp_app_tool_meta(invoking: str, invoked: str) -> dict[str, object]:
+    return {
+        "ui": {"resourceUri": MCP_APP_RESOURCE_URI},
+        "openai/outputTemplate": MCP_APP_RESOURCE_URI,
+        "openai/toolInvocation/invoking": invoking,
+        "openai/toolInvocation/invoked": invoked,
+    }
 
 
 class PrincipalBridge:
@@ -546,6 +560,27 @@ def create_mcp_server(
         auth=auth,
         lifespan=lifecycle,
     )
+
+    @server.resource(
+        MCP_APP_RESOURCE_URI,
+        name="vidxp_mcp_app",
+        title="VidXP video workspace",
+        description=(
+            "Interactive upload progress and evidence review for MCP Apps hosts."
+        ),
+        mime_type=MCP_APP_MIME_TYPE,
+        meta={
+            "ui": {
+                "prefersBorder": True,
+                "csp": {
+                    "connectDomains": [],
+                    "resourceDomains": [],
+                },
+            }
+        },
+    )
+    async def read_mcp_app() -> str:
+        return load_mcp_app_html()
 
     async def artifact_bytes(
         artifact_id: ArtifactId,
@@ -1061,9 +1096,125 @@ def create_mcp_server(
         )
         return "\n".join(lines)
 
-    async def evidence_content(
+    def evidence_app_payload(
+        *,
         job: Job,
-    ) -> list[ImageContent | ResourceLink | TextContent]:
+        source_job_id: JobId,
+        delivery: EvidenceDeliveryResult,
+        query_result: QueryAnswer | None,
+    ) -> dict[str, object]:
+        board = delivery.board
+        pages: list[dict[str, object]] = []
+        tiles: list[dict[str, object]] = []
+        if board is not None:
+            for page in board.pages:
+                artifact = page.artifact
+                delivery_info = artifact.delivery
+                pages.append(
+                    {
+                        "page_number": page.page_number,
+                        "media_id": page.media_id,
+                        "width": page.width,
+                        "height": page.height,
+                        "tile_ids": list(page.tile_ids),
+                        "resource_uri": artifact.resource_uri,
+                        "download_url": (
+                            delivery_info.download_url
+                            if delivery_info is not None
+                            else None
+                        ),
+                    }
+                )
+            for tile in board.tiles:
+                tiles.append(
+                    {
+                        "evidence_id": tile.evidence_id,
+                        "rank": tile.rank,
+                        "page_number": tile.page_number,
+                        "position": tile.position,
+                        "media_id": tile.media_id,
+                        "modalities": list(tile.modalities),
+                        "start": tile.start,
+                        "end": tile.end,
+                        "display_text": concise_text(tile.display_text),
+                        "state": tile.state.value,
+                    }
+                )
+            requested_count = board.requested_count
+            rendered_count = board.rendered_count
+            failed_count = board.failed_count
+            next_start_rank = board.next_start_rank
+        else:
+            for item in delivery.items:
+                resolved = item.range
+                tiles.append(
+                    {
+                        "evidence_id": item.evidence_id,
+                        "rank": item.rank,
+                        "page_number": None,
+                        "position": item.rank,
+                        "media_id": item.media_id,
+                        "modalities": list(item.modalities),
+                        "start": (
+                            resolved.source_start_seconds
+                            if resolved is not None
+                            else 0.0
+                        ),
+                        "end": (
+                            resolved.source_end_seconds
+                            if resolved is not None
+                            else 0.0
+                        ),
+                        "display_text": None,
+                        "state": item.state.value,
+                    }
+                )
+            requested_count = len(delivery.items)
+            rendered_count = sum(
+                item.state.value == "ready" for item in delivery.items
+            )
+            failed_count = requested_count - rendered_count
+            next_start_rank = None
+
+        answer: dict[str, object] | None = None
+        if query_result is not None:
+            answer = {
+                "mode": query_result.mode.value,
+                "claims": [
+                    {
+                        "text": concise_text(claim.text, limit=512) or "",
+                        "evidence_ids": list(claim.evidence_ids),
+                    }
+                    for claim in query_result.claims
+                ],
+                "fallback_reason": concise_text(
+                    query_result.fallback_reason,
+                    limit=512,
+                ),
+            }
+
+        return {
+            "view": "evidence",
+            "job_id": job.job_id,
+            "source_job_id": source_job_id,
+            "job_kind": job.kind.value,
+            "answer": answer,
+            "board": {
+                "requested_count": requested_count,
+                "rendered_count": rendered_count,
+                "failed_count": failed_count,
+                "next_start_rank": next_start_rank,
+                "pages": pages,
+                "tiles": tiles,
+            },
+        }
+
+    async def evidence_presentation(
+        job: Job,
+    ) -> tuple[
+        dict[str, object],
+        list[ImageContent | ResourceLink | TextContent],
+    ]:
         query_result = None
         if job.kind in {JobKind.search, JobKind.query}:
             result = job.result.result
@@ -1082,18 +1233,27 @@ def create_mcp_server(
                 delivery=projected_delivery,
                 query_result=query_result,
             )
+            source_job_id = job.job_id
         else:
             board = job.result.result
             projected_board, blocks = await project_evidence_board(board)
+            projected_delivery = EvidenceDeliveryResult(
+                policy=EvidenceDeliveryPolicy(mode=EvidenceDeliveryMode.none),
+                items=(),
+                board=projected_board,
+            )
             index = evidence_index(
                 source_job_id=board.source_job_id,
-                delivery=EvidenceDeliveryResult(
-                    policy=EvidenceDeliveryPolicy(mode=EvidenceDeliveryMode.none),
-                    items=(),
-                    board=projected_board,
-                ),
+                delivery=projected_delivery,
             )
-        return [TextContent(type="text", text=index), *blocks]
+            source_job_id = board.source_job_id
+        payload = evidence_app_payload(
+            job=job,
+            source_job_id=source_job_id,
+            delivery=projected_delivery,
+            query_result=query_result,
+        )
+        return payload, [TextContent(type="text", text=index), *blocks]
 
     def completed_evidence_result(
         source_job_id: JobId,
@@ -1227,6 +1387,10 @@ def create_mcp_server(
             "Automatic indexing defaults on. Poll only get_media_upload."
         ),
         annotations=_SUBMIT,
+        meta=_mcp_app_tool_meta(
+            "Creating a VidXP upload session…",
+            "VidXP upload session ready.",
+        ),
         structured_output=True,
     )
     async def create_media_upload(
@@ -1826,10 +1990,14 @@ def create_mcp_server(
         description=(
             "Present a completed search, query, or evidence-board job as a "
             "concise evidence index plus model-visible board images and resource "
-            "links. This intentionally omits structuredContent; use get_job only "
-            "when the full machine record is actually needed."
+            "links. The compact structured result drives the optional VidXP "
+            "evidence-review UI without exposing the full machine record."
         ),
         annotations=_READ_ONLY,
+        meta=_mcp_app_tool_meta(
+            "Opening VidXP evidence…",
+            "VidXP evidence ready.",
+        ),
     )
     async def get_job_evidence(job_id: JobId) -> CallToolResult:
         def completed_evidence_job(_actor: Principal) -> Job:
@@ -1855,10 +2023,13 @@ def create_mcp_server(
             operation=completed_evidence_job,
         )
         try:
-            blocks = await evidence_content(job)
+            structured_content, blocks = await evidence_presentation(job)
         except ApplicationError as exc:
             raise _application_error(exc) from exc
-        return CallToolResult(content=blocks)
+        return CallToolResult(
+            content=blocks,
+            structured_content=structured_content,
+        )
 
     @server.tool(
         title="Get compact job status",

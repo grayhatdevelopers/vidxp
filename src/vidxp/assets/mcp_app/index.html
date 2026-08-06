@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VidXP evidence review</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --accent: #6d5ef7;
+        --surface: color-mix(in srgb, Canvas 94%, CanvasText 6%);
+        --surface-strong: color-mix(in srgb, Canvas 88%, CanvasText 12%);
+        --border: color-mix(in srgb, CanvasText 18%, transparent);
+        --muted: color-mix(in srgb, CanvasText 64%, transparent);
+      }
+
+      * { box-sizing: border-box; }
+      body { margin: 0; color: CanvasText; background: Canvas; }
+      button, a { font: inherit; }
+      button:focus-visible, a:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
+      .app { display: grid; gap: 16px; padding: 16px; }
+      .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+      .eyebrow { margin: 0 0 4px; color: var(--muted); font-size: 12px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+      h1, h2, p { margin-top: 0; }
+      h1 { margin-bottom: 4px; font-size: 20px; line-height: 1.25; }
+      h2 { margin-bottom: 10px; font-size: 16px; }
+      .lede, .status { margin-bottom: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+      .toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+      .button { min-height: 38px; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; color: CanvasText; background: var(--surface); cursor: pointer; text-decoration: none; }
+      .button:hover { background: var(--surface-strong); }
+      .button.primary { border-color: var(--accent); color: white; background: var(--accent); }
+      .button:disabled { cursor: not-allowed; opacity: .5; }
+      .panel { border: 1px solid var(--border); border-radius: 14px; padding: 14px; background: var(--surface); }
+      .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+      .metric { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: Canvas; }
+      .metric strong { display: block; font-size: 18px; }
+      .metric span { color: var(--muted); font-size: 12px; }
+      .board-grid, .drilldown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+      .board-image, .drilldown-image { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 10px; background: Canvas; }
+      .tile-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+      .tile { width: 100%; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 10px; padding: 10px; color: CanvasText; background: Canvas; text-align: left; cursor: pointer; }
+      .tile[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+      .rank { min-width: 28px; color: var(--accent); font-weight: 750; }
+      .tile-copy { min-width: 0; }
+      .tile-title { display: block; overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+      .tile-meta { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
+      .check { font-size: 16px; }
+      .file-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+      .file { display: grid; grid-template-columns: 1fr auto; gap: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+      .file:first-child { border-top: 0; padding-top: 0; }
+      .badge { align-self: start; border-radius: 999px; padding: 3px 8px; color: var(--muted); background: Canvas; font-size: 12px; }
+      .error { border-color: color-mix(in srgb, #c43b3b 45%, var(--border)); }
+      .notice { min-height: 20px; color: var(--muted); font-size: 13px; }
+      .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+      @media (max-width: 560px) { .app { padding: 12px; } .header { align-items: stretch; flex-direction: column; } .header .button { align-self: flex-start; } }
+    </style>
+  </head>
+  <body>
+    <main class="app" aria-live="polite">
+      <header class="header">
+        <div>
+          <p class="eyebrow">VidXP</p>
+          <h1 id="title">Preparing video workspace…</h1>
+          <p id="lede" class="lede">Waiting for the tool result.</p>
+        </div>
+        <button id="expand" class="button" type="button" hidden>Expand</button>
+      </header>
+      <section id="content"></section>
+      <p id="notice" class="notice" role="status"></p>
+    </main>
+    <script>
+      (() => {
+        "use strict";
+
+        const title = document.getElementById("title");
+        const lede = document.getElementById("lede");
+        const content = document.getElementById("content");
+        const notice = document.getElementById("notice");
+        const expand = document.getElementById("expand");
+        const pending = new Map();
+        const selected = new Set();
+        let requestId = 1;
+        let latestResult = null;
+        let uploadPageUrl = null;
+        let connected = false;
+        let hostCapabilities = {};
+        let hostContext = {};
+
+        const element = (tag, className, text) => {
+          const node = document.createElement(tag);
+          if (className) node.className = className;
+          if (text !== undefined && text !== null) node.textContent = String(text);
+          return node;
+        };
+
+        const asObject = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
+        const asArray = (value) => Array.isArray(value) ? value : [];
+        const formatSeconds = (value) => {
+          const seconds = Number(value);
+          if (!Number.isFinite(seconds) || seconds < 0) return "—";
+          const minutes = Math.floor(seconds / 60);
+          const remainder = (seconds % 60).toFixed(seconds < 60 ? 1 : 0).padStart(2, "0");
+          return `${minutes}:${remainder}`;
+        };
+
+        const normalizeResult = (value) => {
+          const result = asObject(value);
+          if (result.mcp_tool_result) return normalizeResult(result.mcp_tool_result);
+          if (result.call_tool_result) return normalizeResult(result.call_tool_result);
+          return {
+            structuredContent: asObject(result.structuredContent ?? result.structured_content),
+            content: asArray(result.content),
+            isError: Boolean(result.isError ?? result.is_error),
+          };
+        };
+
+        const request = (method, params) => {
+          const id = requestId++;
+          window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+          return new Promise((resolve, reject) => {
+            const timer = window.setTimeout(() => {
+              pending.delete(id);
+              reject(new Error(`The host did not answer ${method}.`));
+            }, 15000);
+            pending.set(id, { resolve, reject, timer });
+          });
+        };
+
+        const notify = (method, params) => {
+          window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+        };
+
+        const updateHostContext = (next) => {
+          hostContext = { ...hostContext, ...asObject(next) };
+          const variables = asObject(hostContext.styles?.variables);
+          for (const [name, value] of Object.entries(variables)) {
+            if (name.startsWith("--") && typeof value === "string") {
+              document.documentElement.style.setProperty(name, value);
+            }
+          }
+          const supportsFullscreen = asArray(hostContext.availableDisplayModes).includes("fullscreen");
+          expand.hidden = !(supportsFullscreen || window.openai?.requestDisplayMode);
+        };
+
+        const connect = async () => {
+          try {
+            const initialized = asObject(await request("ui/initialize", {
+              protocolVersion: "2026-01-26",
+              appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
+              appInfo: { name: "VidXP video workspace", version: "1.0.0" },
+            }));
+            hostCapabilities = asObject(initialized.hostCapabilities);
+            updateHostContext(initialized.hostContext);
+            connected = true;
+            notify("ui/notifications/initialized");
+          } catch (_error) {
+            updateHostContext({});
+          }
+        };
+
+        const callTool = async (name, args) => {
+          if (connected && hostCapabilities.serverTools) {
+            return normalizeResult(await request("tools/call", { name, arguments: args }));
+          }
+          if (window.openai?.callTool) return normalizeResult(await window.openai.callTool(name, args));
+          return normalizeResult(await request("tools/call", { name, arguments: args }));
+        };
+
+        const imageBlocks = (result) => asArray(result?.content).filter((block) => {
+          const mime = String(block?.mimeType ?? block?.mime_type ?? "").toLowerCase();
+          return block?.type === "image" && (mime === "image/jpeg" || mime === "image/png") && typeof block?.data === "string";
+        });
+
+        const persistSelection = () => {
+          const evidenceIds = [...selected];
+          if (connected) {
+            void request("ui/update-model-context", {
+              structuredContent: { selectedEvidenceIds: evidenceIds },
+            }).catch(() => undefined);
+          }
+          if (window.openai?.setWidgetState) {
+            void Promise.resolve(
+              window.openai.setWidgetState({ selectedEvidenceIds: evidenceIds })
+            ).catch(() => undefined);
+          }
+        };
+
+        const panel = (heading) => {
+          const section = element("section", "panel");
+          if (heading) section.append(element("h2", "", heading));
+          return section;
+        };
+
+        const metric = (value, label) => {
+          const box = element("div", "metric");
+          box.append(element("strong", "", value), element("span", "", label));
+          return box;
+        };
+
+        const renderUpload = (data) => {
+          title.textContent = "Upload videos to VidXP";
+          lede.textContent = data.status || "Use the secure upload page, then refresh progress here.";
+          uploadPageUrl = data.upload_session_url || uploadPageUrl;
+          const wrapper = document.createDocumentFragment();
+          const metrics = element("div", "metrics");
+          metrics.append(
+            metric(data.file_count ?? 0, "files"),
+            metric(data.ready_file_count ?? 0, "ready"),
+            metric(data.failed_file_count ?? 0, "failed"),
+            metric(data.aggregate_state || "empty", "state")
+          );
+          const overview = panel("Session progress");
+          overview.append(metrics);
+          const actions = element("div", "toolbar");
+          if (typeof uploadPageUrl === "string" && /^https:\/\//i.test(uploadPageUrl)) {
+            const open = element("a", "button primary", "Choose videos");
+            open.href = uploadPageUrl;
+            open.target = "_blank";
+            open.rel = "noopener noreferrer";
+            open.addEventListener("click", async (event) => {
+              if (connected && hostCapabilities.openLinks) {
+                event.preventDefault();
+                await request("ui/open-link", { url: uploadPageUrl });
+              } else if (window.openai?.openExternal) {
+                event.preventDefault();
+                await window.openai.openExternal({ href: uploadPageUrl, redirectUrl: false });
+              }
+            });
+            actions.append(open);
+          }
+          const refresh = element("button", "button", "Refresh status");
+          refresh.type = "button";
+          refresh.addEventListener("click", async () => {
+            refresh.disabled = true;
+            notice.textContent = "Refreshing upload status…";
+            try {
+              const next = await callTool("get_media_upload", { upload_session_id: data.session_id });
+              if (next.isError) throw new Error("VidXP could not refresh this upload session.");
+              latestResult = { ...next, structuredContent: { ...data, ...next.structuredContent, upload_session_url: uploadPageUrl } };
+              render(latestResult);
+              notice.textContent = "Upload status refreshed.";
+            } catch (error) {
+              notice.textContent = error instanceof Error ? error.message : "Upload status refresh failed.";
+            } finally {
+              refresh.disabled = false;
+            }
+          });
+          actions.append(refresh);
+          overview.append(actions);
+          wrapper.append(overview);
+
+          const items = asArray(data.items);
+          if (items.length) {
+            const files = panel("Files");
+            const list = element("ul", "file-list");
+            for (const item of items) {
+              const row = element("li", "file");
+              const copy = element("div");
+              copy.append(element("strong", "", item.original_filename || "Video"), element("p", "status", item.status || item.next_action || ""));
+              row.append(copy, element("span", "badge", item.phase || item.state || "pending"));
+              list.append(row);
+            }
+            files.append(list);
+            wrapper.append(files);
+          }
+          content.replaceChildren(wrapper);
+        };
+
+        const renderDrilldown = (result) => {
+          let region = document.getElementById("drilldown");
+          if (!region) {
+            region = panel("Selected evidence");
+            region.id = "drilldown";
+            content.append(region);
+          }
+          region.replaceChildren(element("h2", "", "Selected evidence"));
+          const images = imageBlocks(result);
+          if (images.length) {
+            const grid = element("div", "drilldown-grid");
+            images.forEach((block, index) => {
+              const mime = block.mimeType ?? block.mime_type;
+              const image = element("img", "drilldown-image");
+              image.alt = `Selected VidXP evidence frame ${index + 1}`;
+              image.src = `data:${mime};base64,${block.data}`;
+              grid.append(image);
+            });
+            region.append(grid);
+          } else {
+            region.append(element("p", "status", "VidXP returned resource links for the selected evidence in the conversation."));
+          }
+        };
+
+        const renderEvidence = (data, result) => {
+          const board = asObject(data.board);
+          const tiles = asArray(board.tiles);
+          const pages = asArray(board.pages);
+          const images = imageBlocks(result);
+          title.textContent = data.answer?.claims?.length ? "Grounded video answer" : "Review video evidence";
+          lede.textContent = `${board.rendered_count ?? tiles.length} ranked moment${(board.rendered_count ?? tiles.length) === 1 ? "" : "s"} from job ${data.source_job_id || data.job_id || ""}.`;
+          const wrapper = document.createDocumentFragment();
+
+          if (data.answer?.claims?.length) {
+            const answer = panel("Answer");
+            for (const claim of data.answer.claims) {
+              const text = element("p", "", claim.text || "");
+              const citations = asArray(claim.evidence_ids);
+              if (citations.length) text.append(element("span", "status", ` Evidence: ${citations.join(", ")}`));
+              answer.append(text);
+            }
+            wrapper.append(answer);
+          } else if (data.answer?.fallback_reason) {
+            const answer = panel("Answer unavailable");
+            answer.append(element("p", "status", data.answer.fallback_reason));
+            wrapper.append(answer);
+          }
+
+          const overview = panel("Evidence board");
+          const metrics = element("div", "metrics");
+          metrics.append(
+            metric(board.rendered_count ?? tiles.length, "rendered"),
+            metric(pages.length, "pages"),
+            metric(board.failed_count ?? 0, "failed"),
+            metric(board.next_start_rank ?? "—", "next rank")
+          );
+          overview.append(metrics);
+          if (images.length) {
+            const grid = element("div", "board-grid");
+            images.slice(0, pages.length || images.length).forEach((block, index) => {
+              const mime = block.mimeType ?? block.mime_type;
+              const image = element("img", "board-image");
+              image.alt = `VidXP evidence board page ${pages[index]?.page_number ?? index + 1}`;
+              image.src = `data:${mime};base64,${block.data}`;
+              grid.append(image);
+            });
+            overview.append(grid);
+          } else {
+            overview.append(element("p", "status", "Board pages are available as MCP resources in the conversation."));
+          }
+          wrapper.append(overview);
+
+          if (tiles.length) {
+            const choices = panel("Select moments");
+            const help = element("p", "status", "Choose up to ten moments, then request exact frames or clips without rerunning search.");
+            const list = element("ul", "tile-list");
+            for (const tile of tiles) {
+              const item = element("li");
+              const button = element("button", "tile");
+              button.type = "button";
+              button.dataset.evidenceId = tile.evidence_id;
+              button.setAttribute("aria-pressed", selected.has(tile.evidence_id) ? "true" : "false");
+              button.append(
+                element("span", "rank", `#${tile.rank ?? "?"}`),
+                (() => {
+                  const copy = element("span", "tile-copy");
+                  copy.append(
+                    element("span", "tile-title", tile.display_text || asArray(tile.modalities).join(" + ") || "Video moment"),
+                    element("span", "tile-meta", `${formatSeconds(tile.start)}–${formatSeconds(tile.end)} · ${asArray(tile.modalities).join(", ")}`)
+                  );
+                  return copy;
+                })(),
+                element("span", "check", selected.has(tile.evidence_id) ? "✓" : "+")
+              );
+              button.addEventListener("click", () => {
+                const id = tile.evidence_id;
+                if (selected.has(id)) selected.delete(id);
+                else if (selected.size < 10) selected.add(id);
+                else notice.textContent = "Select at most ten evidence moments at once.";
+                persistSelection();
+                render(latestResult);
+              });
+              item.append(button);
+              list.append(item);
+            }
+            const actions = element("div", "toolbar");
+            for (const [label, mode] of [["Show frames", "keyframes"], ["Create clips", "keyframes_and_clips"]]) {
+              const action = element("button", mode === "keyframes" ? "button primary" : "button", label);
+              action.type = "button";
+              action.disabled = selected.size === 0;
+              action.addEventListener("click", async () => {
+                action.disabled = true;
+                notice.textContent = mode === "keyframes" ? "Preparing selected frames…" : "Preparing selected clips…";
+                try {
+                  const next = await callTool("materialize_job_evidence", {
+                    source_job_id: data.source_job_id,
+                    evidence_ids: [...selected],
+                    mode,
+                  });
+                  if (next.isError) throw new Error("VidXP could not prepare the selected evidence.");
+                  renderDrilldown(next);
+                  notice.textContent = mode === "keyframes" ? "Selected frames are ready." : "Selected clip links are ready.";
+                } catch (error) {
+                  notice.textContent = error instanceof Error ? error.message : "Evidence preparation failed.";
+                } finally {
+                  action.disabled = selected.size === 0;
+                }
+              });
+              actions.append(action);
+            }
+            choices.append(help, list, actions);
+            wrapper.append(choices);
+          }
+          content.replaceChildren(wrapper);
+        };
+
+        const render = (result) => {
+          latestResult = normalizeResult(result);
+          const data = latestResult.structuredContent;
+          notice.textContent = latestResult.isError ? "VidXP returned an error." : "";
+          if (data.view === "upload" || data.upload_session_url || data.aggregate_state) renderUpload(data);
+          else if (data.view === "evidence" || data.board) renderEvidence(data, latestResult);
+          else {
+            title.textContent = "VidXP";
+            lede.textContent = "This tool result does not include an interactive view.";
+            content.replaceChildren();
+          }
+        };
+
+        window.addEventListener("message", (event) => {
+          if (event.source !== window.parent) return;
+          const message = event.data;
+          if (!message || message.jsonrpc !== "2.0") return;
+          if (message.id !== undefined && pending.has(message.id)) {
+            const request = pending.get(message.id);
+            pending.delete(message.id);
+            window.clearTimeout(request.timer);
+            if (message.error) request.reject(message.error);
+            else request.resolve(message.result);
+            return;
+          }
+          if (message.method === "ui/notifications/tool-result") render(message.params);
+          if (message.method === "ui/notifications/host-context-changed") updateHostContext(message.params);
+          if (message.method === "ui/notifications/tool-cancelled") notice.textContent = message.params?.reason || "The tool call was cancelled.";
+          if (message.method === "ui/resource-teardown" && message.id !== undefined) {
+            window.parent.postMessage({ jsonrpc: "2.0", id: message.id, result: {} }, "*");
+          }
+        }, { passive: true });
+
+        const saved = asArray(
+          window.openai?.widgetState?.selectedEvidenceIds ??
+          window.openai?.widgetState?.privateContent?.selectedEvidenceIds
+        );
+        saved.slice(0, 10).forEach((id) => typeof id === "string" && selected.add(id));
+        expand.addEventListener("click", async () => {
+          if (connected && asArray(hostContext.availableDisplayModes).includes("fullscreen")) {
+            await request("ui/request-display-mode", { mode: "fullscreen" });
+          } else if (window.openai?.requestDisplayMode) {
+            await window.openai.requestDisplayMode({ mode: "fullscreen" });
+          }
+        });
+        updateHostContext({});
+        const initialMetadata = window.openai?.toolResponseMetadata;
+        if (initialMetadata) render(initialMetadata);
+        else if (window.openai?.toolOutput) render({ structuredContent: window.openai.toolOutput, content: [] });
+        if (typeof ResizeObserver === "function") {
+          new ResizeObserver(() => {
+            if (connected) {
+              notify("ui/notifications/size-changed", {
+                width: Math.ceil(document.documentElement.scrollWidth),
+                height: Math.ceil(document.documentElement.scrollHeight),
+              });
+            }
+          }).observe(document.documentElement);
+        }
+        void connect();
+      })();
+    </script>
+  </body>
+</html>
