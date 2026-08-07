@@ -167,12 +167,9 @@ VidXP's repository marketplace includes three reusable agent workflows:
 - [Ingest and index videos](plugins/vidxp/skills/vidxp-ingest-video/SKILL.md)
 - [Find moments and return inspectable evidence](plugins/vidxp/skills/vidxp-find-video-evidence/SKILL.md)
 
-For first-time setup, copy the ready-to-use prompt from the
-[Codex installation guide](docs/integrations/openai-plugin.md#copy-and-paste-this-prompt-recommended)
-into a new Codex task. The agent asks whether you want stable or beta and
-Desktop or CLI, then installs the marketplace, VidXP, and its local MCP
-connection without sending you through Settings. VidXP Desktop can perform the
-same setup from its **Set up in Codex** button.
+Paste this into Codex: **“Install the VidXP plugin from `grayhatdevelopers/vidxp`, then read and follow its `vidxp-install` skill in this task: ask whether I want Desktop or CLI, install my choice, connect its local MCP server, and verify everything.”**
+
+VidXP Desktop can perform the same setup from its **Set up in Codex** button.
 
 The MCP App resource gives compatible hosts an interactive upload and
 evidence-review view; every workflow continues to work through ordinary MCP
