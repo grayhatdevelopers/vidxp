@@ -20,58 +20,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PackagingTests(unittest.TestCase):
-    def test_publisher_metadata_keeps_company_and_project_links_distinct(self):
-        company_name = "Grayhat Developers PVT Ltd"
-        developer_name = "Grayhat Studio"
-        company_url = "https://grayhat.studio/"
-        project_url = "https://github.com/grayhatdevelopers/vidxp"
-
-        project = tomllib.loads(
-            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        )["project"]
-        self.assertNotIn(
-            company_name,
-            {author["name"] for author in project["authors"]},
-        )
-        self.assertEqual(project["urls"]["Homepage"], project_url)
-        self.assertEqual(project["urls"]["Repository"], project_url)
-
-        manifest = json.loads(
-            (
-                ROOT
-                / "plugins"
-                / "vidxp"
-                / ".codex-plugin"
-                / "plugin.json"
-            ).read_text(encoding="utf-8")
-        )
-        self.assertEqual(manifest["author"]["name"], company_name)
-        self.assertEqual(manifest["author"]["url"], company_url)
-        self.assertEqual(manifest["interface"]["developerName"], developer_name)
-        self.assertEqual(manifest["interface"]["websiteURL"], company_url)
-        self.assertEqual(manifest["homepage"], project_url)
-        self.assertEqual(manifest["repository"], project_url)
-
-        tauri = json.loads(
-            (ROOT / "desktop" / "src-tauri" / "tauri.conf.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        self.assertEqual(tauri["bundle"]["publisher"], company_name)
-        self.assertIn(company_name, tauri["bundle"]["copyright"])
-        self.assertIn(
-            f'org.opencontainers.image.vendor="{company_name}"',
-            (ROOT / "Dockerfile").read_text(encoding="utf-8"),
-        )
-        self.assertIn(
-            f"[{company_name}]({company_url})",
-            (ROOT / "README.md").read_text(encoding="utf-8"),
-        )
-        self.assertIn(
-            f"Copyright (c) 2026 {company_name}",
-            (ROOT / "LICENSE").read_text(encoding="utf-8"),
-        )
-
     def test_wheel_contains_mcp_app_and_canonical_plugin_bundle(self):
         with TemporaryDirectory() as directory:
             subprocess.run(

@@ -3,7 +3,7 @@
   "version": "0.4.0-b.3",
   "description": "Ingest, index, search, and inspect video evidence with VidXP.",
   "author": {
-    "name": "Grayhat Developers PVT Ltd",
+    "name": "Grayhat",
     "url": "https://grayhat.studio/"
   },
   "homepage": "https://github.com/grayhatdevelopers/vidxp",
@@ -15,7 +15,7 @@
     "displayName": "VidXP",
     "shortDescription": "Search video and inspect grounded evidence.",
     "longDescription": "Use VidXP to ingest and index videos, search dialogue and scenes, answer grounded questions, and review evidence boards, frames, and clips.",
-    "developerName": "Grayhat Studio",
+    "developerName": "Grayhat",
     "category": "Productivity",
     "capabilities": ["Read", "Write", "Interactive"],
     "websiteURL": "https://grayhat.studio/",
