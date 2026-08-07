@@ -37,6 +37,7 @@ FROM python:3.14-slim-trixie AS runtime-base
 LABEL org.opencontainers.image.title="VidXP" \
     org.opencontainers.image.description="Video indexing and search" \
     org.opencontainers.image.source="https://github.com/grayhatdevelopers/vidxp" \
+    org.opencontainers.image.vendor="Grayhat Developers PVT Ltd" \
     org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

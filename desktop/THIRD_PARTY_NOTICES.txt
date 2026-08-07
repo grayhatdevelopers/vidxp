@@ -9,7 +9,7 @@ VidXP Desktop and VidXP | MIT | https://github.com/grayhatdevelopers/vidxp
 
 MIT License
 
-Copyright (c) 2026 Grayhat Developers
+Copyright (c) 2026 Grayhat Developers PVT Ltd
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

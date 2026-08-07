@@ -34,6 +34,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Grayhat Developers PVT Ltd",
+    "copyright": "Copyright © 2026 Grayhat Developers PVT Ltd",
     "resources": [
       "../THIRD_PARTY_NOTICES.txt",
       "../../LICENSE"
