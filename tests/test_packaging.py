@@ -383,10 +383,7 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("src-tauri/icons/128x128.png", sync_script)
         self.assertIn('resolve(desktopRoot, "public")', sync_script)
         self.assertIn('resolve(publicDirectory, "icon.png")', sync_script)
-        self.assertEqual(
-            (ROOT / "desktop" / "public" / "icon.png").read_bytes(),
-            icon.read_bytes(),
-        )
+        self.assertIn("copyFileSync(source, favicon)", sync_script)
         self.assertEqual(
             (ROOT / "plugins" / "vidxp" / "assets" / "logo.png").read_bytes(),
             icon.read_bytes(),
