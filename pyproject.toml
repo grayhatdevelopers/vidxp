@@ -79,10 +79,6 @@ vidxp = [
   "requirements/*.txt",
   "migrations/*.py",
   "migrations/versions/*.py",
-  "bundled_plugins/vidxp/.mcp.json",
-  "bundled_plugins/vidxp/.codex-plugin/plugin.json",
-  "bundled_plugins/vidxp/skills/*/SKILL.md",
-  "bundled_plugins/vidxp/skills/*/agents/*.yaml",
 ]
 
 [tool.setuptools.dynamic.optional-dependencies]

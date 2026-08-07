@@ -114,6 +114,7 @@ jobs:
       artifact_retention_days: 30
       checkout_ref: ${{ inputs.head_sha }}
       package_artifact_name: vidxp-python-dist
+      plugin_marketplace_ref: ${{ inputs.target_branch }}
       sign: true
     secrets: inherit
 

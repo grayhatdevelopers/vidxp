@@ -20,9 +20,12 @@
     "websiteURL": "https://github.com/grayhatdevelopers/vidxp",
     "defaultPrompt": [
       "Find and verify moments in my indexed videos.",
+      "Set up VidXP on this computer.",
       "Ingest and index a video with VidXP."
     ],
-    "brandColor": "#6D5EF7"
-  },
-  "mcpServers": "./.mcp.json"
+    "brandColor": "#6D5EF7",
+    "composerIcon": "./assets/logo.png",
+    "logo": "./assets/logo.png",
+    "logoDark": "./assets/logo.png"
+  }
 }

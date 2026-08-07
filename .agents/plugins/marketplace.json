@@ -1,0 +1,20 @@
+{
+  "name": "vidxp",
+  "interface": {
+    "displayName": "VidXP"
+  },
+  "plugins": [
+    {
+      "name": "vidxp",
+      "source": {
+        "source": "local",
+        "path": "./plugins/vidxp"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,44 +1,50 @@
 # ChatGPT and Codex plugin integration
 
-VidXP ships one versioned plugin bundle with its Python distribution. The
-bundle combines the local MCP server definition with VidXP's canonical ingest
-and evidence-search skills, while the MCP server exposes an optional interactive
-view for hosts that implement MCP Apps.
+VidXP ships one versioned plugin from this repository. It provides the install,
+ingest, and evidence-search skills, while an installed VidXP runtime provides
+the local MCP server and its optional interactive MCP App view.
 
-The packaged bundle lives at
-`src/vidxp/bundled_plugins/vidxp/` and contains:
+The sole editable plugin source lives at `plugins/vidxp/` and contains:
 
 - `.codex-plugin/plugin.json`, the plugin manifest;
-- `.mcp.json`, which starts the installed `vidxp-mcp` command; and
-- `skills/`, a release snapshot of the canonical root `skills/` folders.
+- `assets/logo.png`, used for the plugin logo and composer icon; and
+- `skills/`, the canonical install, ingest, and evidence workflows.
 
-The root skill folders remain the authoring source. Packaging tests require the
-bundled snapshot to match their file inventory and text exactly, and Release
-Please keeps the plugin manifest version aligned with the Python package.
+The repository marketplace is declared at `.agents/plugins/marketplace.json`.
+Other product code in the repository does not affect the marketplace: Codex
+reads only that manifest and the plugin path it declares. In a repository
+checkout the marketplace is discoverable as an available local marketplace; it
+is not installed merely because the repository was opened. Packaging copies
+the canonical plugin into the Python wheel at build time, and Release Please
+keeps its manifest version aligned with the Python package.
 
 ## Install in Codex
 
 With **AI assistant integration** enabled, VidXP Desktop shows two distinct
 actions:
 
-- **Set up in Codex** exports a target-specific copy of this bundle to a
-  Desktop-managed `vidxp-local` marketplace, registers that marketplace through
-  the Codex CLI, and installs the plugin. The generated `.mcp.json` pins the
-  selected installation's absolute `vidxp-mcp` command, repository, and data
-  paths, so Codex does not depend on its process `PATH`.
+- **Set up in Codex** installs the plugin and registers the selected
+  installation's absolute `vidxp-mcp` command, repository, and data paths, so
+  Codex does not depend on its process `PATH`.
 - **Copy MCP setup** retains the transport-only JSON flow for other compatible
   local MCP clients.
 
-The Codex action installs the MCP server and both skills as one unit. It uses
-the documented JSON forms of `codex plugin marketplace add` and
-`codex plugin add`, leaves personal marketplace files and `config.toml`
-untouched, and asks the user to start a new Codex chat after installation. The
-exported marketplace lives in VidXP Desktop's private application-data
-directory. Its catalog is written to the Codex marketplace contract at
-`.agents/plugins/marketplace.json`, with the plugin at `plugins/vidxp/`. The
-exporter also removes the obsolete root-level `marketplace.json` from earlier
-VidXP-managed exports. The canonical distributable bundle remains checked into
-this repository and packaged in every VidXP wheel.
+Signed beta builds register `grayhatdevelopers/vidxp` at `main`; signed stable
+builds use `release`. Both use sparse checkout for `.agents/plugins` and
+`plugins/vidxp`, so unrelated repository content is not downloaded into the
+plugin cache. Development and pull-request builds export the packaged plugin to
+the Desktop-private `vidxp-local` marketplace instead. The action uses the
+documented `codex plugin marketplace add`, `codex plugin add`, and
+`codex mcp add` commands. A successful Git install removes the obsolete managed
+`vidxp-local` registration. Start a new Codex task after setup.
+
+Users can also add the release marketplace directly:
+
+```text
+codex plugin marketplace add grayhatdevelopers/vidxp --ref main \
+  --sparse .agents/plugins --sparse plugins/vidxp
+codex plugin add vidxp@vidxp
+```
 
 ## Interactive MCP App
 
@@ -66,8 +72,9 @@ only exact HTTPS origins if future component assets or requests require them.
 
 ## Connect ChatGPT
 
-The bundled `.mcp.json` is for local plugin hosts. A ChatGPT connection still
-requires a publicly reachable Streamable HTTP endpoint (VidXP serves `/mcp`),
+The Git marketplace described above is for Codex's local plugin system. A
+ChatGPT connection still requires a publicly reachable Streamable HTTP endpoint
+(VidXP serves `/mcp`),
 an HTTPS deployment or secure development tunnel, and registration in ChatGPT
 Developer Mode.
 

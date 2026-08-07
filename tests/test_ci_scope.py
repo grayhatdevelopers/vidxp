@@ -41,6 +41,7 @@ class CiScopeTests(unittest.TestCase):
             "pyproject.toml",
             "uv.lock",
             ".github/workflows/desktop.yml",
+            "plugins/vidxp/skills/vidxp-ingest-video/SKILL.md",
         ):
             with self.subTest(path=path):
                 self.assertTrue(classify([path]).run_desktop)
@@ -48,7 +49,7 @@ class CiScopeTests(unittest.TestCase):
         for path in (
             "README.md",
             "docs/releasing.md",
-            "skills/vidxp-ingest-video/SKILL.md",
+            ".agents/plugins/marketplace.json",
             "web/upload-page/src/app.js",
         ):
             with self.subTest(path=path):

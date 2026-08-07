@@ -22,6 +22,11 @@ on:
         required: false
         default: ""
         type: string
+      plugin_marketplace_ref:
+        description: Git ref for release builds; empty keeps a local marketplace.
+        required: false
+        default: ""
+        type: string
   workflow_dispatch:
     inputs:
       checkout_ref:
@@ -41,6 +46,11 @@ on:
         type: boolean
       package_artifact_name:
         description: Existing Python distribution artifact; otherwise build from checkout.
+        required: false
+        default: ""
+        type: string
+      plugin_marketplace_ref:
+        description: Git ref for release builds; empty keeps a local marketplace.
         required: false
         default: ""
         type: string
@@ -179,6 +189,7 @@ jobs:
         working-directory: desktop
         env:
           VIDXP_DESKTOP_SIGN: ${{ (runner.os == 'macOS' && inputs.sign) && '1' || '' }}
+          VIDXP_PLUGIN_MARKETPLACE_REF: ${{ inputs.plugin_marketplace_ref }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}

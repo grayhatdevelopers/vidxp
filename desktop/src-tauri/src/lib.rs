@@ -51,6 +51,8 @@ const RUNTIME_PACKAGE_WHEEL_NAME: &str =
 const RUNTIME_PACKAGE_WHEEL_SHA256: &str =
     include_str!(concat!(env!("OUT_DIR"), "/runtime-package-sha256.txt"));
 const MODEL_CACHE_CATALOG_BYTES: &[u8] = include_bytes!("../../model-cache-catalog.json");
+const CODEX_PLUGIN_MARKETPLACE_SOURCE: &str = "grayhatdevelopers/vidxp";
+const CODEX_PLUGIN_MARKETPLACE_REF: Option<&str> = option_env!("VIDXP_PLUGIN_MARKETPLACE_REF");
 const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
 const RUNTIME_CONSTRAINTS_FILE_NAME: &str = "runtime-constraints.txt";
 const MAX_SETUP_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
@@ -3693,11 +3695,25 @@ async fn install_codex_plugin(
                 installer_path.display()
             ));
         }
-        let marketplace_root = paths.private_data.join("codex-marketplace");
         let mut command = target_command(&profile, &paths, &installer_path);
+        if let Some(marketplace_ref) =
+            CODEX_PLUGIN_MARKETPLACE_REF.filter(|value| !value.is_empty())
+        {
+            command
+                .arg("--marketplace-source")
+                .arg(CODEX_PLUGIN_MARKETPLACE_SOURCE)
+                .arg("--marketplace-ref")
+                .arg(marketplace_ref)
+                .arg("--marketplace-sparse")
+                .arg(".agents/plugins")
+                .arg("--marketplace-sparse")
+                .arg("plugins/vidxp");
+        } else {
+            command
+                .arg("--marketplace-root")
+                .arg(paths.private_data.join("codex-marketplace"));
+        }
         command
-            .arg("--marketplace-root")
-            .arg(&marketplace_root)
             .arg("--repository")
             .arg("default")
             .arg("--index-directory")

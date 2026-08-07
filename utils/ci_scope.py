@@ -21,15 +21,17 @@ def _normalize(path: str) -> str:
 
 
 def _is_documentation(path: str) -> bool:
-    return path.startswith("docs/") or path.endswith(".md")
+    return path.startswith("docs/") or (
+        path.endswith(".md") and not path.startswith("plugins/")
+    )
 
 
 def _is_container_neutral(path: str) -> bool:
-    return path.startswith(("desktop/", "skills/", "tests/"))
+    return path.startswith((".agents/", "desktop/", "plugins/", "tests/"))
 
 
 def _affects_desktop(path: str) -> bool:
-    return path.startswith(("desktop/", "src/", "tests/", "utils/")) or path in {
+    return path.startswith(("desktop/", "plugins/", "src/", "tests/", "utils/")) or path in {
         ".github/workflows/ci.yml",
         ".github/workflows/desktop.yml",
         "LICENSE",
@@ -42,7 +44,16 @@ def _affects_desktop(path: str) -> bool:
 
 def _is_unknown_product_path(path: str) -> bool:
     return not path.startswith(
-        (".github/", "desktop/", "skills/", "src/", "tests/", "utils/", "web/")
+        (
+            ".agents/",
+            ".github/",
+            "desktop/",
+            "plugins/",
+            "src/",
+            "tests/",
+            "utils/",
+            "web/",
+        )
     ) and path not in {
         ".dockerignore",
         "compose.coolify.yaml",

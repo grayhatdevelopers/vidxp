@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "vidxp": {
-      "command": "vidxp-mcp",
-      "args": ["--repository", "default"]
-    }
-  }
-}

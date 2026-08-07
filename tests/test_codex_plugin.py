@@ -16,7 +16,7 @@ from vidxp.codex_plugin import (
 )
 
 
-def test_export_codex_plugin_materializes_skills_and_target_mcp_config() -> None:
+def test_export_codex_plugin_materializes_the_canonical_skill_bundle() -> None:
     with TemporaryDirectory() as directory:
         root = Path(directory) / "codex-marketplace"
         index_directory = Path("C:/VidXP/repositories/default")
@@ -34,7 +34,6 @@ def test_export_codex_plugin_materializes_skills_and_target_mcp_config() -> None
                 encoding="utf-8"
             )
         )
-        mcp = json.loads((plugin_root / ".mcp.json").read_text(encoding="utf-8"))
         marketplace_path = root / ".agents" / "plugins" / "marketplace.json"
         marketplace = json.loads(marketplace_path.read_text(encoding="utf-8"))
 
@@ -45,18 +44,8 @@ def test_export_codex_plugin_materializes_skills_and_target_mcp_config() -> None
         assert (
             plugin_root / "skills" / "vidxp-find-video-evidence" / "SKILL.md"
         ).is_file()
-        assert mcp["mcpServers"]["vidxp"]["args"] == [
-            "--repository",
-            "default",
-            "--index-directory",
-            str(index_directory),
-            "--data-dir",
-            str(data_directory),
-        ]
-        assert Path(mcp["mcpServers"]["vidxp"]["command"]).name.lower() in {
-            "vidxp-mcp",
-            "vidxp-mcp.exe",
-        }
+        assert (plugin_root / "skills" / "vidxp-install" / "SKILL.md").is_file()
+        assert not (plugin_root / ".mcp.json").exists()
         assert marketplace["name"] == "vidxp-local"
         assert marketplace["plugins"][0]["source"]["path"] == "./plugins/vidxp"
         assert marketplace["plugins"][0]["policy"] == {
@@ -91,7 +80,7 @@ def test_install_codex_plugin_registers_marketplace_then_installs_bundle() -> No
         calls.append(command)
         if command[1:4] == ["plugin", "marketplace", "add"]:
             payload = {"marketplaceName": "vidxp-local", "alreadyAdded": False}
-        else:
+        elif command[1:3] == ["plugin", "add"]:
             payload = {
                 "pluginId": "vidxp@vidxp-local",
                 "name": "vidxp",
@@ -99,6 +88,8 @@ def test_install_codex_plugin_registers_marketplace_then_installs_bundle() -> No
                 "version": "0.4.0+codex.example",
                 "installedPath": "/codex/cache/vidxp",
             }
+        else:
+            return subprocess.CompletedProcess(command, 0, "Added MCP server", "")
         return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
 
     with TemporaryDirectory() as directory:
@@ -117,9 +108,81 @@ def test_install_codex_plugin_registers_marketplace_then_installs_bundle() -> No
         "vidxp@vidxp-local",
         "--json",
     ]
+    assert calls[2][0:5] == ["codex-test", "mcp", "add", "vidxp", "--"]
+    assert Path(calls[2][5]).name.lower() in {"vidxp-mcp", "vidxp-mcp.exe"}
+    assert calls[2][6:] == ["--repository", "default"]
     assert result.plugin_id == "vidxp@vidxp-local"
     assert result.installed_path == "/codex/cache/vidxp"
-    assert "MCP server and skills" in result.detail
+    assert "skills and local MCP server" in result.detail
+
+
+def test_install_codex_plugin_uses_git_marketplace_and_migrates_local_source() -> None:
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        arguments = command[1:]
+        if arguments[:3] == ["plugin", "marketplace", "add"]:
+            payload = {"marketplaceName": "vidxp"}
+        elif arguments[:2] == ["plugin", "add"]:
+            payload = {
+                "pluginId": "vidxp@vidxp",
+                "name": "vidxp",
+                "marketplaceName": "vidxp",
+                "version": "0.4.0-b.3",
+            }
+        elif arguments == ["plugin", "list", "--json"]:
+            payload = {"installed": [{"pluginId": "vidxp@vidxp-local"}]}
+        elif arguments == ["plugin", "marketplace", "list", "--json"]:
+            payload = {"marketplaces": [{"name": "vidxp-local"}]}
+        elif "--json" in arguments:
+            payload = {}
+        else:
+            return subprocess.CompletedProcess(command, 0, "ok", "")
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    result = install_codex_plugin(
+        None,
+        marketplace_source="grayhatdevelopers/vidxp",
+        marketplace_ref="main",
+        marketplace_sparse=(".agents/plugins", "plugins/vidxp"),
+        codex_command="codex-test",
+        runner=runner,
+    )
+
+    assert calls[0] == [
+        "codex-test",
+        "plugin",
+        "marketplace",
+        "add",
+        "grayhatdevelopers/vidxp",
+        "--ref",
+        "main",
+        "--sparse",
+        ".agents/plugins",
+        "--sparse",
+        "plugins/vidxp",
+        "--json",
+    ]
+    assert calls[1] == ["codex-test", "plugin", "add", "vidxp@vidxp", "--json"]
+    assert calls[2][1:5] == ["mcp", "add", "vidxp", "--"]
+    assert calls[4] == [
+        "codex-test",
+        "plugin",
+        "remove",
+        "vidxp@vidxp-local",
+        "--json",
+    ]
+    assert calls[6] == [
+        "codex-test",
+        "plugin",
+        "marketplace",
+        "remove",
+        "vidxp-local",
+        "--json",
+    ]
+    assert result.marketplace_name == "vidxp"
+    assert result.marketplace_path == "grayhatdevelopers/vidxp@main"
 
 
 def test_export_refuses_to_replace_an_unmanaged_marketplace() -> None:

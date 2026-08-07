@@ -21,7 +21,7 @@
         },
         {
           "jsonpath": "$.version",
-          "path": "src/vidxp/bundled_plugins/vidxp/.codex-plugin/plugin.json",
+          "path": "plugins/vidxp/.codex-plugin/plugin.json",
           "type": "json"
         },
         {

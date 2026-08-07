@@ -188,17 +188,17 @@ action, and **Quit VidXP** runs supervised shutdown for the interface and any
 Desktop-owned repository worker. The active-target panel also reports and
 controls local video processing through the existing `JobService` worker
 lifecycle, reports the app integration service, creates copyable AI-assistant
-MCP config, installs the bundled MCP-and-skills plugin directly into Codex, and
+MCP config, installs the VidXP plugin and local MCP server into Codex, and
 presents the existing doctor result as product health rather than raw output.
-Codex setup exports a target-specific copy of the plugin from the selected
-VidXP runtime into a dedicated Desktop-private `vidxp-local` marketplace. The
-copy keeps the versioned skills but replaces its generic MCP command with the
-selected runtime's absolute executable, repository, and data paths. Desktop
-then uses `codex plugin marketplace add --json` and
-`codex plugin add vidxp@vidxp-local --json`; it never edits Codex configuration
-or the user's personal marketplace by hand. Re-running setup refreshes the
-managed bundle using a deterministic plugin-version cache key. A new Codex chat
-is required before the refreshed skills and tools are available.
+Release builds add the repository's Git marketplace from `main` for beta or
+`release` for stable, then install `vidxp@vidxp`. Development and pull-request
+builds export the packaged plugin to a dedicated Desktop-private
+`vidxp-local` marketplace. Desktop uses the supported Codex CLI commands to
+register the marketplace, plugin, and selected runtime's absolute `vidxp-mcp`
+command with its repository and data paths. Re-running setup refreshes these
+registrations; a successful release setup removes the obsolete local
+marketplace. A new Codex task is required before refreshed skills and tools are
+available.
 The browser and app integration service remain loopback-only by default.
 Explicit sharing controls compose their existing `--share` modes: browser
 sharing reports its LAN URL and warns that it is unauthenticated, while API/MCP

@@ -15,8 +15,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--marketplace-root",
         type=Path,
-        required=True,
         help="Dedicated local marketplace directory managed by VidXP Desktop.",
+    )
+    parser.add_argument(
+        "--marketplace-source",
+        help="Git marketplace source, such as owner/repository.",
+    )
+    parser.add_argument("--marketplace-ref", help="Git ref to fetch.")
+    parser.add_argument(
+        "--marketplace-sparse",
+        action="append",
+        default=[],
+        help="Sparse checkout path for a Git marketplace; repeat as needed.",
     )
     parser.add_argument("--registry")
     parser.add_argument("--repository", default="default")
@@ -32,6 +42,9 @@ def main(arguments: Sequence[str] | None = None) -> None:
     try:
         result = install_codex_plugin(
             options.marketplace_root,
+            marketplace_source=options.marketplace_source,
+            marketplace_ref=options.marketplace_ref,
+            marketplace_sparse=options.marketplace_sparse,
             registry=options.registry,
             repository=options.repository,
             index_directory=options.index_directory,

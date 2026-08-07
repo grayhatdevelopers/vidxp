@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PackagingTests(unittest.TestCase):
-    def test_wheel_contains_mcp_app_and_versioned_plugin_bundle(self):
+    def test_wheel_contains_mcp_app_and_canonical_plugin_bundle(self):
         with TemporaryDirectory() as directory:
             subprocess.run(
                 [
@@ -48,12 +48,14 @@ class PackagingTests(unittest.TestCase):
 
         required = {
             "vidxp/assets/mcp_app/index.html",
-            "vidxp/bundled_plugins/vidxp/.mcp.json",
             "vidxp/bundled_plugins/vidxp/.codex-plugin/plugin.json",
+            "vidxp/bundled_plugins/vidxp/assets/logo.png",
             "vidxp/bundled_plugins/vidxp/skills/vidxp-ingest-video/SKILL.md",
             "vidxp/bundled_plugins/vidxp/skills/vidxp-ingest-video/agents/openai.yaml",
             "vidxp/bundled_plugins/vidxp/skills/vidxp-find-video-evidence/SKILL.md",
             "vidxp/bundled_plugins/vidxp/skills/vidxp-find-video-evidence/agents/openai.yaml",
+            "vidxp/bundled_plugins/vidxp/skills/vidxp-install/SKILL.md",
+            "vidxp/bundled_plugins/vidxp/skills/vidxp-install/agents/openai.yaml",
         }
         self.assertLessEqual(required, members)
         self.assertIn(
@@ -61,15 +63,19 @@ class PackagingTests(unittest.TestCase):
             entry_points,
         )
 
-    def test_bundled_plugin_is_valid_and_skills_match_canonical_sources(self):
+    def test_repository_marketplace_uses_the_canonical_branded_plugin(self):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-        plugin_root = ROOT / "src" / "vidxp" / "bundled_plugins" / "vidxp"
+        plugin_root = ROOT / "plugins" / "vidxp"
         manifest = json.loads(
             (plugin_root / ".codex-plugin" / "plugin.json").read_text(
                 encoding="utf-8"
             )
         )
-        mcp = json.loads((plugin_root / ".mcp.json").read_text(encoding="utf-8"))
+        marketplace = json.loads(
+            (ROOT / ".agents" / "plugins" / "marketplace.json").read_text(
+                encoding="utf-8"
+            )
+        )
 
         self.assertEqual(manifest["name"], "vidxp")
         self.assertEqual(
@@ -77,28 +83,18 @@ class PackagingTests(unittest.TestCase):
             Version(project["project"]["version"]),
         )
         self.assertEqual(manifest["skills"], "./skills/")
-        self.assertEqual(manifest["mcpServers"], "./.mcp.json")
-        self.assertEqual(mcp["mcpServers"]["vidxp"]["command"], "vidxp-mcp")
-
-        canonical = ROOT / "skills"
-        bundled = plugin_root / "skills"
-        canonical_files = {
-            path.relative_to(canonical)
-            for path in canonical.rglob("*")
-            if path.is_file()
-        }
-        bundled_files = {
-            path.relative_to(bundled)
-            for path in bundled.rglob("*")
-            if path.is_file()
-        }
-        self.assertEqual(bundled_files, canonical_files)
-        for relative in canonical_files:
-            self.assertEqual(
-                (bundled / relative).read_text(encoding="utf-8"),
-                (canonical / relative).read_text(encoding="utf-8"),
-                relative.as_posix(),
-            )
+        self.assertNotIn("mcpServers", manifest)
+        self.assertEqual(manifest["interface"]["logo"], "./assets/logo.png")
+        self.assertEqual(
+            manifest["interface"]["composerIcon"], "./assets/logo.png"
+        )
+        self.assertTrue((plugin_root / "assets" / "logo.png").is_file())
+        self.assertEqual(marketplace["name"], "vidxp")
+        self.assertEqual(
+            marketplace["plugins"][0]["source"]["path"],
+            "./plugins/vidxp",
+        )
+        self.assertFalse((ROOT / "skills").exists())
 
     def test_sdist_contains_every_upload_page_build_input(self):
         with TemporaryDirectory() as directory:
@@ -671,7 +667,7 @@ class PackagingTests(unittest.TestCase):
     def test_combined_release_version_contract(self):
         expected_extra_files = {
             "uv.lock",
-            "src/vidxp/bundled_plugins/vidxp/.codex-plugin/plugin.json",
+            "plugins/vidxp/.codex-plugin/plugin.json",
             "desktop/src-tauri/Cargo.toml",
             "desktop/src-tauri/Cargo.lock",
             "desktop/package.json",

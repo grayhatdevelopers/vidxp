@@ -17,6 +17,7 @@ from vidxp.mcp_cli import stdio_client_config
 
 PLUGIN_NAME = "vidxp"
 MARKETPLACE_NAME = "vidxp-local"
+GIT_MARKETPLACE_NAME = "vidxp"
 MANAGED_MARKER = ".vidxp-managed-marketplace"
 MARKETPLACE_MANIFEST = Path(".agents") / "plugins" / "marketplace.json"
 
@@ -52,7 +53,10 @@ class CodexPluginInstall:
 
 
 def bundled_codex_plugin() -> Path:
-    return Path(__file__).resolve().parent / "bundled_plugins" / PLUGIN_NAME
+    packaged = Path(__file__).resolve().parent / "bundled_plugins" / PLUGIN_NAME
+    if (packaged / ".codex-plugin" / "plugin.json").is_file():
+        return packaged
+    return Path(__file__).resolve().parents[2] / "plugins" / PLUGIN_NAME
 
 
 def _json_bytes(payload: Any) -> bytes:
@@ -65,8 +69,8 @@ def _write_json(path: Path, payload: Any) -> None:
     path.write_bytes(_json_bytes(payload))
 
 
-def _bundle_digest(source: Path, mcp_config: dict[str, Any]) -> str:
-    digest = hashlib.sha256(_json_bytes(mcp_config))
+def _bundle_digest(source: Path) -> str:
+    digest = hashlib.sha256()
     for path in sorted(item for item in source.rglob("*") if item.is_file()):
         digest.update(path.relative_to(source).as_posix().encode("utf-8"))
         digest.update(path.read_bytes())
@@ -109,16 +113,9 @@ def export_codex_plugin(
     plugin_root = plugins_root / PLUGIN_NAME
     marker = root / MANAGED_MARKER
 
-    mcp_config = stdio_client_config(
-        registry=registry,
-        repository=repository,
-        index_directory=index_directory,
-        data_directory=data_directory,
-        device=device,
-    )
     plugin_version = (
         f"{__version__.split('+', 1)[0]}+codex."
-        f"{_bundle_digest(source, mcp_config)}"
+        f"{_bundle_digest(source)}"
     )
 
     staging_parent = Path(tempfile.mkdtemp(prefix=".vidxp-plugin-", dir=plugins_root))
@@ -130,7 +127,6 @@ def export_codex_plugin(
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["version"] = plugin_version
         _write_json(manifest_path, manifest)
-        _write_json(staging_plugin / ".mcp.json", mcp_config)
 
         if backup.exists():
             shutil.rmtree(backup)
@@ -224,6 +220,88 @@ def _run_codex_json(
     return payload
 
 
+def _run_codex(
+    command: str,
+    arguments: Sequence[str],
+    *,
+    runner: CommandRunner,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        completed = runner(
+            [command, *arguments],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CodexPluginInstallError(f"Codex could not be started: {exc}") from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise CodexPluginInstallError(
+            detail or f"Codex exited with status {completed.returncode}."
+        )
+    return completed
+
+
+def _plugin_version(plugin_root: Path) -> str:
+    manifest_path = plugin_root / ".codex-plugin" / "plugin.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        version = manifest["version"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise CodexPluginInstallError(
+            "This VidXP installation does not contain a valid plugin manifest."
+        ) from exc
+    if not isinstance(version, str) or not version:
+        raise CodexPluginInstallError("The VidXP plugin version is invalid.")
+    return version
+
+
+def _remove_legacy_local_plugin(
+    command: str,
+    *,
+    runner: CommandRunner,
+) -> None:
+    plugins = _run_codex_json(
+        command,
+        ["plugin", "list", "--json"],
+        runner=runner,
+    ).get("installed", [])
+    if any(
+        isinstance(plugin, dict)
+        and plugin.get("pluginId") == f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
+        for plugin in plugins
+    ):
+        _run_codex_json(
+            command,
+            [
+                "plugin",
+                "remove",
+                f"{PLUGIN_NAME}@{MARKETPLACE_NAME}",
+                "--json",
+            ],
+            runner=runner,
+        )
+
+    marketplaces = _run_codex_json(
+        command,
+        ["plugin", "marketplace", "list", "--json"],
+        runner=runner,
+    ).get("marketplaces", [])
+    if any(
+        isinstance(marketplace, dict)
+        and marketplace.get("name") == MARKETPLACE_NAME
+        for marketplace in marketplaces
+    ):
+        _run_codex_json(
+            command,
+            ["plugin", "marketplace", "remove", MARKETPLACE_NAME, "--json"],
+            runner=runner,
+        )
+
+
 def _configured_codex_command(
     environment: Mapping[str, str],
 ) -> str | None:
@@ -297,8 +375,11 @@ def resolve_codex_command(
 
 
 def install_codex_plugin(
-    marketplace_root: Path,
+    marketplace_root: Path | None,
     *,
+    marketplace_source: str | None = None,
+    marketplace_ref: str | None = None,
+    marketplace_sparse: Sequence[str] = (),
     registry: str | None = None,
     repository: str = "default",
     index_directory: str | None = None,
@@ -307,16 +388,17 @@ def install_codex_plugin(
     codex_command: str | None = None,
     runner: CommandRunner = subprocess.run,
 ) -> CodexPluginInstall:
-    """Export, register, and install VidXP's local Codex plugin."""
+    """Install VidXP's plugin and register its target-specific MCP command."""
 
-    exported = export_codex_plugin(
-        marketplace_root,
-        registry=registry,
-        repository=repository,
-        index_directory=index_directory,
-        data_directory=data_directory,
-        device=device,
-    )
+    if marketplace_source and marketplace_root is not None:
+        raise CodexPluginInstallError(
+            "Choose either a Git marketplace source or a local marketplace root."
+        )
+    if not marketplace_source and marketplace_root is None:
+        raise CodexPluginInstallError(
+            "A Git marketplace source or local marketplace root is required."
+        )
+
     command = codex_command or resolve_codex_command()
     if command is None:
         raise CodexPluginInstallError(
@@ -324,51 +406,108 @@ def install_codex_plugin(
             "app, make the codex command available, and try again."
         )
 
-    marketplace_result = _run_codex_json(
-        command,
-        [
+    if marketplace_source:
+        marketplace_arguments = [
+            "plugin",
+            "marketplace",
+            "add",
+            marketplace_source,
+        ]
+        if marketplace_ref:
+            marketplace_arguments.extend(("--ref", marketplace_ref))
+        for sparse_path in marketplace_sparse:
+            marketplace_arguments.extend(("--sparse", sparse_path))
+        marketplace_arguments.append("--json")
+        marketplace_path = (
+            f"{marketplace_source}@{marketplace_ref}"
+            if marketplace_ref
+            else marketplace_source
+        )
+        marketplace_name_fallback = GIT_MARKETPLACE_NAME
+        plugin_version = _plugin_version(bundled_codex_plugin())
+    else:
+        assert marketplace_root is not None
+        exported = export_codex_plugin(
+            marketplace_root,
+            registry=registry,
+            repository=repository,
+            index_directory=index_directory,
+            data_directory=data_directory,
+            device=device,
+        )
+        marketplace_arguments = [
             "plugin",
             "marketplace",
             "add",
             exported.marketplace_root,
             "--json",
-        ],
+        ]
+        marketplace_path = exported.marketplace_path
+        marketplace_name_fallback = exported.marketplace_name
+        plugin_version = exported.plugin_version
+
+    marketplace_result = _run_codex_json(
+        command,
+        marketplace_arguments,
         runner=runner,
     )
     marketplace_name = str(
-        marketplace_result.get("marketplaceName") or exported.marketplace_name
+        marketplace_result.get("marketplaceName") or marketplace_name_fallback
     )
     plugin_result = _run_codex_json(
         command,
         [
             "plugin",
             "add",
-            f"{exported.plugin_name}@{marketplace_name}",
+            f"{PLUGIN_NAME}@{marketplace_name}",
             "--json",
         ],
         runner=runner,
     )
+
+    mcp = stdio_client_config(
+        registry=registry,
+        repository=repository,
+        index_directory=index_directory,
+        data_directory=data_directory,
+        device=device,
+    )["mcpServers"][PLUGIN_NAME]
+    _run_codex(
+        command,
+        [
+            "mcp",
+            "add",
+            PLUGIN_NAME,
+            "--",
+            str(mcp["command"]),
+            *(str(argument) for argument in mcp["args"]),
+        ],
+        runner=runner,
+    )
+    if marketplace_source:
+        _remove_legacy_local_plugin(command, runner=runner)
+
     return CodexPluginInstall(
-        plugin_name=str(plugin_result.get("name") or exported.plugin_name),
+        plugin_name=str(plugin_result.get("name") or PLUGIN_NAME),
         plugin_id=(
             None
             if plugin_result.get("pluginId") is None
             else str(plugin_result["pluginId"])
         ),
         plugin_version=str(
-            plugin_result.get("version") or exported.plugin_version
+            plugin_result.get("version") or plugin_version
         ),
         marketplace_name=str(
             plugin_result.get("marketplaceName") or marketplace_name
         ),
-        marketplace_path=exported.marketplace_path,
+        marketplace_path=marketplace_path,
         installed_path=(
             None
             if plugin_result.get("installedPath") is None
             else str(plugin_result["installedPath"])
         ),
         detail=(
-            "VidXP is installed in Codex with its MCP server and skills. "
-            "Start a new Codex chat to use the updated plugin."
+            "VidXP is installed in Codex with its skills and local MCP server. "
+            "Start a new Codex task to use the updated plugin."
         ),
     )
