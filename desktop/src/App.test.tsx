@@ -206,6 +206,30 @@ describe('desktop target lifecycle', () => {
     expect(mocks.stopLocalServer).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps worker timeouts with the worker control and clears them after recovery', async () => {
+    const operational = {
+      ...managedProfile,
+      frontend,
+      surfaces: ['worker', 'browser'],
+      validation_error: null,
+    };
+    const state = { profiles: [operational], selected_profile_id: operational.id, issues: [] };
+    mocks.targetSetupState.mockResolvedValue(state);
+    mocks.recheckTargetState.mockResolvedValue(state);
+    mocks.localWorkerStatus.mockRejectedValue('VidXP local processing failed: the operation exceeded 120 seconds');
+    const user = userEvent.setup();
+    renderApp();
+
+    const workerFailure = await screen.findByRole('alert', { name: 'Local processing status could not be checked' });
+    expect(workerFailure).toHaveTextContent('the operation exceeded 120 seconds');
+    expect(screen.queryByRole('alert', { name: 'That did not work' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Start processing' }));
+
+    expect(await screen.findByRole('button', { name: 'Stop processing' })).toBeVisible();
+    expect(screen.queryByRole('alert', { name: 'Local processing status could not be checked' })).not.toBeInTheDocument();
+  });
+
   it('adds optional features to the selected existing installation', async () => {
     const updated = { ...localProfile, surfaces: ['worker', 'browser', 'mcp'] };
     const updatedState = { profiles: [updated], selected_profile_id: updated.id, issues: [] };

@@ -1,6 +1,6 @@
 import { Alert, Badge, Button, Checkbox, Code, Group, Loader, Modal, Stack, Text, Title } from '@mantine/core';
 import { IconActivityHeartbeat, IconCopy, IconExternalLink, IconPlugConnected, IconPlayerPlay, IconPlayerStop, IconRefresh, IconSettings, IconShare, IconTerminal2 } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   errorMessage,
@@ -50,6 +50,11 @@ const CAPABILITY_LABELS: Record<string, string> = {
   scene: 'Visual scene search',
 };
 
+interface WorkerFailure {
+  title: string;
+  detail: string;
+}
+
 export function TargetSummary({ profile, validationError, checking, operationPending, opening, onRecheck, onManageManaged, onSetupChanged, onChooseAnother, onOpen }: TargetSummaryProps) {
   const executable = profile.display_executable;
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
@@ -60,6 +65,9 @@ export function TargetSummary({ profile, validationError, checking, operationPen
   const [codexSetup, setCodexSetup] = useState<CodexPluginInstallResult | null>(null);
   const [busy, setBusy] = useState<'doctor' | 'config' | 'codex' | 'features' | 'worker-start' | 'worker-stop' | 'browser-share' | 'browser-stop' | 'server-start' | 'server-share' | 'server-stop' | null>(null);
   const [runtimeFailure, setRuntimeFailure] = useState<string | null>(null);
+  const [workerFailure, setWorkerFailure] = useState<WorkerFailure | null>(null);
+  const workerStatusRequest = useRef(0);
+  const workerActionActive = useRef(false);
   const [copied, setCopied] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [externalSetupOpened, setExternalSetupOpened] = useState(false);
@@ -131,20 +139,40 @@ export function TargetSummary({ profile, validationError, checking, operationPen
   useEffect(() => {
     if (!workerAvailable) {
       setWorker(null);
+      setWorkerFailure(null);
       return;
     }
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const poll = async () => {
+      if (workerActionActive.current) {
+        if (active) timer = setTimeout(() => void poll(), 5000);
+        return;
+      }
+      const request = ++workerStatusRequest.current;
       try {
         const status = await localWorkerStatus();
-        if (active) setWorker(status);
+        if (active && request === workerStatusRequest.current) {
+          setWorker(status);
+          setWorkerFailure(null);
+        }
       } catch (error) {
-        if (active) setRuntimeFailure(errorMessage(error, 'Local video processing status could not be checked.'));
+        if (active && request === workerStatusRequest.current) {
+          setWorkerFailure({
+            title: 'Local processing status could not be checked',
+            detail: errorMessage(error, 'VidXP could not check local video processing.'),
+          });
+        }
+      } finally {
+        if (active) timer = setTimeout(() => void poll(), 5000);
       }
     };
     void poll();
-    const timer = setInterval(() => void poll(), 5000);
-    return () => { active = false; clearInterval(timer); };
+    return () => {
+      active = false;
+      workerStatusRequest.current += 1;
+      if (timer) clearTimeout(timer);
+    };
   }, [profile.id, workerAvailable]);
 
   useEffect(() => {
@@ -271,12 +299,18 @@ export function TargetSummary({ profile, validationError, checking, operationPen
 
   async function setWorkerRunning(running: boolean) {
     setBusy(running ? 'worker-start' : 'worker-stop');
-    setRuntimeFailure(null);
+    setWorkerFailure(null);
+    workerActionActive.current = true;
+    workerStatusRequest.current += 1;
     try {
       setWorker(await (running ? startLocalWorker() : stopLocalWorker()));
     } catch (error) {
-      setRuntimeFailure(errorMessage(error, 'VidXP could not change local video processing.'));
+      setWorkerFailure({
+        title: running ? 'Local processing could not be started' : 'Local processing could not be stopped',
+        detail: errorMessage(error, 'VidXP could not change local video processing.'),
+      });
     } finally {
+      workerActionActive.current = false;
       setBusy(null);
     }
   }
@@ -374,15 +408,18 @@ export function TargetSummary({ profile, validationError, checking, operationPen
             </Alert>
           )}
 
-          {workerAvailable && <Group justify="space-between" className="runtimeControlRow">
-            <div>
-              <Text fw={650}>Local video processing</Text>
-              <Text size="sm" className="mutedText">{worker?.running ? 'Ready to process indexing, search, and model jobs on this computer.' : 'Starts automatically when VidXP needs to process a video. You can also start it now.'}</Text>
-            </div>
-            {worker?.running
-              ? <Button color="red" variant="light" leftSection={<IconPlayerStop size={17} />} loading={busy === 'worker-stop'} disabled={operationPending || busy !== null} onClick={() => void setWorkerRunning(false)}>Stop processing</Button>
-              : <Button variant="light" leftSection={<IconPlayerPlay size={17} />} loading={busy === 'worker-start'} disabled={operationPending || busy !== null} onClick={() => void setWorkerRunning(true)}>Start processing</Button>}
-          </Group>}
+          {workerAvailable && <div>
+            <Group justify="space-between" className="runtimeControlRow">
+              <div>
+                <Text fw={650}>Local video processing</Text>
+                <Text size="sm" className="mutedText">{worker?.running ? 'Ready to process indexing, search, and model jobs on this computer.' : 'Starts automatically when VidXP needs to process a video. You can also start it now.'}</Text>
+              </div>
+              {worker?.running
+                ? <Button color="red" variant="light" leftSection={<IconPlayerStop size={17} />} loading={busy === 'worker-stop'} disabled={operationPending || busy !== null} onClick={() => void setWorkerRunning(false)}>Stop processing</Button>
+                : <Button variant="light" leftSection={<IconPlayerPlay size={17} />} loading={busy === 'worker-start'} disabled={operationPending || busy !== null} onClick={() => void setWorkerRunning(true)}>Start processing</Button>}
+            </Group>
+            {workerFailure && <Alert mt="sm" color="red" title={workerFailure.title} role="alert">{workerFailure.detail}</Alert>}
+          </div>}
 
           {browserAvailable && <Group justify="space-between" className="runtimeControlRow" align="flex-start">
             <div>
