@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/grayhatdevelopers/vidxp">
-    <img src="./plugins/vidxp/assets/logo.png" alt="VidXP logo" width="180">
+    <img src="./docs/images/logo.png" alt="VidXP logo" width="180">
   </a>
 </p>
 

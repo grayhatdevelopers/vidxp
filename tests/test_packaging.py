@@ -319,12 +319,12 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn("local_path", script)
 
     def test_canonical_icon_is_packaged_and_desktop_derivatives_are_wired(self):
-        icon = ROOT / "plugins" / "vidxp" / "assets" / "logo.png"
+        icon = ROOT / "docs" / "images" / "logo.png"
         self.assertTrue(icon.is_file())
         self.assertTrue(icon.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
 
         self.assertIn(
-            "recursive-include plugins/vidxp *",
+            "include docs/images/logo.png",
             (ROOT / "MANIFEST.in").read_text(encoding="utf-8"),
         )
         project = tomllib.loads(
@@ -335,15 +335,19 @@ class PackagingTests(unittest.TestCase):
             "https://github.com/grayhatdevelopers/vidxp",
         )
         self.assertIn(
-            "./plugins/vidxp/assets/logo.png",
+            "./docs/images/logo.png",
             (ROOT / "README.md").read_text(encoding="utf-8"),
         )
         build_hook = (ROOT / "setup.py").read_text(encoding="utf-8")
         self.assertIn(
-            '"plugins" / "vidxp" / "assets" / "logo.png"',
+            '"docs" / "images" / "logo.png"',
             build_hook,
         )
         self.assertIn('"vidxp" / "assets" / "icon.png"', build_hook)
+        self.assertIn(
+            'copyfile(source, plugin_target / "assets" / "logo.png")',
+            build_hook,
+        )
 
         package = json.loads(
             (ROOT / "desktop" / "package.json").read_text(encoding="utf-8")
@@ -363,13 +367,14 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(
             package["scripts"]["icons"],
             (
-                "tauri icon ../plugins/vidxp/assets/logo.png "
+                "tauri icon ../docs/images/logo.png "
                 "--output src-tauri/icons && npm run sync:branding"
             ),
         )
         sync_script = (
             ROOT / "desktop" / "scripts" / "sync-branding.mjs"
         ).read_text(encoding="utf-8")
+        self.assertIn("../docs/images/logo.png", sync_script)
         self.assertIn("../plugins/vidxp/assets/logo.png", sync_script)
         self.assertIn(
             "../src/vidxp/assets/artifact_download/vidxp-logo.png",
@@ -380,6 +385,10 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('resolve(publicDirectory, "icon.png")', sync_script)
         self.assertEqual(
             (ROOT / "desktop" / "public" / "icon.png").read_bytes(),
+            icon.read_bytes(),
+        )
+        self.assertEqual(
+            (ROOT / "plugins" / "vidxp" / "assets" / "logo.png").read_bytes(),
             icon.read_bytes(),
         )
         self.assertIn(

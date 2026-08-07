@@ -17,7 +17,7 @@
     "model-catalog:check": "uv run --frozen python scripts/model-catalog.py --check",
     "tauri": "tauri",
     "sync:branding": "node scripts/sync-branding.mjs",
-    "icons": "tauri icon ../plugins/vidxp/assets/logo.png --output src-tauri/icons && npm run sync:branding",
+    "icons": "tauri icon ../docs/images/logo.png --output src-tauri/icons && npm run sync:branding",
     "predesktop:dev": "npm run sync:branding",
     "desktop:dev": "tauri dev",
     "predesktop:build": "npm run icons",
