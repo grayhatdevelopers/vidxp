@@ -159,15 +159,20 @@ questions about a library, and return inspectable evidence such as boards,
 frames, and clips. Clients can connect locally over stdio or to a self-hosted
 VidXP server.
 
-### ChatGPT and Codex skills
+### Codex plugin and skills
 
-VidXP's repository marketplace includes three reusable agent workflows:
+VidXP is distributed as a Codex plugin through a Git marketplace hosted in
+this GitHub repository. It includes three reusable agent workflows:
 
 - [Install Desktop or CLI and connect Codex](plugins/vidxp/skills/vidxp-install/SKILL.md)
 - [Ingest and index videos](plugins/vidxp/skills/vidxp-ingest-video/SKILL.md)
 - [Find moments and return inspectable evidence](plugins/vidxp/skills/vidxp-find-video-evidence/SKILL.md)
 
-Paste this into Codex: **“Install the VidXP plugin from `grayhatdevelopers/vidxp`, then read and follow its `vidxp-install` skill in this task: ask whether I want Desktop or CLI, install my choice, connect its local MCP server, and verify everything.”**
+Paste this into Codex:
+
+```text
+Add https://github.com/grayhatdevelopers/vidxp as a Git plugin marketplace and install the VidXP plugin. Then set up VidXP on this computer: ask whether I want Desktop or CLI, connect its local MCP server to Codex, and verify it works.
+```
 
 VidXP Desktop can perform the same setup from its **Set up in Codex** button.
 
