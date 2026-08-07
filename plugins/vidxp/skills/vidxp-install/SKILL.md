@@ -5,7 +5,20 @@ description: Install, update, or repair VidXP Desktop or the VidXP CLI and conne
 
 # Install VidXP
 
-Help the user choose a local VidXP setup, install only what they approve, verify it, and connect Codex to the resulting local MCP server.
+Reuse a working local VidXP setup when the user approves it. Otherwise, help them choose a setup, install only what they approve, verify it, and connect Codex to its local MCP server.
+
+## Check for an existing installation first
+
+Before offering a new install, look for every `vidxp` executable available to the local shell. Do not modify any candidate. For each one, run:
+
+```text
+<absolute-vidxp-path> --version
+<absolute-vidxp-path> desktop-probe --json --desktop-version codex-plugin --request-id codex-install
+```
+
+For each successful probe, show the user its executable, version, `data_root`, `repository_root`, and `model_root`. These are the installation's effective paths; existing downloaded models under the reported `model_root` can be reused. Ask the user to confirm whether to reuse that installation and those paths.
+
+If the user approves reuse, skip installation and upgrades. Use executables from that same environment, preserve the reported paths when registering MCP, and repair a missing surface or dependency only with approval. If no compatible installation is found or the user declines reuse, continue with the setup choice.
 
 ## Start with the choice
 
@@ -58,6 +71,8 @@ Ask before starting an installer, changing a tool environment, or downloading mo
    ```text
    codex mcp add vidxp -- <absolute-vidxp-mcp-path> --repository default
    ```
+
+   When reusing an installation, also pass its reported `data_root` as `--data-dir` and a non-default `repository_root` as `--index-directory`. If `model_root` is not `<data_root>/models`, add `--env VIDXP_MODEL_CACHE=<model_root>` before `vidxp` so Codex launches MCP against the same model cache.
 
 7. Run `codex mcp get vidxp --json` and start a new Codex task before testing VidXP tools.
 
