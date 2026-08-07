@@ -23,7 +23,7 @@ keeps its manifest version aligned with the Python package.
 ### Ask Codex to install it
 
 ```text
-Add https://github.com/grayhatdevelopers/vidxp as a Git plugin marketplace and install the VidXP plugin. Then set up VidXP on this computer: ask whether I want Desktop or CLI, connect its local MCP server to Codex, and verify it works.
+Add https://github.com/grayhatdevelopers/vidxp as a Git plugin marketplace, install the VidXP plugin, then use its $vidxp-install skill to set up VidXP on this computer.
 ```
 
 ### VidXP Desktop button

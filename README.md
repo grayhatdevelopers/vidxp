@@ -171,7 +171,7 @@ this GitHub repository. It includes three reusable agent workflows:
 Paste this into Codex:
 
 ```text
-Add https://github.com/grayhatdevelopers/vidxp as a Git plugin marketplace and install the VidXP plugin. Then set up VidXP on this computer: ask whether I want Desktop or CLI, connect its local MCP server to Codex, and verify it works.
+Add https://github.com/grayhatdevelopers/vidxp as a Git plugin marketplace, install the VidXP plugin, then use its $vidxp-install skill to set up VidXP on this computer.
 ```
 
 VidXP Desktop can perform the same setup from its **Set up in Codex** button.
