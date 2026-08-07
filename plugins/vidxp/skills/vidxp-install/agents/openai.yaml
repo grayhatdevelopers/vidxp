@@ -1,4 +1,4 @@
 interface:
   display_name: "Install VidXP"
   short_description: "Install VidXP Desktop or CLI and connect Codex"
-  default_prompt: "Use $vidxp-install to install VidXP and connect its local MCP server to Codex."
+  default_prompt: "Use $vidxp-install to ask whether I want VidXP Desktop or CLI, install my choice, register its local MCP server, and verify the setup."

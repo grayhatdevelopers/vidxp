@@ -20,6 +20,40 @@ keeps its manifest version aligned with the Python package.
 
 ## Install in Codex
 
+### Copy and paste this prompt (recommended)
+
+Paste the following into a new **Codex** task. This is for the local Codex app,
+not ChatGPT web or ChatGPT Classic. The agent handles the marketplace, plugin,
+VidXP installation, and MCP registration; the user does not need to find a
+Settings page or edit configuration files.
+
+```text
+Set up VidXP on this computer for Codex. Do not send me into Settings and do
+not ask me to edit configuration files by hand.
+
+Before downloading or installing anything, ask me to choose:
+1. Stable (Git ref release) or beta (Git ref main).
+2. VidXP Desktop or the VidXP CLI.
+
+After I answer, use the local shell to:
+- Add the Git marketplace grayhatdevelopers/vidxp at the selected ref with
+  sparse paths .agents/plugins and plugins/vidxp.
+- Install vidxp@vidxp and capture the JSON result from Codex.
+- Read <installedPath>/skills/vidxp-install/SKILL.md from that result and
+  follow it immediately in this task for my Desktop or CLI choice.
+- Ask before launching an installer or downloading model weights.
+- Register the installed runtime's absolute vidxp-mcp path through the Codex
+  CLI and verify it with codex mcp get vidxp --json.
+- Run the applicable VidXP health check and report the exact result. Do not
+  claim setup succeeded until both VidXP and the Codex MCP registration verify.
+```
+
+The plugin becomes part of the normal skill catalog in subsequent Codex tasks.
+Reading the installed skill by its returned path lets the same task finish the
+first-time bootstrap without waiting for a restart.
+
+### VidXP Desktop button
+
 With **AI assistant integration** enabled, VidXP Desktop shows two distinct
 actions:
 
@@ -38,7 +72,10 @@ documented `codex plugin marketplace add`, `codex plugin add`, and
 `codex mcp add` commands. A successful Git install removes the obsolete managed
 `vidxp-local` registration. Start a new Codex task after setup.
 
-Users can also add the release marketplace directly:
+### Manual fallback
+
+If an agent does not have an authorized local shell, add the beta marketplace
+manually with:
 
 ```text
 codex plugin marketplace add grayhatdevelopers/vidxp --ref main \
