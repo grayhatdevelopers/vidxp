@@ -64,6 +64,7 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
   const [busy, setBusy] = useState<'discover' | 'browse' | 'activate' | null>('discover');
   const [failure, setFailure] = useState<string | null>(null);
   const candidateGeneration = useRef(new Map<string, number>());
+  const failureAlert = useRef<HTMLDivElement | null>(null);
 
   async function discover() {
     setBusy('discover');
@@ -89,6 +90,12 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
   useEffect(() => {
     void discover();
   }, []);
+
+  useEffect(() => {
+    if (!failure) return;
+    failureAlert.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+    failureAlert.current?.focus({ preventScroll: true });
+  }, [failure]);
 
   async function checkCandidate(path: string) {
     const generation = (candidateGeneration.current.get(path) ?? 0) + 1;
@@ -165,6 +172,8 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
         <Title id="local-setup-title" order={1} className="pageTitle">Connect this desktop to VidXP</Title>
         <Text className="lede">Choose the VidXP installation you already use. Connecting it here will not change or update it.</Text>
       </div>
+
+      {failure && <div ref={failureAlert} tabIndex={-1}><Alert mb="md" icon={<IconAlertCircle aria-hidden="true" />} color="red" title="Could not continue" role="alert">{failure}</Alert></div>}
 
       <div className="setupPanel">
         <Group justify="space-between" align="flex-start" mb="md">
@@ -256,7 +265,6 @@ export function LocalSetup({ onBack, onActivated }: LocalSetupProps) {
       </div>
 
       {busy === 'activate' && <div className="statusRegion" role="status" aria-live="polite"><Loader size="xs" /> Connecting this VidXP installation…</div>}
-      {failure && <Alert icon={<IconAlertCircle aria-hidden="true" />} color="red" title="Could not continue" role="alert">{failure}</Alert>}
     </section>
   );
 }

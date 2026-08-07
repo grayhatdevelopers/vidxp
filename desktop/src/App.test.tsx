@@ -459,6 +459,19 @@ describe('desktop target lifecycle', () => {
     expect(mocks.launchUi).not.toHaveBeenCalled();
   });
 
+  it('keeps a managed installation failure visible in the setup dialog until it is acknowledged', async () => {
+    mocks.installRuntime.mockRejectedValueOnce('The installed runtime failed its compatibility check.');
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+
+    await user.click(screen.getByRole('button', { name: 'Install VidXP' }));
+
+    expect(await screen.findByRole('dialog', { name: 'Setup could not finish' })).toBeVisible();
+    expect(screen.getByRole('alert', { name: 'VidXP was not installed' })).toHaveTextContent('The installed runtime failed its compatibility check.');
+    expect(screen.getByText(/model files already downloaded remain cached/i)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Review setup' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Setup could not finish' })).not.toBeInTheDocument());
+  });
+
   it('blocks setup interaction and reports managed installation stages', async () => {
     const media = deferred<{ ready: boolean }>();
     mocks.installMediaRuntime.mockReturnValue(media.promise);

@@ -1722,6 +1722,30 @@ fn managed_probe_error(message: impl Into<String>) -> target_profiles::TargetErr
     }
 }
 
+fn validate_managed_runtime_identity(
+    runtime: &Path,
+    launcher: &Path,
+    identity: &target_profiles::RuntimeIdentity,
+) -> Result<(), target_profiles::TargetError> {
+    if !path_is_confined(launcher, runtime) {
+        return Err(managed_probe_error(format!(
+            "The managed launcher resolved outside the Desktop-owned runtime at {}.",
+            runtime.display()
+        )));
+    }
+    if !same_path(&identity.prefix, runtime) {
+        return Err(managed_probe_error(format!(
+            "The managed probe reported Python environment {}, but VidXP Desktop owns {}.",
+            identity.prefix.display(),
+            runtime.display()
+        )));
+    }
+    // POSIX virtual environments commonly symlink their Python executable to a shared base
+    // interpreter. The environment prefix, not that resolved interpreter target, establishes
+    // which environment the managed launcher is running from.
+    Ok(())
+}
+
 fn validate_managed_projection(
     paths: &DesktopPaths,
     projection: &target_profiles::ManagedRuntimeProjection,
@@ -1752,14 +1776,7 @@ fn validate_managed_projection(
             )));
         }
     }
-    if !path_is_confined(&validated.executable, &runtime)
-        || !path_is_confined(&validated.runtime.python_executable, &runtime)
-        || !same_path(&validated.runtime.prefix, &runtime)
-    {
-        return Err(managed_probe_error(
-            "The managed probe reported a launcher or Python runtime outside the active Desktop-owned environment.",
-        ));
-    }
+    validate_managed_runtime_identity(&runtime, &validated.executable, &validated.runtime)?;
     Ok(validated)
 }
 
@@ -4712,8 +4729,8 @@ mod tests {
         manifest, manifest_digest, normalize_line_endings, normalized_runtime_constraints,
         package_acquisition_arguments, package_specification, read_active_runtime_snapshot,
         reconcile_managed_runtime_storage, required_encoder_missing, restore_active_runtime,
-        selected_capabilities, selected_surfaces, ui_process_action, write_activation_journal,
-        write_active_runtime,
+        selected_capabilities, selected_surfaces, ui_process_action,
+        validate_managed_runtime_identity, write_activation_journal, write_active_runtime,
     };
     use std::{
         ffi::OsStr,
@@ -4753,6 +4770,39 @@ mod tests {
             paths.activation_journal,
             PathBuf::from("private").join("activation-journal.json")
         );
+    }
+
+    #[test]
+    fn managed_runtime_accepts_a_shared_posix_base_interpreter() {
+        let root = std::env::temp_dir().join(format!(
+            "vidxp-managed-runtime-identity-{}",
+            std::process::id()
+        ));
+        let runtime = root.join("runtimes").join("profile");
+        let launcher = runtime.join("bin").join("vidxp");
+        fs::create_dir_all(launcher.parent().expect("launcher parent")).expect("runtime");
+        fs::write(&launcher, b"launcher").expect("launcher");
+        let identity = crate::target_profiles::RuntimeIdentity {
+            python_executable: root
+                .join("python")
+                .join("cpython")
+                .join("bin")
+                .join("python3"),
+            python_version: "3.13.5".into(),
+            implementation: "CPython".into(),
+            prefix: runtime.clone(),
+            base_prefix: root.join("python").join("cpython"),
+        };
+
+        assert!(validate_managed_runtime_identity(&runtime, &launcher, &identity).is_ok());
+        assert!(
+            validate_managed_runtime_identity(&runtime, &root.join("other-vidxp"), &identity)
+                .is_err()
+        );
+        let mut wrong_prefix = identity;
+        wrong_prefix.prefix = root.join("other-environment");
+        assert!(validate_managed_runtime_identity(&runtime, &launcher, &wrong_prefix).is_err());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -55,9 +55,11 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
   const [operation, setOperation] = useState<ManagedOperation | null>('load');
   const [message, setMessage] = useState('Loading VidXP options…');
   const [failure, setFailure] = useState<string | null>(null);
+  const [installFailure, setInstallFailure] = useState<string | null>(null);
   const [setupProgress, setSetupProgress] = useState<ManagedSetupProgress | null>(null);
   const [setupElapsed, setSetupElapsed] = useState(0);
   const operations = useExclusiveOperation<ManagedOperation>();
+  const failureAlert = useRef<HTMLDivElement | null>(null);
   const initialLoad = useRef<Promise<{
     manifest: RuntimeManifest;
     status: RuntimeStatus;
@@ -155,6 +157,12 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
     return () => window.clearInterval(timer);
   }, [operation]);
 
+  useEffect(() => {
+    if (!failure || installFailure) return;
+    failureAlert.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+    failureAlert.current?.focus({ preventScroll: true });
+  }, [failure, installFailure]);
+
   function toggleValue(value: string, checked: boolean, setter: (next: string[]) => void, current: string[]) {
     setter(checked ? [...current, value] : current.filter((item) => item !== value));
   }
@@ -204,6 +212,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
       draft_id: draftId,
     };
     setFailure(null);
+    setInstallFailure(null);
     setSetupProgress({
       draft_id: draftId,
       current: 1,
@@ -231,7 +240,9 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
       setMessage(result.install.prepared ? 'VidXP and the selected search features are ready.' : 'VidXP is installed. Search files can be downloaded later.');
       onCommitted(result.setup);
     } catch (error) {
-      setFailure(errorMessage(error, 'Setup did not finish. Your previous VidXP installation is unchanged.'));
+      const detail = errorMessage(error, 'Setup did not finish. Your previous VidXP installation is unchanged.');
+      setFailure(detail);
+      setInstallFailure(detail);
     } finally {
       settleOperation(operationId);
       setSetupProgress(null);
@@ -305,6 +316,11 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
   const progressCurrent = setupProgress?.current ?? 1;
   const progressTotal = setupProgress?.total ?? (prepareDuringInstall ? 8 : 7);
 
+  function dismissInstallFailure() {
+    setInstallFailure(null);
+    setFailure(null);
+  }
+
   function formatBytes(bytes: number) {
     if (bytes < 1024) return `${bytes} B`;
     const units = ['KiB', 'MiB', 'GiB', 'TiB'];
@@ -325,6 +341,8 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
         <Title id="managed-setup-title" order={1} className="pageTitle">Choose your VidXP features</Title>
         <Text className="lede">Choose what VidXP can search, where video work runs, and how you want to open or connect to it. You can change these later.</Text>
       </div>
+
+      {failure && !installFailure && <div ref={failureAlert} tabIndex={-1}><Alert mb="md" icon={<IconAlertCircle aria-hidden="true" />} color="red" title="Could not continue" role="alert">{failure}</Alert></div>}
 
       {!manifest ? (
         <div className="emptyState" role="status" aria-live="polite"><Loader size="sm" /> Loading setup options…</div>
@@ -446,48 +464,55 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
         )}
       </div>
       <Modal
-        opened={operation === 'install'}
-        onClose={() => undefined}
-        title="Setting up VidXP"
+        opened={operation === 'install' || installFailure !== null}
+        onClose={() => { if (operation !== 'install') dismissInstallFailure(); }}
+        title={installFailure ? 'Setup could not finish' : 'Setting up VidXP'}
         size="md"
-        closeOnClickOutside={false}
-        closeOnEscape={false}
-        withCloseButton={false}
+        closeOnClickOutside={operation !== 'install'}
+        closeOnEscape={operation !== 'install'}
+        withCloseButton={operation !== 'install'}
       >
-        <Stack gap="md" role="status" aria-live="polite" aria-atomic="true">
-          <Group justify="space-between" align="baseline">
-            <Text fw={700}>Step {progressCurrent} of {progressTotal}</Text>
-            <Text size="sm" className="mutedText">{setupElapsed}s elapsed</Text>
-          </Group>
-          <Progress value={(progressCurrent / progressTotal) * 100} size="lg" animated />
-          {setupProgress?.stage === 'models'
-            && setupProgress.model_message && (
-              <Stack gap={6}>
-                <Group justify="space-between" align="baseline" wrap="nowrap">
-                  <Text size="sm" fw={650}>{setupProgress.model_message}</Text>
-                  {setupProgress.model_current != null && setupProgress.model_total != null
-                    ? <Text size="xs" className="mutedText" style={{ whiteSpace: 'nowrap' }}>
-                        {formatBytes(setupProgress.model_current)} of {formatBytes(setupProgress.model_total)}
-                      </Text>
-                    : <Loader size="xs" />}
-                </Group>
-                {setupProgress.model_current != null && setupProgress.model_total != null && (
-                  <Progress
-                    aria-label="Current model download progress"
-                    value={(setupProgress.model_current / setupProgress.model_total) * 100}
-                    size="md"
-                    animated
-                  />
-                )}
-              </Stack>
-            )}
-          <div>
-            <Text fw={650}>{setupProgress?.message ?? 'Starting managed setup'}</Text>
-            <Text size="sm" className="mutedText" mt="xs">The existing installation remains active until every step has completed and the replacement passes validation.</Text>
-          </div>
-        </Stack>
+        {installFailure ? (
+          <Stack gap="md">
+            <Alert icon={<IconAlertCircle aria-hidden="true" />} color="red" title="VidXP was not installed" role="alert">{installFailure}</Alert>
+            <Text size="sm">Any model files already downloaded remain cached and will be reused when you retry.</Text>
+            <Group justify="flex-end"><Button onClick={dismissInstallFailure}>Review setup</Button></Group>
+          </Stack>
+        ) : (
+          <Stack gap="md" role="status" aria-live="polite" aria-atomic="true">
+            <Group justify="space-between" align="baseline">
+              <Text fw={700}>Step {progressCurrent} of {progressTotal}</Text>
+              <Text size="sm" className="mutedText">{setupElapsed}s elapsed</Text>
+            </Group>
+            <Progress value={(progressCurrent / progressTotal) * 100} size="lg" animated />
+            {setupProgress?.stage === 'models'
+              && setupProgress.model_message && (
+                <Stack gap={6}>
+                  <Group justify="space-between" align="baseline" wrap="nowrap">
+                    <Text size="sm" fw={650}>{setupProgress.model_message}</Text>
+                    {setupProgress.model_current != null && setupProgress.model_total != null
+                      ? <Text size="xs" className="mutedText" style={{ whiteSpace: 'nowrap' }}>
+                          {formatBytes(setupProgress.model_current)} of {formatBytes(setupProgress.model_total)}
+                        </Text>
+                      : <Loader size="xs" />}
+                  </Group>
+                  {setupProgress.model_current != null && setupProgress.model_total != null && (
+                    <Progress
+                      aria-label="Current model download progress"
+                      value={(setupProgress.model_current / setupProgress.model_total) * 100}
+                      size="md"
+                      animated
+                    />
+                  )}
+                </Stack>
+              )}
+            <div>
+              <Text fw={650}>{setupProgress?.message ?? 'Starting managed setup'}</Text>
+              <Text size="sm" className="mutedText" mt="xs">The existing installation remains active until every step has completed and the replacement passes validation.</Text>
+            </div>
+          </Stack>
+        )}
       </Modal>
-      {failure && <Alert mt="md" icon={<IconAlertCircle aria-hidden="true" />} color="red" title="Could not continue" role="alert">{failure}</Alert>}
     </section>
   );
 }
