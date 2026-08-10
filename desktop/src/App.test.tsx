@@ -394,9 +394,41 @@ describe('desktop target lifecycle', () => {
   it('directs a managed target without browser surface back to managed setup', async () => {
     const setup = { profiles: [managedProfile], selected_profile_id: managedProfile.id, issues: [] };
     mocks.targetSetupState.mockResolvedValue(setup); mocks.recheckTargetState.mockResolvedValue(setup);
-    renderApp();
+    const user = userEvent.setup(); renderApp();
     expect(await screen.findByText('The browser interface is not enabled')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Setup options' })).toBeEnabled();
+    const setupOptions = screen.getByRole('button', { name: 'Setup options' });
+    await waitFor(() => expect(setupOptions).toBeEnabled());
+    await user.click(setupOptions);
+    expect(await screen.findByRole('heading', { name: 'Choose your VidXP features' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Install and manage VidXP on this computer?' })).not.toBeInTheDocument();
+  });
+
+  it('opens a broken managed installation directly on a visible repair action', async () => {
+    const broken = {
+      ...managedProfile,
+      validation_error: {
+        code: 'validation_required',
+        message: 'The desktop runtime needs to be installed for this app version.',
+      },
+    };
+    const setup = { profiles: [broken], selected_profile_id: broken.id, issues: [] };
+    mocks.targetSetupState.mockResolvedValue(setup);
+    mocks.recheckTargetState.mockResolvedValue(setup);
+    mocks.runtimeStatus.mockResolvedValue({
+      state: 'broken', ready: false, runtime_profile: 'runtime-a', package_version: '0.4.0',
+      capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models',
+      detail: 'The desktop runtime needs to be installed for this app version.',
+    });
+    const user = userEvent.setup(); renderApp();
+
+    const repair = await screen.findByRole('button', { name: 'Repair VidXP' });
+    await waitFor(() => expect(repair).toBeEnabled());
+    await user.click(repair);
+
+    expect(await screen.findByRole('heading', { name: 'Choose your VidXP features' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Install and manage VidXP on this computer?' })).not.toBeInTheDocument();
+    expect(screen.getByText('VidXP needs attention')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Repair now' })).toBeVisible();
   });
 
   it('keeps ready managed settings read-only until a draft is dirty, then offers Apply and Reset', async () => {
@@ -431,6 +463,7 @@ describe('desktop target lifecycle', () => {
     expect(screen.getByRole('checkbox', { name: /VidXP app|Browser interface/i })).not.toBeChecked();
     await user.click(screen.getByText('Storage location'));
     expect(screen.getByText('D:\\CustomModels')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Repair now' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Repair VidXP' })).toBeEnabled();
   });
 
@@ -581,7 +614,6 @@ describe('desktop target lifecycle', () => {
     mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, runtime_profile: 'runtime-a', package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models', detail: 'Ready.' });
     const user = userEvent.setup(); renderApp();
     await user.click(await screen.findByRole('button', { name: 'Setup options' }));
-    await user.click(screen.getByRole('button', { name: 'Choose features' }));
     await screen.findByRole('heading', { name: 'Choose your VidXP features' });
     expect(screen.getByRole('button', { name: 'Apply update' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Check downloaded models' }));

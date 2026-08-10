@@ -355,6 +355,9 @@ export function TargetSummary({ profile, validationError, checking, operationPen
         <Alert color="red" title="This setup needs attention" role="alert" mb="md">
           {validationError.message}
           <details className="technicalDetails"><summary>Technical details</summary><Code>{validationError.code}</Code></details>
+          {profile.kind === 'managed' && (
+            <Button mt="md" variant="light" loading={operationPending} onClick={onManageManaged}>Repair VidXP</Button>
+          )}
         </Alert>
       )}
       {runtimeFailure && <Alert color="red" title="That did not work" role="alert" mb="md">{runtimeFailure}</Alert>}

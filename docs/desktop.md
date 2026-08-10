@@ -20,6 +20,10 @@ implementation:
 - managed repositories and models use the same platform VidXP data directory
   as the CLI; adopted targets retain their reported roots, while managed Python
   and package environments use private desktop application-data directories;
+- Desktop-managed launchers stay private and are restored through their saved
+  managed profile rather than being added to `PATH` or offered for external
+  adoption. This preserves Desktop's lifecycle ownership, version checks, and
+  controlled launch environment without shadowing a separately installed CLI;
 - the existing DBOS worker remains the durable execution boundary; and
 - closing the desktop process stops the exact browser and API processes it launched,
   while broad worker shutdown remains limited to desktop-owned runtimes.

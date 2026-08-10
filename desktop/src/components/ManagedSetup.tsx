@@ -344,6 +344,28 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
 
       {failure && !installFailure && <div ref={failureAlert} tabIndex={-1}><Alert mb="md" icon={<IconAlertCircle aria-hidden="true" />} color="red" title="Could not continue" role="alert">{failure}</Alert></div>}
 
+      {status?.state === 'broken' && operation !== 'install' && (
+        <>
+          <Alert
+            className="managedAttention"
+            icon={<IconAlertCircle aria-hidden="true" />}
+            color="yellow"
+            title={corruptPointer ? 'VidXP could not read the saved setup' : attentionTitle}
+            role="alert"
+          >
+            {corruptPointer
+              ? <Text size="sm">Review the options below and rebuild VidXP. Your saved setup is not changed until the new one is ready.</Text>
+              : <><Text size="sm">Repair this Desktop-managed installation now, or review its saved features below first.</Text><details className="technicalDetails"><summary>Technical details</summary>{message}</details></>}
+            <Button mt="md" disabled={!manifest || isBusy} onClick={() => void install()}>
+              {corruptPointer ? 'Rebuild now' : dirty ? 'Apply update now' : 'Repair now'}
+            </Button>
+          </Alert>
+          <Alert color="yellow" title={dirty ? 'Your current setup stays available during the update' : 'Repair keeps your selected features'}>
+            {dirty ? 'VidXP switches to the updated setup only after it has been installed and checked.' : 'VidXP first repairs the video tools, then restores this installation only if needed.'}
+          </Alert>
+        </>
+      )}
+
       {!manifest ? (
         <div className="emptyState" role="status" aria-live="polite"><Loader size="sm" /> Loading setup options…</div>
       ) : (
@@ -424,20 +446,6 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
         <div className="neutralSetupNote" role="status">{status.detail}</div>
       )}
 
-      {status?.state === 'broken' && operation !== 'install' && (
-        <Alert
-          className="managedAttention"
-          icon={<IconAlertCircle aria-hidden="true" />}
-          color="yellow"
-          title={corruptPointer ? 'VidXP could not read the saved setup' : attentionTitle}
-          role="alert"
-        >
-          {corruptPointer
-            ? 'Review the options above and rebuild VidXP. Your saved setup is not changed until the new one is ready.'
-            : <><Text size="sm">Use the repair action below to check and restore this installation.</Text><details className="technicalDetails"><summary>Technical details</summary>{message}</details></>}
-        </Alert>
-      )}
-
       {status?.state === 'ready' && (
         <div className="runtimeSummary">
           <Text fw={700}>VidXP is installed</Text>
@@ -447,7 +455,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
         </div>
       )}
 
-      {recoverableConfiguration && (dirty || status?.state === 'broken') && <Alert color="yellow" title={dirty ? 'Your current setup stays available during the update' : 'Repair keeps your selected features'}>{dirty ? 'VidXP switches to the updated setup only after it has been installed and checked.' : 'VidXP first repairs the video tools, then restores this installation only if needed.'}</Alert>}
+      {recoverableConfiguration && dirty && status?.state !== 'broken' && <Alert color="yellow" title="Your current setup stays available during the update">VidXP switches to the updated setup only after it has been installed and checked.</Alert>}
       {status?.ready && !displayedRuntimeSelected && <Alert color="yellow" title="This is not your active installation">Switch back to this installation before preparing models or opening VidXP.</Alert>}
 
       <div className="managedFooter">
