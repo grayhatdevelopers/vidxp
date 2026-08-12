@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import queue
+import threading
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Protocol, Sequence
@@ -147,59 +149,119 @@ def _consume_visual_stream(
     progress: ProgressCallback | None,
     timings: dict[str, float],
 ) -> FrameStreamStats:
+    participant_queues = {
+        p.name: queue.Queue(maxsize=4)
+        for p in participants
+    }
+    errors: list[Exception] = []
+    errors_lock = threading.Lock()
     stream_stats = FrameStreamStats()
-    stream = iter(
-        iter_frame_batches(
-            source.path,
-            samplings=tuple(
-                participant.sampling for participant in participants
-            ),
-            batch_size=max(
-                participant.processor.batch_size(config)
-                for participant in participants
-            ),
-            cancellation=cancellation,
-            stats=stream_stats,
-        )
-    )
-    while True:
-        stream_started = perf_counter()
+
+    def _record_error(exc: Exception) -> None:
+        with errors_lock:
+            errors.append(exc)
+
+    def _decode_worker() -> None:
         try:
-            samples = next(stream)
-        except StopIteration:
-            timings["frame_stream"] += perf_counter() - stream_started
-            break
-        rgb_samples = _rgb_samples(samples)
-        timings["frame_stream"] += perf_counter() - stream_started
-
-        for participant in participants:
-            participant_samples = [
-                sample
-                for sample in rgb_samples
-                if _is_participant_sample(sample, participant)
-            ]
-            if not participant_samples:
-                continue
-            processor_started = perf_counter()
-            participant.processor.process(
-                participant_samples,
-                state=participant.state,
-                info=info,
-                config=config,
-                storage=storage,
-                cancellation=cancellation,
+            stream = iter(
+                iter_frame_batches(
+                    source.path,
+                    samplings=tuple(
+                        p.sampling for p in participants
+                    ),
+                    batch_size=max(
+                        p.processor.batch_size(config)
+                        for p in participants
+                    ),
+                    cancellation=cancellation,
+                    stats=stream_stats,
+                )
             )
-            timings[participant.name] += (
-                perf_counter() - processor_started
-            )
+            while True:
+                stream_started = perf_counter()
+                try:
+                    samples = next(stream)
+                except StopIteration:
+                    timings["frame_stream"] += (
+                        perf_counter() - stream_started
+                    )
+                    break
+                rgb_samples = _rgb_samples(samples)
+                timings["frame_stream"] += (
+                    perf_counter() - stream_started
+                )
+                for participant_queue in participant_queues.values():
+                    participant_queue.put(rgb_samples)
+                report_progress(
+                    progress,
+                    "visual_indexing",
+                    "Indexing the shared sampled-frame stream.",
+                    stream_stats.frames_materialized,
+                    expected,
+                )
+        except Exception as exc:
+            _record_error(exc)
+        finally:
+            for q in participant_queues.values():
+                q.put(None)
 
-        report_progress(
-            progress,
-            "visual_indexing",
-            "Indexing the shared sampled-frame stream.",
-            stream_stats.frames_materialized,
-            expected,
+    def _participant_worker(
+        participant: _Participant,
+        work_queue: queue.Queue,
+    ) -> None:
+        try:
+            while True:
+                cancellation.raise_if_cancelled()
+                try:
+                    batch = work_queue.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                if batch is None:
+                    break
+                participant_samples = [
+                    sample
+                    for sample in batch
+                    if _is_participant_sample(sample, participant)
+                ]
+                if not participant_samples:
+                    continue
+                started = perf_counter()
+                participant.processor.process(
+                    participant_samples,
+                    state=participant.state,
+                    info=info,
+                    config=config,
+                    storage=storage,
+                    cancellation=cancellation,
+                )
+                timings[participant.name] += (
+                    perf_counter() - started
+                )
+        except Exception as exc:
+            _record_error(exc)
+
+    decode_thread = threading.Thread(
+        target=_decode_worker, name="vidxp-visual-decode"
+    )
+    participant_threads = [
+        threading.Thread(
+            target=_participant_worker,
+            args=(p, participant_queues[p.name]),
+            name=f"vidxp-visual-{p.name}",
         )
+        for p in participants
+    ]
+
+    decode_thread.start()
+    for t in participant_threads:
+        t.start()
+    decode_thread.join()
+    for t in participant_threads:
+        t.join()
+
+    if errors:
+        raise errors[0]
+
     return stream_stats
 
 
