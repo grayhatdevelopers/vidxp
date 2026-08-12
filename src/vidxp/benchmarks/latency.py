@@ -353,7 +353,7 @@ def aggregate_latency_runs(
     for repetition, manifest in enumerate(manifests):
         processed_frames += int(manifest.get("processed_frames", 0))
         for modality, count in (manifest.get("record_counts") or {}).items():
-            record_counts[modality] = int(count)
+            record_counts[modality] = record_counts.get(modality, 0) + int(count)
         for video_id in sorted(manifest.get("videos", {})):
             stages = _per_video_stages(manifest, video_id)
             if not stages:
@@ -422,6 +422,36 @@ def aggregate_latency_runs(
         "processed_frames": processed_frames,
         "record_counts": dict(sorted(record_counts.items())),
     }
+
+
+def _validate_baseline_compatibility(
+    report: Mapping[str, Any],
+    baseline: Mapping[str, Any],
+) -> None:
+    baseline_corpus = baseline.get("corpus") or {}
+    report_corpus = report.get("corpus") or {}
+    corpus_keys = ("videos", "duration_seconds", "fps", "width", "height", "audio_mode", "seed")
+    for key in corpus_keys:
+        report_val = report_corpus.get(key)
+        baseline_val = baseline_corpus.get(key)
+        if report_val is not None and baseline_val is not None and report_val != baseline_val:
+            raise ValueError(
+                f"Baseline corpus mismatch: {key!r} is {baseline_val!r}, "
+                f"current is {report_val!r}."
+            )
+    for key in ("input_mode", "device"):
+        report_val = report.get(key)
+        baseline_val = baseline.get(key)
+        if report_val is not None and baseline_val is not None and report_val != baseline_val:
+            raise ValueError(
+                f"Baseline {key!r} mismatch: {baseline_val!r}, current is {report_val!r}."
+            )
+    report_mods = sorted(report.get("modalities") or [])
+    baseline_mods = sorted(baseline.get("modalities") or [])
+    if report_mods and baseline_mods and report_mods != baseline_mods:
+        raise ValueError(
+            f"Baseline modalities mismatch: {baseline_mods}, current is {report_mods}."
+        )
 
 
 def compare_baseline(
@@ -556,28 +586,28 @@ def run_latency(
         allowed_specs=registry.model_specs(),
     )
     ensure_adapter_outputs(run_directory)
-    clips = generate_synthetic_corpus(
-        spec=spec,
-        directory=run_directory / "corpus",
-        ffprobe=ffprobe,
-        ffmpeg=ffmpeg,
-    )
-    sources = build_latency_sources(
-        clips=clips,
-        spec=spec,
-        input_mode=input_mode,
-    )
     manifests: list[dict[str, Any]] = []
     wall_samples: list[float] = []
     rss_samples: list[int | None] = []
     try:
+        clips = generate_synthetic_corpus(
+            spec=spec,
+            directory=run_directory / "corpus",
+            ffprobe=ffprobe,
+            ffmpeg=ffmpeg,
+        )
+        sources = build_latency_sources(
+            clips=clips,
+            spec=spec,
+            input_mode=input_mode,
+        )
         for _ in range(repetitions):
             started = perf_counter()
             with IndexStorage(config) as storage:
                 manifest = run_index(
                     sources,
                     config,
-                    reset=True,
+                    reset=reset,
                     storage=storage,
                     manifest_store=ManifestStore(
                         config,
@@ -630,6 +660,7 @@ def run_latency(
                 raise ValueError(
                     f"Baseline report is not readable JSON: {baseline_path}"
                 ) from exc
+            _validate_baseline_compatibility(report, baseline)
             report["baseline"] = compare_baseline(
                 report,
                 baseline,

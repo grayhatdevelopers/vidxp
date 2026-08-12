@@ -671,6 +671,8 @@ def index_latency_command(
 
     try:
         parts = resolution.lower().split("x")
+        if len(parts) != 2:
+            raise ValueError
         width, height = int(parts[0]), int(parts[1])
         if width <= 0 or height <= 0:
             raise ValueError
