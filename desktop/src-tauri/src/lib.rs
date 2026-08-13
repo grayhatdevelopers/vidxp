@@ -5349,11 +5349,16 @@ mod tests {
         let manifest = manifest().expect("manifest");
         let selected = selected_capabilities(
             &manifest,
-            &["scene".into(), "dialogue".into(), "scene".into()],
+            &[
+                "scene".into(),
+                "videoprism".into(),
+                "dialogue".into(),
+                "scene".into(),
+            ],
         )
         .expect("selection");
 
-        assert_eq!(selected, ["dialogue", "scene"]);
+        assert_eq!(selected, ["dialogue", "scene", "videoprism"]);
         assert!(selected_capabilities(&manifest, &["other".into()]).is_err());
     }
 

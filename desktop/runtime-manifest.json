@@ -47,6 +47,11 @@
       "extra": "actor",
       "modality": "actor",
       "label": "Actor recognition"
+    },
+    "videoprism": {
+      "extra": "videoprism",
+      "modality": "videoprism",
+      "label": "Temporal video search"
     }
   },
   "media_runtime": {
