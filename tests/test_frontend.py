@@ -89,12 +89,12 @@ class FrontendTests(unittest.TestCase):
                 return_value=service,
             ):
                 available = frontend._available_query_modalities(
-                    ("dialogue", "scene", "actor"),
+                    ("dialogue", "scene", "actor", "videoprism"),
                 )
 
         self.assertEqual(
             available,
-            ("dialogue", "scene", "actor"),
+            ("dialogue", "scene", "actor", "videoprism"),
         )
 
     def tearDown(self):
@@ -338,6 +338,47 @@ class FrontendTests(unittest.TestCase):
         command = jobs.submit_index.call_args.args[0]
         self.assertEqual(command.scene_sample_fps, 2.0)
         service.require_models.assert_not_called()
+
+    def test_videoprism_clip_control_is_conditional_and_configures_index(self):
+        with patch.object(
+            frontend.st,
+            "selectbox",
+            return_value=4.0,
+        ) as selectbox:
+            selected = frontend._videoprism_sample_fps_control(
+                ("videoprism",),
+                disabled=False,
+            )
+
+        self.assertEqual(selected, 4.0)
+        self.assertEqual(
+            selectbox.call_args.args[:2],
+            ("Temporal clip length", (1.0, 2.0, 4.0)),
+        )
+        self.assertEqual(selectbox.call_args.kwargs["index"], 1)
+
+        jobs = Mock()
+        jobs.submit_index.return_value = SimpleNamespace(job_id="job-1")
+        session_state = {frontend.MEDIA_ID_KEY: MEDIA_ID}
+        with (
+            patch.object(frontend, "_configured_service", return_value=Mock()),
+            patch.object(frontend, "_configured_jobs", return_value=jobs),
+            patch.object(frontend.st, "session_state", session_state),
+            patch.object(frontend.st, "query_params", {}),
+            patch.object(frontend.st, "rerun"),
+        ):
+            frontend._run_indexing(
+                None,
+                {},
+                ("videoprism",),
+                videoprism_sample_fps=selected,
+            )
+
+        command = jobs.submit_index.call_args.args[0]
+        self.assertEqual(
+            command.capability_options,
+            {"videoprism": {"sample_fps": 4.0}},
+        )
 
     def test_indexing_omits_scene_sample_rate_without_scene(self):
         jobs = Mock()
