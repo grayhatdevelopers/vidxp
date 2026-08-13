@@ -40,6 +40,7 @@ from vidxp.model_contracts import (
     ModelArtifactDownloadError,
     ModelArtifactUnavailableError,
     ModelKey,
+    model_artifact_cached,
     model_artifact_path,
 )
 from vidxp.runtime import ModelRuntime, resolve_backends
@@ -204,7 +205,7 @@ class ModelTests(unittest.TestCase):
 
         retrieve.assert_not_called()
 
-    def test_model_readiness_checks_the_pinned_cache_without_loading(self):
+    def test_model_readiness_rejects_corrupt_pinned_cache_without_loading(self):
         with TemporaryDirectory() as directory:
             cache = Path(directory) / "models"
             path = model_artifact_path(cache, YUNET_MODEL)
@@ -224,7 +225,7 @@ class ModelTests(unittest.TestCase):
                 (
                     YUNET_MODEL.model_id,
                     YUNET_MODEL.download_size_bytes,
-                    True,
+                    False,
                 ),
                 (
                     SFACE_MODEL.model_id,
@@ -233,6 +234,23 @@ class ModelTests(unittest.TestCase):
                 ),
             ],
         )
+
+    def test_model_cache_requires_the_pinned_checksum(self):
+        with TemporaryDirectory() as directory:
+            content = b"verified model"
+            spec = replace(
+                YUNET_MODEL,
+                filename="verified.onnx",
+                sha256=hashlib.sha256(content).hexdigest(),
+            )
+            cache = Path(directory) / "models"
+            path = model_artifact_path(cache, spec)
+            path.parent.mkdir(parents=True)
+            path.write_bytes(content)
+
+            self.assertTrue(model_artifact_cached(cache, spec))
+            path.write_bytes(b"corrupt")
+            self.assertFalse(model_artifact_cached(cache, spec))
 
     def test_explicit_snapshot_download_reports_bytes(self):
         with TemporaryDirectory() as directory:

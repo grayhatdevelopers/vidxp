@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from vidxp.ports import ModelRuntimePort
+from vidxp.core.indexing_common import report_preparation
 from vidxp.capabilities.actor.specs import (
     SFACE_MODEL,
     YUNET_MODEL,
@@ -38,14 +39,11 @@ def get_actor_models(
             download=download,
             progress=progress,
         )
-        if progress is not None:
-            progress(
-                {
-                    "state": "preparing",
-                    "stage": "loading_model",
-                    "message": "Loading OpenCV Zoo YuNet and SFace models.",
-                }
-            )
+        report_preparation(
+            progress,
+            "loading_model",
+            "Loading OpenCV Zoo YuNet and SFace models.",
+        )
         models = ActorModels(
             detector=cv2.FaceDetectorYN.create(
                 str(detector_path),

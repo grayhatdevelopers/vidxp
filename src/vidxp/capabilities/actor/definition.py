@@ -32,21 +32,18 @@ from vidxp.capabilities.actor.schemas import (
 )
 from vidxp.capabilities.visual import index_capabilities
 from vidxp.core.contracts import IndexConfig, VideoSource
-from vidxp.core.indexing_common import ProgressCallback
+from vidxp.core.indexing_common import ProgressCallback, report_preparation
 
 
 def prepare_models(
     context: PreparationContext,
     progress: ProgressCallback | None,
 ) -> tuple[str, ...]:
-    if progress is not None:
-        progress(
-            {
-                "state": "preparing",
-                "stage": "actor_models",
-                "message": "Preparing OpenCV Zoo YuNet and SFace models.",
-            }
-        )
+    report_preparation(
+        progress,
+        "actor_models",
+        "Preparing OpenCV Zoo YuNet and SFace models.",
+    )
     get_actor_models(context.runtime, download=True, progress=progress)
     return (YUNET_MODEL.filename, SFACE_MODEL.filename)
 

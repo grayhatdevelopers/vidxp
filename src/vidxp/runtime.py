@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import platform
-import hashlib
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from contextlib import contextmanager
 from threading import BoundedSemaphore, Lock, RLock
 from time import monotonic, sleep
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, TypeVar
 from pathlib import Path
 
 from vidxp.application_models import RuntimeProfile
@@ -17,7 +16,9 @@ from vidxp.model_contracts import (
     ModelArtifactUnavailableError,
     ModelKey,
     ModelSpec,
+    model_artifact_valid,
 )
+from vidxp.core.indexing_common import report_preparation
 from vidxp.settings import VidXPSettings
 
 
@@ -32,6 +33,7 @@ class _ModelDownloadVerificationError(RuntimeError):
 _MODEL_DOWNLOAD_ATTEMPTS = 3
 _DOWNLOAD_HEARTBEAT_SECONDS = 5.0
 _MINIMUM_PROGRESS_BYTES = 1024 * 1024
+_DownloadResult = TypeVar("_DownloadResult")
 
 
 def _download_failure_reason(exc: Exception) -> str:
@@ -81,6 +83,39 @@ def _download_failure_retryable(
     if type(exc).__module__.startswith(("huggingface_hub", "pooch")):
         return False
     return None
+
+
+def _download_with_retries(
+    spec: ModelSpec | ArtifactSpec,
+    download: Callable[[int], _DownloadResult],
+    *,
+    resumable: bool,
+    hash_mismatch_is_retryable: bool = False,
+    on_retry: Callable[[int], None] | None = None,
+) -> _DownloadResult:
+    for attempt in range(1, _MODEL_DOWNLOAD_ATTEMPTS + 1):
+        try:
+            return download(attempt)
+        except Exception as exc:
+            retryable = _download_failure_retryable(
+                exc,
+                hash_mismatch_is_retryable=hash_mismatch_is_retryable,
+            )
+            if retryable is None:
+                raise
+            if attempt >= _MODEL_DOWNLOAD_ATTEMPTS or not retryable:
+                raise ModelArtifactDownloadError(
+                    spec.capability,
+                    spec.model_id,
+                    attempts=attempt,
+                    reason=_download_failure_reason(exc),
+                    resumable=resumable,
+                    retryable=retryable,
+                ) from exc
+            if on_retry is not None:
+                on_retry(attempt + 1)
+            sleep(2 ** (attempt - 1))
+    raise AssertionError("Model download retry loop did not terminate.")
 
 
 def _torch_accelerators() -> tuple[bool, bool]:
@@ -136,14 +171,6 @@ def resolve_backends(requested: str) -> RuntimeProfile:
         mps_available=mps_available,
         cuda_available=cuda_available,
     )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 class ResourceScheduler:
@@ -259,7 +286,7 @@ class ModelRuntime:
                         state["message"] = f"Downloading {spec.model_id}."
                 return result
 
-        def download() -> str:
+        def download_snapshot() -> str:
             snapshot = Path(
                 snapshot_download(
                     repo_id=spec.model_id,
@@ -270,10 +297,7 @@ class ModelRuntime:
                 )
             )
             weights = snapshot / spec.weights_file
-            if (
-                not weights.is_file()
-                or _sha256(weights) != spec.weights_sha256
-            ):
+            if not model_artifact_valid(weights, spec):
                 raise _ModelDownloadVerificationError
             return str(snapshot)
 
@@ -296,21 +320,17 @@ class ModelRuntime:
             heartbeat = now - reported_at >= _DOWNLOAD_HEARTBEAT_SECONDS
             if not force and reported_current >= 0 and not advanced and not heartbeat:
                 return
-            progress(
-                {
-                    "state": "preparing",
-                    "stage": "downloading_model",
-                    **event,
-                }
+            report_preparation(
+                progress,
+                "downloading_model",
+                event["message"],
+                current=event["current"],
+                total=event["total"],
             )
             reported_at = now
             reported_current = current
 
-        last_error: Exception | None = None
-        last_retryable = False
-        attempts = 0
-        for attempt in range(1, _MODEL_DOWNLOAD_ATTEMPTS + 1):
-            attempts = attempt
+        def download(attempt: int) -> str:
             with state_lock:
                 state["message"] = (
                     f"Connecting to download {spec.model_id}."
@@ -321,49 +341,33 @@ class ModelRuntime:
                     )
                 )
             report(force=True)
-            try:
-                with ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(download)
-                    while True:
-                        try:
-                            snapshot = future.result(timeout=0.5)
-                            break
-                        except FutureTimeout:
-                            report()
-            except Exception as exc:
-                last_error = exc
-                retryable = _download_failure_retryable(exc)
-                if retryable is None:
-                    raise
-                last_retryable = retryable
-                if (
-                    attempt >= _MODEL_DOWNLOAD_ATTEMPTS
-                    or not retryable
-                ):
-                    break
-                with state_lock:
-                    state["message"] = (
-                        f"Download interrupted for {spec.model_id}; cached "
-                        "partial files will be resumed."
-                    )
-                report(force=True)
-                sleep(2 ** (attempt - 1))
-                continue
-            with state_lock:
-                state["current"] = spec.download_size_bytes
-                state["message"] = f"Downloaded {spec.model_id}."
-            report(force=True)
-            return Path(snapshot)
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(download_snapshot)
+                while True:
+                    try:
+                        return future.result(timeout=0.5)
+                    except FutureTimeout:
+                        report()
 
-        assert last_error is not None
-        raise ModelArtifactDownloadError(
-            spec.capability,
-            spec.model_id,
-            attempts=attempts,
-            reason=_download_failure_reason(last_error),
+        def report_retry(_next_attempt: int) -> None:
+            with state_lock:
+                state["message"] = (
+                    f"Download interrupted for {spec.model_id}; cached "
+                    "partial files will be resumed."
+                )
+            report(force=True)
+
+        snapshot = _download_with_retries(
+            spec,
+            download,
             resumable=True,
-            retryable=last_retryable,
-        ) from last_error
+            on_retry=report_retry,
+        )
+        with state_lock:
+            state["current"] = spec.download_size_bytes
+            state["message"] = f"Downloaded {spec.model_id}."
+        report(force=True)
+        return Path(snapshot)
 
     def resolve_model(
         self,
@@ -390,8 +394,7 @@ class ModelRuntime:
                 local_weights = local_snapshot / spec.weights_file
                 snapshot = (
                     local_snapshot
-                    if local_weights.is_file()
-                    and _sha256(local_weights) == spec.weights_sha256
+                    if model_artifact_valid(local_weights, spec)
                     else None
                 )
             except Exception:
@@ -424,88 +427,59 @@ class ModelRuntime:
         try:
             destination = self.settings.model_cache / spec.provider
             path = destination / spec.filename
-            if not path.is_file() or _sha256(path) != spec.sha256:
+            if not model_artifact_valid(path, spec):
                 if not download or not self.settings.allow_model_downloads:
                     raise ModelArtifactUnavailableError(spec.capability)
-                if progress is not None:
-                    progress(
-                        {
-                            "state": "preparing",
-                            "stage": "downloading_model",
-                            "message": f"Downloading {spec.model_id}.",
-                            "current": 0,
-                            "total": spec.download_size_bytes,
-                        }
-                    )
+                report_preparation(
+                    progress,
+                    "downloading_model",
+                    f"Downloading {spec.model_id}.",
+                    current=0,
+                    total=spec.download_size_bytes,
+                )
                 import pooch
 
-                last_error = None
-                for attempt in range(1, _MODEL_DOWNLOAD_ATTEMPTS + 1):
-                    try:
-                        resolved = Path(
-                            pooch.retrieve(
-                                url=spec.url,
-                                known_hash=f"sha256:{spec.sha256}",
-                                fname=spec.filename,
-                                path=destination,
-                                progressbar=False,
-                            )
+                def download_artifact(_attempt: int) -> Path:
+                    return Path(
+                        pooch.retrieve(
+                            url=spec.url,
+                            known_hash=f"sha256:{spec.sha256}",
+                            fname=spec.filename,
+                            path=destination,
+                            progressbar=False,
                         )
-                        break
-                    except Exception as exc:
-                        last_error = exc
-                        retryable = _download_failure_retryable(
-                            exc,
-                            hash_mismatch_is_retryable=True,
-                        )
-                        if retryable is None:
-                            raise
-                        if (
-                            attempt >= _MODEL_DOWNLOAD_ATTEMPTS
-                            or not retryable
-                        ):
-                            raise ModelArtifactDownloadError(
-                                spec.capability,
-                                spec.model_id,
-                                attempts=attempt,
-                                reason=_download_failure_reason(exc),
-                                resumable=False,
-                                retryable=retryable,
-                            ) from exc
-                        if progress is not None:
-                            progress(
-                                {
-                                    "state": "preparing",
-                                    "stage": "downloading_model",
-                                    "message": (
-                                        f"Download interrupted for "
-                                        f"{spec.model_id}; retrying attempt "
-                                        f"{attempt + 1} of "
-                                        f"{_MODEL_DOWNLOAD_ATTEMPTS}. This "
-                                        "file will restart from zero."
-                                    ),
-                                    "current": 0,
-                                    "total": spec.download_size_bytes,
-                                }
-                            )
-                        sleep(2 ** (attempt - 1))
-                else:
-                    assert last_error is not None
-                    raise last_error
+                    )
+
+                def report_retry(next_attempt: int) -> None:
+                    report_preparation(
+                        progress,
+                        "downloading_model",
+                        f"Download interrupted for {spec.model_id}; "
+                        f"retrying attempt {next_attempt} of "
+                        f"{_MODEL_DOWNLOAD_ATTEMPTS}. This file will "
+                        "restart from zero.",
+                        current=0,
+                        total=spec.download_size_bytes,
+                    )
+
+                resolved = _download_with_retries(
+                    spec,
+                    download_artifact,
+                    resumable=False,
+                    hash_mismatch_is_retryable=True,
+                    on_retry=report_retry,
+                )
             else:
                 resolved = path
-            if not resolved.is_file() or _sha256(resolved) != spec.sha256:
+            if not model_artifact_valid(resolved, spec):
                 raise ModelArtifactUnavailableError(spec.capability)
-            if progress is not None:
-                progress(
-                    {
-                        "state": "preparing",
-                        "stage": "downloading_model",
-                        "message": f"Verified {spec.model_id}.",
-                        "current": spec.download_size_bytes,
-                        "total": spec.download_size_bytes,
-                    }
-                )
+            report_preparation(
+                progress,
+                "downloading_model",
+                f"Verified {spec.model_id}.",
+                current=spec.download_size_bytes,
+                total=spec.download_size_bytes,
+            )
         except (ModelArtifactDownloadError, ModelArtifactUnavailableError):
             raise
         except Exception as exc:

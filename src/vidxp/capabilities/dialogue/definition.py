@@ -26,7 +26,7 @@ from vidxp.capabilities.dialogue.operations import (
 )
 from vidxp.capabilities.schemas import SearchInput, SearchResult
 from vidxp.core.contracts import IndexConfig, VideoSource
-from vidxp.core.indexing_common import ProgressCallback
+from vidxp.core.indexing_common import ProgressCallback, report_preparation
 def filter_requirements_for_source(
     source: VideoSource,
     requirements: tuple[Requirement, ...],
@@ -49,14 +49,7 @@ def prepare_models(
     prepared = []
 
     def report(stage: str, message: str) -> None:
-        if progress is not None:
-            progress(
-                {
-                    "state": "preparing",
-                    "stage": stage,
-                    "message": message,
-                }
-            )
+        report_preparation(progress, stage, message)
 
     report(
         "dialogue_model",

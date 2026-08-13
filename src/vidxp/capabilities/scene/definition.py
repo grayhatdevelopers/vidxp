@@ -19,23 +19,18 @@ from vidxp.capabilities.scene.operations import search_operation
 from vidxp.capabilities.schemas import SearchInput, SearchResult
 from vidxp.capabilities.visual import index_capabilities
 from vidxp.core.contracts import IndexConfig, VideoSource
-from vidxp.core.indexing_common import ProgressCallback
+from vidxp.core.indexing_common import ProgressCallback, report_preparation
 
 def prepare_models(
     context: PreparationContext,
     progress: ProgressCallback | None,
 ) -> tuple[str, ...]:
     SceneConfig.model_validate(context.settings)
-    if progress is not None:
-        progress(
-            {
-                "state": "preparing",
-                "stage": "scene_model",
-                "message": (
-                    f"Preparing scene model: SigLIP2 {SIGLIP2_MODEL.model_id}"
-                ),
-            }
-        )
+    report_preparation(
+        progress,
+        "scene_model",
+        f"Preparing scene model: SigLIP2 {SIGLIP2_MODEL.model_id}",
+    )
     get_scene_model(context.runtime, download=True, progress=progress)
     return (SIGLIP2_MODEL.model_id,)
 

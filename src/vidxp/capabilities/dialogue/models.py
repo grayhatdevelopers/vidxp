@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from vidxp.ports import ModelRuntimePort
+from vidxp.core.indexing_common import report_preparation
 from vidxp.model_contracts import loaded_compute_precision
 from vidxp.capabilities.dialogue.specs import (
     FASTER_WHISPER_MODEL,
@@ -28,16 +29,11 @@ def get_embedder(
             download=download,
             progress=progress,
         )
-        if progress is not None:
-            progress(
-                {
-                    "state": "preparing",
-                    "stage": "loading_model",
-                    "message": (
-                        f"Loading {QWEN3_EMBEDDING_MODEL.model_id}."
-                    ),
-                }
-            )
+        report_preparation(
+            progress,
+            "loading_model",
+            f"Loading {QWEN3_EMBEDDING_MODEL.model_id}.",
+        )
         model = SentenceTransformer(
             str(snapshot),
             device=device,
@@ -74,16 +70,11 @@ def get_whisper_model(
             download=download,
             progress=progress,
         )
-        if progress is not None:
-            progress(
-                {
-                    "state": "preparing",
-                    "stage": "loading_model",
-                    "message": (
-                        f"Loading {FASTER_WHISPER_MODEL.model_id}."
-                    ),
-                }
-            )
+        report_preparation(
+            progress,
+            "loading_model",
+            f"Loading {FASTER_WHISPER_MODEL.model_id}.",
+        )
         model = WhisperModel(
             str(snapshot),
             device=device.split(":", 1)[0],
