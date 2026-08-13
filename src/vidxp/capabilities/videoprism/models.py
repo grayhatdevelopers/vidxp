@@ -16,6 +16,12 @@ class VideoPrismModel:
     device: str
 
 
+def normalize_pooled_output(features: Any) -> Any:
+    import torch
+
+    return torch.nn.functional.normalize(features.flatten(start_dim=1), dim=-1)
+
+
 def get_videoprism_model(
     runtime: ModelRuntimePort,
     *,

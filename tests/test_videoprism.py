@@ -10,12 +10,22 @@ from vidxp.capabilities.videoprism.indexing import (
     VideoPrismIndexState,
     process_videoprism_samples,
 )
+from vidxp.capabilities.videoprism.models import normalize_pooled_output
 from vidxp.capabilities.videoprism.specs import VIDEOPRISM_MODEL
 from vidxp.core.contracts import CancellationToken, IndexConfig
 from vidxp.core.video import FrameSample, VideoInfo
 
 
 class VideoPrismTests(unittest.TestCase):
+    def test_provider_pooler_dimension_is_removed(self):
+        import torch
+
+        embedding = normalize_pooled_output(torch.tensor([[[3.0, 4.0]]]))
+
+        self.assertEqual(tuple(embedding.shape), (1, 2))
+        self.assertAlmostEqual(embedding[0, 0].item(), 0.6)
+        self.assertAlmostEqual(embedding[0, 1].item(), 0.8)
+
     def test_config_rejects_invalid_sampling(self):
         with self.assertRaises(ValidationError):
             VideoPrismConfig(sample_fps=0)

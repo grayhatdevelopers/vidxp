@@ -7,6 +7,7 @@ from vidxp.capabilities.videoprism.config import videoprism_config
 from vidxp.capabilities.videoprism.models import (
     VideoPrismModel,
     get_videoprism_model,
+    normalize_pooled_output,
 )
 from vidxp.capabilities.videoprism.specs import VIDEOPRISM_MODEL
 from vidxp.core.contracts import (
@@ -53,7 +54,7 @@ def encode_video_clips(
     inputs = {name: value.to(provider.device) for name, value in inputs.items()}
     with torch.inference_mode():
         features = provider.model.get_video_features(**inputs).pooler_output
-        features = torch.nn.functional.normalize(features, dim=-1)
+        features = normalize_pooled_output(features)
     return features.cpu().numpy().tolist()
 
 
