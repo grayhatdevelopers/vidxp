@@ -281,7 +281,7 @@ class ModelTests(unittest.TestCase):
             with patch(
                 "huggingface_hub.snapshot_download",
                 side_effect=download,
-            ), patch(
+            ) as snapshot_download, patch(
                 "huggingface_hub.constants.HF_HUB_DISABLE_XET",
                 False,
             ):
@@ -295,6 +295,10 @@ class ModelTests(unittest.TestCase):
                 )
 
         self.assertEqual(resolved, snapshot)
+        self.assertEqual(
+            snapshot_download.call_args.kwargs["ignore_patterns"],
+            ("*.h5", "*.msgpack", "*.npz", "*.ot"),
+        )
         download_events = [
             event for event in events if event["stage"] == "downloading_model"
         ]

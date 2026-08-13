@@ -2706,7 +2706,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             [item["name"] for item in result.structured_content["items"]],
-            ["dialogue", "scene", "actor"],
+            ["dialogue", "scene", "actor", "videoprism"],
         )
 
     async def test_streamable_http_works_with_the_official_remote_client(self):

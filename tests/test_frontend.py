@@ -277,7 +277,7 @@ class FrontendTests(unittest.TestCase):
             ):
                 available = frontend._available_index_modalities()
 
-        self.assertEqual(available, ("dialogue", "scene"))
+        self.assertEqual(available, ("dialogue", "scene", "videoprism"))
         self.assertTrue(
             all(
                 not call.args[0].include_runtime_checks

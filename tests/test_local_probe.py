@@ -37,7 +37,7 @@ class LocalProbeTests(unittest.TestCase):
             patch("vidxp.local_probe._module_available", return_value=True),
             patch(
                 "vidxp.local_probe._installed_search_capabilities",
-                return_value=["actor", "dialogue", "scene"],
+                return_value=["actor", "dialogue", "scene", "videoprism"],
             ),
             patch(
                 "vidxp.local_probe.media_runtime_is_initialized",
@@ -85,7 +85,7 @@ class LocalProbeTests(unittest.TestCase):
         )
         self.assertEqual(
             payload["search_capabilities"],
-            ["actor", "dialogue", "scene"],
+            ["actor", "dialogue", "scene", "videoprism"],
         )
         self.assertTrue(all(surface["launchable"] for surface in payload["surfaces"].values()))
 
@@ -247,11 +247,12 @@ class LocalProbeTests(unittest.TestCase):
     def test_desktop_model_catalog_is_derived_from_canonical_specs(self):
         catalog = desktop_model_cache_catalog()
 
-        self.assertEqual(len(catalog), 5)
+        self.assertEqual(len(catalog), 6)
         self.assertEqual(
             {item["id"] for item in catalog},
             {
                 "google/siglip2-base-patch16-224",
+                "google/videoprism-lvt-base-f16r288",
                 "Qwen/Qwen3-Embedding-0.6B",
                 "dropbox-dash/faster-whisper-large-v3-turbo",
                 "yunet",

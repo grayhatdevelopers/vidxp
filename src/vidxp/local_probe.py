@@ -110,7 +110,9 @@ def _surface_capabilities(
     return {
         "worker": _surface_capability(
             installed=(
-                {"dialogue", "scene", "actor"}.issubset(search_capabilities)
+                {"dialogue", "scene", "actor", "videoprism"}.issubset(
+                    search_capabilities
+                )
                 and _module_available("pydantic_ai")
             ),
             media_ready=media_ready,

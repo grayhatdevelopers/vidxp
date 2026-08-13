@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <strong>Dialogue search · Scene search · Actor grouping</strong>
+  <strong>Dialogue search · Scene search · Temporal video search · Actor grouping</strong>
 </p>
 
 <p align="center">
@@ -43,8 +43,12 @@ VidXP makes one video—or an entire collection—searchable by meaning:
   matching moments.
 - **Scene search:** describe what appeared on screen and find the closest
   visual matches.
+- **VideoPrism search:** describe an action or event spanning a short clip.
 - **Actor matching:** find recurring faces within a video and export a
   highlighted video for a selected group.
+
+Existing indexes remain compatible. Index media with the `videoprism`
+capability selected before using temporal video search.
 
 Use it to search years of family videos, add video search to an editing
 workflow, or let an AI agent answer questions using evidence from your own
@@ -138,6 +142,9 @@ vidxp index create <media-id>
 # Find a visual moment
 vidxp search scene "a yellow taxi on a city street"
 
+# Find an action spanning several frames
+vidxp search videoprism "a person opens a door and walks outside"
+
 # Find something that was said
 vidxp search dialogue "the bread just came out of the oven"
 ```
@@ -197,10 +204,11 @@ approximately 3 GiB.
 |---|---:|
 | Dialogue search | 2.64 GiB |
 | Scene search | 1.43 GiB |
+| VideoPrism temporal search | 0.93 GiB |
 | Actor matching | 37 MiB |
 
 A full local Desktop setup with every search capability uses approximately
-7.1 GiB. Leave additional temporary space during installation and for indexes,
+8.1 GiB. Leave additional temporary space during installation and for indexes,
 source videos, and exported results.
 
 By default, the CLI and desktop app share the same VidXP data directory:

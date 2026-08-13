@@ -14,7 +14,7 @@ shape needs.
 | Desktop app | Install the native package | Adopt a compatible local installation or create a private Desktop-managed runtime |
 | Browser UI in Docker | Published `vidxp` image | One CPU worker/UI container |
 | Public/self-hosted service | `compose.coolify.yaml` | API/MCP control plane, CPU worker, PostgreSQL, Chroma, tusd |
-| Embed one capability | `dialogue`, `scene`, or `actor` extra | Python indexing/retrieval code |
+| Embed one capability | `dialogue`, `scene`, `actor`, or `videoprism` extra | Python indexing/retrieval code |
 
 Do not install the bare package and expect it to index video. Base `vidxp`
 provides the lightweight command shell, configuration, and typed contracts.
@@ -227,7 +227,8 @@ Extras are composable:
 | `dialogue` | Storage, transcription, dialogue embeddings | Scene/actor providers |
 | `scene` | Storage, PyTorch, Transformers, OpenCV, Pillow | Dialogue/actor providers |
 | `actor` | Storage, OpenCV, YuNet/SFace support | Dialogue/scene providers |
-| `all` | Dialogue, scene, and actor | Grounded-query model client and UI |
+| `videoprism` | Storage, VideoPrism, PyTorch, Transformers, Torchvision | Other model providers |
+| `all` | Every built-in search capability | Grounded-query model client and UI |
 | `local-worker` | `all` plus grounded-query client | Browser UI, MCP SDK, HTTP server |
 | `frontend` | Streamlit | Worker providers |
 | `mcp` | MCP SDK | Worker providers |

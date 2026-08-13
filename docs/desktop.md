@@ -135,13 +135,13 @@ Target profiles use a versioned desktop-private schema. Profile content and the
 selected profile identity are stored separately. No credentials or remote tokens
 are stored; remote targets are intentionally outside this release.
 
-Users select dialogue, scene, and actor search features independently. Product
-choices map to package extras as follows: **Local video processing** adds
-`local-worker` and includes all built-in search features, **Browser interface**
-adds `frontend`, **AI assistant integration** adds the stdio `mcp` transport,
-and **App integration service** adds the loopback API plus Streamable HTTP MCP
-through `server`. These package names stay out of the normal product flow. Model preparation
-can be deferred, and a native folder picker
+Users select dialogue, scene, VideoPrism temporal search, and actor features
+independently. Product choices map to package extras as follows: **Local video
+processing** adds `local-worker` and includes all built-in search features,
+**Browser interface** adds `frontend`, **AI assistant integration** adds the
+stdio `mcp` transport, and **App integration service** adds the loopback API
+plus Streamable HTTP MCP through `server`. These package names stay out of the
+normal product flow. Model preparation can be deferred, and a native folder picker
 can select a model-cache directory before any model is downloaded.
 The managed runtime acquires the exact VidXP package from the wheel embedded in
 the Desktop installer with dependency resolution disabled, then resolves that

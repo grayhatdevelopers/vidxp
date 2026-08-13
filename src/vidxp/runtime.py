@@ -293,6 +293,7 @@ class ModelRuntime:
                     revision=spec.revision,
                     cache_dir=str(cache),
                     local_files_only=False,
+                    ignore_patterns=("*.h5", "*.msgpack", "*.npz", "*.ot"),
                     tqdm_class=ReportingTqdm,
                 )
             )

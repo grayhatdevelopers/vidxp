@@ -838,7 +838,9 @@ def run():
     st.logo(application_icon, size="large", link=PROJECT_URL)
     service = _configured_service()
     st.title("VidXP")
-    st.caption("Index and search video by dialogue, scene, and actor.")
+    st.caption(
+        "Index and search video by dialogue, scene, temporal clips, and actor."
+    )
     st.caption(f"Index repository: {service.layout.root}")
     if notice := st.session_state.pop(MEDIA_NOTICE_KEY, None):
         st.success(notice)

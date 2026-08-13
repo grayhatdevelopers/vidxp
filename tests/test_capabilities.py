@@ -25,6 +25,7 @@ from vidxp.capabilities.registry import (
 )
 from vidxp.capability_service import CapabilityService
 from vidxp.capabilities.scene.config import SceneConfig
+from vidxp.capabilities.videoprism.config import VideoPrismConfig
 from vidxp.core.contracts import IndexConfig
 from vidxp.core.runner import _index_groups
 
@@ -62,12 +63,12 @@ class CapabilityTests(unittest.TestCase):
     def test_registry_drives_capability_metadata(self):
         self.assertEqual(
             self.registry.names(),
-            ("dialogue", "scene", "actor"),
+            ("dialogue", "scene", "actor", "videoprism"),
         )
         self.assertEqual(self.registry.index_names(), self.registry.names())
         self.assertEqual(
             self.registry.preparable_names(),
-            ("dialogue", "scene", "actor"),
+            ("dialogue", "scene", "actor", "videoprism"),
         )
         self.assertEqual(
             self.registry.collection_names(),
@@ -75,6 +76,7 @@ class CapabilityTests(unittest.TestCase):
                 "dialogue": "dialogue",
                 "scene": "scene",
                 "actor": "actor",
+                "videoprism": "videoprism",
             },
         )
 
@@ -140,6 +142,10 @@ class CapabilityTests(unittest.TestCase):
         )
         self.assertIs(self.registry.get("scene").config_model, SceneConfig)
         self.assertIs(self.registry.get("actor").config_model, ActorConfig)
+        self.assertIs(
+            self.registry.get("videoprism").config_model,
+            VideoPrismConfig,
+        )
 
         options = self.registry.validate_options(
             ("scene",),
@@ -207,10 +213,10 @@ class CapabilityTests(unittest.TestCase):
     def test_visual_execution_group_is_explicit(self):
         self.assertEqual(
             _index_groups(
-                ("dialogue", "scene", "actor"),
+                ("dialogue", "scene", "actor", "videoprism"),
                 self.registry,
             ),
-            (("dialogue",), ("scene", "actor")),
+            (("dialogue",), ("scene", "actor", "videoprism")),
         )
         self.assertIsNotNone(
             self.registry.executor("scene").index_processor

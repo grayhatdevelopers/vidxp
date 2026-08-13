@@ -1,0 +1,6 @@
+numpy>=2.3,<3
+opencv-python-headless>=5.0.0.93,<6
+torch>=2.13,<3
+torchvision>=0.28,<1
+transformers>=5.14.1,<6
+huggingface-hub>=1.25.1,<2

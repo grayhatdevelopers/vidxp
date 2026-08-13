@@ -10,6 +10,11 @@
     "relative_artifact": "models--google--siglip2-base-patch16-224/snapshots/75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2/model.safetensors"
   },
   {
+    "id": "google/videoprism-lvt-base-f16r288",
+    "label": "google/videoprism-lvt-base-f16r288",
+    "relative_artifact": "models--google--videoprism-lvt-base-f16r288/snapshots/fb6de9f0eb7bc285be86bdca1cf7daa3e3ef51ff/model.safetensors"
+  },
+  {
     "id": "Qwen/Qwen3-Embedding-0.6B",
     "label": "Qwen/Qwen3-Embedding-0.6B",
     "relative_artifact": "models--Qwen--Qwen3-Embedding-0.6B/snapshots/97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3/model.safetensors"

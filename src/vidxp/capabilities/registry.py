@@ -503,8 +503,9 @@ def _builtin_plugins() -> tuple[CapabilityPlugin, ...]:
     from vidxp.capabilities.actor.definition import PLUGIN as actor
     from vidxp.capabilities.dialogue.definition import PLUGIN as dialogue
     from vidxp.capabilities.scene.definition import PLUGIN as scene
+    from vidxp.capabilities.videoprism.definition import PLUGIN as videoprism
 
-    return dialogue, scene, actor
+    return dialogue, scene, actor, videoprism
 
 
 def _external_entry_points(allowlist: tuple[str, ...]) -> tuple[EntryPoint, ...]:
