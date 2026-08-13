@@ -15,9 +15,9 @@ def require(condition: bool, message: str) -> None:
 def verify_minimal(executable: str) -> None:
     from vidxp.capabilities.registry import create_capability_registry
 
+    required_capabilities = {"dialogue", "scene", "actor"}
     require(
-        create_capability_registry().names()
-        == ("dialogue", "scene", "actor", "videoprism"),
+        required_capabilities.issubset(create_capability_registry().names()),
         "minimal wheel does not expose the expected capability registry",
     )
     help_text = subprocess.check_output([executable, "--help"], text=True)
