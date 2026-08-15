@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -9,7 +10,7 @@ from vidxp.capabilities.visual import (
     _consume_visual_stream,
 )
 from vidxp.core.contracts import CancellationToken, IndexConfig, VideoSource
-from vidxp.core.video import FrameSample, FrameSampling, FrameStreamStats
+from vidxp.core.video import FrameSample, FrameSampling
 
 
 def _mock_participant(
@@ -42,10 +43,7 @@ class ConsumeVisualStreamTests(unittest.TestCase):
             side_effect=lambda samples: samples,
         )
         cls._rgb_patch.start()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls._rgb_patch.stop()
+        cls.addClassCleanup(cls._rgb_patch.stop)
 
     def test_single_participant_processes_all_samples(self):
         scene = _mock_participant("scene")
@@ -154,7 +152,9 @@ class ConsumeVisualStreamTests(unittest.TestCase):
         ):
             from vidxp.core.contracts import IndexCancelledError
 
-            cancel_timer = threading.Timer(0.1, lambda: (proceed.set(), cancellation.cancel()))
+            cancel_timer = threading.Timer(
+                0.1, lambda: (cancellation.cancel(), proceed.set())
+            )
             cancel_timer.start()
             with self.assertRaises(IndexCancelledError):
                 _consume_visual_stream(
@@ -179,7 +179,6 @@ class ConsumeVisualStreamTests(unittest.TestCase):
         timings = {"frame_stream": 0.0, "scene": 0.3}
 
         def broken_stream(path, *, stats=None, **kw):
-            stats = stats or FrameStreamStats()
             yield [_sample(0, 0.0)]
             raise RuntimeError("decode failure")
 
@@ -292,3 +291,58 @@ class ConsumeVisualStreamTests(unittest.TestCase):
             "_consume_visual_stream deadlocked on a failed participant",
         )
         self.assertIsInstance(outcome.get("error"), ValueError)
+
+    def test_slow_participant_at_shutdown_does_not_deadlock(self):
+        scene = _mock_participant("scene")
+        actor = _mock_participant("actor")
+        source = VideoSource(video_id="v1", path="unused.mp4")
+        config = IndexConfig(video_id="v1", enabled_modalities=("scene", "actor"))
+        storage = Mock()
+        cancellation = CancellationToken()
+        timings = {"frame_stream": 0.0, "scene": 0.3, "actor": 0.2}
+
+        def slow_process(samples, **kw):
+            time.sleep(0.01)
+
+        scene.processor.process = slow_process
+
+        batches = [[_sample(i, i / 24.0)] for i in range(24)]
+
+        def fake_stream(path, *, stats=None, **kw):
+            stats.frames_advanced = 24
+            stats.frames_materialized = 24
+            return iter(batches)
+
+        outcome = {}
+
+        def run():
+            with patch(
+                "vidxp.capabilities.visual.iter_frame_batches",
+                side_effect=fake_stream,
+            ):
+                try:
+                    _consume_visual_stream(
+                        source,
+                        participants=[scene, actor],
+                        expected=24,
+                        info=Mock(
+                            fps=24, frame_count=24, duration=1.0, width=2, height=2
+                        ),
+                        config=config,
+                        storage=storage,
+                        cancellation=cancellation,
+                        progress=None,
+                        timings=timings,
+                    )
+                    outcome["error"] = None
+                except Exception as exc:
+                    outcome["error"] = exc
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        worker.join(timeout=5)
+        self.assertFalse(
+            worker.is_alive(),
+            "_consume_visual_stream deadlocked at shutdown with a full queue",
+        )
+        self.assertIsNone(outcome.get("error"))

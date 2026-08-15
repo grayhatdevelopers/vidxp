@@ -156,6 +156,7 @@ def _consume_visual_stream(
     errors: list[Exception] = []
     errors_lock = threading.Lock()
     stream_stats = FrameStreamStats()
+    done = threading.Event()
 
     def _record_error(exc: Exception) -> None:
         with errors_lock:
@@ -211,6 +212,7 @@ def _consume_visual_stream(
         except Exception as exc:
             _record_error(exc)
         finally:
+            done.set()
             for q in participant_queues.values():
                 try:
                     q.put_nowait(None)
@@ -227,9 +229,13 @@ def _consume_visual_stream(
                 try:
                     batch = work_queue.get(timeout=0.2)
                 except queue.Empty:
+                    if done.is_set():
+                        break
                     continue
                 if batch is None:
                     break
+                if errors:
+                    return
                 participant_samples = [
                     sample
                     for sample in batch
@@ -322,7 +328,9 @@ def index_visuals(
         raise ValueError("Visual indexing requires a video path.")
 
     selected = tuple(
-        config.enabled_modalities if modalities is None else modalities
+        dict.fromkeys(
+            config.enabled_modalities if modalities is None else modalities
+        )
     )
     if not selected:
         raise ValueError("At least one visual capability must be selected.")
