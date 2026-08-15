@@ -234,3 +234,61 @@ class ConsumeVisualStreamTests(unittest.TestCase):
                     progress=None,
                     timings=timings,
                 )
+
+    def test_error_in_participant_mid_stream_propagates_without_deadlock(self):
+        scene = _mock_participant("scene")
+        actor = _mock_participant("actor")
+        source = VideoSource(video_id="v1", path="unused.mp4")
+        config = IndexConfig(video_id="v1", enabled_modalities=("scene", "actor"))
+        storage = Mock()
+        cancellation = CancellationToken()
+        timings = {"frame_stream": 0.0, "scene": 0.3, "actor": 0.2}
+
+        def broken_process(samples, **kw):
+            raise ValueError("actor failure mid-stream")
+
+        actor.processor.process = broken_process
+
+        batches = [
+            [_sample(i, i / 24.0), _sample(i + 1, (i + 1) / 24.0)]
+            for i in range(0, 20, 2)
+        ]
+
+        def fake_stream(path, *, stats=None, **kw):
+            stats.frames_advanced = 20
+            stats.frames_materialized = 20
+            return iter(batches)
+
+        outcome = {}
+
+        def run():
+            with patch(
+                "vidxp.capabilities.visual.iter_frame_batches",
+                side_effect=fake_stream,
+            ):
+                try:
+                    _consume_visual_stream(
+                        source,
+                        participants=[scene, actor],
+                        expected=20,
+                        info=Mock(
+                            fps=24, frame_count=20, duration=0.8, width=2, height=2
+                        ),
+                        config=config,
+                        storage=storage,
+                        cancellation=cancellation,
+                        progress=None,
+                        timings=timings,
+                    )
+                    outcome["error"] = None
+                except ValueError as exc:
+                    outcome["error"] = exc
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        worker.join(timeout=5)
+        self.assertFalse(
+            worker.is_alive(),
+            "_consume_visual_stream deadlocked on a failed participant",
+        )
+        self.assertIsInstance(outcome.get("error"), ValueError)

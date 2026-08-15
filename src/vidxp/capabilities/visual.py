@@ -191,7 +191,16 @@ def _consume_visual_stream(
                     perf_counter() - stream_started
                 )
                 for participant_queue in participant_queues.values():
-                    participant_queue.put(rgb_samples)
+                    while True:
+                        try:
+                            participant_queue.put(
+                                rgb_samples, timeout=0.2
+                            )
+                            break
+                        except queue.Full:
+                            if errors:
+                                return
+                            cancellation.raise_if_cancelled()
                 report_progress(
                     progress,
                     "visual_indexing",
@@ -203,7 +212,10 @@ def _consume_visual_stream(
             _record_error(exc)
         finally:
             for q in participant_queues.values():
-                q.put(None)
+                try:
+                    q.put_nowait(None)
+                except queue.Full:
+                    pass
 
     def _participant_worker(
         participant: _Participant,
