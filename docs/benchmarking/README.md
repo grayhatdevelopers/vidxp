@@ -18,7 +18,6 @@ installation and product usage, start with the main
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
 | LongVALE combined evaluation | Next | Build the visual-plus-speech adapter and validate one evaluation archive before scheduling the full run |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
-| Indexing latency benchmark | Ready | `vidxp benchmark index-latency` measures throughput, per-stage timings, and peak memory on synthetic FFmpeg media; supports regression detection against baselines |
 
 Read [current results](results.md) for the scores, plain-language metric
 definitions, honest comparisons, and the next benchmark decision.
