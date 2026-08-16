@@ -21,6 +21,7 @@ from vidxp.benchmarks.hirest import (
     HIREST_DEFAULT_WINDOW_FRACTION,
     run_hirest,
 )
+from vidxp.benchmarks.latency import run_latency
 from vidxp.benchmarks.prepare import (
     PreparationPlan,
     execute_preparation,
@@ -574,3 +575,134 @@ def hirest_command(
         emit_json(metrics)
     else:
         rich_print(metrics)
+
+
+@app.command("index-latency")
+def index_latency_command(
+    ctx: typer.Context,
+    run_id: Annotated[str, typer.Option(help="Arbitrary label for this run.")],
+    modalities: Annotated[
+        str,
+        typer.Option(
+            help="Comma-separated modality names: scene,actor,dialogue."
+        ),
+    ] = "scene",
+    videos: Annotated[
+        int,
+        typer.Option(min=1, help="Number of synthetic clips to generate."),
+    ] = 1,
+    duration_seconds: Annotated[
+        float,
+        typer.Option(min=0.1, help="Duration of each synthetic clip."),
+    ] = 8.0,
+    fps: Annotated[
+        int,
+        typer.Option(min=1, help="Frame rate of synthetic clips."),
+    ] = 24,
+    resolution: Annotated[
+        str,
+        typer.Option(
+            help="Synthetic clip resolution in WxH format (e.g. 320x180)."
+        ),
+    ] = "320x180",
+    repetitions: Annotated[
+        int,
+        typer.Option(min=1, help="Number of times to repeat the run."),
+    ] = 1,
+    input_mode: Annotated[
+        Literal["transcript", "transcribe"],
+        typer.Option(
+            help=(
+                "'transcript' supplies a synthetic transcript for dialogue "
+                "embedding (no real transcription). 'transcribe' runs "
+                "real whisper on audio (requires --audio-mode flite)."
+            )
+        ),
+    ] = "transcript",
+    audio_mode: Annotated[
+        Literal["none", "sine", "flite"],
+        typer.Option(
+            help=(
+                "Audio track for synthetic clips: 'none' (no audio), "
+                "'sine' (tone), or 'flite' (speech synthesis)."
+            )
+        ),
+    ] = "none",
+    reset: Annotated[
+        bool,
+        typer.Option(help="Clear any existing index before running."),
+    ] = False,
+    baseline: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            dir_okay=False,
+            help=(
+                "Path to a previous latency report JSON for regression "
+                "comparison."
+            ),
+        ),
+    ] = None,
+    baseline_tolerance: Annotated[
+        float,
+        typer.Option(
+            min=0.0,
+            max=5.0,
+            help=(
+                "Relative regression tolerance. A stage mean slower by "
+                "more than this ratio flags as regression."
+            ),
+        ),
+    ] = 0.15,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Run a reproducible indexing-latency benchmark on synthetic media."""
+
+    selected = [item.strip() for item in modalities.split(",") if item.strip()]
+    if not selected:
+        raise typer.BadParameter(
+            "At least one latency modality is required.", param_hint="--modalities"
+        )
+    for modality in selected:
+        _require_benchmark_dependencies(modality)
+
+    try:
+        parts = resolution.lower().split("x")
+        if len(parts) != 2:
+            raise ValueError
+        width, height = int(parts[0]), int(parts[1])
+        if width <= 0 or height <= 0:
+            raise ValueError
+    except (IndexError, ValueError, AttributeError):
+        raise typer.BadParameter(
+            f"Invalid resolution: {resolution!r}. Use WxH, e.g. 320x180.",
+            param_hint="--resolution",
+        )
+
+    state = state_from_context(ctx)
+    report = run_latency(
+        run_id=run_id,
+        output_root=state.settings.data_dir / "benchmark_runs",
+        ffprobe=state.settings.ffprobe_executable,
+        ffmpeg=state.settings.ffmpeg_executable,
+        modalities=tuple(selected),
+        videos=videos,
+        duration_seconds=duration_seconds,
+        fps=fps,
+        width=width,
+        height=height,
+        repetitions=repetitions,
+        input_mode=input_mode,
+        audio_mode=audio_mode,
+        device=state.settings.runtime_backend,
+        reset=reset,
+        baseline_path=baseline,
+        baseline_tolerance=baseline_tolerance,
+    )
+    if effective_output_format(state, json_output) == OutputFormat.json:
+        emit_json(report)
+    else:
+        rich_print(report)
