@@ -33,6 +33,8 @@ uv tool install --python 3.14 --torch-backend cpu \
 
 ### Containers
 
+Browse published tags in the [VidXP container package]({container_package_url}).
+
 ```bash
 docker pull {container_image}:{version}
 ```
