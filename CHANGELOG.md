@@ -16,8 +16,7 @@
 
 ### Bug Fixes
 
-* **models:** harden preparation downloads ([62cb7b1](https://github.com/grayhatdevelopers/vidxp/commit/62cb7b1b2dbdfbc968435bb76101b3199a88c1f8))
-* **models:** harden preparation downloads ([69c5e51](https://github.com/grayhatdevelopers/vidxp/commit/69c5e51588c496699fe3a49b8c61a374f1058a98))
+* **models:** resume supported interrupted downloads, verify cached files against pinned checksums, and return actionable preparation errors ([62cb7b1](https://github.com/grayhatdevelopers/vidxp/commit/62cb7b1b2dbdfbc968435bb76101b3199a88c1f8), [69c5e51](https://github.com/grayhatdevelopers/vidxp/commit/69c5e51588c496699fe3a49b8c61a374f1058a98))
 
 ## [0.4.0-b.3](https://github.com/grayhatdevelopers/vidxp/compare/v0.4.0-b.2...v0.4.0-b.3) (2026-08-05)
 
