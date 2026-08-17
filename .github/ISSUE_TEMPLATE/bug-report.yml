@@ -1,0 +1,74 @@
+name: Bug report
+description: Report a reproducible problem with VidXP.
+title: "[Bug]: "
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary affected area
+      options:
+        - Desktop app
+        - CLI
+        - Browser interface
+        - HTTP API
+        - MCP integration
+        - Installation or upgrade
+        - Docker or deployment
+        - Shared behavior across interfaces
+        - Documentation
+        - Other or unsure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: capability
+    attributes:
+      label: Affected capability
+      options:
+        - Dialogue search
+        - Scene search
+        - Action search (videoprism)
+        - Actor matching
+        - Multiple capabilities
+        - Not capability-specific or unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the actual result and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it?
+      description: Include the smallest set of steps, commands, or input that triggers the problem.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the versions and installation or deployment details needed to reproduce the problem.
+      placeholder: |
+        VidXP version:
+        Operating system:
+        Installation or deployment: Desktop-managed, existing installation, uv tool, Docker, Coolify, or source
+        Python version, if applicable:
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Logs or other details
+      description: Add relevant logs, screenshots, or files. Remove tokens, private paths, and personal media.

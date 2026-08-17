@@ -1,0 +1,10 @@
+offline = true
+no_progress = true
+
+exclude_path = [
+  '(^|[\\/])\.pytest_cache([\\/]|$)',
+  '(^|[\\/])\.venv([\\/]|$)',
+  '(^|[\\/])\.worktrees([\\/]|$)',
+  '(^|[\\/])node_modules([\\/]|$)',
+  '(^|[\\/])venv([\\/]|$)',
+]

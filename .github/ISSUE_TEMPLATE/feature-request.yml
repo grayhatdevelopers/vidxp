@@ -1,0 +1,57 @@
+name: Feature request
+description: Propose an improvement or new VidXP capability.
+title: "[Feature]: "
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Desktop app
+        - CLI
+        - Browser interface
+        - HTTP API
+        - MCP integration
+        - Installation or upgrade
+        - Docker or deployment
+        - Shared behavior across interfaces
+        - Documentation
+        - Other or unsure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: capability
+    attributes:
+      label: Related capability
+      options:
+        - Dialogue search
+        - Scene search
+        - Action search (videoprism)
+        - Actor matching
+        - Multiple capabilities
+        - Not capability-specific or unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the user need or limitation rather than only the requested implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What outcome do you want?
+      description: Explain what VidXP should let the user do and what success would look like.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add examples, alternatives, constraints, or related issues if they help explain the request.
