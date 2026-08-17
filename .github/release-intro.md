@@ -10,6 +10,10 @@ the Python package and containers for command-line and server deployments.
 | macOS Apple Silicon | [DMG]({macos_url}) |
 | Linux x86-64 | [AppImage]({linux_url}) |
 
+Beta and stable macOS DMGs are signed with a Developer ID certificate and
+notarized by Apple. The Windows installer is not yet signed and may trigger
+SmartScreen.
+
 Verify downloaded files against [SHA256SUMS]({checksums_url}).
 
 ### Command line

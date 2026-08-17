@@ -1,273 +1,236 @@
-# Desktop application
+# Desktop development
 
-The desktop application is a Tauri v2 launcher, target-selection surface, and
-process supervisor. On first launch it asks which local VidXP target to use
-before offering any installation. It does not contain a second VidXP
-implementation:
+This guide is for contributors working on the VidXP Desktop application. For
+installation and everyday use, see the [installation guide](../INSTALLATION_GUIDE.md#desktop-app).
 
-- an existing compatible `vidxp` executable can be adopted without downloading
-  Python, VidXP, FFmpeg, models, or another environment;
-- executable discovery never selects a candidate without user confirmation;
-- adopted isolated uv-tool installations remain externally owned, but an
-  explicit setup action can reinstall their exact reported package version
-  with a changed search, local-processing, or integration feature set; the desktop does not
-  broadly stop them or silently rebuild them;
-- both Desktop-managed and adopted isolated uv-tool installations can add or
-  remove features by reinstalling the complete selected feature set;
-- local video processing installs the existing `local-worker` extra and is
-  separate from the browser interface, AI-assistant integration, and app
-  integration service;
-- managed repositories and models use the same platform VidXP data directory
-  as the CLI; adopted targets retain their reported roots, while managed Python
-  and package environments use private desktop application-data directories;
-- Desktop-managed launchers stay private and are restored through their saved
-  managed profile rather than being added to `PATH` or offered for external
-  adoption. This preserves Desktop's lifecycle ownership, version checks, and
-  controlled launch environment without shadowing a separately installed CLI;
-- the existing DBOS worker remains the durable execution boundary; and
-- closing the desktop process stops the exact browser and API processes it launched,
-  while broad worker shutdown remains limited to desktop-owned runtimes.
+Desktop is a Tauri v2 control panel for a local VidXP installation. It helps a
+user choose or create an installation, starts services on demand, and stops the
+processes it owns. The CLI, HTTP, MCP, and Desktop surfaces all use the same
+Python application contracts; Desktop must not become a second implementation
+of VidXP behavior.
 
-The desktop separates shared product data from its private implementation
-state. The shared root is the same operating-system VidXP data directory used
-by the CLI:
+## What Desktop owns
 
-```text
-VidXP/
-  repositories/
-    default/
-  models/                    # default; a user-selected directory is also supported
-```
+Desktop calls the selected VidXP installation a **target**. It supports two
+kinds:
 
-The identifier-scoped private desktop directory contains the managed runtime
-and its activation journal/pointer:
+| Target | Owned by | Desktop may do |
+|---|---|---|
+| Existing installation | The user or its original package manager | Check compatibility, save the selection, and start explicitly selected services |
+| Desktop-managed installation | Desktop | Create, update, validate, activate, and remove features from the private runtime |
 
-```text
-dev.grayhat.vidxp/
-  runtimes/
-  python/
-  active-runtime.json
-  activation-journal.json    # present only during recoverable activation
-```
+The distinction matters because Desktop has different responsibilities for
+each target. Preserve these rules:
 
-Target profiles are non-secret Tauri Store data. Their platform-specific store
-location is resolved by the Tauri Store plugin and must not be assumed to be
-the same directory as `active-runtime.json`.
+- Never select a discovered executable or install software without user
+  confirmation.
+- Check the exact executable the user selected before activating it. Do not
+  substitute another executable found on `PATH`.
+- Do not broadly stop an externally managed installation. Stop only the child
+  processes Desktop started.
+- Stage and validate a managed setup or update before making it active. A
+  failed or cancelled operation must leave the previous target usable.
+- Store repositories and model files in the normal VidXP data directory. This
+  allows the CLI and Desktop to use the same product data. Store the managed
+  Python runtime, activation state, and target profiles in Desktop's private
+  application data instead.
+- Keep model downloads explicit. Readiness checks, startup, indexing, and
+  search must not silently download model files.
+- Allow browser and app-integration services to accept connections only from
+  the same computer by default. Sharing must be a separate action that shows
+  the network address, authentication details, and exposure warning.
 
-On Windows the per-user NSIS package installs program files under
-`%LOCALAPPDATA%\Programs\VidXP`, keeping them separate from both directories.
-The desktop's uv download cache uses the operating system-provided app-cache
-directory. Docker and Compose storage remains explicitly volume-backed and does
-not inherit this desktop layout.
+Desktop uses VidXP's existing DBOS worker for durable local jobs. It starts and
+monitors that worker through the shared application service rather than
+implementing another job system.
 
-The application bundles `uv` and performs a system-media preflight before
-creating Python or downloading VidXP. If FFmpeg is missing, Windows can show
-and run the approved WinGet command after native confirmation when WinGet is
-available. macOS can do the same with Homebrew; without Homebrew it provides
-Homebrew or manual FFmpeg remediation instead. Linux shows the applicable APT,
-DNF, or manual terminal command without trying to automate elevation.
-The application verifies ffmpeg, ffprobe,
-`libx264`, and `aac`, then installs the exact Python and VidXP versions in
-`desktop/runtime-manifest.json`, persists the verified absolute executable
-paths through `vidxp init`, runs the full `vidxp doctor`, and only then activates
-the new runtime. A failed or cancelled setup never replaces the previous active
-runtime.
+## Project map
+
+The main Desktop files are:
+
+| Path | Purpose |
+|---|---|
+| `desktop/src/` | React user interface and frontend tests |
+| `desktop/src-tauri/src/` | Tauri commands, setup lifecycle, activation, and process supervision |
+| `desktop/runtime-manifest.json` | Pinned Python and VidXP runtime versions |
+| `desktop/sidecars.json` | Pinned `uv` sidecar versions and archive checksums |
+| `desktop/model-cache-catalog.json` | Generated catalog of model downloads shown during setup |
+| `desktop/scripts/` | Sidecar, model-catalog, notice, branding, and package scripts |
+| `desktop/THIRD_PARTY_NOTICES.txt` | Generated notices shipped with the installers |
+
+Repositories and models live in the shared VidXP data directory. The managed
+runtime and activation state live in Desktop's private application directory.
+Both locations vary by operating system, so use the existing Python or Tauri
+path helpers instead of hard-coding them.
 
 ## Build locally
 
-From `desktop/`:
+From the repository root, install the locked frontend dependencies and fetch
+the sidecar for your platform.
+
+Windows:
 
 ```powershell
-npm ci
-npm run sidecar:windows
-npm run desktop:dev
-npm run desktop:build
+npm --prefix desktop ci
+npm --prefix desktop run sidecar:windows
+npm --prefix desktop run desktop:dev
 ```
 
-On macOS Apple Silicon or Linux x86-64:
+macOS Apple Silicon or Linux x86-64:
 
 ```bash
-npm ci
-npm run sidecar:unix
-npm run desktop:dev
-npm run desktop:build
+npm --prefix desktop ci
+npm --prefix desktop run sidecar:unix
+npm --prefix desktop run desktop:dev
 ```
 
-The sidecar scripts download the pinned official `uv` release, verify its
-checked-in SHA-256 archive digest from `desktop/sidecars.json`, and place the
-target-suffixed binary where Tauri expects it. The Rust build also executes the
-target sidecar and rejects a version mismatch. Generated binaries and build
-outputs are ignored by Git. `desktop:build` selects NSIS on Windows, DMG on
-macOS, and AppImage on Linux, disables signing, and requires the checked-in
-Cargo lock to remain unchanged.
+Build the native package with:
 
-## First-run configuration
+```bash
+npm --prefix desktop run desktop:build
+```
 
-The target-first screen offers two paths:
+The sidecar script downloads the pinned official `uv` archive and checks its
+SHA-256 digest against `desktop/sidecars.json`. It then places the executable
+where Tauri expects it for that build target. Generated sidecars and build
+output are ignored by Git.
 
-- **Existing local installation** discovers `vidxp` executables on `PATH` or
-  accepts an executable selected with the native file picker. The desktop shows
-  its canonical path and runs `vidxp desktop-probe --json` before activation.
-  The probe is side-effect free and reports its raw launcher identity, package
-  version, probe and launch contract metadata, Python identity, local data
-  roots, media initialization, and installed search, processing, and integration
-  availability. Desktop compares that report with
-  the exact executable the user selected and decides compatibility. Reopening
-  Desktop restores the selected profile immediately and rechecks it once in the
-  background.
-  After activation, **Setup options** can change search, local-processing,
-  browser, AI-assistant, or app-integration features. For an isolated uv-tool
-  installation, the bundled `uv` uses
-  `uv tool install --force` to recreate the tool environment from the complete
-  selected extra set while retaining its compatible VidXP and Python versions.
-  If its probe contract predates the Desktop management contract, Desktop stops
-  presenting the missing fields as disabled features and instead offers an
-  explicit in-place update to the package version in the bundled runtime
-  manifest. A newer, unsupported probe requires a Desktop update. The
-  target is stopped only if Desktop launched its UI/API child, then re-probed
-  after the package operation. Other external environment types remain under
-  their original package manager.
-- **Desktop-managed runtime** reveals the existing capability, model, and media
-  setup only after explicit confirmation. The staged installation and activation
-  boundary is unchanged.
+Local builds are unsigned. The selected package is NSIS on Windows, DMG on
+macOS, and AppImage on Linux.
 
-Target profiles use a versioned desktop-private schema. Profile content and the
-selected profile identity are stored separately. No credentials or remote tokens
-are stored; remote targets are intentionally outside this release.
+## Validate a change
 
-Users select dialogue, scene, VideoPrism temporal search, and actor features
-independently. Product choices map to package extras as follows: **Local video
-processing** adds `local-worker` and includes all built-in search features,
-**Browser interface** adds `frontend`, **AI assistant integration** adds the
-stdio `mcp` transport, and **App integration service** adds the loopback API
-plus Streamable HTTP MCP through `server`. These package names stay out of the
-normal product flow. Model preparation can be deferred, and a native folder picker
-can select a model-cache directory before any model is downloaded.
-The managed runtime acquires the exact VidXP package from the wheel embedded in
-the Desktop installer with dependency resolution disabled, then resolves that
-local package's selected extras and constrained dependencies from production
-PyPI. Release candidates embed the same already-smoke-tested wheel retained for
-publication, so fresh managed setup can be validated before that version exists
-on the public index. TestPyPI is used only for package-only nightly validation
-and is never a desktop runtime source.
-The release contract classifies prerelease versions as beta and ordinary
-versions as stable, and the bundled manifest pins the matching Python runtime.
-This release does not include an automatic Desktop updater, so there is not yet
-a user-facing update-channel enrollment preference; adding one belongs with the
-signed updater rather than the Python runtime selector.
-Windows and Linux resolve CPU-only PyTorch wheels using uv's
-`--torch-backend cpu`; macOS uses native PyPI wheels. The custom PyTorch index
-is therefore a resolver input and is not embedded as a package URL, avoiding
-the prior package-publication failure mode. Every selected profile is also
-constrained by a requirements snapshot exported from `uv.lock` and embedded
-during the desktop build for the complete local-worker, frontend, MCP, and
-server dependency set. Capability selection controls which packages are installed; the constraints
-prevent those packages from drifting independently after the desktop binary is
-published.
+Run the smallest checks that cover the files you changed. Before running the
+complete Desktop checks, install the frontend dependencies and prepare the
+locked Rust dependency information used by notice generation:
 
-FFmpeg and ffprobe are host prerequisites. When WinGet is available, Windows
-can show and run the supported FFmpeg install command after consent. When
-Homebrew is available, macOS can similarly offer `brew install ffmpeg`; without
-Homebrew it instructs the user to install [Homebrew](https://brew.sh/), install
-FFmpeg manually, or otherwise make FFmpeg and ffprobe available on `PATH`.
-Linux displays the detected APT or DNF command, with a manual command as the
-fallback, and does not automate elevation. Adopted installations remain
-responsible for their own media-runtime setup.
+```bash
+npm --prefix desktop ci
+cargo install cargo-about --version 0.9.1 --locked --features cli
+cargo fetch --manifest-path desktop/src-tauri/Cargo.toml --locked
+```
 
-Optional model preparation invokes the shared `vidxp prepare` command for only
-the selected modalities. A ready managed runtime also exposes a separate
-**Check downloaded models** action, so verification does not require a fake
-configuration change. Setup, probe, worker lifecycle, and browser-service children
-share one process ownership policy: null stdin, bounded captured output where
-applicable, cancellation and timeouts, and whole-tree termination/reaping.
-Closing the app cancels an active managed operation and stops the exact browser
-service it owns. No model is bundled in the installer.
+Run the generated-file checks, frontend suite, Python package build, sidecar
+check, and Rust tests:
 
-Desktop startup and a second-instance activation show and focus the control
-panel; neither action opens the browser. For a browser-enabled profile, **Open
-VidXP** explicitly starts or reuses the supervised loopback service and opens
-one browser tab. Closing a configured control panel hides it to the tray.
-**Manage VidXP** shows the panel, **Open VidXP** performs the separate browser
-action, and **Quit VidXP** runs supervised shutdown for the interface and any
-Desktop-owned repository worker. The active-target panel also reports and
-controls local video processing through the existing `JobService` worker
-lifecycle, reports the app integration service, creates copyable AI-assistant
-MCP config, installs the VidXP plugin and local MCP server into Codex, and
-presents the existing doctor result as product health rather than raw output.
-Release builds add the repository's Git marketplace from `main` for beta or
-`release` for stable, then install `vidxp@vidxp`. Development and pull-request
-builds export the packaged plugin to a dedicated Desktop-private
-`vidxp-local` marketplace. Desktop uses the supported Codex CLI commands to
-register the marketplace, plugin, and selected runtime's absolute `vidxp-mcp`
-command with its repository and data paths. Re-running setup refreshes these
-registrations; a successful release setup removes the obsolete local
-marketplace. A new Codex task is required before refreshed skills and tools are
-available.
-The browser and app integration service remain loopback-only by default.
-Explicit sharing controls compose their existing `--share` modes: browser
-sharing reports its LAN URL and warns that it is unauthenticated, while API/MCP
-sharing reports its LAN origin, health URL, MCP URL, selected port, and
-app-managed bearer token. Switching sharing modes replaces only the exact
-Desktop-supervised child process.
+```bash
+npm --prefix desktop run model-catalog:check
+npm --prefix desktop run notices:check
+npm --prefix desktop run check
+python -m build
+npm --prefix desktop run sidecar:unix
+cargo test --release --locked --manifest-path desktop/src-tauri/Cargo.toml
+```
 
-## Implementation dependencies
+Use `npm --prefix desktop run sidecar:windows` instead of `sidecar:unix` on
+Windows. Report the exact commands you ran and any platform package you could
+not build or inspect.
 
-Tauri Shell commands are converted to standard commands and passed through one
-shared runner. `process-wrap` 9.1.0 (MIT/Apache-2.0) supplies Windows Job Object
-and POSIX process-group ownership while preserving Tauri sidecar resolution;
-the runner's deadline-aware monitor supplies bounded waits, including while
-descendants retain output pipes. The runner hides Windows consoles, closes
-stdin, bounds captured output, applies operation-specific
-timeouts and cancellation, and kills and reaps the owned process tree on every
-post-spawn failure path. The loopback UI uses the same ownership abstraction as
-a long-lived service.
+Two checked-in files must stay synchronized with their source contracts:
 
-React's reducer plus the local async-action helper is sufficient for the finite
-setup lifecycle, so no state framework was added. The active-target screen
-reuses `vidxp doctor --json`, exact-target `vidxp-mcp --print-config`, and the
-`vidxp-api` `/health` endpoint. Desktop supervises only processes it starts;
-external environments retain broad-process ownership; package changes require
-the dedicated, user-confirmed feature update. Generated IPC was evaluated:
-`tauri-specta` would require replacing command macros and build integration
-while the transition service is still changing, and `ts-rs` generates DTOs but
-not the command calls. The current adapter is therefore limited to exact,
-consumed commands and one presentation normalizer.
+- After changing capability or model contracts, run
+  `npm --prefix desktop run model-catalog:write`, review the diff, and run the
+  corresponding `:check` command.
+- After changing a production dependency or license, run
+  `npm --prefix desktop run notices:write`, review the inventory, and run the
+  corresponding `:check` command.
 
-Distributable notices are generated from locked production graphs with
-`cargo-about` 0.9.1 (MIT/Apache-2.0) under `--locked --frozen` and
-`license-checker-rseidelsohn` 4.4.2 (BSD-3-Clause). Build-only and development
-Rust crates are excluded; frontend development packages are excluded with the
-tool's production graph. The generated inventory includes the bundled uv
-0.12.0 executable and its upstream license, and the bundle separately contains
-VidXP's root MIT `LICENSE`. Both `THIRD_PARTY_NOTICES.txt` and the project
-license are packaged in NSIS, DMG, and AppImage resources.
+Do not edit generated catalog entries or notices by hand.
 
-The native NSIS, DMG, and AppImage packages themselves never install FFmpeg or
-run a package manager. That consented action belongs to first-run configuration,
-where errors and retries are visible. `vidxp doctor` remains a read-only validation
-gate. Target FFmpeg binaries will not be bundled until their exact build
-provenance, enabled codecs, and redistribution licenses are recorded. This is
-an explicit packaging gate, not a silent download from an unaudited third
-party.
+## Setup behavior to preserve
 
-## Release targets
+Setup follows the same broad sequence for either target: the user chooses an
+installation, Desktop checks its executable, and only a compatible result can
+become active. Creating or updating a managed target adds a staging step before
+activation.
 
-The initial target matrix is:
+### Existing installation
 
-- Windows x86-64: per-user NSIS installer;
-- macOS Apple Silicon: DMG; and
-- Linux x86-64: AppImage.
+When a user selects an existing installation:
 
-The release workflow builds all three from the stamped release commit and
-attaches them to the matching GitHub release. Initial packages are unsigned;
-Windows SmartScreen and macOS Gatekeeper may therefore require explicit user
-confirmation. Signing and notarization improve that experience but do not
-block publication.
+1. Discover candidates on `PATH` or accept a file chosen by the user.
+2. Run that executable's read-only `desktop-probe --json` command. The report
+   describes the installation, supported features, data locations, and the
+   contract versions Desktop uses to communicate with it.
+3. If the report is incompatible, say whether VidXP or Desktop must be updated
+   and leave the current active target unchanged.
+4. Save only non-secret target metadata. Do not store remote credentials or
+   bearer tokens in the profile.
+5. Leave package and broad process ownership with the original installation.
 
-The Tauri shell itself uses the operating system webview. Selecting no browser
-surface omits Streamlit and its Python dependencies, but does not turn the
-Tauri executable into a non-webview application. Users who require no webview
-at all should install a CLI/MCP package profile instead of the desktop package.
+Desktop may update an isolated `uv tool` installation only after the user
+confirms a feature change. It recreates that tool environment with compatible
+VidXP and Python versions and then checks it again. Desktop must leave every
+other external environment with its original package manager.
 
-Updater integration, richer tray controls, in-app playback, CUDA installers,
-and true offline installers remain deferred.
+### Desktop-managed installation
+
+When Desktop creates or updates its own installation:
+
+1. Check the host media tools before creating Python or installing VidXP.
+2. Install the versions pinned in `runtime-manifest.json` into a staged private
+   runtime.
+3. Run `vidxp init` so the new runtime records the verified FFmpeg and ffprobe
+   paths.
+4. Install only the selected features and prepare only the selected models.
+5. Run `vidxp doctor` and the launch checks.
+6. Make the staged runtime active only after every check passes. Until that
+   point, the previous runtime remains the working target.
+
+The user-facing feature choices map to package extras as follows:
+
+| Desktop choice | Package extra | Result |
+|---|---|---|
+| Local video processing | `local-worker` | Built-in search features and the local worker |
+| Browser interface | `frontend` | Local browser interface |
+| AI assistant integration | `mcp` | MCP server launched as a local process |
+| App integration service | `server` | Local API and Streamable HTTP MCP |
+
+These package names are implementation details and should not replace the
+product labels in the interface.
+
+The installer does not bundle FFmpeg. If it is missing, setup may offer the
+supported WinGet command on Windows or Homebrew command on macOS, but it must
+wait for user confirmation before running either one. On Linux, setup shows an
+APT, DNF, or manual command and leaves elevation to the user. Existing
+installations remain responsible for their own media setup.
+
+Starting Desktop shows the control panel without opening a browser. **Open
+VidXP** starts or reuses the browser service and opens one tab. Closing the
+configured window hides it in the system tray. **Quit VidXP** stops only the
+services and managed worker started by that Desktop instance.
+
+Codex integration must use the selected runtime's absolute `vidxp-mcp` command
+and the supported Codex CLI configuration commands. Keep the end-user steps in
+the [AI assistant integration guide](integrations/openai-plugin.md), not in
+this implementation guide.
+
+## Packaging and releases
+
+VidXP currently publishes:
+
+| Platform | Package |
+|---|---|
+| Windows x86-64 | Per-user NSIS installer |
+| macOS Apple Silicon | DMG |
+| Linux x86-64 | AppImage |
+
+The release workflow builds all three packages from the stamped release commit
+and attaches them to one GitHub release.
+
+Beta and stable macOS DMGs are signed with a Developer ID certificate and the
+hardened runtime. The workflow then notarizes, staples, and verifies each DMG
+before publication. The Windows installer is currently unsigned, so
+SmartScreen may require user confirmation.
+
+Each release candidate embeds the VidXP wheel built and tested for that same
+candidate. Managed setup installs the selected extras under the dependency
+constraints bundled with Desktop. It never uses TestPyPI; that service is
+reserved for nightly Python-package validation.
+
+Every installer includes the root MIT license and generated third-party
+notices. Do not bundle FFmpeg until the exact binary provenance, enabled
+codecs, and redistribution licenses are recorded and approved.
+
+Automatic Desktop updates, richer tray controls, in-app playback, CUDA
+installers, and fully offline installers are not implemented yet.

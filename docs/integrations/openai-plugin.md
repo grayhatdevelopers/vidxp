@@ -1,108 +1,163 @@
-# ChatGPT and Codex plugin integration
+# Connect VidXP to Codex or ChatGPT
 
-VidXP ships one versioned plugin from this repository. It provides the install,
-ingest, and evidence-search skills, while an installed VidXP runtime provides
-the local MCP server and its optional interactive MCP App view.
+VidXP lets an AI assistant search indexed videos and return evidence such as
+timestamps, frames, boards, and clips.
 
-The sole editable plugin source lives at `plugins/vidxp/` and contains:
+Two pieces make the integration work:
 
-- `.codex-plugin/plugin.json`, the plugin manifest;
-- `assets/logo.png`, used for the plugin logo and composer icon; and
-- `skills/`, the canonical install, ingest, and evidence workflows.
+- The **MCP server** gives the assistant access to VidXP tools and data.
+- The optional **Codex plugin** adds guided workflows for setup, ingestion,
+  indexing, search, and evidence review.
 
-The repository marketplace is declared at `.agents/plugins/marketplace.json`.
-Other product code in the repository does not affect the marketplace: Codex
-reads only that manifest and the plugin path it declares. In a repository
-checkout the marketplace is discoverable as an available local marketplace; it
-is not installed merely because the repository was opened. Packaging copies
-the canonical plugin into the Python wheel at build time, and Release Please
-keeps its manifest version aligned with the Python package.
+Choose a setup:
 
-## Install in Codex
+| What you want | Use |
+|---|---|
+| Connect Codex on the same computer | VidXP Desktop or the local `vidxp-mcp` server |
+| Let Codex guide installation and video workflows | The Codex plugin plus the local MCP server |
+| Connect ChatGPT on the web | A public HTTPS VidXP deployment |
 
-### Ask Codex to install it
+## Check VidXP first
+
+The simplest local setup is VidXP Desktop with **AI assistant integration**
+enabled. For a command-line installation, install the `local-worker,mcp`
+profile and run:
+
+```bash
+vidxp init
+vidxp prepare
+vidxp doctor
+vidxp-mcp --check --repository default
+```
+
+The final command starts the MCP server, lists its tools, requests the current
+index status, and prints the selected data and repository paths. If VidXP is
+not ready, follow the [installation guide](../../INSTALLATION_GUIDE.md) before
+connecting an assistant.
+
+## Connect Codex from VidXP Desktop
+
+1. Open VidXP Desktop and select the installation Codex should use.
+2. Confirm that the installation passes its health check.
+3. Select **Set up in Codex**.
+4. Start a new Codex task.
+
+Desktop installs the VidXP plugin and registers the selected installation's
+exact `vidxp-mcp` executable, repository, and data paths. It does not depend on
+that executable being available on the shell's `PATH`.
+
+Select **Copy MCP setup** instead when another compatible local assistant needs
+the MCP connection settings without the Codex plugin.
+
+## Ask Codex to set everything up
+
+Paste this request into Codex:
 
 ```text
 Add https://github.com/grayhatdevelopers/vidxp as a Git plugin marketplace, install the VidXP plugin, then use its $vidxp-install skill to set up VidXP on this computer.
 ```
 
-### VidXP Desktop button
+The plugin guides Codex through finding an existing installation or offering a
+new Desktop or command-line setup. Codex should ask before it installs
+software, changes an existing environment, or downloads models.
 
-With **AI assistant integration** enabled, VidXP Desktop shows two distinct
-actions:
+Start a new Codex task after setup so the task loads the plugin and VidXP MCP
+tools.
 
-- **Set up in Codex** installs the plugin and registers the selected
-  installation's absolute `vidxp-mcp` command, repository, and data paths, so
-  Codex does not depend on its process `PATH`.
-- **Copy MCP setup** retains the transport-only JSON flow for other compatible
-  local MCP clients.
+## Connect Codex without the plugin
 
-Signed beta builds register `grayhatdevelopers/vidxp` at `main`; signed stable
-builds use `release`. Both use sparse checkout for `.agents/plugins` and
-`plugins/vidxp`, so unrelated repository content is not downloaded into the
-plugin cache. Development and pull-request builds export the packaged plugin to
-the Desktop-private `vidxp-local` marketplace instead. The action uses the
-documented `codex plugin marketplace add`, `codex plugin add`, and
-`codex mcp add` commands. A successful Git install removes the obsolete managed
-`vidxp-local` registration. Start a new Codex task after setup.
+The plugin is optional. To connect only the VidXP tools, first print the local
+MCP configuration:
 
-### Manual fallback
-
-If an agent does not have an authorized local shell, add the beta marketplace
-manually with:
-
-```text
-codex plugin marketplace add grayhatdevelopers/vidxp --ref main \
-  --sparse .agents/plugins --sparse plugins/vidxp
-codex plugin add vidxp@vidxp
+```bash
+vidxp mcp-config --repository default
 ```
 
-## Interactive MCP App
+Then register the server with Codex:
 
-`create_media_upload` and `get_job_evidence` advertise the same
-`ui://vidxp/evidence-review-v1.html` resource. A compatible host can render it
-inline to:
+```bash
+codex mcp add vidxp -- vidxp-mcp --repository default
+codex mcp list
+```
 
-- open VidXP's short-lived HTTPS upload page and refresh session progress;
-- review answer claims and annotated evidence-board pages;
-- select up to ten ranked evidence IDs; and
-- request exact keyframes or clips with `materialize_job_evidence` without
-  rerunning retrieval.
+Use the absolute path to `vidxp-mcp` when it is not on `PATH`. If the selected
+installation uses custom data, repository, or model locations, copy the full
+command and environment printed by `vidxp mcp-config`. Do not reconstruct those
+paths by hand.
 
-The component completes the MCP Apps `ui/initialize` handshake, then uses the
-standard `tools/call`, `ui/open-link`, `ui/request-display-mode`,
-`ui/update-model-context`, and resize messages. ChatGPT-specific `window.openai`
-helpers are feature-detected only as compatibility fallbacks and for ephemeral
-widget state. VidXP remains authoritative for upload, job, search, and artifact
-state, and non-UI clients receive the existing text, image, and resource-link
-content.
+Start a new Codex task after changing MCP configuration. The ChatGPT desktop
+app, Codex CLI, and Codex IDE extension use the same configuration when they
+run on the same Codex host.
 
-The resource is self-contained, uses system fonts, has no remote script or
-style dependencies, and publishes an explicit empty resource/connect CSP. Add
-only exact HTTPS origins if future component assets or requests require them.
+Useful diagnostic commands are:
 
-## Connect ChatGPT
+| Command | Result |
+|---|---|
+| `vidxp-mcp --check --repository default` | Starts the server and checks its tools and repository |
+| `vidxp mcp-config --repository <name>` | Prints local-client JSON for a named repository |
+| `vidxp-mcp --print-config` | Prints configuration JSON without other output |
+| `vidxp-mcp --help` | Shows server options and a connection example |
 
-The Git marketplace described above is for Codex's local plugin system. A
-ChatGPT connection still requires a publicly reachable Streamable HTTP endpoint
-(VidXP serves `/mcp`),
-an HTTPS deployment or secure development tunnel, and registration in ChatGPT
-Developer Mode.
+## Connect ChatGPT on the web
 
-Do not add a placeholder `.app.json`. That file can reference only the real app
-identifier issued after the remote MCP connection is registered. Once that ID
-exists, add the descriptor to the plugin bundle and validate the deployed app
-through ChatGPT Developer Mode.
+ChatGPT on the web cannot start `vidxp-mcp` on your computer or read local
+Codex configuration. Deploy VidXP at a public HTTPS address, then connect
+ChatGPT to:
 
-Before public submission, also complete the current OpenAI review requirements,
-including organization verification, public endpoint availability, privacy and
-support URLs, accurate tool metadata, and CSP validation.
+```text
+https://your-vidxp-host.example/mcp
+```
 
-## Official references
+The deployment needs an identity provider that issues access tokens accepted
+by VidXP. VidXP checks those tokens using its OIDC settings; it does not provide
+user accounts or a login service itself.
 
+Follow the [Coolify deployment guide](../deployment/coolify.md) to configure
+HTTPS, authentication, storage, uploads, and the public MCP address. After the
+deployment is ready, register it through ChatGPT Developer Mode.
+
+## Use the interactive evidence view
+
+Compatible MCP hosts can show VidXP's upload and evidence-review interface
+inside the conversation. A user can:
+
+- upload videos through a temporary secure link;
+- monitor indexing progress;
+- inspect the evidence supporting an answer; and
+- request exact frames or clips without repeating the search.
+
+The integration still works when a host cannot display this interface. Those
+clients receive ordinary text, images, and resource links instead.
+
+## Maintain the integration
+
+This section is for contributors. The editable plugin is in `plugins/vidxp/`,
+and `.agents/plugins/marketplace.json` publishes it from this repository.
+Python packaging copies the same plugin into the wheel. Release Please keeps
+the plugin version aligned with the Python package version.
+
+Desktop release builds use the Git marketplace from `main` for beta and
+`release` for stable. Development and pull-request builds use the packaged
+plugin through Desktop's private `vidxp-local` marketplace. Successful release
+setup removes that development registration.
+
+Do not add a placeholder `.app.json`. Add the descriptor only after ChatGPT
+issues the real application identifier for a registered remote connection.
+
+Keep the MCP App resource self-contained. It must work without optional
+ChatGPT compatibility helpers, use an explicit Content Security Policy, and
+avoid remote scripts and styles. Hosts without MCP App support must continue to
+receive the normal MCP results.
+
+Before public submission, confirm the current OpenAI requirements for
+organization verification, endpoint availability, privacy and support URLs,
+tool metadata, authentication, and Content Security Policy.
+
+Official references:
+
+- [Codex MCP configuration](https://developers.openai.com/codex/mcp/)
 - [Plugin architecture](https://developers.openai.com/plugins/concepts/plugins)
 - [Package a plugin](https://developers.openai.com/plugins/build/plugins)
 - [Add a ChatGPT UI](https://developers.openai.com/plugins/build/chatgpt-ui)
-- [UI guidelines](https://developers.openai.com/plugins/concepts/ui-guidelines)
 - [Connect from ChatGPT](https://developers.openai.com/plugins/deploy/connect-chatgpt)
 - [App review](https://developers.openai.com/plugins/deploy/app-review)

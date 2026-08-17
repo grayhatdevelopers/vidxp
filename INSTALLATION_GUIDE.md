@@ -1,601 +1,470 @@
-# Installation guide
+# Install VidXP
 
-Use this guide to choose one supported VidXP shape and install only what that
-shape needs.
+For the simplest setup, install the Desktop app. Use the command line when you
+want scripting, local MCP, or direct control over which interfaces are
+installed.
 
-## Choose an installation
+## Choose a setup
 
-| Goal | Recommended installation | What runs |
-|---|---|---|
-| Native CLI indexing | `vidxp[local-worker]` | CLI plus a supervised local worker |
-| Local agent integration | `vidxp[local-worker,mcp]` | Local worker and stdio MCP |
-| Native browser UI | `vidxp[local-worker,frontend]` | CLI, local worker, Streamlit |
-| Local application server | `vidxp[local-worker,server]` | Loopback HTTP API, remote MCP, local worker |
-| Desktop app | Install the native package | Adopt a compatible local installation or create a private Desktop-managed runtime |
-| Browser UI in Docker | Published `vidxp` image | One CPU worker/UI container |
-| Public/self-hosted service | `compose.coolify.yaml` | API/MCP control plane, CPU worker, PostgreSQL, Chroma, tusd |
-| Embed one capability | `dialogue`, `scene`, `actor`, or `videoprism` extra | Python indexing/retrieval code |
+| What you want | Recommended setup |
+|---|---|
+| A normal desktop application | [Desktop app](#desktop-app) |
+| Commands, scripts, or a local AI assistant | [Command line](#command-line) |
+| A local browser app without installing Python | [Docker](#docker) |
+| A server reachable over HTTPS | [Self-hosted server](#self-hosted-server) |
 
-Do not install the bare package and expect it to index video. Base `vidxp`
-provides the lightweight command shell, configuration, and typed contracts.
-Local model work requires a capability or worker extra.
+VidXP currently supports Windows x86-64, Linux x86-64, and Apple Silicon macOS
+14 or newer. CPU processing is supported; GPU setup is not yet supported.
 
-## What your machine needs
+## Before you install
 
-| Installation | Install first | Managed by VidXP |
-|---|---|---|
-| CLI or MCP | [uv 0.12+](https://docs.astral.sh/uv/getting-started/installation/) | Python and the isolated VidXP environment |
-| Desktop-managed target | A supported OS, internet access for first setup, FFmpeg, ffprobe, `libx264`, and `aac` | uv, Python, VidXP, and selected model files |
-| Desktop with existing target | A compatible local `vidxp` executable and that installation's own media-runtime setup | Target discovery, service controls, and feature reinstallation for isolated uv tools |
-| Docker | Docker Engine or Docker Desktop | Python, VidXP, and FFmpeg inside the image |
+Desktop and command-line setups need:
 
-Native CLI and desktop processing require FFmpeg, ffprobe, `libx264`, and
-`aac`. `vidxp init` checks them and offers the supported operating-system
-package-manager command when something is missing. On Windows, Desktop can
-show and run the WinGet command after consent when WinGet is available. On
-macOS it can do the same with Homebrew; without Homebrew it provides Homebrew
-or manual FFmpeg remediation. Linux displays the applicable APT, DNF, or
-manual command without automating elevation. Docker already includes FFmpeg.
+- internet access during first setup;
+- FFmpeg and ffprobe with the `libx264` and `aac` codecs; and
+- free space for the application, selected models, indexes, and videos.
 
-Supported native systems are Windows x86-64, Linux x86-64, and Apple Silicon
-macOS 14 or newer. CPU is the supported runtime; GPU installation remains
-deferred.
+VidXP checks FFmpeg during setup and shows an installation command when it is
+missing. Windows and macOS can run the suggested WinGet or Homebrew command
+only after you approve it. Linux shows a command for you to run. Docker already
+includes FFmpeg.
 
-## Native local setup
+Approximate model downloads are:
 
-uv installs VidXP as an isolated command-line tool, selects Python, and
-resolves CPU PyTorch. Users do not need to create or activate a virtual
+| Feature | Download |
+|---|---:|
+| Dialogue search | 2.64 GiB |
+| Scene search | 1.43 GiB |
+| Action search | 0.93 GiB |
+| Actor matching | 37 MiB |
+
+The Desktop-managed runtime can use about 3 GiB in addition to selected models.
+A complete local setup uses about 8.1 GiB before adding videos and indexes.
+
+## Desktop app
+
+### 1. Download and open VidXP
+
+Download the package for your operating system from
+[GitHub Releases](https://github.com/grayhatdevelopers/vidxp/releases):
+
+- Windows: NSIS installer
+- Apple Silicon macOS: DMG
+- Linux x86-64: AppImage
+
+Beta and stable macOS releases are signed with a Developer ID certificate,
+notarized by Apple, and stapled. The Windows installer is not yet signed, so
+Windows SmartScreen may ask you to confirm that you want to open it. Confirm
+only when you downloaded the package from the official VidXP release page.
+
+### 2. Choose how Desktop should run VidXP
+
+On first launch, choose one option:
+
+- **Set up VidXP for me** — recommended for most people. Desktop installs and
+  manages its own private Python and VidXP environment.
+- **Use an existing installation** — use a compatible `vidxp` command already
+  installed on your computer.
+
+Desktop shows what it will install before making changes. A failed or cancelled
+setup leaves the previous working setup available.
+
+### 3. Choose features
+
+- **Local video processing** imports, indexes, searches, and creates video
+  results on this computer.
+- **Browser interface** adds the full VidXP browser app.
+- **AI assistant integration** lets a local MCP-compatible assistant use VidXP.
+- **App integration service** lets other local applications use the HTTP API or
+  Streamable HTTP MCP.
+
+Choose where models should be stored, then decide whether to download them
+during setup. VidXP displays the required downloads before starting them.
+
+### 4. Open VidXP
+
+After setup finishes:
+
+- select **Open VidXP** to start the browser app;
+- select **Check downloaded models** to verify or download selected models;
+- use **Setup options** to add or remove features; or
+- use **Quit VidXP** from the tray to stop Desktop-managed services.
+
+Browser and API sharing are off by default. If you enable sharing, use it only
+on a trusted local network and follow the warning shown by Desktop.
+
+## Command line
+
+Command-line installation uses
+[uv](https://docs.astral.sh/uv/getting-started/installation/) to install an
+isolated Python tool. You do not need to create or activate a virtual
 environment.
 
-### 1. Install the profile you need
+### 1. Install VidXP
+
+Install the CLI, local processing, and local MCP support:
 
 ```bash
-# Check uv
-uv --version
-
-# Install CLI and MCP
-uv tool install --python 3.14 --torch-backend cpu "vidxp[local-worker,mcp]"
+uv tool install --python 3.14 --torch-backend cpu \
+  "vidxp[local-worker,mcp]"
 ```
 
-Replace the bracketed extras when you need another surface:
+The name inside brackets selects the features installed with VidXP. Choose the
+complete set you need:
 
-| Goal | Install this package profile |
+| What you need | Package profile |
 |---|---|
-| CLI indexing | `vidxp[local-worker]` |
-| Browser UI | `vidxp[local-worker,frontend]` |
-| Local stdio MCP | `vidxp[local-worker,mcp]` |
-| Local API + remote MCP | `vidxp[local-worker,server]` |
-| UI + API + both MCP transports | `vidxp[local-worker,frontend,server]` |
+| CLI and local processing | `vidxp[local-worker]` |
+| Browser app | `vidxp[local-worker,frontend]` |
+| Local MCP | `vidxp[local-worker,mcp]` |
+| Local HTTP API and remote MCP | `vidxp[local-worker,server]` |
+| Browser app, API, and MCP | `vidxp[local-worker,frontend,mcp,server]` |
 
-For example, add the browser interface with:
+To add or remove features later, reinstall the tool with the complete set you
+want to keep. For example:
 
 ```bash
 uv tool install --force --python 3.14 --torch-backend cpu \
-  "vidxp[local-worker,mcp,frontend]"
+  "vidxp[local-worker,frontend,mcp]"
 ```
 
-`--torch-backend cpu` prevents an unintended CUDA dependency set on Linux and
-keeps the supported runtime consistent across platforms. If `vidxp` is not
-found after installation, run `uv tool update-shell` and reopen the terminal.
+If the `vidxp` command is not found, run `uv tool update-shell`, close the
+terminal, and open it again.
 
-### 2. Initialize FFmpeg
+### 2. Check FFmpeg
 
 ```bash
 vidxp init
 ```
 
-`init` performs these steps:
+VidXP checks FFmpeg, ffprobe, `libx264`, and `aac`. Review any suggested system
+installation command before approving it.
 
-1. resolves FFmpeg and ffprobe;
-2. executes version checks;
-3. verifies the `libx264` and `aac` encoders;
-4. shows the exact supported package-manager command if anything is missing;
-5. asks before running WinGet or Homebrew; and
-6. stores the verified absolute paths in VidXP’s per-user configuration.
-
-Linux prints an applicable APT, DNF, or pacman command for the user to run in a
-system terminal. VidXP does not automate `sudo`.
-
-For scripts and CI:
+If FFmpeg is already installed somewhere unusual, provide its paths:
 
 ```bash
-vidxp init --json \
+vidxp init \
   --ffmpeg /absolute/path/to/ffmpeg \
   --ffprobe /absolute/path/to/ffprobe
 ```
 
-Redirected/noninteractive input never prompts or installs. `--yes` is an
-explicit authorization to run the displayed supported package-manager command.
-
-The lightweight one-off form is:
-
-```bash
-uvx vidxp init
-```
-
-Because the paths are stored in per-user configuration, a later permanent
-installation can reuse initialization performed by `uvx`.
-
-### 3. Prepare models
+### 3. Download models
 
 ```bash
 vidxp prepare
 ```
 
-The command displays the models that are missing, their pinned download sizes,
-the cache location, and the maximum additional disk use before asking for
-confirmation.
-
-| Capability | Models | Approximate download |
-|---|---|---:|
-| Dialogue | Qwen3 Embedding 0.6B + faster-whisper large-v3-turbo | 2.64 GiB |
-| Scene | SigLIP2 base patch16-224 | 1.43 GiB |
-| Actor | OpenCV Zoo YuNet + SFace | 37 MiB |
-
-Prepare only what you plan to index:
+VidXP shows the missing models, download size, and storage location before
+asking for confirmation. Download only selected features when preferred:
 
 ```bash
 vidxp prepare --modalities scene
 vidxp prepare --modalities dialogue,actor
+vidxp prepare --modalities videoprism  # action search
 ```
 
-Noninteractive preparation requires explicit confirmation:
+For a noninteractive script, add `--yes`. Indexing and search commands do not
+silently download missing models.
 
-```bash
-vidxp prepare --modalities scene --yes
-```
-
-Indexing, API jobs, and MCP tools never turn the first request into a hidden
-model download.
-
-#### Upgrading from the previous model stack
-
-This release replaces:
-
-- WhisperX `large-v2` and `all-MiniLM-L6-v2` with faster-whisper
-  `large-v3-turbo` and Qwen3 Embedding 0.6B;
-- OpenAI CLIP `ViT-B/32` with SigLIP2 base patch16-224; and
-- `face_recognition`/dlib with OpenCV Zoo YuNet and SFace.
-
-The resulting embeddings, actor thresholds, and provider manifests are not
-compatible with indexes built by the earlier stack. Prepare the new models,
-then re-index the registered videos you want in the active snapshot. Keep the
-old repository until the replacement index has been validated.
-
-### 4. Verify
+### 4. Verify the installation
 
 ```bash
 vidxp doctor
 ```
 
-`doctor` checks installed distributions, provider imports, FFmpeg, codecs, and
-the selected pinned model artifacts. It never installs packages, changes the
-operating system, constructs models, or downloads weights.
-
-Limit the check when you prepared a subset:
+When you installed only some search features, check only those features:
 
 ```bash
 vidxp doctor --modalities scene
-vidxp doctor --modalities dialogue,actor
 ```
 
-### 5. Start the selected surface
-
-- CLI: `vidxp --help`
-- Loopback browser UI: `vidxp ui`
-- LAN-shared unauthenticated browser UI: `vidxp ui --share`
-- Local HTTP API and MCP: `vidxp-api`
-- LAN-shared authenticated HTTP API and MCP: `vidxp-api --share`
-- Local stdio MCP: `vidxp-mcp`
-
-The browser UI binds to loopback unless `--share` is present. In share mode,
-VidXP gives Streamlit an explicit wildcard bind and Streamlit prints both the
-Local and Network URLs. The UI has no authentication, so share it only on a
-trusted network.
-VidXP suppresses Streamlit's first-run email prompt and disables Streamlit
-usage-statistics collection for this managed launch.
-
-## First CLI index
+### 5. Import, index, and search a video
 
 ```bash
+# Import a video and copy its media ID from the result
 vidxp media import samplevideo.mp4 --json
+
+# Index that media ID
 vidxp index create <media-id>
+
+# Find a visual scene
 vidxp search scene "a yellow taxi on a city street"
+
+# Find an action or event (`videoprism` is the CLI name for action search)
+vidxp search videoprism "a person opens a door and walks outside"
+
+# Find something that was said
+vidxp search dialogue "the bread just came out of the oven"
 ```
 
-- `media import` copies and validates the video in managed storage.
-- `media list` rediscovers registered filenames and IDs.
-- `index list` shows active searchable membership.
-- Search/query without `--media-id` ranks across every indexed video.
-- `--media-id <media-id>` restricts results to one video.
+Add `--media-id <media-id>` to a search command to restrict results to one
+video. Without it, VidXP searches all indexed videos in the active repository.
 
-Index one capability or change scene cadence:
+### Start an installed interface
 
-```bash
-vidxp index create <media-id> \
-  --modality scene \
-  --scene-sample-fps 1
-```
+| Interface | Command |
+|---|---|
+| Command help | `vidxp --help` |
+| Browser app | `vidxp ui` |
+| Local HTTP API and MCP server | `vidxp-api` |
+| MCP server started as a local process | `vidxp-mcp` |
 
-## Optional dependency extras
+The browser app and API listen only on this computer by default. Their `--share`
+options deliberately expose them to the local network. The browser share has no
+authentication; the API share prints a bearer token. Use either only on a
+trusted network.
 
-Extras are composable:
+## Connect a local AI assistant
 
-| Extra | Includes | Does not include |
-|---|---|---|
-| `storage` | Embedded Chroma and host monitoring | Model providers or UI |
-| `dialogue` | Storage, transcription, dialogue embeddings | Scene/actor providers |
-| `scene` | Storage, PyTorch, Transformers, OpenCV, Pillow | Dialogue/actor providers |
-| `actor` | Storage, OpenCV, YuNet/SFace support | Dialogue/scene providers |
-| `videoprism` | Storage, VideoPrism, PyTorch, Transformers, Torchvision | Other model providers |
-| `all` | Every built-in search capability | Grounded-query model client and UI |
-| `local-worker` | `all` plus grounded-query client | Browser UI, MCP SDK, HTTP server |
-| `frontend` | Streamlit | Worker providers |
-| `mcp` | MCP SDK | Worker providers |
-| `slm` | OpenAI-compatible local query-model client | A language model or model weights |
-| `server` | FastAPI, remote MCP, PostgreSQL/control dependencies | Local providers |
-| `server-worker` | Server storage client and every CPU provider | Public API process |
-| `benchmarks` | Benchmark adapter dependencies | Local worker providers |
-| `test` | Pytest and HTTP test client | Product runtime features |
-
-The `server` extra is intentionally model-free. Use it with `local-worker` for
-a loopback all-in-one API, or use the separate control and worker images for a
-deployed server.
-
-## Local MCP
-
-After installing `local-worker,mcp`:
+Install the `local-worker,mcp` profile and prepare the models you want to use.
+Then print the command and paths a local MCP client should use:
 
 ```bash
 vidxp mcp-config
 ```
 
-The command prints `mcpServers` JSON for Claude Desktop and other clients that
-use that local-stdio format, with the resolved absolute `vidxp-mcp` executable
-and default repository argument. It is not a universal MCP configuration.
-
-Codex uses its own configuration. Either run:
+For Codex, add VidXP directly:
 
 ```bash
 codex mcp add vidxp -- vidxp-mcp --repository default
+codex mcp list
 ```
 
-or add an `[mcp_servers.vidxp]` entry to `~/.codex/config.toml`. The ChatGPT
-desktop app and Codex share that local MCP configuration. ChatGPT web does not
-read this file or the generated JSON; connect it to a deployed HTTPS `/mcp`
-endpoint through a custom app/connector instead.
+The ChatGPT desktop app, Codex CLI, and Codex IDE extension use the same MCP
+configuration when they run on the same Codex host. ChatGPT on the web cannot
+read this local configuration; it needs a deployed HTTPS VidXP server. See the
+[official OpenAI MCP documentation](https://developers.openai.com/codex/mcp/)
+for client setup details.
+
+Check the VidXP MCP server itself with:
 
 ```bash
 vidxp-mcp --check --repository default
 ```
 
-The self-check performs a real stdio handshake, discovers tools, calls the
-read-only index-status tool, prints resolved data/index paths, and exits.
+## Use the local HTTP API
 
-Useful alternatives:
-
-| Command | Result |
-|---|---|
-| `vidxp mcp-config --repository <name>` | Client JSON for a named repository |
-| `vidxp-mcp --print-config` | JSON without other output |
-| `vidxp-mcp --help` | Options plus a copy/paste example |
-
-## Local HTTP API
-
-Install `local-worker,server`, prepare models, then run:
+Install the `local-worker,server` profile, prepare models, and run:
 
 ```bash
 vidxp-api
 ```
 
-The default is reachable only from the same machine. To deliberately share it
-on the machine's detected LAN address, run `vidxp-api --share`. Share mode:
+The default server is available only on this computer:
 
-- generates and then reuses an app-owned bearer token;
-- binds Uvicorn to the detected LAN address;
-- configures the HTTP and MCP Host-header policies for that address; and
-- prints the exact health URL, Streamable HTTP MCP URL, and bearer token.
-
-The managed token is stored as `api-share-token` in VidXP's platform-native
-configuration directory. Share mode uses plain HTTP and is intended for a
-trusted local network; use the supported reverse-proxy deployment when TLS is
-required.
-
-The unauthenticated local default is deliberately loopback-only:
-
-| Endpoint | Purpose |
+| Address | Purpose |
 |---|---|
-| `http://127.0.0.1:32191/docs` | Interactive OpenAPI |
-| `http://127.0.0.1:32191/openapi.json` | Machine-readable contract |
-| `http://127.0.0.1:32191/health` | Process liveness |
-| `http://127.0.0.1:32191/ready` | Aggregate runtime readiness |
+| `http://127.0.0.1:32191/docs` | Interactive API documentation |
+| `http://127.0.0.1:32191/openapi.json` | Machine-readable API contract |
+| `http://127.0.0.1:32191/health` | Service health |
+| `http://127.0.0.1:32191/ready` | Runtime readiness |
 | `http://127.0.0.1:32191/mcp` | Streamable HTTP MCP |
 
-Native installs default to port `32191` to avoid the heavily reused development
-port `8000`. Use `vidxp-api --port <port>` when a specific port is required.
+Use `vidxp-api --port <port>` when another local port is required.
 
-The Streamable HTTP MCP endpoint includes `create_media_upload`. Its returned
-capability link uses the actual listener host and port; opening `/` manually is
-not an upload flow. Native mode serves the packaged Uppy page and receives bounded,
-non-resumable multipart uploads directly in the API process. It requires no Docker,
-PostgreSQL, Chroma server, tusd, or separately started helper. The session result
-reports the effective per-file and aggregate limits, and `get_media_upload` follows
-the durable import and automatic-indexing lifecycle through `indexed` and
-`searchable=true`.
+Use `vidxp-api --share` only for a trusted local network. For HTTPS, hosted AI
+clients, or public access, use the supported server deployment instead.
 
-`vidxp-api --share` is different: it binds a bearer-protected, plain-HTTP LAN
-listener but cannot safely synthesize an advertised browser handoff origin.
-Consequently its MCP surface omits `create_media_upload` and
-`get_media_upload` unless an explicit HTTPS
-`VIDXP_UPLOAD_HANDOFF_PUBLIC_URL` is configured. The command reports that
-omission instead of exposing a tool that would fail when called.
+See [Local API and MCP server](docs/local-api.md) for authentication, uploads,
+and sharing behavior.
 
-Local stdio exposes `ingest_local_media` instead. Pass one to ten paths that are
-inside the configured import boundaries and poll `get_media_ingestion`; file bytes
-do not cross MCP. Both ingestion tools default to the repository's advertised
-capability set. Supply `modalities` to narrow it or
-`index_after_import=false` for the advanced registration-only workflow.
+## Optional dependency extras
 
-Do not bind an unauthenticated API to a non-loopback address. Public
-deployments require static bearer or OIDC authentication and should use the
-supported server Compose topology. Hosted ChatGPT and Claude integrations
-should use OIDC because those clients cannot be configured with VidXP's private
-single-tenant static token. Set `VIDXP_HTTP_AUTH_MODE=oidc`, the issuer,
-audience, JWKS URL, required scopes, and canonical HTTPS
-`VIDXP_MCP_PUBLIC_URL`; VidXP publishes the MCP protected-resource metadata and
-validates those access tokens.
+Most users should choose one of the package profiles above. The individual
+extras below are for developers embedding VidXP in a Python application or
+assembling a custom installation:
 
-## Desktop application
+| Extra | Adds |
+|---|---|
+| `dialogue` | Transcription, dialogue embeddings, and storage |
+| `scene` | Scene search and storage |
+| `videoprism` | Action search and storage |
+| `actor` | Actor matching and storage |
+| `all` | Every built-in search feature |
+| `local-worker` | All search features plus local job processing |
+| `frontend` | Browser interface |
+| `mcp` | Local stdio MCP |
+| `server` | HTTP API and Streamable HTTP MCP control service |
+| `server-worker` | CPU processing for a deployed server |
+| `slm` | OpenAI-compatible grounded-answer model client |
 
-Download the Windows, Apple Silicon macOS, or Linux package from
-[GitHub Releases](https://github.com/grayhatdevelopers/vidxp/releases).
-
-Desktop opens its control panel first and asks which local target to use. It
-does not install anything before that choice:
-
-- **Use an existing installation** discovers compatible `vidxp` executables or
-  lets you browse to one. Desktop validates the versioned probe and launch
-  contracts, and the installation stays selected and externally owned.
-  For an isolated uv-tool installation, **Setup options** can change its search,
-  local-processing, browser, AI-assistant, or app-integration features. Desktop recreates that app environment at
-  its compatible VidXP and Python versions with the complete selected extra set,
-  then rechecks it. If the saved installation predates the required management
-  contract, Desktop offers to update that same uv-tool environment to the runtime
-  version bundled with the Desktop release before applying the chosen features.
-  It does not interpret fields missing from an older probe as disabled features.
-  Other environment types stay with their original package
-  manager. Desktop does not broadly stop an external installation. The
-  compatibility probe reports installed search, processing, and integration features.
-- **Set up VidXP for me** creates a private Python and VidXP runtime owned by
-  Desktop. Python and uv do not need to be installed separately. Capability
-  code, optional local video processing, browser interface, AI-assistant
-  integration, and app integration service,
-  model storage, and initial model preparation are selected before applying
-  the draft.
-
-A managed setup or update remains a draft until its candidate runtime passes
-the Desktop probe and launch contracts. Activation then replaces the previous
-managed target atomically; failed or cancelled work leaves the previous target
-authoritative. For an unchanged ready runtime, **Check downloaded models**
-checks cached files and downloads only missing selected model material without
-requiring a configuration change.
-
-The active-target panel can run the selected installation's read-only
-`vidxp doctor --json` check, start/monitor/stop local video processing through
-the existing worker supervisor, generate `mcpServers` JSON bound to that exact
-installation and repository, and start/monitor/stop a Desktop-owned loopback
-`vidxp-api` process when the app integration service is installed. These controls remain
-available after installation; Desktop is not only a first-run installer or a
-browser launcher. It broadly stops only a Desktop-owned target and only
-reinstalls an existing isolated tool after the user confirms the feature change.
-Browser and app-service processes start private to the current computer.
-Desktop can also invoke each service's existing `--share` mode: it shows the
-resolved LAN port and URLs, warns that the shared browser has no authentication,
-and exposes the API/MCP bearer token behind the connection details.
-
-Starting Desktop, or starting it a second time, shows and focuses the control
-panel without opening a browser. **Open VidXP** explicitly starts or reuses the
-loopback browser service and opens one tab. Closing a configured window hides
-it to the tray. Tray actions are **Manage VidXP**, **Open VidXP**, and **Quit
-VidXP**. Quit stops the exact browser and API services Desktop launched; broad worker
-shutdown is limited to a Desktop-owned runtime.
-
-The NSIS, DMG, and AppImage packages do not bundle FFmpeg. Managed setup can
-run WinGet on Windows or Homebrew on macOS only after native confirmation and
-only when that package manager is available. Without Homebrew, macOS shows
-installation remediation instead. Linux displays an APT, DNF, or manual
-command and does not automate elevation. An adopted installation keeps
-responsibility for its own FFmpeg setup.
-Windows SmartScreen and macOS Gatekeeper may require explicit confirmation
-until signing is added. See [Desktop application](docs/desktop.md) for runtime,
-storage, and build details.
+The base `vidxp` package provides commands and shared contracts but cannot
+index video by itself. Search features download their models only through the
+explicit preparation step. Keep benchmark and test extras in contributor
+environments rather than production applications.
 
 ## Docker
 
-The published local image contains the CPU worker, browser UI, Python, and
-FFmpeg. Prepare models into a persistent volume, then start the app:
+The published local image includes VidXP, CPU processing, the browser app,
+Python, and FFmpeg.
+
+Prepare models in a persistent volume:
 
 ```bash
-# Download selected models
 docker run --rm -it \
   -v vidxp-data:/var/lib/vidxp \
   ghcr.io/grayhatdevelopers/vidxp:latest \
   vidxp prepare
+```
 
-# Start the browser app
+Start VidXP:
+
+```bash
 docker run --rm --init \
   -p 8501:8501 \
   -v vidxp-data:/var/lib/vidxp \
   ghcr.io/grayhatdevelopers/vidxp:latest
 ```
 
-Open `http://localhost:8501`. Pin a published version instead of `latest` for
-a long-lived installation.
+Open `http://localhost:8501`. Pin a published version instead of `latest` for a
+long-lived installation.
 
-## Published container images
+### Published images
 
-Every stable release publishes three Linux/amd64 images from the same validated
-release commit:
+Every stable release publishes these Linux x86-64 images from the same
+validated release:
 
-| Image | Published tag | Purpose |
+| Image | Tag | Purpose |
 |---|---|---|
-| Local | `<release>`, `<major>.<minor>`, `latest` | CPU worker + browser UI |
-| Control | `<release>-control` | API, remote MCP, migrations, private upload hooks |
-| Worker | `<release>-worker` | CPU model providers and server storage client |
+| Local | `<release>` or `latest` | CPU worker and browser interface |
+| Control | `<release>-control` | API, remote MCP, migrations, and upload hooks |
+| Worker | `<release>-worker` | CPU processing and server storage client |
 
-Repository:
+All images use `ghcr.io/grayhatdevelopers/vidxp`. Pin an exact release for a
+long-lived installation; the Coolify deployment uses the control and worker
+images together.
 
-```text
-ghcr.io/grayhatdevelopers/vidxp
-```
+## Self-hosted server
 
-The local image is used by `compose.yaml`. The control and worker images are
-used by `compose.coolify.yaml`.
+The supported server deployment runs on one machine and includes the VidXP API,
+MCP, a CPU worker, PostgreSQL, Chroma, and resumable uploads. It requires HTTPS,
+authentication, secrets, persistent storage, and backups.
 
-## Coolify and server Compose
+Follow the [Coolify deployment guide](docs/deployment/coolify.md) for the full
+operator procedure. The current deployment is single-node and single-repository;
+it does not provide multi-node failover or GPU processing.
 
-The supported server topology contains:
+## After an upgrade
 
-| Control plane | Execution and storage | Ingestion |
-|---|---|---|
-| FastAPI + Streamable HTTP MCP | One CPU worker, PostgreSQL, Chroma | tusd + private hook service |
-
-It is a single-node, single-repository deployment. It does not claim
-multi-replica failover, hosted database substitution, or GPU execution.
-
-Follow [Coolify deployment](docs/deployment/coolify.md) for:
-
-- exact control/worker image variables;
-- required secrets and public hostnames;
-- proxy rules for MCP and resumable uploads;
-- explicit worker model preparation through the authenticated API or MCP;
-- readiness/migration gates;
-- persistent volumes and backups; and
-- the optional, explicitly prepared Ollama profile.
-
-## Install from source
-
-Source installation is for contributors and reproducible development, not the
-normal public quick start:
+Run these checks after upgrading VidXP:
 
 ```bash
-git clone https://github.com/grayhatdevelopers/vidxp.git
-cd vidxp
-uv sync --frozen \
-  --extra local-worker \
-  --extra frontend \
-  --extra mcp \
-  --extra server
-uv run --no-sync vidxp init
-uv run --no-sync vidxp prepare
-uv run --no-sync vidxp doctor
-uv run --no-sync vidxp ui
+vidxp init
+vidxp doctor
 ```
 
-The lock routes PyTorch through the official CPU index on Linux and Windows.
+When an upgrade changes a search model or index format, existing videos may need
+to be indexed again. VidXP reports this instead of silently replacing a working
+index. Prepare the required models, re-index the affected videos, and keep the
+old repository until you have checked the replacement results.
 
-## Data and configuration locations
+## Data locations
 
-Local commands do not treat the current directory as their storage root.
+VidXP stores data outside the current working directory:
 
-| Platform | Data root | Configuration root |
+| Platform | Data | Configuration |
 |---|---|---|
 | Windows | `%LOCALAPPDATA%\VidXP` | `%APPDATA%\VidXP` |
 | macOS | `~/Library/Application Support/VidXP` | `~/Library/Application Support/VidXP` |
 | Linux | `${XDG_DATA_HOME:-~/.local/share}/VidXP` | `${XDG_CONFIG_HOME:-~/.config}/VidXP` |
 
-The data root contains:
+The data location contains repositories, downloaded models, imported videos,
+and generated results. The configuration location contains saved settings and
+locally managed access tokens. Docker stores its persistent data in the
+`vidxp-data` volume used in the commands above.
 
-```text
-VidXP/
-  repositories/
-    default/
-  models/
-```
-
-The desktop application uses this same root for repositories and its default
-model cache. Its managed Python environments and active-runtime pointer remain
-in the identifier-scoped private application-data directory. On Windows,
-per-user program files are installed separately under
-`%LOCALAPPDATA%\Programs\VidXP`.
-
-Use an alternate root for one CLI invocation:
+Use another location for one CLI command:
 
 ```bash
 vidxp --data-dir /path/to/vidxp-data ui
 ```
 
-Set `VIDXP_DATA_DIR` when the CLI, UI, local MCP, and local API should all use
-the same alternate root. `VIDXP_INDEX_DIR` and `VIDXP_MODEL_CACHE` are advanced
-single-location overrides. Docker uses its declared volumes instead.
+Set `VIDXP_DATA_DIR` when every local VidXP interface should use the same
+alternate location. `VIDXP_INDEX_DIR` and `VIDXP_MODEL_CACHE` override only the
+repository or model location and are intended for advanced setups. Docker uses
+its declared volumes instead.
 
 ## Troubleshooting
 
 ### `vidxp` is not found
 
-- Run `uv tool update-shell`, restart the shell, and try again.
-- Confirm the installation with `uv tool list`.
+```bash
+uv tool update-shell
+uv tool list
+```
+
+Restart the terminal after updating the shell.
 
 ### FFmpeg or a codec is missing
 
 ```bash
 vidxp init
+vidxp doctor
 ```
 
-Review the displayed package-manager command before approving it. Rerun
-`vidxp doctor` afterward.
+Review the suggested package-manager command before approving it.
 
-### Linux or Windows starts resolving NVIDIA packages
+### Linux or Windows starts downloading NVIDIA packages
 
-Reinstall the managed tool with the explicit CPU option:
+Reinstall with the supported CPU dependency set:
 
 ```bash
 uv tool install --force --python 3.14 --torch-backend cpu \
   "vidxp[local-worker,frontend]"
 ```
 
-Do not use plain `pip install "vidxp[local-worker]"` on Linux unless you have
-already installed and constrained the intended CPU PyTorch build.
+### uv warns that it cannot hardlink from its cache
 
-### uv cannot hardlink from its cache
-
-This warning means the cache and environment are on filesystems that cannot
-hardlink to each other. Installation falls back to copying and remains valid.
-Suppress the warning when that layout is intentional:
+uv falls back to copying files, so the installation remains valid. To suppress
+the warning when the cache and installation intentionally use different
+filesystems, reinstall with copy mode:
 
 ```bash
 uv tool install --link-mode copy --python 3.14 --torch-backend cpu \
   "vidxp[local-worker,frontend]"
 ```
 
-or set `UV_LINK_MODE=copy`.
+You can also set `UV_LINK_MODE=copy` for future uv commands.
 
-### A model is missing or the worker is offline
+### A model is missing
 
 ```bash
 vidxp prepare
 vidxp doctor
 ```
 
-For offline operation, prepare while network access is allowed, then set
+For later offline use, prepare models while online, then set
 `VIDXP_ALLOW_MODEL_DOWNLOADS=false`.
 
 ### Search says the index is not ready
 
-- Check `vidxp index status`.
-- Check `vidxp jobs list` and inspect the failed job.
-- Retry indexing after fixing the reported dependency/model error.
-- A failed or cancelled generation does not replace the previous active
-  snapshot.
+```bash
+vidxp index status
+vidxp jobs list
+```
 
-### Resetting local data
+Inspect the failed job, fix the reported problem, and index the video again. A
+failed or cancelled indexing job does not replace the last working index.
 
-VidXP intentionally does not provide an implicit destructive reset. Inspect the
-resolved paths first:
+### Windows blocks the Desktop installer
+
+Confirm that the installer came from the official GitHub release page, then use
+Windows' option to open it. Do not bypass a warning for a package from another
+source.
+
+### Remove local data
+
+VidXP does not provide a one-command destructive reset. First show the paths it
+is using:
 
 ```bash
 vidxp repositories show
 ```
 
-Back up or remove only the specific per-user repository/model directories you
-intend to discard.
+Back up or remove only the specific repository or model directory you intend to
+discard.
+
+## Develop VidXP from source
+
+Source setup is for contributors, not normal installation. Follow the
+[contribution guide](docs/CONTRIBUTING.md).

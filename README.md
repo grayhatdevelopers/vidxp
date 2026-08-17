@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <strong>Dialogue search · Scene search · Temporal video search · Actor grouping</strong>
+  <strong>Dialogue search · Scene search · Action search · Actor grouping</strong>
 </p>
 
 <p align="center">
@@ -43,12 +43,9 @@ VidXP makes one video—or an entire collection—searchable by meaning:
   matching moments.
 - **Scene search:** describe what appeared on screen and find the closest
   visual matches.
-- **VideoPrism search:** describe an action or event spanning a short clip.
+- **Action search:** describe something that happens over several seconds.
 - **Actor matching:** find recurring faces within a video and export a
   highlighted video for a selected group.
-
-Existing indexes remain compatible. Index media with the `videoprism`
-capability selected before using temporal video search.
 
 Use it to search years of family videos, add video search to an editing
 workflow, or let an AI agent answer questions using evidence from your own
@@ -60,25 +57,31 @@ video library. Your videos can stay on your machine.
 
 Choose the setup that fits how you want to use VidXP.
 
-### 1. CLI and MCP
+### 1. Desktop app
 
-For direct use, scripts, and local AI agents, install
+Download the installer for Windows, Apple Silicon macOS, or Linux from
+[GitHub Releases](https://github.com/grayhatdevelopers/vidxp/releases).
+
+Connect an existing VidXP installation or let the desktop app manage an isolated
+runtime for you. See the
+[Desktop installation instructions](INSTALLATION_GUIDE.md#desktop-app)
+for supported setup options.
+
+### 2. CLI and local AI assistants
+
+For commands, scripts, and local AI assistants, install
 [uv](https://docs.astral.sh/uv/getting-started/installation/), then run:
 
 ```bash
 # Install the CPU edition
 uv tool install --python 3.14 --torch-backend cpu "vidxp[local-worker,mcp]"
 
-# Set up FFmpeg
+# Check FFmpeg, download models, and verify the installation
 vidxp init
-
-# Download search models
 vidxp prepare
-
-# Check everything
 vidxp doctor
 
-# Connect an MCP client
+# Print the settings for a local MCP client
 vidxp mcp-config
 ```
 
@@ -93,20 +96,18 @@ vidxp ui
 See the [installation guide](INSTALLATION_GUIDE.md) for client-specific MCP
 configuration, the HTTP API, and remote server setup.
 
-### 2. Desktop app
-
-Download the installer for Windows, Apple Silicon macOS, or Linux from
-[GitHub Releases](https://github.com/grayhatdevelopers/vidxp/releases).
-
-Connect an existing VidXP installation or let the desktop app manage an isolated
-runtime for you. See the [desktop guide](docs/desktop.md) for supported setup
-options.
-
 ### 3. Docker for a server
 
 Run the published all-in-one image on a home server or another single machine:
 
 ```bash
+# Download the search models into the persistent volume
+docker run --rm -it \
+  -v vidxp-data:/var/lib/vidxp \
+  ghcr.io/grayhatdevelopers/vidxp:latest \
+  vidxp prepare
+
+# Start the browser interface
 docker run --rm --init \
   -p 8501:8501 \
   -v vidxp-data:/var/lib/vidxp \
@@ -142,7 +143,7 @@ vidxp index create <media-id>
 # Find a visual moment
 vidxp search scene "a yellow taxi on a city street"
 
-# Find an action spanning several frames
+# Find an action or event
 vidxp search videoprism "a person opens a door and walks outside"
 
 # Find something that was said
@@ -161,19 +162,19 @@ application, or use the HTTP API when VidXP runs as a service.
 
 [![VidXP being used with ChatGPT Desktop AI](./docs/images/claude-with-vidxp.jpg)](https://youtu.be/fa4Zx-bSOh4)
 
-MCP lets AI clients add and index videos, search dialogue and scenes, ask
-questions about a library, and return inspectable evidence such as boards,
-frames, and clips. Clients can connect locally over stdio or to a self-hosted
-VidXP server.
+MCP lets AI clients add and index videos, search a library, ask grounded
+questions, and return inspectable evidence such as boards, frames, and clips.
+A local client can start VidXP as a program on the same computer. A hosted
+client connects to a deployed VidXP server.
 
 ### Codex plugin and skills
 
 VidXP is distributed as a Codex plugin through a Git marketplace hosted in
-this GitHub repository. It includes three reusable agent workflows:
+this GitHub repository. It includes three reusable workflows:
 
-- [Install Desktop or CLI and connect Codex](plugins/vidxp/skills/vidxp-install/SKILL.md)
-- [Ingest and index videos](plugins/vidxp/skills/vidxp-ingest-video/SKILL.md)
-- [Find moments and return inspectable evidence](plugins/vidxp/skills/vidxp-find-video-evidence/SKILL.md)
+- install Desktop or the CLI and connect Codex;
+- ingest and index videos; and
+- find moments and return inspectable evidence.
 
 Paste this into Codex:
 
@@ -183,11 +184,12 @@ Add https://github.com/grayhatdevelopers/vidxp as a Git plugin marketplace, inst
 
 VidXP Desktop can perform the same setup from its **Set up in Codex** button.
 
-The MCP App resource gives compatible hosts an interactive upload and
-evidence-review view; every workflow continues to work through ordinary MCP
-tool results when a host has no UI.
+Compatible AI clients can show an interactive upload and evidence-review view.
+Clients without that interface still receive the same workflow results through
+ordinary MCP tools.
 
 - [Python, HTTP, and MCP installation](INSTALLATION_GUIDE.md)
+- [Local HTTP API and MCP server](docs/local-api.md)
 - [ChatGPT and Codex plugin integration](docs/integrations/openai-plugin.md)
 - [Optional capability packages](INSTALLATION_GUIDE.md#optional-dependency-extras)
 - [Coolify server setup](docs/deployment/coolify.md)
@@ -204,7 +206,7 @@ approximately 3 GiB.
 |---|---:|
 | Dialogue search | 2.64 GiB |
 | Scene search | 1.43 GiB |
-| VideoPrism temporal search | 0.93 GiB |
+| Action search | 0.93 GiB |
 | Actor matching | 37 MiB |
 
 A full local Desktop setup with every search capability uses approximately
@@ -241,7 +243,7 @@ video-library use cases is especially useful.
 ## Help and project links
 
 - [Installation and troubleshooting](INSTALLATION_GUIDE.md)
-- [Desktop application](docs/desktop.md)
+- [Desktop development](docs/desktop.md)
 - [Coolify deployment](docs/deployment/coolify.md)
 - [Changelog](CHANGELOG.md)
 - [Issue tracker](https://github.com/grayhatdevelopers/vidxp/issues)
@@ -254,16 +256,23 @@ Contributions are welcome. Read the
 
 ## Credits
 
-Built by [Grayhat](https://grayhat.studio/) and maintained by the community.
-Originally researched by students:
+VidXP began as a student research project by:
+
 - [Abdullah Mansoor](https://github.com/abdullahmansoor321)
 - [Muhammad Haroon](https://github.com/haroon10725)
 - [Sarah Jawaid](https://github.com/sarr266)
 - [Talha Ahmed](https://github.com/talhaahmed1234)
 
-Working with [Dr Shahab Tahzeeb](https://scholar.google.com/citations?user=cryeRB0AAAAJ&hl=en) ([NED University of Engineering and Technology](https://www.neduet.edu.pk/)) and [Saad Bazaz](https://scholar.google.com/citations?user=mrJo09oAAAAJ&hl=en) ([Grayhat](https://grayhat.studio/)).
+The research was conducted with
+[Dr Shahab Tahzeeb](https://scholar.google.com/citations?user=cryeRB0AAAAJ&hl=en)
+at [NED University of Engineering and Technology](https://www.neduet.edu.pk/)
+and [Saad Bazaz](https://scholar.google.com/citations?user=mrJo09oAAAAJ&hl=en)
+at [Grayhat](https://grayhat.studio/).
 
-Email: info@grayhat.studio
+VidXP is now built by [Grayhat](https://grayhat.studio/) and maintained by
+community contributors.
+
+Email: <info@grayhat.studio>
 
 <a href="https://github.com/grayhatdevelopers/vidxp/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=grayhatdevelopers/vidxp" alt="VidXP contributors">

@@ -1,41 +1,96 @@
-# Coolify deployment
+# Deploy VidXP with Coolify
 
-`compose.coolify.yaml` is a prebuilt-image Compose deployment. It has no build
-contexts and does not download models in the API process.
+Use this guide to run VidXP as a server on one Coolify host. The deployment
+provides an HTTPS API and MCP server, browser uploads, CPU video processing,
+and persistent storage.
 
-## Images
+One deployed stack holds one VidXP repository. Run another complete stack with
+separate databases and volumes when you need a separate repository. This setup
+does not support GPU processing, multiple worker nodes, automatic failover, or
+hosted replacements for its bundled databases.
 
-- `VIDXP_CONTROL_IMAGE`: the VidXP `control` target for the API, private tusd
-  hooks, MCP server, readiness checks, and migrations. It contains no PyTorch or
-  Chroma server.
-- `VIDXP_WORKER_IMAGE`: the VidXP `worker` target with CPU capabilities and
-  Chroma's HTTP-only client.
-- PostgreSQL 18.3, Chroma 1.5.9, tusd 2.10.0, and the optional self-hosted
-  Ollama 0.32.5 service are pinned by digest in the Compose file.
+## Before you start
 
-Use immutable VidXP release tags or digests for both first-party image variables.
+Prepare:
 
-## Required variables
+- a Coolify host with enough CPU, memory, and storage for models, uploaded
+  videos, indexes, and backups;
+- an API hostname, such as `api.example.com`;
+- an upload address, such as `https://uploads.example.com/uploads/`;
+- one published VidXP release version or image digest; and
+- either a private API token or an OIDC identity provider.
+
+A private token works for applications that can send an `Authorization`
+header. Hosted ChatGPT and similar connectors normally need OIDC so users can
+authorize access through an identity provider.
+
+The Compose file starts these services:
+
+| Service | Responsibility |
+|---|---|
+| `api` | HTTP API and Streamable HTTP MCP |
+| `worker` | Model preparation, indexing, search, and result generation |
+| `tusd` | Resumable browser uploads |
+| `hooks` | Private upload-completion handling |
+| `postgres` | Application and job data |
+| `chroma` | Search indexes |
+
+PostgreSQL, Chroma, tusd, and the optional Ollama service are already pinned by
+digest in `compose.coolify.yaml`. The Compose file uses published images and
+does not build VidXP from the repository.
+
+## 1. Configure images, storage secrets, and addresses
+
+Add the following values to the Coolify deployment environment. When managing
+the same Compose file locally, place them in an ignored `.env` file.
+
+Replace every placeholder. Use a different random value of at least 32
+characters for each secret.
 
 ```dotenv
+# Use the same published release for both VidXP images.
 VIDXP_CONTROL_IMAGE=ghcr.io/grayhatdevelopers/vidxp:<release>-control
 VIDXP_WORKER_IMAGE=ghcr.io/grayhatdevelopers/vidxp:<release>-worker
-POSTGRES_PASSWORD=<random-secret>
-VIDXP_HTTP_AUTH_MODE=static
-VIDXP_HTTP_STATIC_BEARER_TOKEN=<random-secret-at-least-32-characters>
-VIDXP_ARTIFACT_DOWNLOAD_SECRET=<artifact-download-secret-at-least-32-characters>
-VIDXP_UPLOAD_CLEANUP_TOKEN=<different-random-secret-at-least-32-characters>
+
+# Keep every secret distinct.
+POSTGRES_PASSWORD=<random-database-password>
+VIDXP_ARTIFACT_DOWNLOAD_SECRET=<random-artifact-secret>
+VIDXP_UPLOAD_CLEANUP_TOKEN=<random-cleanup-token>
+VIDXP_UPLOAD_HANDOFF_SECRET=<random-handoff-secret>
+
+# Replace the example hostnames with your public addresses.
 VIDXP_PUBLIC_API_HOST=api.example.com
 VIDXP_UPLOAD_PUBLIC_ENDPOINT=https://uploads.example.com/uploads/
 VIDXP_UPLOAD_HANDOFF_PUBLIC_URL=https://api.example.com/upload-handoff
-VIDXP_UPLOAD_HANDOFF_SECRET=<third-random-secret-at-least-32-characters>
 VIDXP_UPLOAD_CORS_ORIGIN_REGEX=^(https://api\.example\.com|https://app\.example\.com)$
 VIDXP_MCP_MAX_RESOURCE_BYTES=16777216
 ```
 
-The values above select private, single-tenant static bearer authentication.
-For hosted ChatGPT or Claude connectors, configure the existing OIDC resource
-server instead:
+The upload endpoint must end in `/uploads/`. The handoff address must end in
+`/upload-handoff`.
+
+`VIDXP_UPLOAD_CORS_ORIGIN_REGEX` lists the browser origins allowed to open an
+upload session. Keep the parentheses, separate origins with `|`, and escape
+each dot as `\.`. Add only exact HTTPS origins you control.
+
+## 2. Choose authentication
+
+### Private token
+
+Use this mode for a private application that can store and send one API token:
+
+```dotenv
+VIDXP_HTTP_AUTH_MODE=static
+VIDXP_HTTP_STATIC_BEARER_TOKEN=<random-private-api-token>
+```
+
+Treat the token as a password. Do not put it in a browser page, repository,
+screenshot, or log.
+
+### Hosted connector
+
+Use OIDC for hosted ChatGPT or another client that signs users in through an
+identity provider:
 
 ```dotenv
 VIDXP_HTTP_AUTH_MODE=oidc
@@ -47,195 +102,196 @@ VIDXP_HTTP_REQUIRED_SCOPES=["vidxp.read","vidxp.write"]
 VIDXP_MCP_PUBLIC_URL=https://api.example.com/mcp
 ```
 
-The OIDC provider must issue access tokens and scopes accepted by the intended
-host. VidXP validates issuer, audience/resource, signature, expiry, and scopes;
-it does not implement an identity provider. Leave every `VIDXP_HTTP_OIDC_*`
-value and `VIDXP_MCP_PUBLIC_URL` unset in static mode.
+Replace the example identity-provider values. That provider must issue access
+tokens with the configured issuer, audience, and scopes. VidXP validates those
+tokens but does not provide user accounts or a login service.
 
-Compose derives `VIDXP_ARTIFACT_DOWNLOAD_PUBLIC_URL` as
-`https://${VIDXP_PUBLIC_API_HOST}/artifact-download`. The API issues 15-minute
-links by default (`VIDXP_ARTIFACT_DOWNLOAD_TTL_SECONDS=900`); deployments may
-set a value from 60 seconds through 24 hours. Keep the artifact-download secret
-distinct from API, upload, and cleanup credentials.
+Do not set the OIDC variables or `VIDXP_MCP_PUBLIC_URL` in private-token mode.
 
-`VIDXP_MCP_MAX_RESOURCE_BYTES` bounds every in-memory MCP resource read. Keep
-video delivery on the range-capable HTTPS artifact route; local stdio callers
-can use the verified local path. If neither projection is available, oversized
-resources fail with structured remediation instead of being read into memory.
+## 3. Publish the API and upload routes
 
-After `create_clip` completes, `get_artifact_download` returns a native MCP
-resource when the artifact fits `VIDXP_MCP_MAX_RESOURCE_BYTES`; oversized
-artifacts use the configured HTTPS download projection. Its bearer capability is
-carried in the URL fragment, exchanged
-for a `Secure`, `HttpOnly`, `SameSite=Strict` cookie, and removed from browser
-history before the content request. The public route requires neither an API
-token nor browser login; possession of the complete unexpired link is authority
-to download that one repository-bound MP4 or MKV. GET, HEAD, ranges, ETag, and
-resume requests remain valid until expiry. Redact fragments in client-side
-telemetry and do not rewrite the public URL to an internal service hostname.
+Configure Coolify's proxy to publish only these destinations:
 
-`VIDXP_UPLOAD_HANDOFF_PUBLIC_URL` must be the externally reachable HTTPS API
-URL ending exactly in `/upload-handoff`. Keep its secret distinct from the MCP
-bearer and upload-cleanup credentials. `create_media_upload` returns the upload
-session link as ordinary MCP structured and text output; VidXP does not use native
-URL elicitation. Its fragment contains a short-lived capability, and possession of
-the complete link authorizes the browser session. Treat it as a bearer secret; the
-page removes the fragment from browser history after bootstrap.
+| Public route | Internal destination |
+|---|---|
+| API hostname, including `/mcp`, `/upload-handoff`, and `/artifact-download` | `api:8000` |
+| Upload hostname `/uploads/` | `tusd:8080/uploads/` |
 
-The CORS value intentionally accepts only this grouped list of exact HTTPS
-origins with escaped dots; HTTP is accepted only for loopback development. VidXP
-validates that restricted syntax instead of
-using Python's broader regex dialect, and tusd evaluates the same value with
-Go's RE2 engine.
+Do not publish PostgreSQL, Chroma, `hooks`, or Ollama.
 
-Upload policy defaults are 50 GiB per file (`VIDXP_UPLOAD_MAX_BYTES`), 10 files per
-session (`VIDXP_UPLOAD_SESSION_MAX_FILES`), 100 GiB per session
-(`VIDXP_UPLOAD_SESSION_MAX_BYTES`), a 24-hour session lifetime
-(`VIDXP_UPLOAD_SESSION_TTL_SECONDS`), and 100 GiB of repository-wide reserved bytes
-(`VIDXP_UPLOAD_QUOTA_BYTES`). The session byte limit must be at least the per-file
-limit. VidXP enforces file count, per-file size, aggregate session size, and
-repository quota atomically when the browser selects each file. There is no
-per-principal quota setting.
+For `/mcp`, preserve these request headers:
 
-Selection failures use stable API error codes and actionable messages:
+```text
+Authorization
+Accept
+Content-Type
+MCP-Protocol-Version
+Mcp-Method
+Mcp-Name
+Mcp-Param-*
+```
 
-- `upload_file_too_large`: the selected file exceeds the per-file limit.
-- `upload_session_file_limit`: the session reached its file-count limit.
-- `upload_session_byte_limit`: the selection would exceed aggregate bytes.
-- `upload_quota_exceeded`: the repository reservation would exceed quota.
-- `upload_client_key_conflict`: a stable client key was replayed with different
-  metadata.
-- `upload_session_closed` or `upload_session_expired`: request a new session or
-  continue only already-authorized transfers as appropriate.
+Disable response buffering for `/mcp` so clients receive streamed responses
+without waiting for the complete message.
 
-Invalid filenames, non-positive sizes, malformed MIME types, or client keys that
-do not match the documented safe character set are rejected by request validation
-before quota is reserved or an intent is created.
+Upload and artifact links grant temporary access to one session or file.
+Anyone who obtains the complete unexpired link can use it. Disable or redact
+proxy access logs for `/uploads/` and `/upload-handoff`, and never rewrite a
+public artifact link to an internal hostname.
 
-Route the API service's port 8000 to the API hostname. Route only tusd's
-`/uploads/` path on port 8080 to the upload hostname. Do not publish PostgreSQL,
-Chroma, or the hook service.
+## 4. Deploy and check the stack
 
-The same API origin exposes Streamable HTTP MCP at `/mcp`. Configure the proxy
-to preserve `Authorization`, `Accept`, `Content-Type`, `MCP-Protocol-Version`,
-`Mcp-Method`, `Mcp-Name`, and `Mcp-Param-*` headers and disable response buffering
-for `/mcp`. Static bearer mode intentionally publishes no OAuth metadata and is
-only for clients that can set a private bearer header. OIDC mode publishes the
-MCP protected-resource metadata used by hosted connector authentication.
+After adding the environment and proxy routes, use Coolify's deploy action.
 
-Remote MCP request handling is stateless. Upload progress and child lifecycle are
-stored durably outside the transport, so this workflow needs neither an in-memory
-MCP session timeout nor sticky routing by `Mcp-Session-Id`.
+For a local Compose-managed check of the same file, run:
 
-The upload path is a capability URL used to resume an upload. Disable or redact
-reverse-proxy access logging for `/uploads/`; VidXP cannot control logs written by
-an upstream proxy.
+```bash
+docker compose --env-file .env -f compose.coolify.yaml config --quiet
+docker compose --env-file .env -f compose.coolify.yaml pull
+docker compose --env-file .env -f compose.coolify.yaml up -d --wait
+docker compose --env-file .env -f compose.coolify.yaml ps
+```
 
-Video bytes do not travel through MCP. A remote MCP client calls
-`create_media_upload` with an idempotency key and gives the returned HTTPS session
-to the user. Uppy Dashboard supports multiple selections, pause, resume, retry,
-accessible controls, and browser recovery. The browser supplies the actual metadata
-after selection; VidXP creates and reserves each child atomically. Automatic
-indexing defaults to the deployed repository's advertised capability set. The
-client polls only `get_media_upload` until each child is searchable (or failed);
-`modalities` can narrow the set and `index_after_import=false` is the explicit
-registration-only opt-out.
+The migration and readiness jobs should finish successfully. PostgreSQL, API,
+hooks, worker, and tusd should report healthy. The completed `chroma-ready` job
+confirms that Chroma is available.
 
-The page exchanges its fragment capability for an `HttpOnly`, `Secure`,
-`SameSite=Strict` session cookie without a login or manual API-token field. Each
-file receives a separate one-time, five-minute tus creation grant; the initiating
-MCP bearer never enters the page or tusd. Keep
-access logging disabled or redacted for `/uploads/`, because the tus resume URL
-is itself a bearer capability. The page's Content Security Policy permits only
-self-hosted scripts and stylesheets, the style attributes Uppy Dashboard needs
-for dimensions/progress/transitions, and connections to the configured tus
-origin. Inline scripts remain blocked, so both public URLs must be correct before
-startup.
+Check the public addresses:
 
-## Prepare worker models
+```text
+https://api.example.com/health
+https://api.example.com/ready
+https://api.example.com/docs
+https://api.example.com/mcp
+```
 
-Start the stack, then explicitly prepare the model set before accepting
-indexing requests. Submit preparation through the authenticated API so the
-durable job executes on the worker and writes to the shared model volume:
+`/ready` confirms that the server can accept requests. Model readiness is
+checked separately after the next step.
 
-| Selected models | Maximum pinned download |
+## 5. Download worker models
+
+VidXP does not download models during deployment. After the stack is healthy,
+submit a model-preparation job through the authenticated API.
+
+| Feature | Approximate download |
 |---|---:|
-| Dialogue + scene + actor | Approximately 4.11 GiB |
+| Dialogue search | 2.64 GiB |
+| Scene search | 1.43 GiB |
+| Action search | 0.93 GiB |
+| Actor matching | 37 MiB |
 
-The request below is the operator's explicit authorization for those
-downloads. Ensure the `model-cache` volume has enough additional capacity:
+The example below prepares every built-in search feature. In the shell running
+the request, set `VIDXP_API_TOKEN` to the private API token configured above.
+The API name for action search is `videoprism`.
 
 ```bash
 curl --fail-with-body \
   --request POST \
-  "https://${VIDXP_PUBLIC_API_HOST}/api/v1/jobs/model-preparation" \
-  --header "Authorization: Bearer ${VIDXP_HTTP_STATIC_BEARER_TOKEN}" \
+  "https://api.example.com/api/v1/jobs/model-preparation" \
+  --header "Authorization: Bearer ${VIDXP_API_TOKEN}" \
   --header "Idempotency-Key: initial-cpu-models-v1" \
   --header "Content-Type: application/json" \
-  --data '{"modalities":["dialogue","scene","actor"],"capability_options":{}}'
+  --data '{"modalities":["dialogue","scene","videoprism","actor"],"capability_options":{}}'
 ```
 
-The `202 Accepted` response contains the durable `job_id`. Use the bounded wait
-endpoint for compact status, passing the returned observation token on the next
-request. Fetch the full job once after it becomes terminal:
+The `202 Accepted` response includes a `job_id`. Insert it into the wait
+request:
 
 ```bash
 curl --fail-with-body \
-  --header "Authorization: Bearer ${VIDXP_HTTP_STATIC_BEARER_TOKEN}" \
-  "https://${VIDXP_PUBLIC_API_HOST}/api/v1/jobs/<job-id>/wait?timeout_seconds=30"
+  --header "Authorization: Bearer ${VIDXP_API_TOKEN}" \
+  "https://api.example.com/api/v1/jobs/<job-id>/wait?timeout_seconds=30"
 ```
 
-The Streamable HTTP MCP `prepare_models`, `wait_job`, and `get_job` tools expose
-the same operation for an authenticated agent client. Check
-`/api/v1/runtime/readiness` afterward; `/ready` covers control-plane
-availability and does not claim that every optional model is prepared.
+If another wait is needed, append
+`&after_observation_token=<observation-token>` with the token from the previous
+response. Once the job finishes, check `/api/v1/runtime/readiness`.
 
-## Optional grounded query model
+An authenticated MCP client can perform the same operation with
+`prepare_models`, `wait_job`, and `get_job`.
 
-Grounded retrieval works without a language model and returns timestamped
-evidence. To enable generated claims, choose a model only after evaluating its
-schema adherence, resource use, license, and grounding behavior. Set both:
+## 6. Review upload limits
+
+Start with the defaults unless the host has a smaller storage budget:
+
+| Setting | Default |
+|---|---:|
+| `VIDXP_UPLOAD_MAX_BYTES` | 50 GiB per file |
+| `VIDXP_UPLOAD_SESSION_MAX_FILES` | 10 files per session |
+| `VIDXP_UPLOAD_SESSION_MAX_BYTES` | 100 GiB per session |
+| `VIDXP_UPLOAD_QUOTA_BYTES` | 100 GiB reserved across the repository |
+| `VIDXP_UPLOAD_SESSION_TTL_SECONDS` | 24 hours |
+
+Override a value in the deployment environment when needed. The session byte
+limit cannot be smaller than the per-file limit.
+
+VidXP removes temporary access tokens from browser history after an upload or
+download begins, but an upstream proxy can still leak a URL through its logs.
+Keep the log restrictions from the proxy step in place.
+
+`VIDXP_MCP_MAX_RESOURCE_BYTES` sets the largest file returned directly in an
+MCP response. Larger videos use the resumable HTTPS artifact route instead of
+being loaded completely into memory.
+
+## 7. Optional generated answers
+
+Search and timestamped evidence work without a language model. To let VidXP
+generate written claims from that evidence, first evaluate a model's resource
+use, license, structured-output reliability, and grounding behavior.
+
+Then configure the selected model:
 
 ```dotenv
 VIDXP_SLM_BASE_URL=http://ollama:11434/v1
 VIDXP_SLM_MODEL=<evaluated-local-model>
 ```
 
-Then start the optional service and explicitly prepare the selected model:
+Start Ollama and explicitly download the model:
 
 ```bash
-docker compose -f compose.coolify.yaml --profile slm up -d ollama
-docker compose -f compose.coolify.yaml --profile slm exec ollama \
+docker compose --env-file .env -f compose.coolify.yaml --profile slm up -d ollama
+docker compose --env-file .env -f compose.coolify.yaml --profile slm exec ollama \
   ollama pull <evaluated-local-model>
-docker compose -f compose.coolify.yaml up -d worker
+docker compose --env-file .env -f compose.coolify.yaml up -d worker
 ```
 
-The Compose deployment never pulls an SLM implicitly. Ollama is internal and
-should not be published through the proxy.
+Do not publish Ollama through the proxy. Compose never downloads this model
+automatically.
 
-## Start and verify
+## Back up and upgrade
+
+Before changing versions, back up PostgreSQL and these named volumes:
+
+- `chroma-data`;
+- `content-data`;
+- `upload-quarantine`; and
+- `model-cache`.
+
+Keep the backup until imports, indexes, searches, uploads, and downloads work
+on the new version.
+
+To upgrade, change both VidXP image variables to the same published version,
+pull the images, and deploy again. Do not mix control and worker versions. Wait
+for the migration job to finish before treating the API and worker as ready.
+
+The supported server uses the Compose service names `postgres` and `chroma`.
+Do not set `VIDXP_DATABASE_URL` or `VIDXP_CHROMA_SERVER_URL`, and do not replace
+these services with hosted alternatives in this topology.
+
+## Validate a Compose change
+
+This section is for contributors. Because `compose.coolify.yaml` requires
+images, secrets, hostnames, and upload addresses, a bare
+`docker compose config` command fails.
+
+Validate with a complete environment that is not committed:
 
 ```bash
-docker compose -f compose.coolify.yaml pull
-docker compose -f compose.coolify.yaml up -d --wait
-docker compose -f compose.coolify.yaml ps
+docker compose --env-file /path/to/vidxp.env \
+  -f compose.coolify.yaml config --quiet
 ```
 
-The migration and readiness containers should exit successfully. PostgreSQL, API,
-hooks, worker, and tusd should report healthy; Chroma is checked by the completed
-`chroma-ready` gate.
-
-This is the supported server topology: one node, one API/MCP service, one hook
-service, one CPU worker, and the bundled PostgreSQL, Chroma, tusd, and named
-volumes. It is not a multi-replica, failover, or provider-portability design. Back
-up PostgreSQL and the named data volumes before replacing a release.
-
-Treat each deployed stack as its singleton repository boundary. The current
-PostgreSQL catalog and Chroma collections intentionally contain no repository
-namespace. Deploy another complete stack, with separate databases and volumes, for
-a separate repository.
-
-VidXP server mode connects to the internal Compose service names `postgres` and
-`chroma`. Those endpoints are fixed by the supported topology: do not set
-`VIDXP_DATABASE_URL` or `VIDXP_CHROMA_SERVER_URL`, and do not substitute hosted
-PostgreSQL, hosted Chroma, or alternative database providers.
+This command validates configuration only. Before merging a deployment change,
+also test the affected image pull, migration, health check, model preparation,
+upload, artifact download, persistent data, upgrade, and rollback paths on a
+real deployment.
