@@ -589,7 +589,13 @@ def index_latency_command(
     ] = "scene",
     videos: Annotated[
         int,
-        typer.Option(min=1, help="Number of synthetic clips to generate."),
+        typer.Option(
+            min=1,
+            help=(
+                "Number of synthetic clips, or the maximum number of real "
+                "corpus clips to index."
+            ),
+        ),
     ] = 1,
     duration_seconds: Annotated[
         float,
@@ -628,6 +634,15 @@ def index_latency_command(
             )
         ),
     ] = "none",
+    corpus: Annotated[
+        str | None,
+        typer.Option(
+            help=(
+                "Real media corpus: 'didemo' (prepared DiDeMo media) or a "
+                "directory of video files. Omit for synthetic media."
+            ),
+        ),
+    ] = None,
     reset: Annotated[
         bool,
         typer.Option(help="Clear any existing index before running."),
@@ -659,7 +674,7 @@ def index_latency_command(
         typer.Option("--json", help="Emit machine-readable JSON."),
     ] = False,
 ) -> None:
-    """Run a reproducible indexing-latency benchmark on synthetic media."""
+    """Run a reproducible indexing-latency benchmark on synthetic or real media."""
 
     selected = [item.strip() for item in modalities.split(",") if item.strip()]
     if not selected:
@@ -668,6 +683,14 @@ def index_latency_command(
         )
     for modality in selected:
         _require_benchmark_dependencies(modality)
+
+    if corpus is not None and "dialogue" in selected:
+        if input_mode != "transcribe":
+            raise typer.BadParameter(
+                "Real corpora have no released transcripts; dialogue "
+                "requires --input-mode transcribe.",
+                param_hint="--input-mode",
+            )
 
     try:
         parts = resolution.lower().split("x")
@@ -701,6 +724,8 @@ def index_latency_command(
         reset=reset,
         baseline_path=baseline,
         baseline_tolerance=baseline_tolerance,
+        corpus=corpus,
+        data_dir=state.settings.data_dir,
     )
     if effective_output_format(state, json_output) == OutputFormat.json:
         emit_json(report)

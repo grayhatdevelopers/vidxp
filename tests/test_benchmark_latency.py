@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 
+from vidxp.benchmarks.common import benchmark_media_id
 from vidxp.benchmarks.latency import (
+    RealCorpusSpec,
     SyntheticCorpusSpec,
+    _load_corpus_overrides,
+    _validate_baseline_compatibility,
     aggregate_latency_runs,
     build_clip_command,
     build_latency_sources,
+    build_real_corpus_sources,
     compare_baseline,
+    discover_real_corpus,
+    resolve_corpus_directory,
     synthetic_transcript,
     validate_latency_options,
 )
@@ -317,6 +325,7 @@ class CorpusSpecTests(unittest.TestCase):
             width=320, height=180, audio_mode="none", seed=42,
         )
         record = spec.public_record()
+        self.assertEqual(record["kind"], "synthetic")
         self.assertEqual(record["videos"], 2)
         self.assertEqual(record["duration_seconds"], 8.0)
         self.assertEqual(record["audio_mode"], "none")
@@ -327,3 +336,201 @@ class CorpusSpecTests(unittest.TestCase):
             width=640, height=480, audio_mode="flite", seed=7,
         )
         self.assertEqual(spec.public_record()["audio_mode"], "flite")
+
+
+class RealCorpusResolutionTests(unittest.TestCase):
+    def test_none_selects_synthetic(self):
+        directory, name = resolve_corpus_directory(None, data_dir=Path("/x"))
+        self.assertIsNone(directory)
+        self.assertIsNone(name)
+
+    def test_directory_path_is_used_as_is(self):
+        path = Path("/tmp/media")
+        directory, name = resolve_corpus_directory(path)
+        self.assertEqual(directory, path)
+        self.assertIsNone(name)
+
+    def test_named_corpus_resolves_to_prepared_media(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            directory, name = resolve_corpus_directory(
+                "didemo",
+                data_dir=data_dir,
+            )
+        self.assertEqual(name, "didemo")
+        self.assertEqual(
+            directory,
+            data_dir / "benchmarks" / "didemo" / "media",
+        )
+
+    def test_unknown_corpus_rejected(self):
+        with self.assertRaises(ValueError):
+            resolve_corpus_directory("kinetics", data_dir=Path("/x"))
+
+    def test_named_corpus_requires_data_dir(self):
+        with self.assertRaises(ValueError):
+            resolve_corpus_directory("didemo")
+
+
+class RealCorpusSpecTests(unittest.TestCase):
+    def test_public_record_marks_real(self):
+        spec = RealCorpusSpec(
+            name="didemo",
+            source="/tmp/media",
+            video_count=3,
+            total_bytes=1500,
+            min_duration_seconds=4.0,
+            max_duration_seconds=9.0,
+            containers=(".mp4", ".webm"),
+            media_overrides=True,
+        )
+        record = spec.public_record()
+        self.assertEqual(record["kind"], "real")
+        self.assertEqual(record["name"], "didemo")
+        self.assertEqual(record["video_count"], 3)
+        self.assertEqual(record["total_bytes"], 1500)
+        self.assertEqual(record["containers"], [".mp4", ".webm"])
+        self.assertTrue(record["media_overrides"])
+
+
+class RealCorpusSourcesTests(unittest.TestCase):
+    def test_sources_transcribe_and_derive_ids(self):
+        clips = [
+            {
+                "video_name": "a.mp4",
+                "path": Path("/media/a.mp4"),
+                "duration_seconds": 5.0,
+                "size_bytes": 100,
+            },
+            {
+                "video_name": "b.webm",
+                "path": Path("/media/b.webm"),
+                "duration_seconds": 6.0,
+                "size_bytes": 200,
+            },
+        ]
+        sources = build_real_corpus_sources(clips)
+        self.assertEqual(len(sources), 2)
+        self.assertIsNone(sources[0].transcript)
+        self.assertEqual(sources[0].source_name, "a.mp4")
+        self.assertEqual(
+            sources[0].video_id,
+            benchmark_media_id("latency", "a.mp4"),
+        )
+        self.assertEqual(sources[1].source_name, "b.webm")
+
+
+class CorpusOverrideTests(unittest.TestCase):
+    def test_no_override_file_returns_empty(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            overrides = _load_corpus_overrides(Path(temporary))
+        self.assertEqual(overrides, {})
+
+    def test_resolves_relative_replacements_beside_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "media-overrides.json").write_text(
+                '{"12090392@N02_13482799053_87ef417396.mov": '
+                '"replacements/common-starlings.webm"}',
+                encoding="utf-8",
+            )
+            overrides = _load_corpus_overrides(root)
+            expected = (root / "replacements" / "common-starlings.webm").resolve()
+            self.assertEqual(
+                overrides["12090392@N02_13482799053_87ef417396.mov"],
+                expected,
+            )
+
+    def test_rejects_malformed_overrides(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "media-overrides.json").write_text(
+                "not json", encoding="utf-8"
+            )
+            with self.assertRaises(ValueError):
+                _load_corpus_overrides(root)
+
+
+class RealCorpusDiscoveryTests(unittest.TestCase):
+    def test_missing_media_directory_rejected(self):
+        with self.assertRaises(ValueError):
+            discover_real_corpus(
+                Path("/missing/media"),
+                corpus_root=Path("/missing"),
+                ffprobe="ffprobe",
+            )
+
+    def test_empty_media_directory_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            media = root / "media"
+            media.mkdir()
+            with self.assertRaises(ValueError):
+                discover_real_corpus(
+                    media,
+                    corpus_root=root,
+                    ffprobe="ffprobe",
+                )
+
+
+class BaselineCompatibilityTests(unittest.TestCase):
+    @staticmethod
+    def _synthetic_corpus(seed):
+        return {
+            "kind": "synthetic",
+            "videos": 2,
+            "duration_seconds": 8.0,
+            "fps": 24,
+            "width": 320,
+            "height": 180,
+            "audio_mode": "none",
+            "seed": seed,
+        }
+
+    @staticmethod
+    def _real_corpus(**overrides):
+        corpus = {
+            "kind": "real",
+            "name": "didemo",
+            "source": "/tmp/media",
+            "video_count": 2,
+            "total_bytes": 1000,
+            "min_duration_seconds": 5.0,
+            "max_duration_seconds": 8.0,
+            "containers": [".mp4"],
+            "media_overrides": False,
+        }
+        corpus.update(overrides)
+        return corpus
+
+    @staticmethod
+    def _report(corpus):
+        return {
+            "corpus": corpus,
+            "input_mode": "transcript",
+            "device": "cpu",
+            "modalities": ["scene"],
+        }
+
+    def test_matching_real_corpus_passes(self):
+        report = self._report(self._real_corpus())
+        baseline = self._report(self._real_corpus())
+        _validate_baseline_compatibility(report, baseline)
+
+    def test_real_versus_synthetic_mismatch_rejected(self):
+        report = self._report(self._real_corpus())
+        baseline = self._report(self._synthetic_corpus(2026))
+        with self.assertRaises(ValueError):
+            _validate_baseline_compatibility(report, baseline)
+
+    def test_real_corpus_scale_change_rejected(self):
+        report = self._report(self._real_corpus(video_count=2))
+        baseline = self._report(self._real_corpus(video_count=3))
+        with self.assertRaises(ValueError):
+            _validate_baseline_compatibility(report, baseline)
+
+    def test_synthetic_seed_change_rejected(self):
+        report = self._report(self._synthetic_corpus(2026))
+        baseline = self._report(self._synthetic_corpus(7))
+        with self.assertRaises(ValueError):
+            _validate_baseline_compatibility(report, baseline)
