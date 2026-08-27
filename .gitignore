@@ -39,6 +39,8 @@ pnpm-debug.log*
 /target
 /desktop/node_modules/
 /desktop/dist/
+/premiere/dist/
+/premiere/coverage/
 /desktop/src-tauri/target/
 /desktop/src-tauri/gen/
 /desktop/src-tauri/binaries/uv-*

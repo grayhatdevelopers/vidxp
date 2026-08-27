@@ -52,6 +52,24 @@ If port `32191` is already in use, choose another one:
 vidxp-api --port 32192
 ```
 
+### Ingest media already available on this computer
+
+A local application can register media without copying the video through an
+HTTP request. Send one to ten absolute file paths to
+`POST /api/v1/media/local-ingestions`, then poll the URL from its `Location`
+header until the session is terminal. Set `modalities` to the indexable names
+returned by `GET /api/v1/capabilities`; omit it to use every enabled indexing
+feature.
+
+This operation is available only when `vidxp-api` runs in local mode. Every
+path must be readable by the VidXP process and, when trusted import roots are
+configured, must be inside one of those roots. The response never returns a
+source path. Use the upload operations instead when the application and VidXP
+do not share a filesystem.
+
+The [Premiere Pro extension preview](integrations/premiere-pro.md) uses this
+workflow for media already loaded in a Premiere project.
+
 ## Connect a local AI assistant
 
 An assistant that can start a program on the same computer does not need the

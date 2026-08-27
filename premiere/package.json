@@ -1,0 +1,42 @@
+{
+  "name": "vidxp-premiere-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "packageManager": "npm@11.6.0",
+  "engines": {
+    "node": "^22.19.0 || ^24.15.0 || ^26.0.0",
+    "npm": ">=11.6.0"
+  },
+  "scripts": {
+    "clean": "rimraf dist coverage",
+    "build": "vite build",
+    "dev": "concurrently -k -n build,types \"vite build --watch\" \"tsc --watch --noEmit --preserveWatchOutput\"",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "check": "npm run typecheck && npm run lint && npm run test:run && npm run build"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@adobe/cc-ext-uxp-types": "7.3.1",
+    "@adobe/eslint-plugin-premierepro": "26.3.0",
+    "@adobe/premierepro": "26.3.0",
+    "@eslint/js": "9.39.2",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "concurrently": "10.0.5",
+    "eslint": "9.39.2",
+    "eslint-plugin-react-hooks": "7.0.1",
+    "rimraf": "6.1.3",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.65.0",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}

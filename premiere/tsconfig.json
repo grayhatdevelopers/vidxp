@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "useDefineForClassFields": true,
+    "lib": ["ESNext", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "types": [
+      "@adobe/cc-ext-uxp-types",
+      "@adobe/premierepro",
+      "@types/node",
+      "vitest/globals"
+    ]
+  },
+  "include": ["index.tsx", "src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

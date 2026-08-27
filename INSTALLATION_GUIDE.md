@@ -79,6 +79,10 @@ setup leaves the previous working setup available.
 - **App integration service** lets other local applications use the HTTP API or
   Streamable HTTP MCP.
 
+The [Premiere Pro extension preview](docs/integrations/premiere-pro.md) uses
+the app integration service to search media that is already loaded in an
+editing project.
+
 Choose where models should be stored, then decide whether to download them
 during setup. VidXP displays the required downloads before starting them.
 
