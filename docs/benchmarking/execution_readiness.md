@@ -1,5 +1,10 @@
 # Benchmark execution readiness
 
+> **Historical assessment:** Statements below that generic sound was unsupported
+> accurately describe the implementation when this assessment was written. The
+> active [multimodal model direction](model_selection.md) now selects a
+> FineLAP-first sound layer before full LongVALE and FLARE execution.
+
 Collection index: [Benchmarking research](README.md)
 
 Status: Historical pre-implementation assessment
