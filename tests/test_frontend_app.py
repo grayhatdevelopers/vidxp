@@ -161,7 +161,7 @@ def ready_status() -> IndexStatus:
             snapshot_id=SNAPSHOT_ID,
             media_count=1,
             media_ids=(MEDIA_ID,),
-            modalities=("dialogue", "scene", "actor", "videoprism"),
+            modalities=("dialogue", "sound", "scene", "actor", "videoprism"),
         ),
     )
 

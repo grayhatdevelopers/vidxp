@@ -34,6 +34,7 @@ Approximate model downloads are:
 | Feature | Download |
 |---|---:|
 | Dialogue search | 2.64 GiB |
+| Sound event search | 0.94 GiB |
 | Scene search | 1.43 GiB |
 | Action search | 0.93 GiB |
 | Actor matching | 37 MiB |
@@ -161,6 +162,7 @@ asking for confirmation. Download only selected features when preferred:
 vidxp prepare --modalities scene
 vidxp prepare --modalities dialogue,actor
 vidxp prepare --modalities videoprism  # action search
+vidxp prepare --modalities sound       # music and environmental sounds
 ```
 
 For a noninteractive script, add `--yes`. Indexing and search commands do not
@@ -192,6 +194,9 @@ vidxp search scene "a yellow taxi on a city street"
 
 # Find an action or event (`videoprism` is the CLI name for action search)
 vidxp search videoprism "a person opens a door and walks outside"
+
+# Find music or an environmental sound
+vidxp search sound "an alarm ringing"
 
 # Find something that was said
 vidxp search dialogue "the bread just came out of the oven"
@@ -277,6 +282,7 @@ assembling a custom installation:
 | Extra | Adds |
 |---|---|
 | `dialogue` | Transcription, dialogue embeddings, and storage |
+| `sound` | Music and environmental-sound search and storage |
 | `scene` | Scene search and storage |
 | `videoprism` | Action search and storage |
 | `actor` | Actor matching and storage |

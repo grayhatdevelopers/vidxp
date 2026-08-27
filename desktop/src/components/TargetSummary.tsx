@@ -48,6 +48,7 @@ const CAPABILITY_LABELS: Record<string, string> = {
   dialogue: 'Dialogue search',
   media: 'Video tools',
   scene: 'Visual scene search',
+  sound: 'Sound event search',
   videoprism: 'Temporal video search',
 };
 

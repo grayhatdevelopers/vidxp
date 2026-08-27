@@ -2,8 +2,8 @@
 
 Collection index: [Benchmarking research](README.md)
 
-Status: Current decision record; providers described here are planned unless the
-current-results or architecture documents say they are implemented
+Status: Current decision record; FineLAP and VideoPrism are implemented, while
+other candidate providers remain planned unless architecture says otherwise
 
 Last verified: 2026-08-27
 
@@ -22,11 +22,11 @@ generic audio, speech, or their temporal relationship.
 
 ## Repository baseline
 
-The reachable Git history through 2026-08-27 contains no shipped CLAP provider or
-generic-sound capability. CLAP appears in the later landscape/roadmap research,
-not in the application implementation history. It was therefore not removed by
-the VideoPrism change in the history available to this repository; generic sound
-remained an unimplemented layer.
+The history before this change contained no shipped CLAP provider or generic-sound
+capability. CLAP appears in the later landscape/roadmap research, not in the
+application implementation history, so it was not removed by the VideoPrism
+change. This branch now implements the missing layer with FineLAP; LAION-CLAP
+remains the mature comparison rather than the production provider.
 
 VideoPrism is different: it is a current, separately registered temporal-video
 capability using `google/videoprism-lvt-base-f16r288` through Transformers. The
@@ -51,8 +51,8 @@ evaluation harness would answer a different question.
 | Role | First direction | Control or ceiling | Reason |
 | --- | --- | --- | --- |
 | Speech transcription and semantic search | Keep faster-whisper plus the current Qwen3 text-embedding path | Existing released-ASR benchmark paths | Speech and acoustic-event retrieval are different tasks; MAEB shows that no single audio encoder dominates linguistic and environmental-sound work. |
-| Environmental-sound retrieval | Integrate [FineLAP](https://github.com/xiquan-li/FineLAP) first | [LAION-CLAP](https://github.com/LAION-AI/CLAP) as the mature native-Transformers baseline | FineLAP combines global audio-text retrieval with dense frame features and leads the checked same-table AudioCaps comparison. Its fixed ten-second input still requires VidXP-owned windowing and span merging. |
-| Open-vocabulary sound localization | Start with FineLAP dense features; compare [PE-A-Frame](https://github.com/facebookresearch/perception_models) | AEGBench methods as research ceilings | Clip retrieval alone cannot identify exact sound intervals, especially repeated or overlapping events. |
+| Environmental-sound retrieval | [FineLAP](https://github.com/xiquan-li/FineLAP), now integrated | [LAION-CLAP](https://github.com/LAION-AI/CLAP) as the mature native-Transformers baseline | FineLAP combines global audio-text retrieval with dense frame features and leads the checked same-table AudioCaps comparison. VidXP supplies fixed ten-second windowing and timestamped dense records. |
+| Open-vocabulary sound localization | FineLAP dense features, now stored; compare [PE-A-Frame](https://github.com/facebookresearch/perception_models) | AEGBench methods as research ceilings | Clip retrieval alone cannot identify exact sound intervals, especially repeated or overlapping events. FineLAP integration does not establish boundary quality until AEGBench or LongVALE is run. |
 | Visual scene/action retrieval | Evaluate [Qwen3-VL-Embedding-2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B) as the practical candidate | Qwen3-VL-Embedding-8B as the quality ceiling; VideoPrism as the incumbent control | MVEB's text-video table ranks Qwen 8B and 2B first and second. The checked table has no directly comparable VideoPrism row, so this is stronger current selection evidence, not proof that VideoPrism lost a head-to-head. |
 | Visual temporal grounding | Evaluate [TimeLens2-4B](https://github.com/MCG-NJU/TimeLens2) after candidate retrieval | TimeLens2-8B and existing temporal baselines | The published 4B average nearly matches 8B at much lower cost. TimeLens2 is visual-only and cannot replace the sound or speech channels. |
 | Cross-modal fusion | Keep modality-specific providers and fuse timestamped candidates | A unified permissive audio-video-text encoder can be a later comparison | Separate providers preserve provenance, allow independent upgrades, and match the evidence that different model families lead different modalities and tasks. |
@@ -123,8 +123,8 @@ runs only when their result answers an approved paper or release question.
 
 ## Implementation order
 
-1. Add the environmental-sound capability with FineLAP, timestamped windows, and
-   explicit sound provenance.
+1. Validate the implemented FineLAP sound capability on a bounded real-media
+   sample, then run the LongVALE one-archive adapter pilot.
 2. Compare LAION-CLAP as the mature integration baseline and PE-A-Frame where
    boundary quality requires a specialist.
 3. Add or replace the visual video-embedding provider with

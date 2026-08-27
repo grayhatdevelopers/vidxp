@@ -773,6 +773,18 @@ composition root and is sorted deterministically.
   `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`; its published multilingual MTEB
   retrieval results materially exceed the older multilingual E5 baseline and its
   Apache-2.0 license permits the intended deployment.
+- Sound: use FineLAP at immutable Hugging Face revision
+  `b419aa22947d29907a5567f21b81bf3b39a40449`. Each video audio stream is decoded
+  once into ten-second windows. The sound collection stores one normalized global
+  embedding per window and the model's normalized dense embeddings as timestamped
+  activation records. Both use the shared text/audio space, and search results
+  retain `representation`, window, and activation provenance. FineLAP requires
+  repository-supplied Transformers code; VidXP loads only the pinned snapshot,
+  keeps runtime loading offline, and prepares the two small pinned RoBERTa
+  tokenizer artifacts explicitly instead of allowing a constructor-time model
+  download. The Hugging Face model card declares MIT; the upstream GitHub source
+  repository does not contain a separate license file, so redistribution review
+  must preserve that qualification.
 - Actor: replace `face_recognition`/dlib with OpenCV Zoo YuNet plus SFace through
   OpenCV's maintained DNN APIs. Model files are retrieved with `pooch`, pinned to
   OpenCV Zoo commit `47534e27c9851bb1128ccc0102f1145e27f23f98`, and verified

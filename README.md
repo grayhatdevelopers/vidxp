@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <strong>Dialogue search · Scene search · Action search · Actor grouping</strong>
+  <strong>Dialogue search · Sound search · Scene search · Action search · Actor grouping</strong>
 </p>
 
 <p align="center">
@@ -122,7 +122,7 @@ See the [Coolify guide](docs/deployment/coolify.md) for the complete setup.
 ## What you can do today
 
 - Build searchable libraries from individual videos or whole collections.
-- Find dialogue by meaning and visual moments by describing the scene.
+- Find dialogue, sound events, visual scenes, and multi-frame actions by description.
 - Ask grounded questions and inspect the supporting boards, frames, or clips.
 - Group recurring faces and render highlighted actor overlays.
 - Keep personal, client, or project libraries separate.
@@ -145,6 +145,9 @@ vidxp search scene "a yellow taxi on a city street"
 
 # Find an action or event
 vidxp search videoprism "a person opens a door and walks outside"
+
+# Find a sound event
+vidxp search sound "a dog barking over traffic noise"
 
 # Find something that was said
 vidxp search dialogue "the bread just came out of the oven"
@@ -205,12 +208,13 @@ approximately 3 GiB.
 | Capability | Approximate model download |
 |---|---:|
 | Dialogue search | 2.64 GiB |
+| Sound event search | 0.94 GiB |
 | Scene search | 1.43 GiB |
 | Action search | 0.93 GiB |
 | Actor matching | 37 MiB |
 
 A full local Desktop setup with every search capability uses approximately
-8.1 GiB. Leave additional temporary space during installation and for indexes,
+9.0 GiB. Leave additional temporary space during installation and for indexes,
 source videos, and exported results.
 
 By default, the CLI and desktop app share the same VidXP data directory:

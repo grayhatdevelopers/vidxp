@@ -10,8 +10,8 @@ Applies to: VidXP / ActorDB paper benchmarking work
 
 > **Current direction:** The 2026-08-27
 > [multimodal model decision](model_selection.md) supersedes this brief's
-> implemented-capability-only sequencing. Environmental-sound retrieval is now
-> the next planned capability, followed by full vision/sound/speech evaluation.
+> implemented-capability-only sequencing. Environmental-sound retrieval has now
+> been implemented; full vision/sound/speech evaluation is the next phase.
 > This file remains the historical discovery contract.
 
 This document preserves the rules used to start the benchmark research. It

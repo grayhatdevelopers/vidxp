@@ -90,12 +90,12 @@ class FrontendTests(unittest.TestCase):
                 return_value=service,
             ):
                 available = frontend._available_query_modalities(
-                    ("dialogue", "scene", "actor", "videoprism"),
+                    ("dialogue", "sound", "scene", "actor", "videoprism"),
                 )
 
         self.assertEqual(
             available,
-            ("dialogue", "scene", "actor", "videoprism"),
+            ("dialogue", "sound", "scene", "actor", "videoprism"),
         )
 
     def tearDown(self):
@@ -337,7 +337,10 @@ class FrontendTests(unittest.TestCase):
             ):
                 available = frontend._available_index_modalities()
 
-        self.assertEqual(available, ("dialogue", "scene", "videoprism"))
+        self.assertEqual(
+            available,
+            ("dialogue", "sound", "scene", "videoprism"),
+        )
         self.assertTrue(
             all(
                 not call.args[0].include_runtime_checks

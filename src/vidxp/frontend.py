@@ -133,6 +133,7 @@ CAPABILITY_LABELS = {
     "dialogue": "Dialogue search",
     "natural-language": "Ask a question",
     "scene": "Scene search",
+    "sound": "Sound event search (FineLAP)",
     "videoprism": "Temporal action search (VideoPrism)",
 }
 
@@ -907,7 +908,7 @@ def run():
     service = _configured_service()
     st.title("VidXP")
     st.caption(
-        "Index and search video by dialogue, scene, temporal clips, and actor."
+        "Index and search video by dialogue, sound, scenes, actions, and actor."
     )
     st.caption(f"Index repository: {service.layout.root}")
     if notice := st.session_state.pop(MEDIA_NOTICE_KEY, None):

@@ -94,6 +94,12 @@ The file data stays on the computer and does not pass through MCP. As with an
 upload, the client can use `modalities` to select a smaller set of search
 features.
 
+Use the `sound` modality to index or search music, environmental sounds, and
+other non-speech audio events. CLI, HTTP, local stdio MCP, remote MCP, browser,
+and Desktop all resolve that name through the same capability contract. Spoken
+words remain a separate `dialogue` modality, while multi-frame visible actions
+use `videoprism`.
+
 ## Connect from another computer
 
 To make the API reachable from another device on the same trusted network,

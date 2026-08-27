@@ -152,14 +152,13 @@ The result is a useful legacy validation baseline, not a final held-out paper
 result. The current two-video Qwen3 smoke establishes compatibility only; it
 does not supersede this score.
 
-## Next capability and combined benchmark
+## Next combined benchmark
 
-The environmental-sound layer comes before the next full benchmark. LongVALE is
-then the primary combined experiment because it contains visual, generic-audio,
-and spoken evidence in long videos. The work is ordered as follows:
+The FineLAP environmental-sound layer is implemented but has no VidXP quality
+result yet. LongVALE is the primary next experiment because it contains visual,
+generic-audio, and spoken evidence in long videos. The work is ordered as follows:
 
-1. Add timestamped environmental-sound indexing and search with FineLAP; retain
-   LAION-CLAP as a comparison.
+1. Complete a bounded real-media FineLAP integration smoke and record resource use.
 2. Convert LongVALE event descriptions into visual, sound, and dialogue searches.
 3. Combine those result lists using one fixed, provenance-preserving rule.
 4. Return the single start/end range required by the official evaluator.
@@ -167,11 +166,11 @@ and spoken evidence in long videos. The work is ordered as follows:
    storage, and index growth.
 6. Run the complete evaluation only if that pilot finishes cleanly.
 
-VidXP does not currently understand general sound events; this is a planned
-direction, not a shipped claim. If LongVALE is run before that changes, sound-only
-misses must remain in the official result and be disclosed rather than filtered
-out. See [multimodal model direction](model_selection.md) for the selection
-evidence and benchmark roles.
+VidXP now indexes general sound events, but implementation is not evidence of
+retrieval or boundary quality. The full LongVALE query set must remain in the
+official denominator, including sound-only misses. See
+[multimodal model direction](model_selection.md) for the selection evidence and
+benchmark roles.
 
 ## Sources and reproduction
 

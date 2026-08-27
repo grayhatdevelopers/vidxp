@@ -6,8 +6,8 @@ Status: Candidate research complete; execution status updated
 
 Last verified: 2026-08-27
 
-Scope: Capabilities implemented in the current `src/vidxp` package plus the next
-planned environmental-sound capability
+Scope: Capabilities implemented in the current `src/vidxp` package, including
+timestamped environmental-sound retrieval
 
 This catalog is the detailed decision record for published benchmarks. Current
 VidXP measurements are reported separately in [results](results.md). Published
@@ -40,18 +40,19 @@ The selected suite remains component-based:
    to BCL's supplied features.
 6. **MAEB**, **MVEB**, and **AEGBench** as component-selection and regression
    sources for audio embeddings, video embeddings, and sound-event boundaries.
-7. **LongVALE** as the primary combined vision–sound–speech temporal test after
-   the planned environmental-sound provider exists.
+7. **LongVALE** as the primary combined vision–sound–speech temporal test now that
+   the environmental-sound provider exists.
 8. A fixed local indexing/query timing protocol, reported as a VidXP engineering
    measurement rather than as a score directly comparable with unrelated hardware.
 
 LongVALE is the strongest peer-reviewed combined vision–audio–speech temporal
 benchmark found. It still omits actor clustering and expects genuinely fused
-multi-modal interval predictions. The environmental-sound provider is now the
-next planned capability; the current implementation must still disclose that it
-is absent. FLARE is a smaller downloadable audio-visual stress test, but it is a 2026
-preprint benchmark with generated, filtered queries. It belongs in a secondary
-experiment or watchlist until peer review and benchmark stability improve.
+multi-modal interval predictions. FineLAP now supplies separate global-window and
+dense timestamped sound evidence, but the LongVALE adapter and fusion rule remain
+unimplemented and no quality score is claimed. FLARE is a smaller downloadable
+audio-visual stress test, but it is a 2026 preprint benchmark with generated,
+filtered queries. It belongs in a secondary experiment or watchlist until peer
+review and benchmark stability improve.
 
 See [execution readiness](execution_readiness.md) for the corrected implementation
 boundary and per-benchmark engineering classification.
@@ -114,12 +115,12 @@ protocol. It does not mean that a similar published score is already comparable.
 | Movie face clustering | [MovieFaceCluster / VideoClusterNet](https://www.ecva.net/papers/eccv_2024/papers_ECCV/html/4432_ECCV_2024_paper.php) | Unsupervised face-track clustering across nine movies | Whether VidXP actor clustering generalizes to a recent movie protocol | Executable evidence while the dataset link and code remain unavailable | Blocked/reference-only |
 | Egocentric face clustering | [EasyCom-Clustering](https://github.com/ibug-group/Easycom-Clustering) | Face-track clustering in egocentric social video | Whether actor clusters remain stable under first-person views, occlusion, and viewpoint changes | Any executable result until the promised data is released | Blocked/reference-only |
 | Face verification provenance | [LFW / dlib protocol](https://github.com/ageitgey/face_recognition) | Same/different identity verification on still-image pairs | Only the provenance and generic discrimination of the underlying face embedding | VidXP actor clustering, face detection coverage, temporal continuity, or unknown-K performance | Not an actor benchmark; provenance only |
-| Combined temporal | [LongVALE](https://github.com/ttgeng233/LongVALE) | Vision, speech, and generic-audio event grounding in long videos, with one interval per event query | Whether a frozen VidXP interval proposal and scene/speech fusion localize multimodal events | Actor clustering or full omni-modal coverage because VidXP lacks generic-audio recognition | Engineering A/medium; artifacts reachable; compliance, interval, and runtime gates remain |
+| Combined temporal | [LongVALE](https://github.com/ttgeng233/LongVALE) | Vision, speech, and generic-audio event grounding in long videos, with one interval per event query | Whether a frozen VidXP interval proposal and scene/sound/speech fusion localize multimodal events | Actor clustering or proof of omni-modal quality before the new sound path and fusion adapter are evaluated | Engineering A/medium; artifacts reachable; compliance, interval, and runtime gates remain |
 | Audiovisual retrieval | [FLARE](https://flarebench.github.io/) | Caption-to-clip/video retrieval plus clip-level model-simulated visual-only, audio-only, and joint query retrieval | Where VidXP's scene, speech, and fixed-fusion clip rankings succeed or fail across evidence types | Actor performance, human-authored-query generalization, or full generic-sound capability | Engineering A/medium; ready/watchlist preprint |
 | Large-corpus event | [MultiVENT 2.0](https://huggingface.co/datasets/hltcoe/MultiVENT2.0) | Multilingual event-centric ranked-video retrieval using visual, speech/ASR, embedded-text/OCR, and human-description metadata evidence | Whether existing VidXP visual, speech, and metadata paths scale to a large heterogeneous corpus; unsupported OCR becomes a measurable weakness | Timestamp localization, actor clustering, generic acoustic-event retrieval, or multilingual adequacy of the current Qwen3 embedding provider | Engineering A with large operational adapter; approximately 1.93 TB gated |
 | Large-corpus shot | [TRECVID AVS / V3C](https://www-nlpir.nist.gov/projects/tv2025/avs.html) | Natural-language query to up to 1,000 ranked master shots, measured with mean xinfAP | Whether VidXP scene retrieval scales to over a million pooled/judged shots and returns useful corpus rankings | Dialogue or actor performance, or comparable latency across different hardware | Archived 2024/2025 protocol; agreement and approximately 1.6 TB gated |
 | Multimodal whole-video | [MUVR](https://github.com/debby-0527/MUVR) | Paired query-video plus detailed text to ranked short normalized videos; pure-text and pure-video are ablations | Whether VidXP ranks relevant videos for a declared pure-text ablation or a reusable-CLIP visual slice | Timestamp localization, audio/dialogue understanding, actors, or equivalence to the defining paired-query task | Ablation slice adaptable; lower priority |
-| Audiovisual whole-video | [VALOR-32K](https://github.com/TXH-mercury/VALOR) | Bidirectional audiovisual-text retrieval and audiovisual captioning over 32,000 ten-second clips with human captions | Whether VidXP's visual/speech or fixed audiovisual representation ranks captioned clips on a standard released split | Temporal localization, actor clustering, long-video search, or full parity without a generic-audio model | Benchmark and official artifacts verified; media links/source rights must be checked |
+| Audiovisual whole-video | [VALOR-32K](https://github.com/TXH-mercury/VALOR) | Bidirectional audiovisual-text retrieval and audiovisual captioning over 32,000 ten-second clips with human captions | Whether VidXP's visual/sound/speech or fixed audiovisual representation ranks captioned clips on a standard released split | Temporal localization, actor clustering, long-video search, or full parity before a matching adapter run | Benchmark and official artifacts verified; media links/source rights must be checked |
 | Agentic multimodal retrieval | [MM-MSRVTT and TVR-1200](https://openaccess.thecvf.com/content/WACV2026/html/Shah_VRAgent_Self-Refining_Agent_for_Zero-Shot_Multimodal_Video_Retrieval_WACV_2026_paper.html) | Visual-plus-ASR/joint whole-video retrieval on 500 generated MSR-VTT queries and 1,200 adapted TVR queries | A future released run could compare VidXP's frozen fusion with an agent-refined multimodal query strategy | Any current reproducible claim while the defining annotations and code are absent | Benchmark-defining but artifact-blocked |
 | Advertising-context retrieval | [ContextIQ Val-1](https://openaccess.thecvf.com/content/WACV2025/html/Chaubey_ContextIQ_A_Multimodal_Expert-Based_Video_Retrieval_System_for_Contextual_Advertising_WACV_2025_paper.html) | Eight ad-concept queries over 500 YouTube movie clips using manually judged top-five results | Whether VidXP's modality experts produce useful contextual whole-video rankings on this small released annotation set | Standard large-corpus generalization, temporal localization, actors, or comparison to a widely adopted protocol | Low-priority custom benchmark; IDs/splits/queries public, media survival gated |
 | Vector database | [VectorDBBench](https://github.com/zilliztech/vectordbbench) | ANN index build time, recall, latency, and throughput | Whether Chroma retrieves VidXP embeddings accurately and efficiently at a stated scale | Video decoding/model cost or end-to-end retrieval quality | Engineering A; ready diagnostic |
@@ -149,8 +150,8 @@ their published numbers alone do not answer a VidXP capability question:
 | 5 | Dialogue | TVR, `t` subset | A, medium adapter | Gated | Lawful TV clips with original audio |
 | 6 | Actor | BCL on BBT/Buffy | A, medium clustering adapter | Gated | Released inference script cannot score VidXP clusters; lawful raw episodes needed |
 | 7 | Visual | Charades-STA | A, medium adapter | Gated | Dataset agreement and narrow staged domain |
-| 8 | Whole system | LongVALE | B until sound ships, then A/medium fusion adapter | Artifacts reachable; sound/compliance/runtime gates | Evaluation-only raw archives are 40.523 GiB; full 254 GB repository is not required; current code lacks generic audio, while the planned FineLAP layer targets it |
-| 9 | Whole system | FLARE | B until sound ships, then A/medium adapter | Ready artifacts; sound/runtime gate/watchlist | 66.267 GiB release; preprint; generated rank-filtered queries; full visual/audio/joint coverage follows sound integration |
+| 8 | Whole system | LongVALE | A/medium fusion adapter | Artifacts reachable; compliance/runtime gates | Evaluation-only raw archives are 40.523 GiB; full 254 GB repository is not required; FineLAP sound records are available, while the evaluation adapter remains |
+| 9 | Whole system | FLARE | A/medium adapter | Ready artifacts; runtime gate/watchlist | 66.267 GiB release; preprint; generated rank-filtered queries; visual/audio/joint coverage now needs adapter validation |
 | 10 | Actor | Hannah | A, medium evaluator adapter | Gated | Research agreement and separately obtained movie |
 | 11 | Actor/system | MovieNet | A for component slices | Gated | Registration; movies excluded; actor labels are keyframe-oriented |
 
@@ -532,7 +533,8 @@ The active provider conclusions and exact published selection scores are in
   speech, and generic audio but not actors. VidXP must freeze a point-to-interval
   or interval-proposal rule and emit one top-ranked interval, then combine its
   visual, environmental-sound, and speech evidence with a frozen,
-  provenance-preserving fusion rule after the sound provider exists.
+  provenance-preserving fusion rule. The FineLAP provider now exists, but that
+  fusion adapter does not.
   Returning top three alone does not satisfy the protocol. Generic-audio evidence
   within official event queries is unsupported by the current implementation;
   keep all 13,867 queries in the denominator unless a separately justified
@@ -541,7 +543,7 @@ The active provider conclusions and exact published selection scores are in
   path, not a standalone reproduction package. That path additionally needs its
   base model/projector/stage weights, CUDA environment, and evaluator. In all
   cases, those features bypass VidXP and cannot substitute for running VidXP's
-  configured scene/transcription/dialogue providers on the raw evaluation
+  configured scene/sound/transcription/dialogue providers on the raw evaluation
   videos.
 - **Operations:** raw evaluation media are now packaged directly, so YouTube
   survival is no longer the access gate. The raw MP4 payload expands to
@@ -552,9 +554,8 @@ The active provider conclusions and exact published selection scores are in
   require a measured pilot. No LongVALE model checkpoint is needed for a VidXP
   run.
 - **Verdict/confidence:** **Adaptable with reachable evaluation artifacts and
-  license/compliance plus runtime/capacity gates; confirmed.** Run the complete
-  protocol after the planned sound layer; until then generic-audio coverage is an
-  explicit limitation.
+  license/compliance plus runtime/capacity gates; confirmed.** Run one archive
+  through the new sound path and fusion adapter before the complete protocol.
 
 ### FLARE
 
@@ -579,9 +580,8 @@ The active provider conclusions and exact published selection scores are in
   segmented MP4s with audio. Code is MIT; the dataset states CC BY 4.0; the
   repository includes a harness for 15 retrievers.
 - **VidXP fit:** closest obtainable combined visual/sound/speech retrieval stress
-  test. It does not test actor clustering. The full protocol becomes appropriate
-  after the planned environmental-sound provider; a pre-integration speech-only
-  slice remains partial coverage.
+  test. It does not test actor clustering. The sound provider now exists; a full
+  protocol claim still requires the FLARE adapter and visual/audio/joint run.
 - **Caveat:** a unified generated query was retained when it succeeded at rank one
   while its component queries failed, creating material model-selection bias.
 - **Verdict/confidence:** **Adaptable watchlist; artifacts confirmed, publication
@@ -725,8 +725,8 @@ Completed:
 
 Next:
 
-1. Implement timestamped environmental-sound indexing and search with FineLAP,
-   retaining LAION-CLAP as the mature comparison.
+1. Complete a bounded real-media FineLAP integration smoke, retaining LAION-CLAP
+   as the mature comparison.
 2. Implement the fixed LongVALE visual/sound/speech adapter and validate one
    evaluation archive before committing to the full 1,171-video run.
 3. Add fixed hardware-aware indexing and query measurements to each subsequent

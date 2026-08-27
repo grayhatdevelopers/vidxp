@@ -13,7 +13,7 @@ authors = [
   { name = "Saad Bazaz" },
 
 ]
-description = "VidXP - Video indexing and search by dialogue, scene, and actor"
+description = "VidXP - Search video by dialogue, sound, scenes, actions, and actors"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 license = "MIT"
@@ -99,12 +99,17 @@ videoprism = { file = [
   "src/vidxp/requirements/storage.txt",
   "src/vidxp/capabilities/videoprism/requirements.txt",
 ] }
+sound = { file = [
+  "src/vidxp/requirements/storage.txt",
+  "src/vidxp/capabilities/sound/requirements.txt",
+] }
 all = { file = [
   "src/vidxp/requirements/storage.txt",
   "src/vidxp/capabilities/dialogue/requirements.txt",
   "src/vidxp/capabilities/scene/requirements.txt",
   "src/vidxp/capabilities/actor/requirements.txt",
   "src/vidxp/capabilities/videoprism/requirements.txt",
+  "src/vidxp/capabilities/sound/requirements.txt",
 ] }
 local-worker = { file = [
   "src/vidxp/requirements/storage.txt",
@@ -113,6 +118,7 @@ local-worker = { file = [
   "src/vidxp/capabilities/scene/requirements.txt",
   "src/vidxp/capabilities/actor/requirements.txt",
   "src/vidxp/capabilities/videoprism/requirements.txt",
+  "src/vidxp/capabilities/sound/requirements.txt",
 ] }
 mcp = { file = ["src/vidxp/requirements/mcp.txt"] }
 slm = { file = ["src/vidxp/requirements/slm.txt"] }
@@ -128,6 +134,7 @@ server-worker = { file = [
   "src/vidxp/capabilities/scene/requirements.txt",
   "src/vidxp/capabilities/actor/requirements.txt",
   "src/vidxp/capabilities/videoprism/requirements.txt",
+  "src/vidxp/capabilities/sound/requirements.txt",
 ] }
 test = { file = ["src/vidxp/requirements/test.txt"] }
 frontend = { file = ["src/vidxp/requirements/frontend.txt"] }
@@ -144,6 +151,9 @@ torch = [
   { index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchvision = [
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchaudio = [
   { index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
