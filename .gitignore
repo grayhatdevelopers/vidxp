@@ -40,6 +40,7 @@ pnpm-debug.log*
 /desktop/node_modules/
 /desktop/dist/
 /premiere/dist/
+/premiere/ccx/
 /premiere/coverage/
 /premiere/packages/
 /premiere/.rnd

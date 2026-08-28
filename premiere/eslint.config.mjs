@@ -5,9 +5,9 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import typescript from "typescript-eslint";
 
 export default defineConfig(
-  globalIgnores(["dist/**", "coverage/**", "vite.config.mjs"]),
+  globalIgnores(["dist/**", "ccx/**", "coverage/**"]),
   {
-    files: ["index.tsx", "src/**/*.{ts,tsx}", "tests/**/*.ts"],
+    files: ["index.tsx", "*.config.ts", "src/**/*.{ts,tsx}", "tests/**/*.ts"],
     extends: [
       eslint.configs.recommended,
       ...typescript.configs.recommendedTypeChecked,

@@ -1,12 +1,16 @@
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+import { uxp } from "vite-uxp-plugin";
 
-const projectRoot = fileURLToPath(new URL(".", import.meta.url));
+import { config as uxpConfig } from "./uxp.config.ts";
+
+const projectRoot = import.meta.dirname;
 
 export default defineConfig(({ mode }) => {
   const cep = mode === "cep";
+  const boltMode = process.env.BOLT_MODE;
   return {
+    plugins: cep ? [] : [uxp(uxpConfig, boltMode)],
     publicDir: cep ? false : "public",
     base: "./",
     build: cep
@@ -21,30 +25,30 @@ export default defineConfig(({ mode }) => {
             output: {
               format: "iife",
               entryFileNames: "index.js",
-              assetFileNames: "[name][extname]"
-            }
-          }
+              assetFileNames: "[name][extname]",
+            },
+          },
         }
       : {
-          outDir: "dist/uxp",
+          // Bolt's CCX generator packages this project-root directory.
+          outDir: "dist",
           emptyOutDir: true,
           minify: false,
-          sourcemap: true,
+          sourcemap: boltMode === "package" ? false : "inline",
           target: "esnext",
           rolldownOptions: {
             input: resolve(projectRoot, "index.tsx"),
             external: ["os", "premierepro", "uxp"],
             output: {
-              format: "cjs",
-              preserveModules: true,
-              preserveModulesRoot: projectRoot,
-              entryFileNames: "[name].js"
-            }
-          }
+              format: "iife",
+              entryFileNames: "index.js",
+              assetFileNames: "[name][extname]",
+            },
+          },
         },
     test: {
       environment: "node",
-      include: ["tests/**/*.test.ts"]
-    }
+      include: ["tests/**/*.test.ts"],
+    },
   };
 });

@@ -5,6 +5,7 @@
     "lib": ["ESNext", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "resolveJsonModule": true,
     "isolatedModules": true,
@@ -19,6 +20,13 @@
       "vitest/globals"
     ]
   },
-  "include": ["index.tsx", "src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts"],
+  "include": [
+    "index.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tests/**/*.ts",
+    "uxp.config.ts",
+    "vite.config.ts"
+  ],
   "exclude": ["dist", "node_modules"]
 }

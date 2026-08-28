@@ -1,5 +1,4 @@
-import archiver from "archiver";
-import { createWriteStream, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -12,7 +11,15 @@ const cepPackage = resolve(packages, "vidxp-premiere-cep.zxp");
 const certificate = resolve(packages, "vidxp-premiere-build-certificate.p12");
 
 mkdirSync(packages, { recursive: true });
-await archiveDirectory(resolve(root, "dist", "uxp"), uxpPackage);
+const generatedUxpPackages = readdirSync(resolve(root, "ccx"))
+  .filter((name) => name.endsWith(".ccx"));
+if (generatedUxpPackages.length !== 1) {
+  throw new Error(`Expected one Bolt UXP package, found ${generatedUxpPackages.length}.`);
+}
+copyFileSync(
+  resolve(root, "ccx", generatedUxpPackages[0]),
+  uxpPackage,
+);
 
 const signerRoot = resolve(require.resolve("zxp-signer/package.json"), "..");
 const signerPlatform = process.platform === "win32"
@@ -40,18 +47,6 @@ const result = runSigner([
 ], false);
 rmSync(certificate, { force: true });
 if (result.status !== 0) process.exit(result.status ?? 1);
-
-function archiveDirectory(input, output) {
-  return new Promise((resolveArchive, reject) => {
-    const stream = createWriteStream(output);
-    const archive = archiver("zip", { zlib: { level: 9 } });
-    stream.on("close", resolveArchive);
-    archive.on("error", reject);
-    archive.pipe(stream);
-    archive.directory(input, false);
-    void archive.finalize();
-  });
-}
 
 function runSigner(arguments_, exitOnFailure = true) {
   const result = spawnSync(signer, arguments_, { stdio: "inherit" });

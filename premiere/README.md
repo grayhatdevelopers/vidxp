@@ -10,7 +10,7 @@ reference; this is not an Uplift integration.
 Shared React workflow (`src/ui`)
 ├── typed VidXP client (`src/services/vidxp`)
 ├── shared media-library rules (`src/premiere/library.ts`)
-├── UXP bootstrap + Premiere adapter (`index.tsx`, `adapter.ts`)
+├── Bolt UXP build + Premiere adapter (`uxp.config.ts`, `index.tsx`, `adapter.ts`)
 └── CEP bootstrap + Premiere adapter (`cep/`, `cep-adapter.ts`)
     ├── ES3 ExtendScript project bridge (`cep/jsx/host.jsx`)
     └── CEP Node loopback transport (`cep-fetch.ts`)
@@ -37,7 +37,14 @@ npm run check
 npm run package
 ```
 
-`npm run check` creates development bundles under `dist/uxp` and `dist/cep`.
+The UXP target uses [Bolt UXP](https://github.com/hyperbrew/bolt-uxp)'s
+`vite-uxp-plugin` for manifest generation, UXP-compatible transforms and
+polyfills, hot reload, and CCX creation. The separate CEP target shares the
+application code but retains its own Vite and ZXP signing path because Bolt UXP
+does not build CEP extensions.
+
+`npm run check` creates the UXP development bundle under `dist/` and the CEP
+bundle under `dist/cep`.
 `npm run package` additionally creates these ignored release inputs:
 
 - `packages/vidxp-premiere-cep.zxp`, signed and timestamped for Premiere
@@ -47,7 +54,8 @@ npm run package
 The Desktop release workflow performs this packaging once and embeds both
 artifacts in every Desktop installer. End users do not run these commands.
 
-For UXP-only development, add `dist/uxp/manifest.json` to UXP Developer Tool.
+For UXP-only development, add `dist/manifest.json` to UXP Developer Tool, then
+run `npm run dev` for Bolt UXP hot reload.
 CEP development uses an unsigned `dist/cep` build and therefore requires the
 CEP debugging setup documented by Adobe. Neither developer path is an end-user
 installation method.
