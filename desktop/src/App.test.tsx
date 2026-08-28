@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   targetSetupState: vi.fn(), recheckTargetState: vi.fn(), discoverLocalTargets: vi.fn(),
   chooseLocalExecutable: vi.fn(), inspectLocalTarget: vi.fn(), activateLocalTarget: vi.fn(),
   selectTargetProfile: vi.fn(), deleteTargetProfile: vi.fn(), confirmForgetTarget: vi.fn(), beginManagedSetup: vi.fn(),
-  cancelManagedSetup: vi.fn(), installMediaRuntime: vi.fn(), installRuntime: vi.fn(),
+  cancelManagedSetup: vi.fn(), cancelManagedSetupOperation: vi.fn(), installMediaRuntime: vi.fn(), installRuntime: vi.fn(),
   prepareManagedModels: vi.fn(), onManagedSetupProgress: vi.fn(),
   runtimeManifest: vi.fn(), runtimeStatus: vi.fn(), launchUi: vi.fn(),
   chooseModelDirectory: vi.fn(), modelDirectoryInventory: vi.fn(),
@@ -89,6 +89,7 @@ describe('desktop target lifecycle', () => {
     });
     mocks.beginManagedSetup.mockResolvedValue({ id: 'draft-1', previous_profile_id: null });
     mocks.cancelManagedSetup.mockResolvedValue(emptyState);
+    mocks.cancelManagedSetupOperation.mockResolvedValue(undefined);
     mocks.confirmForgetTarget.mockResolvedValue(true);
     mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', capabilities: { scene: { extra: 'scene', label: 'Visual scene search' } }, surfaces: {
       worker: { extra: 'local-worker', label: 'Process videos on this computer', description: 'Run video work locally.', default: true },
@@ -569,7 +570,7 @@ describe('desktop target lifecycle', () => {
     const user = userEvent.setup(); renderApp(); await enterManaged(user);
     await user.click(await screen.findByRole('button', { name: 'Install VidXP' }));
     await waitFor(() => expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({ draft_id: 'draft-1' })));
-    expect(mocks.installMediaRuntime).toHaveBeenCalledWith('draft-1');
+    expect(mocks.installMediaRuntime).toHaveBeenCalledWith('draft-1', 8);
     expect(mocks.launchUi).not.toHaveBeenCalled();
   });
 
@@ -601,6 +602,7 @@ describe('desktop target lifecycle', () => {
     expect(screen.getByRole('dialog', { name: 'Setting up VidXP' })).toBeVisible();
     expect(screen.getByText('Step 1 of 8')).toBeVisible();
     expect(screen.getByText('Checking FFmpeg and required video codecs')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Cancel setup' })).toBeEnabled();
     reportProgress?.({ draft_id: 'draft-1', current: 4, total: 8, stage: 'dependencies', message: 'Installing the selected search features' });
     expect(await screen.findByText('Step 4 of 8')).toBeVisible();
     expect(screen.getByText('Installing the selected search features')).toBeVisible();
@@ -628,6 +630,21 @@ describe('desktop target lifecycle', () => {
     expect(screen.getByRole('progressbar', { name: 'Current model download progress' })).toHaveAttribute('aria-valuenow', '50');
 
     media.resolve({ ready: true });
+  });
+
+  it('cancels a running managed setup without discarding the draft', async () => {
+    const media = deferred<{ ready: boolean }>();
+    mocks.installMediaRuntime.mockReturnValue(media.promise);
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+
+    await user.click(screen.getByRole('button', { name: 'Install VidXP' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel setup' }));
+
+    expect(mocks.cancelManagedSetupOperation).toHaveBeenCalledWith('draft-1');
+    expect(await screen.findByText('Stopping setup safely')).toBeVisible();
+    media.reject('Windows Package Manager FFmpeg installation failed: the operation was cancelled');
+    expect(await screen.findByRole('dialog', { name: 'Setup could not finish' })).toBeVisible();
+    expect(screen.getByRole('alert', { name: 'VidXP was not installed' })).toHaveTextContent('Setup was cancelled');
   });
 
   it('coalesces duplicate managed Continue actions', async () => {

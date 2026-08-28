@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   chooseModelDirectory,
+  cancelManagedSetupOperation,
   displayPath,
   errorMessage,
   installPremiereExtensions,
@@ -64,10 +65,13 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
   const [message, setMessage] = useState('Loading VidXP options…');
   const [failure, setFailure] = useState<string | null>(null);
   const [installFailure, setInstallFailure] = useState<string | null>(null);
+  const [cancelFailure, setCancelFailure] = useState<string | null>(null);
+  const [cancelRequested, setCancelRequested] = useState(false);
   const [setupProgress, setSetupProgress] = useState<ManagedSetupProgress | null>(null);
   const [setupElapsed, setSetupElapsed] = useState(0);
   const operations = useExclusiveOperation<ManagedOperation>();
   const failureAlert = useRef<HTMLDivElement | null>(null);
+  const cancelRequestedRef = useRef(false);
   const initialLoad = useRef<Promise<{
     manifest: RuntimeManifest;
     status: RuntimeStatus;
@@ -236,6 +240,9 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
     };
     setFailure(null);
     setInstallFailure(null);
+    setCancelFailure(null);
+    setCancelRequested(false);
+    cancelRequestedRef.current = false;
     setSetupProgress({
       draft_id: draftId,
       current: 1,
@@ -245,7 +252,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
     });
     try {
       setMessage('Checking FFmpeg and required codecs…');
-      await installMediaRuntime(draftId);
+      await installMediaRuntime(draftId, captured.prepare_models ? 8 : 7);
       if (status?.state === 'broken' && status.runtime_profile && !dirty) {
         const repaired = await runtimeStatus();
         if (repaired.ready) {
@@ -283,12 +290,40 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
       setMessage(result.install.prepared ? 'VidXP and the selected search features are ready.' : 'VidXP is installed. Search files can be downloaded later.');
       onCommitted(result.setup, premiereNotice);
     } catch (error) {
-      const detail = errorMessage(error, 'Setup did not finish. Your previous VidXP installation is unchanged.');
+      const detail = cancelRequestedRef.current
+        ? 'Setup was cancelled. Your previous VidXP installation is unchanged.'
+        : errorMessage(error, 'Setup did not finish. Your previous VidXP installation is unchanged.');
       setFailure(detail);
       setInstallFailure(detail);
     } finally {
+      cancelRequestedRef.current = false;
+      setCancelRequested(false);
       settleOperation(operationId);
       setSetupProgress(null);
+    }
+  }
+
+  async function cancelInstall() {
+    if (cancelRequestedRef.current) return;
+    cancelRequestedRef.current = true;
+    setCancelRequested(true);
+    setCancelFailure(null);
+    setSetupProgress((current) => ({
+      draft_id: draftId,
+      current: current?.current ?? 1,
+      total: current?.total ?? (prepareDuringInstall ? 8 : 7),
+      stage: current?.stage ?? 'cancelling',
+      message: 'Stopping setup safely',
+      model_message: current?.model_message,
+      model_current: current?.model_current,
+      model_total: current?.model_total,
+    }));
+    try {
+      await cancelManagedSetupOperation(draftId);
+    } catch (error) {
+      cancelRequestedRef.current = false;
+      setCancelRequested(false);
+      setCancelFailure(errorMessage(error, 'Setup could not be stopped.'));
     }
   }
 
@@ -573,6 +608,12 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
               <Text fw={650}>{setupProgress?.message ?? 'Starting managed setup'}</Text>
               <Text size="sm" className="mutedText" mt="xs">The existing installation remains active until every step has completed and the replacement passes validation.</Text>
             </div>
+            {cancelFailure && <Alert color="red" title="Could not stop setup" role="alert">{cancelFailure}</Alert>}
+            <Group justify="flex-end">
+              <Button variant="default" loading={cancelRequested} disabled={cancelRequested} onClick={() => void cancelInstall()}>
+                {cancelRequested ? 'Stopping…' : 'Cancel setup'}
+              </Button>
+            </Group>
           </Stack>
         )}
       </Modal>

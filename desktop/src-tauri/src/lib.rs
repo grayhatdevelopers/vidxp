@@ -57,6 +57,7 @@ const CODEX_PLUGIN_MARKETPLACE_REF: Option<&str> = option_env!("VIDXP_PLUGIN_MAR
 const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
 const RUNTIME_CONSTRAINTS_FILE_NAME: &str = "runtime-constraints.txt";
 const MAX_SETUP_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const MEDIA_RUNTIME_INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 static READINESS_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -1375,6 +1376,13 @@ fn executable_candidates(name: &str) -> Vec<PathBuf> {
                 .join("Links"),
         );
     }
+    if cfg!(windows) {
+        for variable in ["PROGRAMFILES", "PROGRAMFILES(X86)", "ProgramW6432"] {
+            if let Some(program_files) = env::var_os(variable) {
+                directories.push(PathBuf::from(program_files).join("WinGet").join("Links"));
+            }
+        }
+    }
     if cfg!(target_os = "macos") {
         directories.extend([
             PathBuf::from("/opt/homebrew/bin"),
@@ -1401,10 +1409,18 @@ fn executable_candidates(name: &str) -> Vec<PathBuf> {
 }
 
 fn resolve_system_executable(name: &str) -> Option<PathBuf> {
-    executable_candidates(name)
+    let resolved = executable_candidates(name)
         .into_iter()
         .find(|candidate| candidate.is_file())
-        .and_then(|candidate| fs::canonicalize(&candidate).ok().or(Some(candidate)))
+        .and_then(|candidate| fs::canonicalize(&candidate).ok().or(Some(candidate)));
+    if resolved.is_some() {
+        return resolved;
+    }
+    #[cfg(windows)]
+    if matches!(name, "ffmpeg" | "ffprobe") {
+        return media_setup::resolve_winget_ffmpeg_executable(&format!("{name}.exe"));
+    }
+    None
 }
 
 fn combined_output(output: &background_process::BackgroundOutput) -> String {
@@ -2063,10 +2079,25 @@ async fn supervised_output(
     cancellation: background_process::CancellationToken,
     operation: &str,
 ) -> Result<background_process::BackgroundOutput, String> {
+    supervised_output_with_timeout(
+        command,
+        cancellation,
+        operation,
+        Duration::from_secs(30 * 60),
+    )
+    .await
+}
+
+async fn supervised_output_with_timeout(
+    command: Command,
+    cancellation: background_process::CancellationToken,
+    operation: &str,
+    timeout: Duration,
+) -> Result<background_process::BackgroundOutput, String> {
     let output = background_process::run_async(
         command,
         background_process::BackgroundPolicy {
-            timeout: Duration::from_secs(30 * 60),
+            timeout,
             max_output_bytes: MAX_SETUP_OUTPUT_BYTES,
         },
         cancellation,
@@ -2548,6 +2579,54 @@ async fn cancel_managed_setup(
 }
 
 #[tauri::command]
+fn cancel_managed_setup_operation(
+    state: tauri::State<'_, DesktopState>,
+    draft_id: String,
+) -> Result<(), String> {
+    cancel_managed_setup_operation_inner(&state, &draft_id)
+}
+
+fn cancel_managed_setup_operation_inner(
+    state: &DesktopState,
+    draft_id: &str,
+) -> Result<(), String> {
+    {
+        let transition = state
+            .transition
+            .lock()
+            .map_err(|_| "The managed setup operation is unavailable.".to_string())?;
+        let record = transition
+            .draft
+            .as_ref()
+            .ok_or_else(|| "This managed setup draft has expired.".to_string())?;
+        if record.draft.id != draft_id {
+            return Err("A stale managed setup screen cannot stop the current operation.".into());
+        }
+        if record.phase != DraftPhase::Applying
+            || !transition.active.is_some_and(|active| {
+                matches!(
+                    active.kind,
+                    TransitionKind::InstallMedia
+                        | TransitionKind::InstallRuntime
+                        | TransitionKind::PrepareModels
+                )
+            })
+        {
+            return Err("No cancellable managed setup operation is active.".into());
+        }
+    }
+    let active = state
+        .operation_cancellation
+        .lock()
+        .map_err(|_| "The setup cancellation supervisor is unavailable.".to_string())?;
+    let cancellation = active
+        .as_ref()
+        .ok_or_else(|| "The managed setup operation has already settled.".to_string())?;
+    cancellation.cancel();
+    Ok(())
+}
+
+#[tauri::command]
 fn choose_model_directory(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
@@ -2572,8 +2651,10 @@ async fn install_media_runtime(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
     draft_id: String,
+    total_steps: u8,
 ) -> Result<MediaRuntimeStatus, String> {
     let cancellation = OperationCancellationGuard::register(&state)?;
+    let total_steps = total_steps.max(1);
     let _transition =
         TargetTransitionCoordinator::begin_apply(&state, &draft_id, TransitionKind::InstallMedia)
             .map_err(|error| error.to_string())?;
@@ -2619,20 +2700,47 @@ async fn install_media_runtime(
     if !approved {
         return Err("FFmpeg setup was deferred.".into());
     }
+    emit_managed_setup_progress(
+        &app,
+        &draft_id,
+        1,
+        total_steps,
+        "video-tools",
+        &format!("Installing FFmpeg with {}", plan.manager),
+    );
     let command = app
         .shell()
         .command(plan.command[0].clone())
         .args(&plan.command[1..]);
     let command: Command = command.into();
-    supervised_output(
+    supervised_output_with_timeout(
         command,
         cancellation.token(),
         &format!("{} FFmpeg installation", plan.manager),
+        MEDIA_RUNTIME_INSTALL_TIMEOUT,
     )
     .await?;
-    let status = tauri::async_runtime::spawn_blocking(inspect_media_runtime)
-        .await
-        .map_err(|error| format!("Media runtime verification stopped unexpectedly: {error}"))?;
+    emit_managed_setup_progress(
+        &app,
+        &draft_id,
+        1,
+        total_steps,
+        "video-tools",
+        "Verifying FFmpeg and required video codecs",
+    );
+    let status = tauri::async_runtime::spawn_blocking(|| {
+        let mut status = inspect_media_runtime();
+        for _ in 0..4 {
+            if status.ready {
+                break;
+            }
+            thread::sleep(Duration::from_secs(1));
+            status = inspect_media_runtime();
+        }
+        status
+    })
+    .await
+    .map_err(|error| format!("Media runtime verification stopped unexpectedly: {error}"))?;
     if !status.ready {
         return Err(format!(
             "FFmpeg installation finished but verification failed: {}",
@@ -4803,6 +4911,7 @@ pub fn run() {
             confirm_forget_target,
             begin_managed_setup,
             cancel_managed_setup,
+            cancel_managed_setup_operation,
             choose_model_directory,
             install_media_runtime,
             runtime_status,
@@ -5094,6 +5203,44 @@ mod tests {
                 .active_operations
                 .wait_until_idle(std::time::Instant::now() + std::time::Duration::from_secs(1))
         );
+    }
+
+    #[test]
+    fn active_managed_operation_can_be_cancelled_without_cancelling_its_draft() {
+        let state = DesktopState::default();
+        state.transition.lock().expect("transition").draft = Some(DraftRecord {
+            draft: ManagedSetupDraft {
+                id: "draft-current".into(),
+                previous_profile_id: None,
+            },
+            phase: DraftPhase::Draft,
+        });
+        let operation = super::OperationCancellationGuard::register(&state).expect("operation");
+        let token = operation.token();
+        let applying = TargetTransitionCoordinator::begin_apply(
+            &state,
+            "draft-current",
+            TransitionKind::InstallMedia,
+        )
+        .expect("apply");
+
+        super::cancel_managed_setup_operation_inner(&state, "draft-current")
+            .expect("cancel operation");
+
+        assert!(token.is_cancelled());
+        assert_eq!(
+            state
+                .transition
+                .lock()
+                .expect("transition")
+                .draft
+                .as_ref()
+                .expect("draft")
+                .phase,
+            DraftPhase::Applying
+        );
+        drop(applying);
+        drop(operation);
     }
 
     fn worker_supervisor_fixture() -> (

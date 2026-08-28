@@ -302,7 +302,7 @@ fn unified_plugin_installer() -> Option<PathBuf> {
     {
         let program_files = env::var_os("ProgramFiles")?;
         let path = PathBuf::from(program_files).join("Common Files/Adobe/Adobe Desktop Common/RemoteComponents/UPI/UnifiedPluginInstallerAgent/UnifiedPluginInstallerAgent.exe");
-        return path.is_file().then_some(path);
+        path.is_file().then_some(path)
     }
     #[cfg(target_os = "macos")]
     {

@@ -448,6 +448,44 @@ vidxp doctor
 
 Review the suggested package-manager command before approving it.
 
+### Windows Desktop is stuck while checking FFmpeg
+
+Select **Cancel setup**. VidXP stops the package-manager process and keeps the
+previous installation and your setup choices. If an older Desktop release does
+not show that button, use **Quit VidXP** from the system tray. If it does not
+respond, end **VidXP Desktop** in Task Manager. End `winget.exe` there too if it
+continues running after VidXP has closed.
+
+Open a new PowerShell window so it receives any PATH changes made by WinGet,
+then check whether FFmpeg finished installing:
+
+```powershell
+winget list --id Gyan.FFmpeg --exact
+where.exe ffmpeg
+where.exe ffprobe
+```
+
+If WinGet lists `Gyan.FFmpeg` and both executables are found, reopen VidXP
+Desktop and retry setup. If the package is missing, or WinGet lists it but the
+executables are still not found, repair the package:
+
+```powershell
+winget install --id Gyan.FFmpeg --exact --source winget --force --silent `
+  --disable-interactivity --accept-package-agreements `
+  --accept-source-agreements
+```
+
+Open another new PowerShell window and verify the result:
+
+```powershell
+ffmpeg -hide_banner -version
+ffprobe -hide_banner -version
+ffmpeg -hide_banner -encoders | findstr /i "libx264 aac"
+```
+
+The final command should list both `libx264` and `aac`. Reopen VidXP Desktop
+and retry setup after all three commands succeed.
+
 ### Linux or Windows starts downloading NVIDIA packages
 
 Reinstall with the supported CPU dependency set:

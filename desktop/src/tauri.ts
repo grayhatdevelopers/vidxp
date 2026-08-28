@@ -382,14 +382,18 @@ export function cancelManagedSetup(draftId: string): Promise<TargetSetupState> {
   return invoke<WireTargetState>('cancel_managed_setup', { draftId }).then(normalizeState);
 }
 
+export function cancelManagedSetupOperation(draftId: string): Promise<void> {
+  return invoke('cancel_managed_setup_operation', { draftId });
+}
+
 export function runtimeManifest(): Promise<RuntimeManifest> { return invoke('runtime_manifest'); }
 export function runtimeStatus(): Promise<RuntimeStatus> { return invoke('runtime_status'); }
 export function modelDirectoryInventory(directory?: string): Promise<ModelDirectoryInventory> {
   return invoke('model_directory_inventory', { directory: directory || null });
 }
 export function chooseModelDirectory(): Promise<string | null> { return invoke('choose_model_directory'); }
-export function installMediaRuntime(draftId: string): Promise<RuntimeStatus> {
-  return invoke('install_media_runtime', { draftId });
+export function installMediaRuntime(draftId: string, totalSteps: number): Promise<RuntimeStatus> {
+  return invoke('install_media_runtime', { draftId, totalSteps });
 }
 export function installRuntime(request: InstallRuntimeRequest): Promise<InstallTransitionResult> {
   return invoke<WireInstallTransitionResult>('install_runtime', { request }).then((result) => ({
