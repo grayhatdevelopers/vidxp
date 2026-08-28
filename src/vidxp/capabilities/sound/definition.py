@@ -48,6 +48,7 @@ def model_manifest(
 
 DEFINITION = CapabilityDefinition(
     name="sound",
+    label="Sound event search",
     description="Index and search music, environmental sounds, and audio events.",
     extra="sound",
     config_model=SoundConfig,

@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "capabilities": {
+    "dialogue": {
+      "extra": "dialogue",
+      "modality": "dialogue",
+      "label": "Dialogue search",
+      "description": "Index and search spoken dialogue.",
+      "models": [
+        {
+          "cache_key": "models--Qwen--Qwen3-Embedding-0.6B/snapshots/97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3/model.safetensors",
+          "download_size_bytes": 1207489041
+        },
+        {
+          "cache_key": "models--dropbox-dash--faster-whisper-large-v3-turbo/snapshots/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/model.bin",
+          "download_size_bytes": 1621668947
+        }
+      ]
+    },
+    "sound": {
+      "extra": "sound",
+      "modality": "sound",
+      "label": "Sound event search",
+      "description": "Index and search music, environmental sounds, and audio events.",
+      "models": [
+        {
+          "cache_key": "finelap-tokenizer/config.json",
+          "download_size_bytes": 481
+        },
+        {
+          "cache_key": "finelap-tokenizer/merges.txt",
+          "download_size_bytes": 456318
+        },
+        {
+          "cache_key": "finelap-tokenizer/vocab.json",
+          "download_size_bytes": 898823
+        },
+        {
+          "cache_key": "models--AndreasXi--FineLAP/snapshots/b419aa22947d29907a5567f21b81bf3b39a40449/model.safetensors",
+          "download_size_bytes": 980404741
+        }
+      ]
+    },
+    "scene": {
+      "extra": "scene",
+      "modality": "scene",
+      "label": "Visual scene search",
+      "description": "Index and search visual scenes.",
+      "models": [
+        {
+          "cache_key": "models--google--siglip2-base-patch16-224/snapshots/75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2/model.safetensors",
+          "download_size_bytes": 1539458338
+        }
+      ]
+    },
+    "actor": {
+      "extra": "actor",
+      "modality": "actor",
+      "label": "Actor recognition",
+      "description": "Index, inspect, and render actor clusters.",
+      "models": [
+        {
+          "cache_key": "opencv-zoo/face_detection_yunet_2026may.onnx",
+          "download_size_bytes": 229738
+        },
+        {
+          "cache_key": "opencv-zoo/face_recognition_sface_2021dec.onnx",
+          "download_size_bytes": 38696353
+        }
+      ]
+    },
+    "videoprism": {
+      "extra": "videoprism",
+      "modality": "videoprism",
+      "label": "Temporal video search",
+      "description": "Index and search temporal video clips with VideoPrism.",
+      "models": [
+        {
+          "cache_key": "models--google--videoprism-lvt-base-f16r288/snapshots/fb6de9f0eb7bc285be86bdca1cf7daa3e3ef51ff/model.safetensors",
+          "download_size_bytes": 993993146
+        }
+      ]
+    }
+  }
+}

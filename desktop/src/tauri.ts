@@ -134,7 +134,8 @@ export interface LocalTargetInspection extends Omit<WireTargetInspection, 'valid
 export interface CapabilitySpec {
   extra: string;
   label: string;
-  description?: string;
+  description: string;
+  models: { cache_key: string; download_size_bytes: number }[];
 }
 
 export interface SurfaceSpec {
@@ -146,6 +147,7 @@ export interface SurfaceSpec {
 
 export interface RuntimeManifest {
   package_version: string;
+  managed_runtime_estimated_size_bytes: number;
   capabilities: Record<string, CapabilitySpec>;
   surfaces: Record<string, SurfaceSpec>;
 }

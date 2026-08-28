@@ -54,7 +54,8 @@ The main Desktop files are:
 | `desktop/src-tauri/src/` | Tauri commands, setup lifecycle, activation, and process supervision |
 | `desktop/runtime-manifest.json` | Pinned Python and VidXP runtime versions |
 | `desktop/sidecars.json` | Pinned `uv` sidecar versions and archive checksums |
-| `desktop/model-cache-catalog.json` | Generated catalog of model downloads shown during setup |
+| `desktop/capability-catalog.json` | Generated capability labels, installation extras, and model download plans |
+| `desktop/model-cache-catalog.json` | Generated model-cache recognition catalog |
 | `desktop/scripts/` | Sidecar, model-catalog, notice, branding, and package scripts |
 | `desktop/THIRD_PARTY_NOTICES.txt` | Generated notices shipped with the installers |
 
@@ -126,11 +127,13 @@ Use `npm --prefix desktop run sidecar:windows` instead of `sidecar:unix` on
 Windows. Report the exact commands you ran and any platform package you could
 not build or inspect.
 
-Two checked-in files must stay synchronized with their source contracts:
+Three checked-in files must stay synchronized with their source contracts:
 
-- After changing capability or model contracts, run
+- After changing capability labels, descriptions, extras, or model contracts,
+  run
   `npm --prefix desktop run model-catalog:write`, review the diff, and run the
-  corresponding `:check` command.
+  corresponding `:check` command. This updates both Desktop catalogs from the
+  canonical capability registry.
 - After changing a production dependency or license, run
   `npm --prefix desktop run notices:write`, review the inventory, and run the
   corresponding `:check` command.
@@ -188,6 +191,12 @@ The user-facing feature choices map to package extras as follows:
 
 These package names are implementation details and should not replace the
 product labels in the interface.
+
+The capability registry owns capability labels, descriptions, installation
+extras, and model specifications. Desktop embeds a generated capability
+catalog because it must show setup choices before a VidXP runtime exists. The
+build merges that generated catalog with Desktop-owned surface and runtime
+metadata; React must not maintain a parallel capability list or storage table.
 
 The installer does not bundle FFmpeg. If it is missing, setup may offer the
 supported WinGet command on Windows or Homebrew command on macOS, but it must

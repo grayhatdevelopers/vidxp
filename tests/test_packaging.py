@@ -674,7 +674,14 @@ class PackagingTests(unittest.TestCase):
         self.assertFalse(manifest["surfaces"]["server"]["default"])
         for surface in manifest["surfaces"].values():
             self.assertIn(surface["extra"], dynamic_extras)
-        for capability in manifest["capabilities"].values():
+        capability_catalog = json.loads(
+            (ROOT / "desktop" / "capability-catalog.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(capability_catalog["schema_version"], 1)
+        self.assertNotIn("capabilities", manifest)
+        for capability in capability_catalog["capabilities"].values():
             self.assertIn(capability["extra"], dynamic_extras)
         self.assertEqual(
             manifest["media_runtime"]["strategy"],

@@ -46,15 +46,6 @@ interface TargetSummaryProps {
   onOpen: () => Promise<void>;
 }
 
-const CAPABILITY_LABELS: Record<string, string> = {
-  actor: 'Actor recognition',
-  dialogue: 'Dialogue search',
-  media: 'Video tools',
-  scene: 'Visual scene search',
-  sound: 'Sound event search',
-  videoprism: 'Temporal video search',
-};
-
 interface WorkerFailure {
   title: string;
   detail: string;
@@ -92,7 +83,17 @@ export function TargetSummary({ profile, validationError, checking, operationPen
   const serverAvailable = runtimeCompatible && profile.surfaces.includes('server');
   const failedChecks = doctor?.checks.filter((check) => !check.ok) ?? [];
 
-  const capabilityLabel = (capability: string) => CAPABILITY_LABELS[capability] ?? capability;
+  const capabilityLabel = (capability: string) => capability === 'media'
+    ? 'Video tools'
+    : externalManifest?.capabilities[capability]?.label ?? capability;
+
+  useEffect(() => {
+    let active = true;
+    void runtimeManifest().then((manifest) => {
+      if (active) setExternalManifest(manifest);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     setDoctor(null);
@@ -234,7 +235,7 @@ export function TargetSummary({ profile, validationError, checking, operationPen
     setExternalFailure(null);
     setExternalTechnical(null);
     try {
-      const manifest = await runtimeManifest();
+      const manifest = externalManifest ?? await runtimeManifest();
       setExternalManifest(manifest);
       if (needsRuntimeUpdate) {
         const defaultSurfaces = Object.entries(manifest.surfaces).filter(([, surface]) => surface.default).map(([id]) => id);

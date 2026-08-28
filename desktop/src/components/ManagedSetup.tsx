@@ -396,6 +396,29 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
   const attentionTitle = /ffmpeg|ffprobe/i.test(message) ? 'Video tools need attention' : 'VidXP needs attention';
   const progressCurrent = setupProgress?.current ?? 1;
   const progressTotal = setupProgress?.total ?? (prepareDuringInstall ? 8 : 7);
+  const selectedModelDownloads = new Map<string, number>();
+  for (const capability of capabilities) {
+    for (const model of manifest?.capabilities[capability]?.models ?? []) {
+      selectedModelDownloads.set(
+        model.cache_key,
+        Math.max(selectedModelDownloads.get(model.cache_key) ?? 0, model.download_size_bytes),
+      );
+    }
+  }
+  const selectedModelBytes = [...selectedModelDownloads.values()].reduce((total, bytes) => total + bytes, 0);
+  const managedRuntimeBytes = manifest?.managed_runtime_estimated_size_bytes ?? 0;
+  const plannedSetupBytes = managedRuntimeBytes + selectedModelBytes;
+  const capabilityModelSummary = capabilities
+    .map((id) => {
+      const capability = manifest?.capabilities[id];
+      if (!capability) return null;
+      const models = new Map<string, number>();
+      for (const model of capability.models ?? []) models.set(model.cache_key, model.download_size_bytes);
+      const bytes = [...models.values()].reduce((total, size) => total + size, 0);
+      return `${capability.label}: ${formatBytes(bytes)}`;
+    })
+    .filter((summary): summary is string => summary !== null)
+    .join(' · ');
 
   function dismissInstallFailure() {
     setInstallFailure(null);
@@ -501,7 +524,9 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
               <Button variant="default" leftSection={<IconFolderOpen aria-hidden="true" size={16} />} loading={operation === 'folder'} disabled={isBusy} onClick={() => void chooseFolder()}>Change location…</Button>
             </Group>
             <Alert mt="md" color="blue" title="Plan for local storage">
-              The managed runtime can use approximately 3 GiB. Models add 37 MiB to 4.11 GiB depending on the selected search features. A full local setup uses approximately 7.1 GiB, plus temporary installation space, indexes, and videos.
+              <Text size="sm">The managed runtime can use approximately {formatBytes(managedRuntimeBytes)}. Selected model downloads total up to {formatBytes(selectedModelBytes)}.</Text>
+              <Text size="sm" mt="xs">{capabilityModelSummary}</Text>
+              <Text size="sm" mt="xs">Plan for approximately {formatBytes(plannedSetupBytes)} locally, plus temporary installation space, indexes, and videos. Valid cached model files are reused.</Text>
             </Alert>
             <div className="cacheInventory" aria-live="polite">
               {operation === 'load' || operation === 'folder' || operation === 'reset' ? (

@@ -33,14 +33,16 @@ Approximate model downloads are:
 
 | Feature | Download |
 |---|---:|
-| Dialogue search | 2.64 GiB |
-| Sound event search | 0.94 GiB |
+| Dialogue search | 2.63 GiB |
+| Sound event search | 0.91 GiB |
 | Scene search | 1.43 GiB |
 | Action search | 0.93 GiB |
 | Actor matching | 37 MiB |
 
 The Desktop-managed runtime can use about 3 GiB in addition to selected models.
-A complete local setup uses about 8.1 GiB before adding videos and indexes.
+All five model sets total about 5.95 GiB, so a complete local setup uses about
+8.95 GiB before temporary installation space, videos, and indexes. Desktop
+calculates the storage plan from the features currently selected during setup.
 
 ## Desktop app
 

@@ -61,10 +61,18 @@ const MEDIA_RUNTIME_INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 static READINESS_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Deserialize, Serialize)]
+struct ModelDownloadSpec {
+    cache_key: String,
+    download_size_bytes: u64,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 struct CapabilitySpec {
     extra: String,
     modality: String,
     label: String,
+    description: String,
+    models: Vec<ModelDownloadSpec>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -92,6 +100,7 @@ struct RuntimeManifest {
     dependency_constraints_sha256: String,
     python_version: String,
     uv_version: String,
+    managed_runtime_estimated_size_bytes: u64,
     surfaces: BTreeMap<String, SurfaceSpec>,
     capabilities: BTreeMap<String, CapabilitySpec>,
     media_runtime: MediaRuntimeSpec,
@@ -5578,6 +5587,14 @@ mod tests {
         assert_eq!(sound.extra, "sound");
         assert_eq!(sound.modality, "sound");
         assert_eq!(sound.label, "Sound event search");
+        assert_eq!(
+            sound
+                .models
+                .iter()
+                .map(|model| model.download_size_bytes)
+                .sum::<u64>(),
+            981_760_363
+        );
         assert_eq!(
             package_specification(&manifest, &["sound".into()], &[]),
             format!("vidxp[sound]=={}", manifest.package_version)

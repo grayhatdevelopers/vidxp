@@ -83,6 +83,7 @@ def model_manifest(
 
 DEFINITION = CapabilityDefinition(
     name="dialogue",
+    label="Dialogue search",
     description="Index and search spoken dialogue.",
     extra="dialogue",
     config_model=DialogueConfig,

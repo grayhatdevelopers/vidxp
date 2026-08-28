@@ -81,6 +81,19 @@ class CapabilityTests(unittest.TestCase):
                 "videoprism": "videoprism",
             },
         )
+        self.assertEqual(
+            tuple(
+                capability.label
+                for capability in CapabilityService(self.registry).list()
+            ),
+            (
+                "Dialogue search",
+                "Sound event search",
+                "Visual scene search",
+                "Actor recognition",
+                "Temporal video search",
+            ),
+        )
 
     def test_registered_operations_are_schema_only_metadata(self):
         self.assertNotIn("handler", OperationDefinition.model_fields)

@@ -91,7 +91,7 @@ describe('desktop target lifecycle', () => {
     mocks.cancelManagedSetup.mockResolvedValue(emptyState);
     mocks.cancelManagedSetupOperation.mockResolvedValue(undefined);
     mocks.confirmForgetTarget.mockResolvedValue(true);
-    mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', capabilities: { scene: { extra: 'scene', label: 'Visual scene search' } }, surfaces: {
+    mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', managed_runtime_estimated_size_bytes: 3 * 1024 ** 3, capabilities: { scene: { extra: 'scene', label: 'Visual scene search', description: 'Index and search visual scenes.', models: [{ cache_key: 'scene', download_size_bytes: 1539458338 }] } }, surfaces: {
       worker: { extra: 'local-worker', label: 'Process videos on this computer', description: 'Run video work locally.', default: true },
       browser: { extra: 'frontend', label: 'Browser interface', description: 'Open VidXP in your browser.', default: true },
       mcp: { extra: 'mcp', label: 'AI assistant integration', description: 'Connect a compatible AI app.', default: false },
@@ -572,6 +572,34 @@ describe('desktop target lifecycle', () => {
     await waitFor(() => expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({ draft_id: 'draft-1' })));
     expect(mocks.installMediaRuntime).toHaveBeenCalledWith('draft-1', 8);
     expect(mocks.launchUi).not.toHaveBeenCalled();
+  });
+
+  it('derives the storage plan from every selected capability model', async () => {
+    mocks.runtimeManifest.mockResolvedValue({
+      package_version: '0.4.0',
+      managed_runtime_estimated_size_bytes: 3 * 1024 ** 3,
+      capabilities: {
+        scene: {
+          extra: 'scene', label: 'Visual scene search', description: 'Index and search visual scenes.',
+          models: [{ cache_key: 'scene-model', download_size_bytes: 1539458338 }],
+        },
+        sound: {
+          extra: 'sound', label: 'Sound event search', description: 'Index and search sound events.',
+          models: [
+            { cache_key: 'sound-model', download_size_bytes: 980404741 },
+            { cache_key: 'sound-vocab', download_size_bytes: 1355622 },
+          ],
+        },
+      },
+      surfaces: {
+        worker: { extra: 'local-worker', label: 'Process videos on this computer', description: 'Run video work locally.', default: true },
+      },
+    });
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+
+    expect(screen.getByText(/Selected model downloads total up to 2.35 GiB/)).toBeVisible();
+    expect(screen.getByText(/Visual scene search: 1.43 GiB · Sound event search: 936.3 MiB/)).toBeVisible();
+    expect(screen.getByText(/Plan for approximately 5.35 GiB locally/)).toBeVisible();
   });
 
   it('keeps a managed installation failure visible in the setup dialog until it is acknowledged', async () => {

@@ -53,6 +53,32 @@ def desktop_model_cache_catalog() -> list[dict[str, str]]:
     return sorted(catalog, key=lambda item: item["id"].casefold())
 
 
+def desktop_capability_catalog() -> dict[str, Any]:
+    """Derive the pre-install Desktop catalog from capability contracts."""
+
+    from vidxp.capabilities.registry import create_capability_registry
+    from vidxp.model_contracts import model_artifact_path
+
+    registry = create_capability_registry()
+    capabilities: dict[str, Any] = {}
+    for name, definition in registry.definitions.items():
+        models = [
+            {
+                "cache_key": model_artifact_path(Path(), spec).as_posix(),
+                "download_size_bytes": spec.download_size_bytes,
+            }
+            for spec in registry.model_specs((name,))
+        ]
+        capabilities[name] = {
+            "extra": definition.extra,
+            "modality": definition.name,
+            "label": definition.display_label,
+            "description": definition.description,
+            "models": sorted(models, key=lambda item: item["cache_key"]),
+        }
+    return {"schema_version": 1, "capabilities": capabilities}
+
+
 def _module_available(name: str) -> bool:
     try:
         return importlib.util.find_spec(name) is not None
@@ -102,6 +128,7 @@ def _surface_capability(
 
 def _surface_capabilities(
     search_capabilities: list[str],
+    required_worker_capabilities: tuple[str, ...],
 ) -> dict[str, dict[str, Any]]:
     media_ready = media_runtime_is_initialized()
     owner_instruction = (
@@ -110,9 +137,7 @@ def _surface_capabilities(
     return {
         "worker": _surface_capability(
             installed=(
-                {"dialogue", "scene", "actor", "videoprism"}.issubset(
-                    search_capabilities
-                )
+                set(required_worker_capabilities).issubset(search_capabilities)
                 and _module_available("pydantic_ai")
             ),
             media_ready=media_ready,
@@ -186,11 +211,11 @@ def _surface_capabilities(
     }
 
 
-def _installed_search_capabilities() -> list[str]:
+def _installed_search_capabilities(registry: Any | None = None) -> list[str]:
     from vidxp.capabilities.registry import create_capability_registry
     from vidxp.dependencies import inspect_requirement
 
-    registry = create_capability_registry()
+    registry = registry or create_capability_registry()
     installed = []
     for name in registry.definitions:
         requirements = registry.requirements_for((name,))
@@ -235,8 +260,17 @@ def build_desktop_probe(
     )
     resolved_launcher = launcher if launcher is not None else sys.argv[0]
 
-    search_capabilities = _installed_search_capabilities()
-    surfaces = _surface_capabilities(search_capabilities)
+    from vidxp.capabilities.registry import create_capability_registry
+
+    registry = create_capability_registry()
+    search_capabilities = _installed_search_capabilities(registry)
+    required_worker_capabilities = tuple(
+        name for name in registry.names() if registry.provenance(name) is None
+    )
+    surfaces = _surface_capabilities(
+        search_capabilities,
+        required_worker_capabilities,
+    )
     return {
         "product": PRODUCT_ID,
         "product_version": __version__,
