@@ -90,6 +90,7 @@ from vidxp.capabilities.registry import create_capability_registry
 from vidxp.composition import HttpApplicationContext
 from vidxp.control_plane import ControlPlaneApplication
 from vidxp.core.artifacts import ArtifactKind, ArtifactState
+from vidxp.core.media import MediaState
 from vidxp.core.uploads import UploadSessionState, UploadState
 from vidxp.job_service import JobService
 from vidxp.mcp import VidXPTokenVerifier, create_mcp_server, create_remote_mcp
@@ -1365,6 +1366,33 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             7,
         )
         self.assertEqual(context.jobs.list.call_args.args[0].page_size, 9)
+
+    async def test_list_media_passes_filters_to_application(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.application.list_media.return_value = MediaPage(total=0)
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.read"}),
+                ),
+            )
+            async with Client(server) as client:
+                media = await client.call_tool(
+                    "list_media",
+                    {
+                        "page_size": 5,
+                        "filename": "clip.mp4",
+                        "state": "ready",
+                    },
+                )
+
+        self.assertFalse(media.is_error)
+        command = context.application.list_media.call_args.args[0]
+        self.assertEqual(command.page_size, 5)
+        self.assertEqual(command.filename, "clip.mp4")
+        self.assertEqual(command.state, MediaState.ready)
 
     async def test_failed_model_preparation_job_is_structured_over_mcp(self):
         with TemporaryDirectory() as directory:

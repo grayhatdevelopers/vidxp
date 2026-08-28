@@ -26,6 +26,7 @@ from vidxp.application_models import (
 from vidxp.api_models import UploadIntentResponse
 from vidxp.composition import HttpApplicationContext
 from vidxp.core.identifiers import MediaId
+from vidxp.core.media import MediaState
 
 
 router = APIRouter(prefix="/media", tags=["media"])
@@ -176,9 +177,22 @@ def list_media(
         str | None,
         Query(min_length=1, max_length=512),
     ] = None,
+    filename: Annotated[
+        str | None,
+        Query(min_length=1),
+    ] = None,
+    state: Annotated[
+        MediaState | None,
+        Query(),
+    ] = None,
 ) -> MediaPage:
     return service.application.list_media(
-        ListMediaCommand(page_size=page_size, cursor=cursor)
+        ListMediaCommand(
+            page_size=page_size,
+            cursor=cursor,
+            filename=filename,
+            state=state,
+        )
     )
 
 

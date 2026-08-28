@@ -398,6 +398,15 @@ class ListMediaCommand(ApplicationModel):
         max_length=512,
         description="Opaque next_cursor from the previous list_media page.",
     )
+    filename: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Filter media records by filename.",
+    )
+    state: MediaState | None = Field(
+        default=None,
+        description="Filter media records by readiness/state.",
+    )
 
 
 class MediaPage(Page[MediaAsset]):

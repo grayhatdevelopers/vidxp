@@ -465,6 +465,25 @@ class CliTests(unittest.TestCase):
         self.assertIn("failed", result.output)
         self.assertIn("-", result.output)
 
+    def test_media_list_passes_filters_to_service(self):
+        self.service.list_media.return_value = MediaPage(items=(), total=0)
+
+        result = self.invoke(
+            [
+                "media",
+                "list",
+                "--filename",
+                "clip.mp4",
+                "--state",
+                "ready",
+            ]
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        command = self.service.list_media.call_args.args[0]
+        self.assertEqual(command.filename, "clip.mp4")
+        self.assertEqual(command.state, MediaState.ready)
+
     def test_ui_share_uses_streamlit_wildcard_bind_and_warns(self):
         with (
             patch(

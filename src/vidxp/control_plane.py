@@ -117,6 +117,9 @@ class ControlPlaneApplication:
     @application_boundary
     def workspace(self, command: ListMediaCommand) -> WorkspaceOverview:
         page = self.list_media(command)
+        # Workspace actions are repository-level guidance, so compare against
+        # repository-wide totals rather than a potentially filtered page total.
+        repository_media_total = self.list_media(ListMediaCommand(page_size=1)).total
         index = self.index_status()
         snapshot = self._read_active_snapshot()
         capabilities = self.list_capabilities()
@@ -166,7 +169,7 @@ class ControlPlaneApplication:
         next_actions = []
         if page.total == 0:
             next_actions.append("register_media")
-        if page.total > len(indexed_media) or any(
+        if repository_media_total > len(indexed_media) or any(
             item.media_id not in indexed_media for item in page.items
         ):
             next_actions.append("index_media")

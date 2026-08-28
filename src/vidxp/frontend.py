@@ -755,7 +755,7 @@ def _select_video(busy, media_id, media_page):
     assets = tuple(
         asset
         for asset in (media_page.items if media_page is not None else ())
-        if asset.state == MediaState.ready
+        if getattr(asset, "state", None) == MediaState.ready
     )
     media_id = _default_media_id(media_id, assets)
     if media_id is not None:
@@ -999,7 +999,9 @@ def run():
             media_id = indexed_media[0]
             st.session_state[MEDIA_ID_KEY] = media_id
     try:
-        media_page = service.list_media(ListMediaCommand(page_size=100))
+        media_page = service.list_media(
+            ListMediaCommand(page_size=100, state=MediaState.ready)
+        )
     except ApplicationError:
         media_page = None
         st.warning(

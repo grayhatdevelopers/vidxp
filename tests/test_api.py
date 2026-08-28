@@ -39,6 +39,7 @@ from vidxp.application_models import (
     JobWaitResult,
     IndexStatus,
     MediaAsset,
+    MediaPage,
     Principal,
     SearchCommand,
     SearchJobResult,
@@ -371,6 +372,56 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.json()["next_actions"], ["register_media"])
         command = context.application.workspace.call_args.args[0]
         self.assertEqual(command.page_size, 25)
+
+    def test_list_media_passes_filters_to_application(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.application.list_media.return_value = MediaPage(
+                items=(),
+                total=0,
+            )
+            with TestClient(create_app(context=context)) as client:
+                response = client.get(
+                    "/api/v1/media",
+                    params={
+                        "page_size": 10,
+                        "filename": "clip.mp4",
+                        "state": "ready",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        command = context.application.list_media.call_args.args[0]
+        self.assertEqual(command.page_size, 10)
+        self.assertEqual(command.filename, "clip.mp4")
+        self.assertEqual(command.state, MediaState.ready)
+
+    def test_workspace_passes_filters_to_application(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.application.workspace.return_value = WorkspaceOverview(
+                media_total=0,
+                index=IndexStatus(
+                    schema_version=2,
+                    state="missing",
+                    stage="status",
+                    message="No index.",
+                ),
+                next_actions=("register_media",),
+            )
+            with TestClient(create_app(context=context)) as client:
+                response = client.get(
+                    "/api/v1/workspace",
+                    params={
+                        "filename": "batch",
+                        "state": "pending",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        command = context.application.workspace.call_args.args[0]
+        self.assertEqual(command.filename, "batch")
+        self.assertEqual(command.state, MediaState.pending)
 
     def test_repository_scopes_are_enforced_per_operation(self):
         with TemporaryDirectory() as directory:
