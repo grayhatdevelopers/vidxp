@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   chooseModelDirectory: vi.fn(), modelDirectoryInventory: vi.fn(),
   targetDoctor: vi.fn(), mcpClientConfig: vi.fn(), installCodexPlugin: vi.fn(), localServerStatus: vi.fn(), localWorkerStatus: vi.fn(), browserServiceStatus: vi.fn(),
   startLocalServer: vi.fn(), startSharedServer: vi.fn(), stopLocalServer: vi.fn(), startSharedBrowser: vi.fn(), stopBrowserService: vi.fn(), startLocalWorker: vi.fn(), stopLocalWorker: vi.fn(), configureExternalInstallation: vi.fn(),
+  premiereIntegrationState: vi.fn(), installPremiereExtensions: vi.fn(), uninstallPremiereExtensions: vi.fn(),
 }));
 
 const windowMocks = vi.hoisted(() => ({
@@ -113,6 +114,13 @@ describe('desktop target lifecycle', () => {
       installed_path: 'C:\\Users\\test\\.codex\\plugins\\vidxp',
       detail: 'VidXP is installed in Codex with its MCP server and skills. Start a new Codex chat to use the updated plugin.',
     });
+    mocks.premiereIntegrationState.mockResolvedValue({
+      installations: [], platform_supported: false, installer_available: false,
+      cep_package_available: true, uxp_package_available: true,
+      cep_installed: false, uxp_installed: false, detail: 'Unavailable.',
+    });
+    mocks.installPremiereExtensions.mockResolvedValue({ installed_hosts: [], opened_packages: [], detail: 'Installed.' });
+    mocks.uninstallPremiereExtensions.mockResolvedValue(undefined);
     mocks.browserServiceStatus.mockResolvedValue({ state: 'stopped', running: false, shared: false, port: null, local_url: null, network_url: null, detail: 'Stopped.' });
     mocks.startSharedBrowser.mockResolvedValue({ state: 'ready', running: true, shared: true, port: 8501, local_url: 'http://127.0.0.1:8501', network_url: 'http://192.168.1.20:8501', detail: 'Shared.' });
     mocks.stopBrowserService.mockResolvedValue({ state: 'stopped', running: false, shared: false, port: null, local_url: null, network_url: null, detail: 'Stopped.' });
@@ -506,6 +514,55 @@ describe('desktop target lifecycle', () => {
     expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({
       surfaces: ['worker', 'browser', 'mcp', 'server'],
     }));
+  });
+
+  it('installs Premiere with its processing and private-service dependencies in one setup flow', async () => {
+    mocks.premiereIntegrationState.mockResolvedValue({
+      installations: [{ display_name: 'Adobe Premiere Pro 2023', version: '23.2.0.69', executable: 'C:\\Program Files\\Adobe\\Premiere.exe', host_kind: 'cep', compatible: true }],
+      platform_supported: true, installer_available: true,
+      cep_package_available: true, uxp_package_available: true,
+      cep_installed: false, uxp_installed: false, detail: 'Found Premiere.',
+    });
+    const premiereProfile = { ...managedProfile, surfaces: ['worker', 'browser', 'server'] };
+    mocks.installRuntime.mockResolvedValue({
+      install: { package_version: '0.4.0', capabilities: ['scene'], surfaces: premiereProfile.surfaces, model_directory: 'C:\\Models', prepared: true },
+      setup: { profiles: [premiereProfile], selected_profile_id: premiereProfile.id, issues: [] },
+    });
+    mocks.installPremiereExtensions.mockResolvedValue({ installed_hosts: ['cep'], opened_packages: [], detail: 'The VidXP extension was installed.' });
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+
+    await user.click(screen.getByRole('checkbox', { name: /Premiere Pro extension/i }));
+    expect(screen.getByRole('checkbox', { name: /Process videos on this computer/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /App integration service/i })).toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Install VidXP and Premiere' }));
+
+    await waitFor(() => expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      surfaces: expect.arrayContaining(['worker', 'server']),
+    })));
+    await waitFor(() => expect(mocks.startLocalServer).toHaveBeenCalledTimes(1));
+    expect(mocks.installPremiereExtensions).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('VidXP and Premiere are ready')).toBeVisible();
+  });
+
+  it('turns Set up Premiere into a preselected managed update instead of a prerequisite warning', async () => {
+    const state = { profiles: [managedProfile], selected_profile_id: managedProfile.id, issues: [] };
+    mocks.targetSetupState.mockResolvedValue(state);
+    mocks.recheckTargetState.mockResolvedValue(state);
+    mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, runtime_profile: 'runtime-a', package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models', detail: 'Ready.' });
+    mocks.premiereIntegrationState.mockResolvedValue({
+      installations: [{ display_name: 'Adobe Premiere Pro 2023', version: '23.2.0.69', executable: 'C:\\Program Files\\Adobe\\Premiere.exe', host_kind: 'cep', compatible: true }],
+      platform_supported: true, installer_available: true,
+      cep_package_available: true, uxp_package_available: true,
+      cep_installed: false, uxp_installed: false, detail: 'Found Premiere.',
+    });
+    const user = userEvent.setup(); renderApp();
+
+    await user.click(await screen.findByRole('button', { name: 'Set up Premiere' }));
+
+    expect(await screen.findByRole('checkbox', { name: /Premiere Pro extension/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Process videos on this computer/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /App integration service/i })).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Apply and install Premiere' })).toBeEnabled();
   });
 
   it('passes the scoped draft through first-time installation and does not auto-open the browser', async () => {

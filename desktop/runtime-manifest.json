@@ -28,7 +28,7 @@
     "server": {
       "extra": "server",
       "label": "App integration service",
-      "description": "Required for the Premiere Pro extension and other app connections. It runs privately on this computer by default; local-network sharing requires bearer-token authentication.",
+      "description": "Connect other apps through VidXP's private local API. Local-network sharing is optional and requires bearer-token authentication.",
       "default": false
     }
   },

@@ -13,12 +13,16 @@ Install VidXP Desktop from the official
 checkout, Node.js installation, local build, Adobe developer mode, or Premiere
 upgrade is required for Premiere Pro 23.2.
 
-1. In Desktop setup, enable **Local video processing** and **App integration
-   service** and select the search features you want.
-2. On the Desktop summary screen, find **Premiere Pro extension** and select
-   **Install for Premiere**.
-3. Complete an Adobe Creative Cloud confirmation window if one appears.
-4. Restart Premiere Pro.
+1. In Desktop setup, select **Premiere Pro extension** and the search features
+   you want. Desktop automatically includes local video processing and its
+   private app connection.
+2. Complete an Adobe Creative Cloud confirmation window if one appears.
+3. Restart Premiere Pro.
+
+For an existing Desktop-managed setup, select **Set up Premiere** on its summary
+screen. The Premiere requirements are preselected and Desktop installs the Adobe
+package after updating VidXP. Use **Install for Premiere** only to reinstall or
+retry the Adobe package without changing VidXP features.
 
 Desktop ships both Adobe extension packages and chooses from the installed
 Premiere versions:
@@ -43,9 +47,10 @@ The extension and VidXP must run on the same computer because Premiere gives
 the panel paths to media already present in the project. VidXP indexes those
 source files in place; it does not upload or duplicate them.
 
-1. In Desktop, start **Local video processing**.
-2. Under **App integration service**, choose **Start locally**.
-3. Copy the displayed API address into the Premiere panel and connect.
+Premiere setup starts the private app service. Local video processing starts
+when VidXP needs it; if you stop either service later, start it again from the
+Desktop summary. Copy the displayed API address into the Premiere panel and
+connect.
 
 Desktop can choose an available local port, so use its displayed address
 instead of assuming the default `http://127.0.0.1:32191`.

@@ -40,6 +40,7 @@ interface TargetSummaryProps {
   opening?: boolean;
   onRecheck: () => Promise<void>;
   onManageManaged: () => void;
+  onSetUpPremiere: () => void;
   onSetupChanged: (setup: TargetSetupState) => void;
   onChooseAnother: () => void;
   onOpen: () => Promise<void>;
@@ -59,7 +60,7 @@ interface WorkerFailure {
   detail: string;
 }
 
-export function TargetSummary({ profile, validationError, checking, operationPending, opening, onRecheck, onManageManaged, onSetupChanged, onChooseAnother, onOpen }: TargetSummaryProps) {
+export function TargetSummary({ profile, validationError, checking, operationPending, opening, onRecheck, onManageManaged, onSetUpPremiere, onSetupChanged, onChooseAnother, onOpen }: TargetSummaryProps) {
   const executable = profile.display_executable;
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [server, setServer] = useState<LocalServerStatus | null>(null);
@@ -401,7 +402,8 @@ export function TargetSummary({ profile, validationError, checking, operationPen
       <PremiereIntegration
         operationPending={operationPending}
         serverEnabled={serverAvailable}
-        onOpenSetup={() => void openExternalSetup()}
+        canConfigureDependency={profile.kind === 'managed'}
+        onConfigureDependency={profile.kind === 'managed' ? onSetUpPremiere : () => void openExternalSetup()}
       />
 
       <div className="setupPanel runtimeControlPanel">

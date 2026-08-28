@@ -16,10 +16,11 @@ import {
 interface PremiereIntegrationProps {
   operationPending?: boolean;
   serverEnabled: boolean;
-  onOpenSetup: () => void;
+  canConfigureDependency: boolean;
+  onConfigureDependency: () => void;
 }
 
-export function PremiereIntegration({ operationPending, serverEnabled, onOpenSetup }: PremiereIntegrationProps) {
+export function PremiereIntegration({ operationPending, serverEnabled, canConfigureDependency, onConfigureDependency }: PremiereIntegrationProps) {
   const [state, setState] = useState<IntegrationState | null>(null);
   const [busy, setBusy] = useState<'refresh' | 'install' | 'remove' | null>('refresh');
   const [failure, setFailure] = useState<string | null>(null);
@@ -96,14 +97,14 @@ export function PremiereIntegration({ operationPending, serverEnabled, onOpenSet
           <Badge color={state.cep_installed ? 'teal' : 'gray'} variant="light">Premiere 23–25.5 {state.cep_installed ? 'installed' : 'available'}</Badge>
           <Badge color={state.uxp_installed ? 'teal' : 'gray'} variant="light">Premiere 25.6+ {state.uxp_installed ? 'installed' : 'available'}</Badge>
         </Group>
-        {!serverEnabled && <Alert color="yellow" title="App integration service required">The Premiere panel connects to VidXP through its private local service. Enable App integration service in Setup options; Browser and AI assistant integration are not required.<Button mt="sm" variant="light" onClick={onOpenSetup}>Enable in Setup options</Button></Alert>}
+        {!serverEnabled && <Alert color="blue" title={canConfigureDependency ? 'Premiere setup includes its connection' : 'Add the app connection first'}>{canConfigureDependency ? 'VidXP will add local processing and its private app service when you continue.' : 'This externally managed VidXP installation needs the App integration service. Add that feature with its setup, then return here.'}</Alert>}
         {!state.installer_available && state.platform_supported && <Alert color="blue" title="Creative Cloud confirmation required">Adobe's background plugin installer was not found. VidXP will open the packaged extension so Creative Cloud can finish the installation.</Alert>}
         {unavailablePackage && <Alert color="red" title="Extension packages are missing">Reinstall or update VidXP Desktop. Release installers include both Premiere packages.</Alert>}
         {result && <Alert color="teal" title={result.opened_packages.length ? 'Finish in Creative Cloud' : 'Premiere extension installed'}>{result.detail}</Alert>}
         {failure && <Alert color="red" title="Premiere setup did not finish" role="alert">{failure}</Alert>}
         <Group justify="flex-end">
           {installed && <Button color="red" variant="subtle" leftSection={<IconTrash size={16} />} loading={busy === 'remove'} disabled={Boolean(operationPending || (busy && busy !== 'remove'))} onClick={() => void remove()}>Remove extension</Button>}
-          <Button leftSection={<IconDownload size={16} />} loading={busy === 'install'} disabled={!state.platform_supported || !serverEnabled || Boolean(unavailablePackage) || Boolean(operationPending || (busy && busy !== 'install'))} onClick={() => void install()}>{installed ? 'Reinstall for Premiere' : 'Install for Premiere'}</Button>
+          <Button leftSection={<IconDownload size={16} />} loading={busy === 'install'} disabled={!state.platform_supported || Boolean(unavailablePackage) || Boolean(operationPending || (busy && busy !== 'install'))} onClick={() => serverEnabled ? void install() : onConfigureDependency()}>{serverEnabled ? installed ? 'Reinstall for Premiere' : 'Install for Premiere' : canConfigureDependency ? 'Set up Premiere' : 'Open setup options'}</Button>
         </Group>
       </Stack>}
     </div>

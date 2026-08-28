@@ -78,11 +78,13 @@ setup leaves the previous working setup available.
 - **AI assistant integration** lets a local MCP-compatible assistant use VidXP.
 - **App integration service** lets other local applications use the HTTP API or
   Streamable HTTP MCP.
+- **Premiere Pro extension** installs the matching Adobe panel and automatically
+  includes local video processing plus the private app integration service.
 
-The [Premiere Pro extension](docs/integrations/premiere-pro.md) uses the app
-integration service to search media that is already loaded in an editing
-project. Desktop includes both supported Adobe extension packages; users do
-not need the source repository or a JavaScript toolchain.
+The [Premiere Pro extension](docs/integrations/premiere-pro.md) searches media
+that is already loaded in an editing project. Desktop includes both supported
+Adobe extension packages; users do not need the source repository or a
+JavaScript toolchain.
 
 Choose where models should be stored, then decide whether to download them
 during setup. VidXP displays the required downloads before starting them.
@@ -107,12 +109,17 @@ variants:
 - Premiere Pro 23.0 through 25.5 uses the CEP extension;
 - Premiere Pro 25.6 or newer uses the UXP extension.
 
-In Desktop, enable **Local video processing** and **App integration service**,
-then open **Premiere Pro extension** and select **Install for Premiere**.
-Desktop detects standard Premiere installations and installs the matching
+In Desktop setup, select **Premiere Pro extension** and the search features you
+want. Desktop automatically includes local video processing and its private app
+service, then detects standard Premiere installations and installs the matching
 package through Adobe Creative Cloud's plugin installer. If Adobe requires
 confirmation or elevation, finish the Creative Cloud prompt. Restart Premiere
 after installation.
+
+For an existing Desktop-managed VidXP installation, select **Set up Premiere**
+on the summary screen. Desktop opens the same setup flow with the Premiere
+requirements already selected. **Install for Premiere** remains available there
+for reinstalling or retrying only the Adobe package.
 
 For Premiere Pro 23.2, open the panel from **Window > Extensions (Legacy) >
 VidXP Search**. For Premiere Pro 25.6 or newer, use **Window > UXP Plugins >
