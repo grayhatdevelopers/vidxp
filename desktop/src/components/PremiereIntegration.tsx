@@ -96,7 +96,7 @@ export function PremiereIntegration({ operationPending, serverEnabled, onOpenSet
           <Badge color={state.cep_installed ? 'teal' : 'gray'} variant="light">Premiere 23–25.5 {state.cep_installed ? 'installed' : 'available'}</Badge>
           <Badge color={state.uxp_installed ? 'teal' : 'gray'} variant="light">Premiere 25.6+ {state.uxp_installed ? 'installed' : 'available'}</Badge>
         </Group>
-        {!serverEnabled && <Alert color="yellow" title="Enable the App integration service">The panel needs VidXP's local service to search and index media.<Button mt="sm" variant="light" onClick={onOpenSetup}>Open Setup options</Button></Alert>}
+        {!serverEnabled && <Alert color="yellow" title="App integration service required">The Premiere panel connects to VidXP through its private local service. Enable App integration service in Setup options; Browser and AI assistant integration are not required.<Button mt="sm" variant="light" onClick={onOpenSetup}>Enable in Setup options</Button></Alert>}
         {!state.installer_available && state.platform_supported && <Alert color="blue" title="Creative Cloud confirmation required">Adobe's background plugin installer was not found. VidXP will open the packaged extension so Creative Cloud can finish the installation.</Alert>}
         {unavailablePackage && <Alert color="red" title="Extension packages are missing">Reinstall or update VidXP Desktop. Release installers include both Premiere packages.</Alert>}
         {result && <Alert color="teal" title={result.opened_packages.length ? 'Finish in Creative Cloud' : 'Premiere extension installed'}>{result.detail}</Alert>}

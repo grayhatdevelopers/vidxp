@@ -5421,6 +5421,23 @@ mod tests {
     }
 
     #[test]
+    fn runtime_manifest_exposes_sound_setup_and_dependency() {
+        let manifest = manifest().expect("manifest");
+        let sound = manifest
+            .capabilities
+            .get("sound")
+            .expect("sound setup capability");
+
+        assert_eq!(sound.extra, "sound");
+        assert_eq!(sound.modality, "sound");
+        assert_eq!(sound.label, "Sound event search");
+        assert_eq!(
+            package_specification(&manifest, &["sound".into()], &[]),
+            format!("vidxp[sound]=={}", manifest.package_version)
+        );
+    }
+
+    #[test]
     fn runtime_constraints_digest_is_independent_of_checkout_line_endings() {
         let canonical = normalized_runtime_constraints();
         let windows = canonical

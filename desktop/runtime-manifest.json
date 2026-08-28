@@ -28,7 +28,7 @@
     "server": {
       "extra": "server",
       "label": "App integration service",
-      "description": "Run an API and network-style MCP connection for other software. It is private by default and can be shared on your local network with bearer-token authentication.",
+      "description": "Required for the Premiere Pro extension and other app connections. It runs privately on this computer by default; local-network sharing requires bearer-token authentication.",
       "default": false
     }
   },
@@ -37,6 +37,11 @@
       "extra": "dialogue",
       "modality": "dialogue",
       "label": "Dialogue search"
+    },
+    "sound": {
+      "extra": "sound",
+      "modality": "sound",
+      "label": "Sound event search"
     },
     "scene": {
       "extra": "scene",
