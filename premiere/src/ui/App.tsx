@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { createPremiereAdapter } from "../premiere/adapter";
 import {
   chunkPaths,
   collectSelectedClips,
   countReadyClips,
   filterLibrary,
 } from "../premiere/library";
-import type { PremiereLibrary, PremiereMediaNode } from "../premiere/types";
+import type {
+  PremiereAdapter,
+  PremiereLibrary,
+  PremiereMediaNode,
+} from "../premiere/types";
 import {
   createIdempotencyKey,
   VidXPClient,
+  type VidXPFetch,
 } from "../services/vidxp/client";
 import type {
   CapabilitySummary,
@@ -45,8 +49,12 @@ interface Notice {
 
 const DEFAULT_API_ADDRESS = "http://127.0.0.1:32191";
 
-export function App() {
-  const premiere = useMemo(() => createPremiereAdapter(), []);
+interface AppProps {
+  fetchImpl?: VidXPFetch;
+  premiere: PremiereAdapter;
+}
+
+export function App({ fetchImpl, premiere }: AppProps) {
   const abortController = useRef<AbortController | undefined>(undefined);
   const [apiAddress, setApiAddress] = useState(DEFAULT_API_ADDRESS);
   const [bearerToken, setBearerToken] = useState("");
@@ -111,6 +119,7 @@ export function App() {
       const nextClient = new VidXPClient({
         baseUrl: apiAddress,
         bearerToken,
+        fetchImpl,
       });
       const [, nextCapabilities, nextWorkspace] = await Promise.all([
         nextClient.health(),

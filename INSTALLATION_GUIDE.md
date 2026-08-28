@@ -79,9 +79,10 @@ setup leaves the previous working setup available.
 - **App integration service** lets other local applications use the HTTP API or
   Streamable HTTP MCP.
 
-The [Premiere Pro extension preview](docs/integrations/premiere-pro.md) uses
-the app integration service to search media that is already loaded in an
-editing project.
+The [Premiere Pro extension](docs/integrations/premiere-pro.md) uses the app
+integration service to search media that is already loaded in an editing
+project. Desktop includes both supported Adobe extension packages; users do
+not need the source repository or a JavaScript toolchain.
 
 Choose where models should be stored, then decide whether to download them
 during setup. VidXP displays the required downloads before starting them.
@@ -97,6 +98,32 @@ After setup finishes:
 
 Browser and API sharing are off by default. If you enable sharing, use it only
 on a trusted local network and follow the warning shown by Desktop.
+
+### Install the Premiere Pro extension
+
+On Windows, VidXP supports Premiere Pro 23.0 or newer with two packaged host
+variants:
+
+- Premiere Pro 23.0 through 25.5 uses the CEP extension;
+- Premiere Pro 25.6 or newer uses the UXP extension.
+
+In Desktop, enable **Local video processing** and **App integration service**,
+then open **Premiere Pro extension** and select **Install for Premiere**.
+Desktop detects standard Premiere installations and installs the matching
+package through Adobe Creative Cloud's plugin installer. If Adobe requires
+confirmation or elevation, finish the Creative Cloud prompt. Restart Premiere
+after installation.
+
+For Premiere Pro 23.2, open the panel from **Window > Extensions (Legacy) >
+VidXP Search**. For Premiere Pro 25.6 or newer, use **Window > UXP Plugins >
+VidXP Search**. If both Premiere generations are installed, Desktop installs
+both packages; their host ranges do not overlap.
+
+Plain loopback HTTP is blocked by Premiere UXP on macOS. Desktop therefore does
+not claim the 25.6+ macOS panel as usable until the integration has a trusted
+local HTTPS transport. The CEP package can use its native local transport on
+supported macOS Premiere versions, but still requires host validation before a
+release claims support.
 
 ## Command line
 

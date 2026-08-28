@@ -58,11 +58,38 @@ interface SpectrumCheckboxProps extends CommonControlProps {
 }
 
 export function SpectrumButton(props: SpectrumButtonProps) {
+  if (isCepRuntime()) return <NativeButton {...props} />;
   return <SpectrumButtonElement tag="sp-button" {...props} />;
 }
 
 export function SpectrumActionButton(props: SpectrumActionButtonProps) {
+  if (isCepRuntime()) return <NativeButton {...props} />;
   return <SpectrumButtonElement tag="sp-action-button" {...props} />;
+}
+
+function NativeButton({
+  ariaLabel,
+  children,
+  className,
+  disabled = false,
+  onPress,
+  quiet = false,
+  selected = false,
+}: SpectrumActionButtonProps) {
+  return (
+    <button
+      aria-label={ariaLabel}
+      aria-pressed={selected || undefined}
+      className={["native-button", quiet ? "quiet" : "", className]
+        .filter(Boolean)
+        .join(" ")}
+      disabled={disabled}
+      onClick={(event) => onPress?.(event.nativeEvent)}
+      type="button"
+    >
+      {children}
+    </button>
+  );
 }
 
 function SpectrumButtonElement({
@@ -110,16 +137,33 @@ function SpectrumButtonElement({
   );
 }
 
-export function SpectrumTextField({
+export function SpectrumTextField(props: SpectrumTextFieldProps) {
+  return isCepRuntime() ? <NativeTextField {...props} /> : <UxpTextField {...props} />;
+}
+
+function NativeTextField({
   ariaLabel,
   className,
   disabled = false,
   label,
   onValueChange,
   placeholder,
-  quiet = false,
   type = "text",
   value,
+}: SpectrumTextFieldProps) {
+  return (
+    <label className="native-control">
+      {label ? <span>{label}</span> : undefined}
+      <input aria-label={ariaLabel} className={className} disabled={disabled}
+        onChange={(event) => onValueChange(event.currentTarget.value)}
+        placeholder={placeholder} type={type} value={value} />
+    </label>
+  );
+}
+
+function UxpTextField({
+  ariaLabel, className, disabled = false, label, onValueChange, placeholder,
+  quiet = false, type = "text", value,
 }: SpectrumTextFieldProps) {
   const ref = useRef<HTMLElement>(null);
   useUxpProperty(ref, "disabled", disabled);
@@ -145,7 +189,11 @@ export function SpectrumTextField({
   );
 }
 
-export function SpectrumTextArea({
+export function SpectrumTextArea(props: SpectrumTextAreaProps) {
+  return isCepRuntime() ? <NativeTextArea {...props} /> : <UxpTextArea {...props} />;
+}
+
+function NativeTextArea({
   ariaLabel,
   className,
   disabled = false,
@@ -154,6 +202,21 @@ export function SpectrumTextArea({
   placeholder,
   quiet = false,
   value,
+}: SpectrumTextAreaProps) {
+  void quiet;
+  return (
+    <label className="native-control">
+      {label ? <span>{label}</span> : undefined}
+      <textarea aria-label={ariaLabel} className={className} disabled={disabled}
+        onChange={(event) => onValueChange(event.currentTarget.value)}
+        placeholder={placeholder} value={value} />
+    </label>
+  );
+}
+
+function UxpTextArea({
+  ariaLabel, className, disabled = false, label, onValueChange, placeholder,
+  quiet = false, value,
 }: SpectrumTextAreaProps) {
   const ref = useRef<HTMLElement>(null);
   useUxpProperty(ref, "disabled", disabled);
@@ -178,7 +241,11 @@ export function SpectrumTextArea({
   );
 }
 
-export function SpectrumCheckbox({
+export function SpectrumCheckbox(props: SpectrumCheckboxProps) {
+  return isCepRuntime() ? <NativeCheckbox {...props} /> : <UxpCheckbox {...props} />;
+}
+
+function NativeCheckbox({
   ariaLabel,
   checked,
   children,
@@ -187,6 +254,22 @@ export function SpectrumCheckbox({
   indeterminate = false,
   onCheckedChange,
   onPress,
+}: SpectrumCheckboxProps) {
+  return (
+    <label className={["native-checkbox", className].filter(Boolean).join(" ")}>
+      <input aria-label={ariaLabel} checked={checked} disabled={disabled}
+        onChange={(event) => onCheckedChange(event.currentTarget.checked)}
+        onClick={(event) => onPress?.(event.nativeEvent)}
+        ref={(element) => { if (element) element.indeterminate = indeterminate; }}
+        type="checkbox" />
+      {children ? <span>{children}</span> : undefined}
+    </label>
+  );
+}
+
+function UxpCheckbox({
+  ariaLabel, checked, children, className, disabled = false,
+  indeterminate = false, onCheckedChange, onPress,
 }: SpectrumCheckboxProps) {
   const ref = useRef<HTMLElement>(null);
   useUxpProperty(ref, "checked", checked);
@@ -209,6 +292,10 @@ export function SpectrumCheckbox({
       {children}
     </sp-checkbox>
   );
+}
+
+function isCepRuntime(): boolean {
+  return Reflect.get(window, "__VIDXP_CEP__") === true;
 }
 
 function booleanAttribute(value: boolean): true | undefined {

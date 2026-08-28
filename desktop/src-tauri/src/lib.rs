@@ -31,6 +31,7 @@ mod background_process;
 mod browser_readiness;
 mod lifecycle;
 mod media_setup;
+mod premiere_integration;
 mod target_profiles;
 
 use activation::{ActivationRecovery, ActivationStage, activation_recovery};
@@ -3728,6 +3729,60 @@ async fn install_codex_plugin(
     .map_err(|error| format!("Codex plugin setup stopped unexpectedly: {error}"))?
 }
 
+#[tauri::command]
+fn premiere_integration_state(
+    app: AppHandle,
+) -> Result<premiere_integration::PremiereIntegrationState, String> {
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("Could not locate VidXP Desktop resources: {error}"))?;
+    Ok(premiere_integration::state(&resource_dir))
+}
+
+#[tauri::command]
+async fn install_premiere_extensions(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<premiere_integration::PremiereInstallResult, String> {
+    let _active = state.active_operations.register()?;
+    let (profile, _) = selected_target_context(&app)?;
+    if !profile.surfaces.iter().any(|surface| surface == "server") {
+        return Err("Enable the App integration service in Setup options before installing the Premiere extension.".into());
+    }
+    let worker_app = app.clone();
+    let (result, packages) = tauri::async_runtime::spawn_blocking(move || {
+        let resource_dir = worker_app
+            .path()
+            .resource_dir()
+            .map_err(|error| format!("Could not locate VidXP Desktop resources: {error}"))?;
+        premiere_integration::install(&resource_dir)
+    })
+    .await
+    .map_err(|error| format!("Premiere setup stopped unexpectedly: {error}"))??;
+    for package in packages {
+        app.opener()
+            .open_path(package.display().to_string(), None::<&str>)
+            .map_err(|error| {
+                format!(
+                    "Could not open {} with Adobe Creative Cloud: {error}",
+                    package.display()
+                )
+            })?;
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+async fn uninstall_premiere_extensions(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<(), String> {
+    let _active = state.active_operations.register()?;
+    tauri::async_runtime::spawn_blocking(premiere_integration::uninstall)
+        .await
+        .map_err(|error| format!("Premiere removal stopped unexpectedly: {error}"))?
+}
+
 fn execute_worker_action(app: &AppHandle, action: &str) -> Result<LocalWorkerStatus, String> {
     let (profile, paths) = selected_target_context(app)?;
     if !profile.surfaces.iter().any(|surface| surface == "worker") {
@@ -4759,6 +4814,9 @@ pub fn run() {
             configure_external_installation,
             mcp_client_config,
             install_codex_plugin,
+            premiere_integration_state,
+            install_premiere_extensions,
+            uninstall_premiere_extensions,
             local_worker_status,
             start_local_worker,
             stop_local_worker,

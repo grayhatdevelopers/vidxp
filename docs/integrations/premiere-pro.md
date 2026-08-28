@@ -1,76 +1,69 @@
 # Search Premiere Pro media with VidXP
 
-The VidXP Premiere Pro extension preview lets an editor choose clips or bins
-from the open Premiere project, index the underlying video files, and search
-the resulting library without leaving Premiere. Search features are discovered
-from the connected VidXP runtime, so the panel does not assume a fixed list of
-capabilities.
+The VidXP Premiere Pro extension lets an editor select clips or bins from the
+open project, index their existing source files, and search the resulting
+library without leaving Premiere. It discovers dialogue, sound, scene, actor,
+and future search features from the connected VidXP runtime instead of keeping
+a fixed capability list in the extension.
 
-This is a source-built proof of concept. It targets Premiere Pro 25.6 or newer
-on the current UXP platform. It has automated client and build coverage, but
-the repository does not yet claim host validation or a packaged `.ccx`
-release.
+## Install the extension
 
-## Prepare VidXP Desktop
+Install VidXP Desktop from the official
+[GitHub release](https://github.com/grayhatdevelopers/vidxp/releases). No Git
+checkout, Node.js installation, local build, Adobe developer mode, or Premiere
+upgrade is required for Premiere Pro 23.2.
 
-The extension and VidXP must run on the same computer because the panel passes
-Premiere's existing local media paths to VidXP. It does not upload or duplicate
-the source videos.
+1. In Desktop setup, enable **Local video processing** and **App integration
+   service** and select the search features you want.
+2. On the Desktop summary screen, find **Premiere Pro extension** and select
+   **Install for Premiere**.
+3. Complete an Adobe Creative Cloud confirmation window if one appears.
+4. Restart Premiere Pro.
 
-1. In VidXP Desktop, enable **Local video processing** and
-   **App integration service** for the selected installation.
-2. Prepare the search features you intend to use.
-3. Start **Local video processing**.
-4. Under **App integration service**, choose **Start locally** and copy the
-   displayed **API address**.
+Desktop ships both Adobe extension packages and chooses from the installed
+Premiere versions:
 
-Keep the service private to the computer. The Premiere preview does not need
-the shared-network mode or a bearer token for this setup.
+| Premiere version | Extension | Open the panel from |
+|---|---|---|
+| 23.0–25.5 | CEP 11 | **Window > Extensions (Legacy) > VidXP Search** |
+| 25.6 or newer | UXP | **Window > UXP Plugins > VidXP Search** |
 
-The command-line equivalent is:
+The package ranges do not overlap. A workstation with an older and a current
+Premiere installation can keep both packages installed without duplicate
+panels in either host.
 
-```bash
-uv tool install --python 3.14 --torch-backend cpu \
-  "vidxp[local-worker,server]"
-vidxp init
-vidxp prepare
-vidxp-api
-```
+Desktop uses Adobe Creative Cloud's official Unified Plugin Installer Agent.
+If the background installer is unavailable or needs user interaction, Desktop
+opens the bundled `.zxp` or `.ccx` package so Creative Cloud can finish the
+installation. It never builds extension code on the user's computer.
 
-The default API address is `http://127.0.0.1:32191`. Desktop may choose a
-different available local port; always use the address it displays.
+## Connect VidXP
 
-## Build and load the preview
+The extension and VidXP must run on the same computer because Premiere gives
+the panel paths to media already present in the project. VidXP indexes those
+source files in place; it does not upload or duplicate them.
 
-Install Node.js 22.19, 24.15, or 26 and Adobe UXP Developer Tool 2.2 or newer.
-From the repository root, run:
+1. In Desktop, start **Local video processing**.
+2. Under **App integration service**, choose **Start locally**.
+3. Copy the displayed API address into the Premiere panel and connect.
 
-```bash
-npm --prefix premiere ci
-npm --prefix premiere run build
-```
-
-In UXP Developer Tool, add `premiere/dist/manifest.json`, load the plugin, then
-open **Window > UXP Plugins > VidXP Search** in Premiere Pro.
-
-Adobe's supported distribution format is a `.ccx` package installed through
-Creative Cloud Desktop. Packaging and signing are intentionally deferred until
-the preview passes the host checklist across supported Premiere versions.
+Desktop can choose an available local port, so use its displayed address
+instead of assuming the default `http://127.0.0.1:32191`.
 
 ## Index Premiere media
 
-1. Open a Premiere project and connect the panel to the VidXP API address.
+1. Open a Premiere project and connect the panel.
 2. Search the project tree or choose **Use current selection** to mirror the
    Project panel selection.
-3. Select clips or bins. A bin expands to its file-backed descendants; Premiere
-   bins are logical containers and do not imply a filesystem directory.
-4. Choose the indexing features reported by VidXP and start indexing.
-5. Keep the panel open while it reports per-batch progress. A dismissible
-   notification reports completion or individual failures.
+3. Select clips or bins. A Premiere bin expands to its file-backed descendants;
+   it is not treated as a filesystem directory.
+4. Choose any indexing features reported by VidXP and start indexing.
+5. Keep the panel open while it reports batch progress. A dismissible notice
+   reports completion and identifies individual failures.
 
 Offline clips, sequences, generated items without a media path, and duplicate
-source paths are not submitted. Selections larger than ten files are divided
-into durable VidXP ingestion sessions of ten files each.
+source paths are not submitted. Large selections are split into durable VidXP
+ingestion sessions.
 
 ## Search indexed moments
 
@@ -78,25 +71,22 @@ Enter a description, choose one indexed video or the complete active library,
 and select any searchable features reported by VidXP. Results show the source
 video, time range, contributing features, and fused score.
 
-The proof of concept does not yet move Premiere's playhead, open a result in the
-Source Monitor, create timeline markers, or insert generated snippets. Those
-operations remain behind the Premiere adapter so they can be added without
-changing the VidXP client or search UI contracts.
+Timeline navigation, Source Monitor actions, marker creation, and snippet
+insertion remain future host-adapter operations. They can be added without
+changing the VidXP client or shared search workflow.
 
-## Current compatibility limits
+## Current release limits
 
-- Adobe documents Premiere UXP as available from Premiere Pro 25.6 with
-  manifest v5 and UXP Developer Tool 2.2.
-- Adobe documents `getMediaFilePath()` for file-backed project items, but proxy,
-  subclip, Productions, UNC, and offline-media behavior still needs host
-  coverage.
-- Adobe restricts ordinary `http://` network access on macOS. The loopback
-  transport in this preview must be validated before macOS support is claimed.
-- React 19, built-in Spectrum control events and values, panel resize behavior,
-  network permissions with Desktop's dynamic port, and UXP request-origin
-  behavior remain manual release gates.
-- Completion appears inside the panel. UXP does not expose a dependable native
-  Premiere toast API, and the preview does not rely on modal `alert()` calls.
+- Windows is the first supported packaging target. Premiere Pro 23.2 must pass
+  the CEP host checklist before the release is promoted beyond preview.
+- Adobe blocks ordinary `http://` URLs in Premiere UXP on macOS. The 25.6+
+  macOS panel needs a trusted loopback HTTPS transport before it is supported.
+- CEP on macOS uses its native Node transport, but installation and media-path
+  behavior still require host validation.
+- Proxy, subclip, Productions, UNC, mounted-volume, offline-media, and React 19
+  control behavior remain explicit manual release gates.
+- Completion appears inside the panel because neither host generation exposes
+  a dependable native Premiere notification API for this workflow.
 
 Contributors should read the [extension architecture](../../premiere/README.md)
 and run the [manual host checklist](../../premiere/docs/MANUAL_TEST_CHECKLIST.md).
@@ -104,8 +94,8 @@ and run the [manual host checklist](../../premiere/docs/MANUAL_TEST_CHECKLIST.md
 ## Adobe references
 
 - [Premiere UXP introduction](https://developer.adobe.com/premiere-pro/uxp/introduction/)
-- [Premiere UXP manifest](https://developer.adobe.com/premiere-pro/uxp/plugins/concepts/manifest/)
-- [Premiere network operations](https://developer.adobe.com/premiere-pro/uxp/resources/recipes/network/)
-- [ClipProjectItem API](https://developer.adobe.com/premiere-pro/uxp/ppro-reference/classes/clipprojectitem)
-- [Official Premiere UXP samples](https://github.com/AdobeDocs/uxp-premiere-pro-samples)
-- [Package and install a UXP plugin](https://developer.adobe.com/premiere-pro/uxp/plugins/distribution/package/)
+- [Package a UXP plugin](https://developer.adobe.com/premiere-pro/uxp/plugins/distribution/package/)
+- [Install a UXP plugin](https://developer.adobe.com/premiere-pro/uxp/plugins/distribution/install/)
+- [Premiere UXP network operations](https://developer.adobe.com/premiere-pro/uxp/resources/recipes/network/)
+- [Adobe CEP PProPanel sample](https://github.com/Adobe-CEP/Samples/tree/master/PProPanel)
+- [Adobe CEP 11 cookbook](https://github.com/Adobe-CEP/CEP-Resources/blob/master/CEP_11.x/Documentation/CEP%2011.1%20HTML%20Extension%20Cookbook.md)

@@ -2,6 +2,8 @@ import { Alert, Badge, Button, Checkbox, Code, Group, Loader, Modal, Stack, Text
 import { IconActivityHeartbeat, IconCopy, IconExternalLink, IconPlugConnected, IconPlayerPlay, IconPlayerStop, IconRefresh, IconSettings, IconShare, IconTerminal2 } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 
+import { PremiereIntegration } from './PremiereIntegration';
+
 import {
   errorMessage,
   browserServiceStatus,
@@ -395,6 +397,12 @@ export function TargetSummary({ profile, validationError, checking, operationPen
           <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={opening} disabled={Boolean(validationError) || desktopSurfaceUnavailable || operationPending} onClick={() => void onOpen()}>Open VidXP</Button>
         </Group>
       </div>
+
+      <PremiereIntegration
+        operationPending={operationPending}
+        serverEnabled={serverAvailable}
+        onOpenSetup={() => void openExternalSetup()}
+      />
 
       <div className="setupPanel runtimeControlPanel">
         <Title order={2} className="panelTitle">Health and background services</Title>

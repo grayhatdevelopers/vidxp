@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./src/ui/App";
+import { createPremiereAdapter } from "./src/premiere/adapter";
 
 // UXP supplies this module inside Premiere at runtime.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -15,7 +16,7 @@ if (!rootElement) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <App />
+    <App premiere={createPremiereAdapter()} />
   </StrictMode>,
 );
 

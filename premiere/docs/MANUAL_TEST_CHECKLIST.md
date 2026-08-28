@@ -1,17 +1,30 @@
 # Premiere Pro manual test checklist
 
-Automated Node tests do not exercise Premiere, UXP, media paths, a real VidXP
-process, or model inference. Complete this checklist in Premiere Pro 25.6 or
-newer with UXP Developer Tool 2.2 or newer before claiming host support.
+Automated tests do not exercise Premiere, CEP, UXP, Creative Cloud, media
+paths, a real VidXP process, or model inference. Complete this checklist on a
+clean Windows test machine with Premiere Pro 23.2 and Premiere Pro 25.6 or
+newer before claiming host support.
+
+## Package installation
+
+- Install a release VidXP Desktop build; do not clone the repository or enable
+  Adobe developer modes for this test.
+- Confirm Desktop detects Premiere 23.2 as CEP and Premiere 25.6+ as UXP.
+- Select **Install for Premiere** and confirm Adobe's installer accepts the
+  signed `.zxp` and `.ccx` packages.
+- Restart both Premiere versions. Confirm 23.2 shows one panel under **Window >
+  Extensions (Legacy)** and 25.6+ shows one panel under **Window > UXP
+  Plugins**.
+- Refresh Desktop and confirm both installed statuses are reported.
+- Remove both extensions from Desktop, restart Premiere, and confirm both
+  panels are absent. Reinstall before continuing.
 
 ## Load and layout
 
-- Run `npm run check` from `premiere/`.
-- Add `premiere/dist/manifest.json` to UXP Developer Tool and load the plugin.
-- Open **Window > UXP Plugins > VidXP Search**.
+- Run every remaining item once in Premiere 23.2 and once in Premiere 25.6+.
 - Dock, float, resize, close, and reopen the panel in supported Premiere themes.
-- Confirm built-in Spectrum buttons, text fields, text areas, and checkboxes
-  render with the active Premiere theme.
+- Confirm UXP's built-in Spectrum controls and CEP's native controls render
+  correctly and consistently with the active Premiere theme.
 - Confirm Tab, Space, and Enter work as expected and focus remains visible.
 - Confirm controlled values do not reset and actions fire only once after UDT
   reloads and React Strict Mode remounts.
@@ -36,6 +49,8 @@ newer with UXP Developer Tool 2.2 or newer before claiming host support.
 
 - In Desktop, start local processing and the app integration service locally.
 - Copy Desktop's dynamic API address into the extension and connect.
+- Confirm CEP connects through its native loopback transport without adding a
+  `null` browser origin to VidXP's CORS allowlist.
 - Confirm the panel shows the capabilities and indexed media reported by that
   runtime, including any capability added after this extension was built.
 - Stop the service and confirm the panel reports a safe, actionable error.
@@ -69,9 +84,9 @@ newer with UXP Developer Tool 2.2 or newer before claiming host support.
 
 ## Safety and cleanup
 
-- Confirm no source video is copied into `premiere/`, UXP plugin data, or UXP
-  temporary storage.
+- Confirm no source video is copied into `premiere/`, CEP or UXP plugin data,
+  or host temporary storage.
 - Confirm no API token, source path, media file, index, build output, or local
   UXP Developer Tool setting appears in `git status`.
-- Stop services started for the test and remove the plugin from UXP Developer
-  Tool when finished.
+- Stop services started for the test and remove both packages from Desktop when
+  finished.

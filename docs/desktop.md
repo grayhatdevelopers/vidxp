@@ -215,8 +215,18 @@ VidXP currently publishes:
 | macOS Apple Silicon | DMG |
 | Linux x86-64 | AppImage |
 
-The release workflow builds all three packages from the stamped release commit
-and attaches them to one GitHub release.
+The release workflow builds all three Desktop packages from the stamped
+release commit and attaches them to one GitHub release. Before those builds it
+also creates the signed CEP `.zxp` and UXP `.ccx` Premiere packages. Every
+Desktop installer embeds both packages as resources, so installation happens
+on the user's computer without source code or build tooling.
+
+Desktop detects standard Premiere installations, assigns versions 23.0–25.5
+to CEP and 25.6 or newer to UXP, and calls Adobe's Unified Plugin Installer
+Agent. If Adobe requires an interactive confirmation, Desktop opens the
+already-built package with Creative Cloud. The package host ranges are
+non-overlapping, so both may remain installed on a workstation with multiple
+Premiere generations.
 
 Beta and stable macOS DMGs are signed with a Developer ID certificate and the
 hardened runtime. The workflow then notarizes, staples, and verifies each DMG
