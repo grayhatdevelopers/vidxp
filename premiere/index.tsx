@@ -1,12 +1,18 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+import "./src/ui/styles.css";
 import { App } from "./src/ui/App";
 import { createPremiereAdapter } from "./src/premiere/adapter";
+import { installPremiereTheme } from "./src/ui/theme";
 
 // UXP supplies this module inside Premiere at runtime.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { entrypoints } = require("uxp") as typeof import("uxp");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const os = require("os") as typeof import("os");
+
+installPremiereTheme(document, os.platform());
 
 const rootElement = document.getElementById("root");
 

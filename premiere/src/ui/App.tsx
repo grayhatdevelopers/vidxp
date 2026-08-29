@@ -28,7 +28,6 @@ import {
   SpectrumTextArea,
   SpectrumTextField,
 } from "./components/Spectrum";
-import { installPremiereTheme } from "./theme";
 
 type ConnectionState =
   | { status: "disconnected" }
@@ -92,8 +91,6 @@ export function App({ fetchImpl, premiere }: AppProps) {
     void loadLibrary();
     return () => abortController.current?.abort();
   }, [loadLibrary]);
-
-  useEffect(() => installPremiereTheme(document), []);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selectedClips = useMemo(

@@ -14,5 +14,8 @@ describe("Bolt UXP configuration", () => {
     expect(config.manifest.requiredPermissions?.network?.domains).not.toContain(
       "ws://localhost:8080",
     );
+    expect(config.webviewUi).toBe(false);
+    expect(config.uniqueIds).toBe(false);
+    expect(config.debugger).toBe("udt");
   });
 });

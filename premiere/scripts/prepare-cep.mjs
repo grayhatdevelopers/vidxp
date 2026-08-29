@@ -9,4 +9,4 @@ mkdirSync(resolve(output, "jsx"), { recursive: true });
 cpSync(resolve(root, "cep", "index.html"), resolve(output, "index.html"));
 cpSync(resolve(root, "cep", "CSXS", "manifest.xml"), resolve(output, "CSXS", "manifest.xml"));
 cpSync(resolve(root, "cep", "jsx", "host.jsx"), resolve(output, "jsx", "host.jsx"));
-cpSync(resolve(root, "public", "styles.css"), resolve(output, "styles.css"));
+cpSync(resolve(root, "src", "ui", "styles.css"), resolve(output, "styles.css"));

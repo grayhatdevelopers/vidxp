@@ -37,11 +37,14 @@ npm run check
 npm run package
 ```
 
-The UXP target uses [Bolt UXP](https://github.com/hyperbrew/bolt-uxp)'s
-`vite-uxp-plugin` for manifest generation, UXP-compatible transforms and
-polyfills, hot reload, and CCX creation. The separate CEP target shares the
-application code but retains its own Vite and ZXP signing path because Bolt UXP
-does not build CEP extensions.
+The UXP target follows Bolt UXP's React scaffold: Vite owns the HTML entry,
+`@vitejs/plugin-react` compiles React, and
+[Bolt UXP](https://github.com/hyperbrew/bolt-uxp)'s `vite-uxp-plugin` owns
+manifest generation, UXP-compatible transforms and polyfills, hot reload, CCX
+creation, and package installation actions. Bolt's Premiere-specific host color
+variables are initialized before React mounts and update when the host theme
+changes. The separate CEP target shares the application code but retains its
+own Vite and ZXP signing path because Bolt UXP does not build CEP extensions.
 
 `npm run check` creates the UXP development bundle under `dist/` and the CEP
 bundle under `dist/cep`.
@@ -54,8 +57,16 @@ bundle under `dist/cep`.
 The Desktop release workflow performs this packaging once and embeds both
 artifacts in every Desktop installer. End users do not run these commands.
 
-For UXP-only development, add `dist/manifest.json` to UXP Developer Tool, then
-run `npm run dev` for Bolt UXP hot reload.
+For UXP-only development, add `dist/manifest.json` to UXP Developer Tool or use
+the checked-in VS Code attach configuration. Run `npm run dev` for Bolt UXP hot
+reload. After `npm run package:uxp`, you can install or remove that development
+CCX with Bolt's actions:
+
+```bash
+npm run ccx-install
+npm run ccx-uninstall
+```
+
 CEP development uses an unsigned `dist/cep` build and therefore requires the
 CEP debugging setup documented by Adobe. Neither developer path is an end-user
 installation method.
@@ -70,6 +81,12 @@ service, or model inference. Run the
 
 - Premiere file paths are passed to VidXP's local ingestion endpoint; source
   video bytes are not copied into extension storage.
+- Bolt's optional webview, hybrid-plugin, and multi-host modes are disabled.
+  The panel has one Premiere UXP context, and Bolt's hybrid helper targets
+  Photoshop and InDesign rather than Premiere.
+- `bolt-uxp-utils` is not used while the UXP package supports Premiere 25.6.
+  The utility package requires Premiere 26.3 or newer, so the typed adapter
+  calls Premiere's host API directly until the minimum supported version moves.
 - CEP uses its Node HTTP client for loopback requests instead of broadening the
   API's browser CORS policy.
 - Desktop owns runtime setup, service startup, extension detection,
