@@ -175,14 +175,14 @@ submit a model-preparation job through the authenticated API.
 
 | Feature | Approximate download |
 |---|---:|
-| Dialogue search | 2.64 GiB |
+| Speech search | 2.64 GiB |
 | Scene search | 1.43 GiB |
 | Action search | 0.93 GiB |
 | Actor matching | 37 MiB |
 
 The example below prepares every built-in search feature. In the shell running
 the request, set `VIDXP_API_TOKEN` to the private API token configured above.
-The API name for action search is `videoprism`.
+The API capability for multi-frame action and motion search is `action`.
 
 ```bash
 curl --fail-with-body \
@@ -191,7 +191,7 @@ curl --fail-with-body \
   --header "Authorization: Bearer ${VIDXP_API_TOKEN}" \
   --header "Idempotency-Key: initial-cpu-models-v1" \
   --header "Content-Type: application/json" \
-  --data '{"modalities":["dialogue","scene","videoprism","actor"],"capability_options":{}}'
+  --data '{"modalities":["speech","scene","action","actor"],"capability_options":{}}'
 ```
 
 The `202 Accepted` response includes a `job_id`. Insert it into the wait

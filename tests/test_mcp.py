@@ -1305,7 +1305,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         "command": {
                             "question": "What happens after the taxi arrives?",
                             "media_id": MEDIA_ID,
-                            "modalities": ["scene", "dialogue"],
+                            "modalities": ["scene", "speech"],
                         },
                         "idempotency_key": "agent-query-0001",
                     },
@@ -1318,7 +1318,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             QueryVideoCommand(
                 question="What happens after the taxi arrives?",
                 media_id=MEDIA_ID,
-                modalities=("scene", "dialogue"),
+                modalities=("scene", "speech"),
                 evidence_delivery=InitialEvidenceDeliveryPolicy(
                     mode=EvidenceDeliveryMode.none
                 ),
@@ -1409,7 +1409,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     details={
                         "model": "publisher/model",
                         "partial_files_preserved": True,
-                        "remediation": "vidxp prepare --modalities dialogue",
+                        "remediation": "vidxp prepare --modalities speech",
                     },
                     retryable=True,
                 ),
@@ -2734,7 +2734,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             [item["name"] for item in result.structured_content["items"]],
-            ["dialogue", "sound", "scene", "actor", "videoprism"],
+            ["speech", "sound", "scene", "actor", "action"],
         )
 
     async def test_streamable_http_works_with_the_official_remote_client(self):

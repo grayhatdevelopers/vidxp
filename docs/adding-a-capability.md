@@ -36,7 +36,7 @@ needs:
 ```
 
 Use an existing capability with a similar shape as a starting point. Scene,
-dialogue, action search, and actor features demonstrate different combinations
+speech, action search, and actor features demonstrate different combinations
 of shared indexing and operations.
 
 ## 2. Define the public contract

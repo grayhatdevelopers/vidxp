@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from vidxp.capabilities.dialogue.config import dialogue_config
-from vidxp.capabilities.dialogue.models import get_embedder, get_whisper_model
-from vidxp.capabilities.dialogue.specs import (
+from vidxp.capabilities.speech.config import speech_config
+from vidxp.capabilities.speech.models import get_embedder, get_whisper_model
+from vidxp.capabilities.speech.specs import (
     FASTER_WHISPER_MODEL,
     QWEN3_EMBEDDING_MODEL,
 )
@@ -123,14 +123,14 @@ def transcribe_video(
     import av
     from faster_whisper import BatchedInferencePipeline
 
-    settings = dialogue_config(config)
+    settings = speech_config(config)
     cancellation.raise_if_cancelled()
     with av.open(str(input_path)) as container:
         if not container.streams.audio:
             report_progress(
                 progress,
                 "dialogue_skipped",
-                "No audio stream was found; dialogue indexing was skipped.",
+                "No audio stream was found; speech indexing was skipped.",
             )
             return [], None
     report_progress(
@@ -175,7 +175,7 @@ def transcribe_video(
     return result, str(info.language)
 
 
-def _dialogue_records(
+def _speech_records(
     phrases,
     vectors,
     config: IndexConfig,
@@ -185,7 +185,7 @@ def _dialogue_records(
         source_id = stable_source_id(
             config.run_id,
             str(config.video_id),
-            "dialogue",
+            "speech",
             f"p{phrase.phrase_id:08d}",
             generation_id=config.generation_id,
         )
@@ -195,7 +195,7 @@ def _dialogue_records(
                 embedding=vector.tolist(),
                 document=phrase.text,
                 metadata={
-                    **config.record_identity("dialogue", source_id),
+                    **config.record_identity("speech", source_id),
                     "phrase_id": phrase.phrase_id,
                     "text": phrase.text,
                     "start": phrase.start,
@@ -206,7 +206,7 @@ def _dialogue_records(
     return records
 
 
-def index_dialogue(
+def index_speech(
     source: VideoSource,
     *,
     config: IndexConfig,
@@ -217,7 +217,7 @@ def index_dialogue(
 ) -> dict[str, Any]:
     if config.video_id is None:
         raise ValueError("IndexConfig.video_id is required for indexing.")
-    settings = dialogue_config(config)
+    settings = speech_config(config)
 
     language = None
     if source.transcript is not None:
@@ -225,7 +225,7 @@ def index_dialogue(
     else:
         if source.path is None:
             raise ValueError(
-                "Dialogue indexing requires a transcript or video path."
+                "Speech indexing requires a transcript or video path."
             )
         segments, language = transcribe_video(
             source.path,
@@ -244,16 +244,16 @@ def index_dialogue(
 
     report_progress(
         progress,
-        "preparing_dialogue_model",
-        f"Preparing dialogue model: {QWEN3_EMBEDDING_MODEL.model_id}.",
+        "preparing_speech_model",
+        f"Preparing speech-search model: {QWEN3_EMBEDDING_MODEL.model_id}.",
         0,
         len(phrases),
     )
     encoder = get_embedder(runtime)
     report_progress(
         progress,
-        "dialogue_indexing",
-        "Indexing dialogue phrases.",
+        "speech_indexing",
+        "Indexing speech phrases.",
         0,
         len(phrases),
     )
@@ -268,15 +268,15 @@ def index_dialogue(
             normalize_embeddings=settings.normalize_embeddings,
         )
         stored += storage.upsert(
-            "dialogue",
-            _dialogue_records(group, vectors, config),
+            "speech",
+            _speech_records(group, vectors, config),
             batch_size=config.storage_batch_size,
             cancellation=cancellation,
         )
         report_progress(
             progress,
-            "dialogue_indexing",
-            "Indexing dialogue phrases.",
+            "speech_indexing",
+            "Indexing speech phrases.",
             stored,
             len(phrases),
         )

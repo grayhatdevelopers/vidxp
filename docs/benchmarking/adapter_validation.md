@@ -86,15 +86,15 @@ command, working directory, compatibility note, output, and return code.
 1. Verify the test split, categories, evaluator, and released-ASR archive.
 2. Select only declared `clip: true` prompt/video pairs.
 3. Parse the matching released SRT files with the `srt` package.
-4. Split each SRT cue into the configured five-word dialogue phrases. Because
+4. Split each SRT cue into the configured five-word speech phrases. Because
    released SRT cues do not contain word timestamps, phrase bounds are
    interpolated linearly within the real cue bounds and disclosed in the run
    manifest.
-5. Submit the timestamped phrases to the dialogue-only VidXP core. The legacy
+5. Submit the timestamped phrases to the speech-only VidXP core. The earlier
    full run used MiniLM; the current smoke used Qwen3 Embedding. Neither path
    loads a transcription model or decodes video.
 6. Search each prompt only within its known video and retrieve every stored
-   dialogue phrase. Project phrase scores onto one-second bins, assign uncovered
+   speech phrase. Project phrase scores onto one-second bins, assign uncovered
    seconds an explicit absence penalty, and rank duration-relative windows by
    their mean score with an earliest-start tie break.
 7. Clamp the selected window to the official video duration, then reject missing,
@@ -263,7 +263,7 @@ copy were removed after recording the evidence above.
 Install the optional adapters and initialize FFmpeg:
 
 ```powershell
-uv tool install "vidxp[scene,dialogue,benchmarks]"
+uv tool install "vidxp[benchmarks,scene,speech]"
 vidxp init
 ```
 

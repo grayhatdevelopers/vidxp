@@ -115,8 +115,8 @@ features.
 Use the `sound` modality to index or search music, environmental sounds, and
 other non-speech audio events. CLI, HTTP, local stdio MCP, remote MCP, browser,
 and Desktop all resolve that name through the same capability contract. Spoken
-words remain a separate `dialogue` modality, while multi-frame visible actions
-use `videoprism`.
+words use the `speech` capability, while multi-frame visible actions and motion
+use `action`.
 
 ## Connect from another computer
 

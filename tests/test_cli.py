@@ -164,7 +164,7 @@ class CliTests(unittest.TestCase):
                 details={
                     "model": "publisher/model",
                     "partial_files_preserved": True,
-                    "remediation": "vidxp prepare --modalities dialogue",
+                    "remediation": "vidxp prepare --modalities speech",
                 },
                 retryable=True,
             ),
@@ -854,7 +854,7 @@ class CliTests(unittest.TestCase):
                 snapshot_id=SNAPSHOT_ID,
                 media_count=1,
                 media_ids=(MEDIA_ID,),
-                modalities=("scene", "dialogue"),
+                modalities=("scene", "speech"),
             ),
         )
         self.service.get_media.return_value = MediaAsset(
@@ -887,7 +887,7 @@ class CliTests(unittest.TestCase):
         payload = json.loads(result.output)
         self.assertEqual(payload["snapshot_id"], SNAPSHOT_ID)
         self.assertEqual(payload["media_count"], 1)
-        self.assertEqual(payload["modalities"], ["scene", "dialogue"])
+        self.assertEqual(payload["modalities"], ["scene", "speech"])
         self.assertEqual(payload["items"][0]["original_filename"], "video.mp4")
 
     def test_doctor_and_prepare_use_shared_models(self):
@@ -943,14 +943,14 @@ class CliTests(unittest.TestCase):
     def test_doctor_accepts_repeated_modality_options(self):
         self.service.check_dependencies.return_value = DependencyCheckResult(
             ok=True,
-            modalities=("dialogue", "scene"),
+            modalities=("speech", "scene"),
             checks=(),
         )
         result = self.invoke(
             [
                 "doctor",
                 "--modalities",
-                "dialogue",
+                "speech",
                 "--modalities",
                 "scene",
                 "--json",
@@ -959,7 +959,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         command = self.service.check_dependencies.call_args.args[0]
-        self.assertEqual(command.modalities, ("dialogue", "scene"))
+        self.assertEqual(command.modalities, ("speech", "scene"))
 
     def test_doctor_can_skip_model_readiness_for_install_validation(self):
         self.service.check_dependencies.return_value = DependencyCheckResult(

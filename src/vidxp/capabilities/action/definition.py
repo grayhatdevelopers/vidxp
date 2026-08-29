@@ -12,11 +12,11 @@ from vidxp.capabilities.contracts import (
     module_import_check,
 )
 from vidxp.capabilities.schemas import SearchInput, SearchResult
-from vidxp.capabilities.videoprism.config import VideoPrismConfig
-from vidxp.capabilities.videoprism.indexing import VISUAL_PROCESSOR
-from vidxp.capabilities.videoprism.models import get_videoprism_model
-from vidxp.capabilities.videoprism.operations import search_operation
-from vidxp.capabilities.videoprism.specs import VIDEOPRISM_MODEL
+from vidxp.capabilities.action.config import VideoPrismConfig
+from vidxp.capabilities.action.indexing import VISUAL_PROCESSOR
+from vidxp.capabilities.action.models import get_videoprism_model
+from vidxp.capabilities.action.operations import search_operation
+from vidxp.capabilities.action.specs import VIDEOPRISM_MODEL
 from vidxp.capabilities.visual import index_capabilities
 from vidxp.core.contracts import IndexConfig, VideoSource
 from vidxp.core.indexing_common import ProgressCallback, report_preparation
@@ -40,16 +40,16 @@ def model_manifest(
     config: IndexConfig,
     _sources: tuple[VideoSource, ...],
 ) -> Mapping[str, Any]:
-    return {"videoprism": VIDEOPRISM_MODEL.identity()}
+    return {"action": VIDEOPRISM_MODEL.identity()}
 
 
 DEFINITION = CapabilityDefinition(
-    name="videoprism",
-    label="Temporal video search",
-    description="Index and search temporal video clips with VideoPrism.",
-    extra="videoprism",
+    name="action",
+    label="Action and motion search",
+    description="Index and search multi-frame actions and motion.",
+    extra="action",
     config_model=VideoPrismConfig,
-    collection_name="videoprism",
+    collection_name="action",
     index_stage="visual_indexing",
     execution_group="visual",
     prepares_models=True,

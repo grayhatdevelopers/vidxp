@@ -5,7 +5,7 @@ from typing import Any, Callable
 from vidxp.ports import ModelRuntimePort
 from vidxp.core.indexing_common import report_preparation
 from vidxp.model_contracts import loaded_compute_precision
-from vidxp.capabilities.dialogue.specs import (
+from vidxp.capabilities.speech.specs import (
     FASTER_WHISPER_MODEL,
     QWEN3_EMBEDDING_MODEL,
     whisper_compute_type,
@@ -18,7 +18,7 @@ def get_embedder(
     download: bool = False,
     progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> Any:
-    device = runtime.device_for("dialogue.embedding")
+    device = runtime.device_for("speech.embedding")
     key = QWEN3_EMBEDDING_MODEL.key(device)
 
     def load() -> Any:
@@ -58,7 +58,7 @@ def get_whisper_model(
     download: bool = False,
     progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> Any:
-    device = runtime.device_for("dialogue.transcription")
+    device = runtime.device_for("speech.transcription")
     compute_type = whisper_compute_type(device)
     key = FASTER_WHISPER_MODEL.key(f"{device}:{compute_type}")
 

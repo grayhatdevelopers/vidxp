@@ -90,12 +90,12 @@ class FrontendTests(unittest.TestCase):
                 return_value=service,
             ):
                 available = frontend._available_query_modalities(
-                    ("dialogue", "sound", "scene", "actor", "videoprism"),
+                    ("speech", "sound", "scene", "actor", "action"),
                 )
 
         self.assertEqual(
             available,
-            ("dialogue", "sound", "scene", "actor", "videoprism"),
+            ("speech", "sound", "scene", "actor", "action"),
         )
 
     def tearDown(self):
@@ -341,7 +341,7 @@ class FrontendTests(unittest.TestCase):
 
         self.assertEqual(
             available,
-            ("dialogue", "sound", "scene", "videoprism"),
+            ("speech", "sound", "scene", "action"),
         )
         self.assertTrue(
             all(
@@ -357,7 +357,7 @@ class FrontendTests(unittest.TestCase):
             return_value=2.0,
         ) as selectbox:
             selected = frontend._scene_sample_fps_control(
-                ("dialogue", "scene"),
+                ("speech", "scene"),
                 disabled=False,
             )
 
@@ -370,7 +370,7 @@ class FrontendTests(unittest.TestCase):
 
         with patch.object(frontend.st, "selectbox") as selectbox:
             selected = frontend._scene_sample_fps_control(
-                ("dialogue",),
+                ("speech",),
                 disabled=False,
             )
 
@@ -411,7 +411,7 @@ class FrontendTests(unittest.TestCase):
             return_value=4.0,
         ) as selectbox:
             selected = frontend._videoprism_sample_fps_control(
-                ("videoprism",),
+                ("action",),
                 disabled=False,
             )
 
@@ -435,14 +435,14 @@ class FrontendTests(unittest.TestCase):
             frontend._run_indexing(
                 None,
                 {},
-                ("videoprism",),
+                ("action",),
                 videoprism_sample_fps=selected,
             )
 
         command = jobs.submit_index.call_args.args[0]
         self.assertEqual(
             command.capability_options,
-            {"videoprism": {"sample_fps": 4.0}},
+            {"action": {"sample_fps": 4.0}},
         )
 
     def test_indexing_omits_scene_sample_rate_without_scene(self):
@@ -456,7 +456,7 @@ class FrontendTests(unittest.TestCase):
             patch.object(frontend.st, "query_params", {}),
             patch.object(frontend.st, "rerun"),
         ):
-            frontend._run_indexing(None, {}, ("dialogue",))
+            frontend._run_indexing(None, {}, ("speech",))
 
         command = jobs.submit_index.call_args.args[0]
         self.assertIsNone(command.scene_sample_fps)

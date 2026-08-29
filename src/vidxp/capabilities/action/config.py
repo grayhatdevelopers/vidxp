@@ -12,4 +12,4 @@ class VideoPrismConfig(CapabilityConfig):
 
 
 def videoprism_config(config: IndexConfig) -> VideoPrismConfig:
-    return VideoPrismConfig.model_validate(config.options_for("videoprism"))
+    return VideoPrismConfig.model_validate(config.options_for("action"))

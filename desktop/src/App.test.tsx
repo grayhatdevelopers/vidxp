@@ -649,11 +649,11 @@ describe('desktop target lifecycle', () => {
       total: 8,
       stage: 'models',
       message: 'Verifying and downloading selected model files',
-      model_message: 'Downloading dialogue transcription model.',
+      model_message: 'Downloading speech transcription model.',
       model_current: 512 * 1024 * 1024,
       model_total: 1024 * 1024 * 1024,
     });
-    expect(await screen.findByText('Downloading dialogue transcription model.')).toBeVisible();
+    expect(await screen.findByText('Downloading speech transcription model.')).toBeVisible();
     expect(screen.getByText('512.0 MiB of 1.00 GiB')).toBeVisible();
     expect(screen.getByRole('progressbar', { name: 'Current model download progress' })).toHaveAttribute('aria-valuenow', '50');
 

@@ -1,6 +1,6 @@
 ## Download VidXP
 
-{release_notice}VidXP turns video into searchable dialogue, sounds, scenes, actions, people, and
+{release_notice}VidXP turns video into searchable speech, sounds, scenes, actions, people, and
 inspectable evidence. Choose the desktop app for the guided local setup, or use
 the Python package and containers for command-line and server deployments.
 

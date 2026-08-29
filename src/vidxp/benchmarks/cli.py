@@ -552,7 +552,7 @@ def hirest_command(
             param_hint="--temporal-window-fraction",
         )
     _require_benchmark_dependencies(
-        "dialogue",
+        "speech",
         include_benchmark_extra=True,
     )
     state = state_from_context(ctx)

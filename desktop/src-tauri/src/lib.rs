@@ -5565,14 +5565,14 @@ mod tests {
             &manifest,
             &[
                 "scene".into(),
-                "videoprism".into(),
-                "dialogue".into(),
+                "action".into(),
+                "speech".into(),
                 "scene".into(),
             ],
         )
         .expect("selection");
 
-        assert_eq!(selected, ["dialogue", "scene", "videoprism"]);
+        assert_eq!(selected, ["speech", "scene", "action"]);
         assert!(selected_capabilities(&manifest, &["other".into()]).is_err());
     }
 
@@ -5627,10 +5627,10 @@ mod tests {
         assert_eq!(
             package_specification(
                 &manifest,
-                &["scene".into(), "dialogue".into()],
+                &["scene".into(), "speech".into()],
                 &["browser".into()],
             ),
-            format!("vidxp[dialogue,frontend,scene]=={version}")
+            format!("vidxp[frontend,scene,speech]=={version}")
         );
         assert_eq!(
             package_specification(&manifest, &["scene".into()], &[]),
@@ -5639,7 +5639,7 @@ mod tests {
         assert_eq!(
             package_specification(
                 &manifest,
-                &["actor".into(), "dialogue".into(), "scene".into()],
+                &["actor".into(), "speech".into(), "scene".into()],
                 &["worker".into()],
             ),
             format!("vidxp[local-worker]=={version}")
@@ -5812,8 +5812,8 @@ mod tests {
         let manifest = manifest().expect("manifest");
 
         assert_eq!(
-            capability_command_arguments(&manifest, "doctor", &["dialogue".into(), "scene".into()]),
-            ["doctor", "--json", "--modalities", "dialogue,scene"]
+            capability_command_arguments(&manifest, "doctor", &["speech".into(), "scene".into()]),
+            ["doctor", "--json", "--modalities", "scene,speech"]
         );
         assert_eq!(
             capability_command_arguments(&manifest, "prepare", &["scene".into()]),

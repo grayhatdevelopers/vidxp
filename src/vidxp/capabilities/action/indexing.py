@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
-from vidxp.capabilities.videoprism.config import videoprism_config
-from vidxp.capabilities.videoprism.models import (
+from vidxp.capabilities.action.config import videoprism_config
+from vidxp.capabilities.action.models import (
     VideoPrismModel,
     get_videoprism_model,
     normalize_pooled_output,
 )
-from vidxp.capabilities.videoprism.specs import VIDEOPRISM_MODEL
+from vidxp.capabilities.action.specs import VIDEOPRISM_MODEL
 from vidxp.core.contracts import (
     CancellationToken,
     IndexConfig,
@@ -74,7 +74,7 @@ def videoprism_records(
         source_id = stable_source_id(
             config.run_id,
             str(config.video_id),
-            "videoprism",
+            "action",
             f"f{first.frame_index:012d}-f{last.frame_index:012d}",
             generation_id=config.generation_id,
         )
@@ -83,7 +83,7 @@ def videoprism_records(
                 source_id=source_id,
                 embedding=list(vector),
                 metadata={
-                    **config.record_identity("videoprism", source_id),
+                    **config.record_identity("action", source_id),
                     "frame_index": first.frame_index,
                     "end_frame_index": last.frame_index,
                     "timestamp": first.timestamp,
@@ -116,7 +116,7 @@ def _store_clips(
         ]
         vectors = encode_video_clips(model_clips, state.provider)
         state.stored_clips += storage.upsert(
-            "videoprism",
+            "action",
             videoprism_records(group, vectors, info, config),
             batch_size=config.storage_batch_size,
             cancellation=cancellation,

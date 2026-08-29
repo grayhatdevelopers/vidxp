@@ -767,7 +767,7 @@ composition root and is sorted deterministically.
   `dropbox-dash/faster-whisper-large-v3-turbo` at immutable revision
   `0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf`. Its transcript/timestamp output is
   tested against the existing
-  dialogue contract. Forced alignment is an optional provider behind a separate
+  speech contract. Forced alignment is an optional provider behind a separate
   contract; it cannot hold base transcription or Python back. Sentence embeddings
   use Qwen3-Embedding-0.6B at immutable revision
   `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`; its published multilingual MTEB

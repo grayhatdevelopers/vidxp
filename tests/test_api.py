@@ -119,7 +119,7 @@ def ingestion_status() -> MediaUploadSessionStatus:
         transfer_backend=UploadTransferBackend.local_path,
         resumable=False,
         index_after_import=True,
-        index_modalities=("scene", "dialogue"),
+        index_modalities=("scene", "speech"),
         expires_at=now.replace(year=now.year + 1),
         maximum_files=10,
         maximum_file_bytes=50 * 1024 * 1024 * 1024,
@@ -466,7 +466,7 @@ class ApiTests(unittest.TestCase):
             status = ingestion_status()
             context.application.select_index_modalities.return_value = (
                 "scene",
-                "dialogue",
+                "speech",
             )
             assert context.uploads is not None
             context.uploads.create_local_ingestion.return_value = status
@@ -481,7 +481,7 @@ class ApiTests(unittest.TestCase):
                             "C:/Premiere/b-roll.mov",
                         ],
                         "index_after_import": True,
-                        "modalities": ["scene", "dialogue"],
+                        "modalities": ["scene", "speech"],
                     },
                 )
                 fetched = client.get(
@@ -496,7 +496,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(created.json()["transfer_backend"], "local_path")
         self.assertEqual(fetched.status_code, 200)
         context.application.select_index_modalities.assert_called_once_with(
-            ("scene", "dialogue")
+            ("scene", "speech")
         )
         call = context.uploads.create_local_ingestion.call_args
         self.assertEqual(
@@ -509,7 +509,7 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(call.kwargs["index_after_import"])
         self.assertEqual(
             call.kwargs["index_modalities"],
-            ("scene", "dialogue"),
+            ("scene", "speech"),
         )
         context.uploads.get_status.assert_called_once_with(
             INGESTION_ID,
@@ -728,7 +728,7 @@ class ApiTests(unittest.TestCase):
                     details={
                         "model": "publisher/model",
                         "partial_files_preserved": True,
-                        "remediation": "vidxp prepare --modalities dialogue",
+                        "remediation": "vidxp prepare --modalities speech",
                     },
                     retryable=True,
                 ),
@@ -895,7 +895,7 @@ class ApiTests(unittest.TestCase):
                     json={
                         "question": "What happens after the taxi arrives?",
                         "media_id": MEDIA_ID,
-                        "modalities": ["scene", "dialogue"],
+                        "modalities": ["scene", "speech"],
                         "top_k": 5,
                     },
                 )
@@ -908,7 +908,7 @@ class ApiTests(unittest.TestCase):
             QueryVideoCommand(
                 question="What happens after the taxi arrives?",
                 media_id=MEDIA_ID,
-                modalities=("scene", "dialogue"),
+                modalities=("scene", "speech"),
                 top_k=5,
             ),
         )

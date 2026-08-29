@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from vidxp.capabilities.videoprism.specs import VIDEOPRISM_MODEL
+from vidxp.capabilities.action.specs import VIDEOPRISM_MODEL
 from vidxp.core.indexing_common import report_preparation
 from vidxp.model_contracts import loaded_compute_precision
 from vidxp.ports import ModelRuntimePort
@@ -28,7 +28,7 @@ def get_videoprism_model(
     download: bool = False,
     progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> VideoPrismModel:
-    device = runtime.device_for("videoprism")
+    device = runtime.device_for("action")
     key = VIDEOPRISM_MODEL.key(device)
 
     def load() -> VideoPrismModel:

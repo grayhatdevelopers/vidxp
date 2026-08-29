@@ -7,9 +7,9 @@ from vidxp.capabilities.contracts import (
     CapabilityIndexResult,
 )
 from vidxp.capabilities.registry import CapabilityRegistry
-from vidxp.capabilities.dialogue.config import dialogue_config
-from vidxp.capabilities.dialogue.indexing import index_dialogue
-from vidxp.capabilities.dialogue.models import get_embedder
+from vidxp.capabilities.speech.config import speech_config
+from vidxp.capabilities.speech.indexing import index_speech
+from vidxp.capabilities.speech.models import get_embedder
 from vidxp.capabilities.schemas import SearchInput, SearchResult
 from vidxp.capabilities.search import search_embeddings
 from vidxp.core.contracts import (
@@ -46,12 +46,12 @@ def index_capability(
     registry: CapabilityRegistry,
     runtime: ModelRuntimePort,
     progress: ProgressCallback | None = None,
-    modalities: tuple[str, ...] = ("dialogue",),
+    modalities: tuple[str, ...] = ("speech",),
 ) -> CapabilityIndexResult:
-    if modalities != ("dialogue",):
-        raise ValueError("The dialogue indexer only accepts dialogue.")
+    if modalities != ("speech",):
+        raise ValueError("The speech indexer only accepts speech.")
     return CapabilityIndexResult(
-        summary=index_dialogue(
+        summary=index_speech(
             source,
             config=config,
             storage=storage,
@@ -62,12 +62,12 @@ def index_capability(
     )
 
 
-def dialogue_embedding(
+def speech_embedding(
     query: str,
     config: IndexConfig,
     runtime: ModelRuntimePort,
 ) -> list[float]:
-    settings = dialogue_config(config)
+    settings = speech_config(config)
     encoder = get_embedder(runtime)
     encoded = encoder.encode_query(
         [query],
@@ -77,7 +77,7 @@ def dialogue_embedding(
     return encoded[0].tolist()
 
 
-def search_dialogue(
+def search_speech(
     query: str,
     *,
     config: IndexConfig,
@@ -95,8 +95,8 @@ def search_dialogue(
         raise ValueError("top_k must be greater than zero.")
     return search_embeddings(
         cleaned,
-        "dialogue",
-        dialogue_embedding(cleaned, config, runtime),
+        "speech",
+        speech_embedding(cleaned, config, runtime),
         config=config,
         required_metadata=REQUIRED_METADATA,
         top_k=top_k,
@@ -112,7 +112,7 @@ def search_operation(
     request: SearchInput,
 ) -> SearchResult:
     config = context.require_config()
-    return search_dialogue(
+    return search_speech(
         request.query,
         config=config,
         top_k=request.top_k,

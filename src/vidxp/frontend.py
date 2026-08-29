@@ -130,11 +130,11 @@ VIDEOPRISM_DETAIL_LABELS = {
 }
 CAPABILITY_LABELS = {
     "actor": "Actor groups",
-    "dialogue": "Dialogue search",
+    "speech": "Speech search",
     "natural-language": "Ask a question",
     "scene": "Scene search",
     "sound": "Sound event search (FineLAP)",
-    "videoprism": "Temporal action search (VideoPrism)",
+    "action": "Action and motion search",
 }
 
 
@@ -409,7 +409,7 @@ def _run_indexing(
                 scene_sample_fps=scene_sample_fps,
                 capability_options=(
                     {
-                        "videoprism": {
+                        "action": {
                             "sample_fps": videoprism_sample_fps,
                         }
                     }
@@ -466,7 +466,7 @@ def _videoprism_sample_fps_control(
     *,
     disabled: bool,
 ) -> float | None:
-    if "videoprism" not in modalities:
+    if "action" not in modalities:
         return None
     return float(
         st.selectbox(
@@ -710,7 +710,7 @@ def _render_search_result(result):
         "Closest sampled scene"
         if search_type == "scene"
         else "Closest temporal action clip"
-        if search_type == "videoprism"
+        if search_type == "action"
         else "Closest supporting evidence"
         if search_type == "natural-language"
         else f"Closest {search_type} match"
@@ -722,7 +722,7 @@ def _render_search_result(result):
             "It does not identify the first occurrence and is not reliable "
             "for counting people."
         )
-    elif search_type == "videoprism":
+    elif search_type == "action":
         st.caption(
             "VideoPrism ranks short multi-frame clips, making it better suited "
             "to actions and events than single-frame scene search."
@@ -881,7 +881,7 @@ def _search_controls(ready, uploaded_video, available_modalities):
                     else "For example: What happens after the taxi arrives?"
                     if search_type == "natural-language"
                     else "For example: A person opens a door and walks out."
-                    if search_type == "videoprism"
+                    if search_type == "action"
                     else "For example: Chef makes pizza and cuts it up."
                 ),
                 disabled=not ready,
@@ -908,7 +908,7 @@ def run():
     service = _configured_service()
     st.title("VidXP")
     st.caption(
-        "Index and search video by dialogue, sound, scenes, actions, and actor."
+        "Index and search video by speech, sound, scenes, actions, and actors."
     )
     st.caption(f"Index repository: {service.layout.root}")
     if notice := st.session_state.pop(MEDIA_NOTICE_KEY, None):

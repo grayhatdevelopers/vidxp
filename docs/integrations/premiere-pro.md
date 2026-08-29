@@ -2,7 +2,7 @@
 
 The VidXP Premiere Pro extension lets an editor select clips or bins from the
 open project, index their existing source files, and search the resulting
-library without leaving Premiere. It discovers dialogue, sound, scene, actor,
+library without leaving Premiere. It discovers speech, sound, scene, actor,
 and future search features from the connected VidXP runtime instead of keeping
 a fixed capability list in the extension.
 

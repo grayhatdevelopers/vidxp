@@ -501,12 +501,12 @@ class CapabilityRegistry:
 
 def _builtin_plugins() -> tuple[CapabilityPlugin, ...]:
     from vidxp.capabilities.actor.definition import PLUGIN as actor
-    from vidxp.capabilities.dialogue.definition import PLUGIN as dialogue
+    from vidxp.capabilities.speech.definition import PLUGIN as speech
     from vidxp.capabilities.scene.definition import PLUGIN as scene
     from vidxp.capabilities.sound.definition import PLUGIN as sound
-    from vidxp.capabilities.videoprism.definition import PLUGIN as videoprism
+    from vidxp.capabilities.action.definition import PLUGIN as action
 
-    return dialogue, sound, scene, actor, videoprism
+    return speech, sound, scene, actor, action
 
 
 def _external_entry_points(allowlist: tuple[str, ...]) -> tuple[EntryPoint, ...]:

@@ -660,7 +660,7 @@ class ApplicationTests(unittest.TestCase):
         registry = CapabilityRegistry(
             (
                 search_plugin("scene"),
-                search_plugin("dialogue"),
+                search_plugin("speech"),
                 actor,
             )
         )
@@ -671,10 +671,10 @@ class ApplicationTests(unittest.TestCase):
             registry=registry,
         )
         backend.active_config.return_value = IndexConfig.local(
-            enabled_modalities=("scene", "dialogue", "actor"),
+            enabled_modalities=("scene", "speech", "actor"),
             collection_names={
                 "scene": "scene",
-                "dialogue": "dialogue",
+                "speech": "speech",
                 "actor": "actor",
             },
         )
@@ -682,8 +682,8 @@ class ApplicationTests(unittest.TestCase):
 
         result = application.search(SearchCommand(query="taxi"))
 
-        self.assertEqual(searched, ["scene", "dialogue"])
-        self.assertEqual(result.modalities, ("scene", "dialogue"))
+        self.assertEqual(searched, ["scene", "speech"])
+        self.assertEqual(result.modalities, ("scene", "speech"))
 
     def test_application_boundary_returns_stable_validation_error(self):
         application, _ = self.application("unused")

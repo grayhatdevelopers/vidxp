@@ -71,7 +71,7 @@ class ControlPlaneWorkspaceTests(unittest.TestCase):
 
         self.assertEqual(
             defaults,
-            ("dialogue", "sound", "scene", "actor", "videoprism"),
+            ("speech", "sound", "scene", "actor", "action"),
         )
         self.assertEqual(selected, ("scene", "sound"))
         self.assertEqual(raised.exception.detail.code, "invalid_request")

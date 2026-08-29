@@ -5,7 +5,7 @@ from typing import Any, Mapping
 from vidxp.capabilities.contracts import CapabilityContext
 from vidxp.capabilities.schemas import SearchInput, SearchResult
 from vidxp.capabilities.search import search_embeddings
-from vidxp.capabilities.videoprism.models import (
+from vidxp.capabilities.action.models import (
     get_videoprism_model,
     normalize_pooled_output,
 )
@@ -70,7 +70,7 @@ def search_videoprism(
         raise ValueError("top_k must be greater than zero.")
     return search_embeddings(
         cleaned,
-        "videoprism",
+        "action",
         videoprism_embedding(cleaned, runtime),
         config=config,
         required_metadata=REQUIRED_METADATA,

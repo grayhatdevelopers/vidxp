@@ -16,8 +16,8 @@ from packaging.requirements import Requirement
 from pydantic import ValidationError
 
 from vidxp.capabilities.contracts import CapabilityDefinition
-from vidxp.capabilities.dialogue import models as dialogue_models
-from vidxp.capabilities.dialogue.specs import (
+from vidxp.capabilities.speech import models as speech_models
+from vidxp.capabilities.speech.specs import (
     FASTER_WHISPER_MODEL,
     QWEN3_EMBEDDING_MODEL,
 )
@@ -84,8 +84,8 @@ class ModelTests(unittest.TestCase):
                 sys.modules,
                 {"sentence_transformers": fake_module},
             ):
-                first = dialogue_models.get_embedder(runtime)
-                second = dialogue_models.get_embedder(runtime)
+                first = speech_models.get_embedder(runtime)
+                second = speech_models.get_embedder(runtime)
 
         self.assertIs(first, second)
         constructor.assert_called_once_with(
@@ -95,7 +95,7 @@ class ModelTests(unittest.TestCase):
             local_files_only=True,
         )
         self.assertEqual(
-            runtime.describe()["compute_precision"]["dialogue.embedding"],
+            runtime.describe()["compute_precision"]["speech.embedding"],
             "bfloat16",
         )
 
@@ -109,7 +109,7 @@ class ModelTests(unittest.TestCase):
 
         keys = (
             ModelKey("scene", "one", "one", "1", "cpu"),
-            ModelKey("dialogue", "two", "two", "1", "cpu"),
+            ModelKey("speech", "two", "two", "1", "cpu"),
         )
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [
@@ -702,7 +702,7 @@ class ModelTests(unittest.TestCase):
         distributions = {
             requirement.name
             for requirement in registry.requirements_for(
-                ("dialogue",),
+                ("speech",),
                 source=source,
             )
         }
@@ -732,7 +732,7 @@ class ModelTests(unittest.TestCase):
             "faster-whisper import",
             {
                 check.label
-                for check in registry.runtime_checks_for(("dialogue",))
+                for check in registry.runtime_checks_for(("speech",))
             },
         )
 

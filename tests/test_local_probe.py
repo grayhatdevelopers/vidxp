@@ -40,10 +40,10 @@ class LocalProbeTests(unittest.TestCase):
                 "vidxp.local_probe._installed_search_capabilities",
                 return_value=[
                     "actor",
-                    "dialogue",
+                    "speech",
                     "scene",
                     "sound",
-                    "videoprism",
+                    "action",
                 ],
             ),
             patch(
@@ -92,7 +92,7 @@ class LocalProbeTests(unittest.TestCase):
         )
         self.assertEqual(
             payload["search_capabilities"],
-            ["actor", "dialogue", "scene", "sound", "videoprism"],
+            ["actor", "speech", "scene", "sound", "action"],
         )
         self.assertTrue(all(surface["launchable"] for surface in payload["surfaces"].values()))
 

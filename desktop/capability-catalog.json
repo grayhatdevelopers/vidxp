@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "capabilities": {
-    "dialogue": {
-      "extra": "dialogue",
-      "modality": "dialogue",
-      "label": "Dialogue search",
-      "description": "Index and search spoken dialogue.",
+    "speech": {
+      "extra": "speech",
+      "modality": "speech",
+      "label": "Speech search",
+      "description": "Transcribe and search spoken words with timestamps.",
       "models": [
         {
           "cache_key": "models--Qwen--Qwen3-Embedding-0.6B/snapshots/97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3/model.safetensors",
@@ -69,11 +69,11 @@
         }
       ]
     },
-    "videoprism": {
-      "extra": "videoprism",
-      "modality": "videoprism",
-      "label": "Temporal video search",
-      "description": "Index and search temporal video clips with VideoPrism.",
+    "action": {
+      "extra": "action",
+      "modality": "action",
+      "label": "Action and motion search",
+      "description": "Index and search multi-frame actions and motion.",
       "models": [
         {
           "cache_key": "models--google--videoprism-lvt-base-f16r288/snapshots/fb6de9f0eb7bc285be86bdca1cf7daa3e3ef51ff/model.safetensors",

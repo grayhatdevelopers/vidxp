@@ -186,7 +186,7 @@ Prepare and index all four evidence paths:
 uv run --no-sync vidxp `
   --data-dir $env:VIDXP_EVAL_DATA_DIR `
   --index-dir $env:VIDXP_EVAL_INDEX_DIR `
-  prepare --modalities scene,videoprism,sound,dialogue --yes
+  prepare --modalities scene,action,sound,speech --yes
 
 foreach ($videoId in $videoIds) {
   $mediaPath = Join-Path $env:VIDXP_EVAL_WORKSPACE "media\$videoId.mp4"
@@ -200,9 +200,9 @@ foreach ($videoId in $videoIds) {
     --index-dir $env:VIDXP_EVAL_INDEX_DIR `
     index create $asset.media_id `
     --modality scene `
-    --modality videoprism `
+    --modality action `
     --modality sound `
-    --modality dialogue
+    --modality speech
 }
 ```
 

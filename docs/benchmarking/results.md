@@ -34,7 +34,7 @@ this rerun:
 - NVIDIA GeForce RTX 3060 Laptop GPU with 4 GiB VRAM present but unused;
 - CPU-only PyTorch execution.
 
-| Generation | Dialogue embedding | Scene embedding | Sampling/window | Transcription in these benchmarks |
+| Generation | Speech embedding | Scene embedding | Sampling/window | Transcription in these benchmarks |
 |---|---|---|---|---|
 | Legacy full, 2026-07-27 | `all-MiniLM-L6-v2` | OpenAI CLIP `ViT-B/32` through `clip-anytorch` | HiREST 0.8-duration window; DiDeMo fixed 30-frame stride and max chunk pooling | Released HiREST SRTs; WhisperX `large-v2` was not exercised |
 | Current smoke, 2026-07-30 | `Qwen/Qwen3-Embedding-0.6B` at `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3` | `google/siglip2-base-patch16-224` at `75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2` | HiREST same 0.8-duration window; DiDeMo source-aware 1.0 sample/sec and max chunk pooling | Released HiREST SRTs; faster-whisper `large-v3-turbo` was not exercised |
@@ -48,14 +48,14 @@ legacy revision metadata after the fact.
 ## Multimodal comparison contract
 
 Natural-language answer prose is not an official benchmark prediction format.
-Benchmark runs continue to preserve atomic scene and dialogue hits, raw
+Benchmark runs continue to preserve atomic scene and speech hits, raw
 distances, and the existing dataset serializers. When a dataset contains both
 eligible modalities, reports must show three fixed rows:
 
 | Retrieval path | What is compared |
 |---|---|
 | Scene only | The existing visual retrieval output |
-| Dialogue only | The existing transcript retrieval output |
+| Speech only | The existing transcript retrieval output |
 | Fixed RRF fusion | Overlap-connected intervals ranked with `rrf_v1`, `k=60` |
 
 No fused benchmark score is reported until the same frozen dataset inputs and
@@ -159,7 +159,7 @@ result yet. LongVALE is the primary next experiment because it contains visual,
 generic-audio, and spoken evidence in long videos. The work is ordered as follows:
 
 1. Complete a bounded real-media FineLAP integration smoke and record resource use.
-2. Convert LongVALE event descriptions into visual, sound, and dialogue searches.
+2. Convert LongVALE event descriptions into visual, sound, and speech searches.
 3. Combine those result lists using one fixed, provenance-preserving rule.
 4. Return the single start/end range required by the official evaluator.
 5. Process one of the nine evaluation archives to measure runtime, temporary

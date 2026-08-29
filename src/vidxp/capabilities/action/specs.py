@@ -2,7 +2,7 @@ from vidxp.model_contracts import ModelSpec
 
 
 VIDEOPRISM_MODEL = ModelSpec(
-    capability="videoprism",
+    capability="action",
     provider="transformers",
     model_id="google/videoprism-lvt-base-f16r288",
     revision="fb6de9f0eb7bc285be86bdca1cf7daa3e3ef51ff",

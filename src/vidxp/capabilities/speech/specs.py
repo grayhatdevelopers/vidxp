@@ -2,7 +2,7 @@ from vidxp.model_contracts import ModelSpec
 
 
 QWEN3_EMBEDDING_MODEL = ModelSpec(
-    capability="dialogue.embedding",
+    capability="speech.embedding",
     provider="sentence-transformers",
     model_id="Qwen/Qwen3-Embedding-0.6B",
     revision="97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
@@ -16,7 +16,7 @@ QWEN3_EMBEDDING_MODEL = ModelSpec(
 )
 
 FASTER_WHISPER_MODEL = ModelSpec(
-    capability="dialogue.transcription",
+    capability="speech.transcription",
     provider="faster-whisper",
     model_id="dropbox-dash/faster-whisper-large-v3-turbo",
     revision="0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",

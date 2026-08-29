@@ -14,13 +14,13 @@ from vidxp.capabilities.contracts import (
     PreparationContext,
     module_import_check,
 )
-from vidxp.capabilities.dialogue.config import DialogueConfig
-from vidxp.capabilities.dialogue.models import get_embedder, get_whisper_model
-from vidxp.capabilities.dialogue.specs import (
+from vidxp.capabilities.speech.config import SpeechConfig
+from vidxp.capabilities.speech.models import get_embedder, get_whisper_model
+from vidxp.capabilities.speech.specs import (
     FASTER_WHISPER_MODEL,
     QWEN3_EMBEDDING_MODEL,
 )
-from vidxp.capabilities.dialogue.operations import (
+from vidxp.capabilities.speech.operations import (
     index_capability,
     search_operation,
 )
@@ -45,15 +45,15 @@ def prepare_models(
     context: PreparationContext,
     progress: ProgressCallback | None,
 ) -> tuple[str, ...]:
-    DialogueConfig.model_validate(context.settings)
+    SpeechConfig.model_validate(context.settings)
     prepared = []
 
     def report(stage: str, message: str) -> None:
         report_preparation(progress, stage, message)
 
     report(
-        "dialogue_model",
-        f"Preparing dialogue model: {QWEN3_EMBEDDING_MODEL.model_id}",
+        "speech_model",
+        f"Preparing speech-search model: {QWEN3_EMBEDDING_MODEL.model_id}",
     )
     get_embedder(context.runtime, download=True, progress=progress)
     prepared.append(QWEN3_EMBEDDING_MODEL.model_id)
@@ -72,7 +72,7 @@ def model_manifest(
     sources: tuple[VideoSource, ...],
 ) -> Mapping[str, Any]:
     result: dict[str, Any] = {
-        "dialogue": {
+        "speech": {
             **QWEN3_EMBEDDING_MODEL.identity(),
         }
     }
@@ -82,14 +82,14 @@ def model_manifest(
 
 
 DEFINITION = CapabilityDefinition(
-    name="dialogue",
-    label="Dialogue search",
-    description="Index and search spoken dialogue.",
-    extra="dialogue",
-    config_model=DialogueConfig,
-    collection_name="dialogue",
-    index_stage="dialogue_indexing",
-    execution_group="dialogue",
+    name="speech",
+    label="Speech search",
+    description="Transcribe and search spoken words with timestamps.",
+    extra="speech",
+    config_model=SpeechConfig,
+    collection_name="speech",
+    index_stage="speech_indexing",
+    execution_group="speech",
     prepares_models=True,
     roles=(CapabilityRole.searchable, CapabilityRole.queryable),
     model_specs=(QWEN3_EMBEDDING_MODEL, FASTER_WHISPER_MODEL),

@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <strong>Dialogue search · Sound search · Scene search · Action search · Actor grouping</strong>
+  <strong>Speech search · Sound search · Scene search · Action search · Actor grouping</strong>
 </p>
 
 <p align="center">
@@ -39,7 +39,7 @@
 
 VidXP makes one video—or an entire collection—searchable by meaning:
 
-- **Dialogue search:** type what you remember someone saying and jump to the
+- **Speech search:** type what you remember someone saying and jump to the
   matching moments.
 - **Scene search:** describe what appeared on screen and find the closest
   visual matches.
@@ -122,7 +122,7 @@ See the [Coolify guide](docs/deployment/coolify.md) for the complete setup.
 ## What you can do today
 
 - Build searchable libraries from individual videos or whole collections.
-- Find dialogue, sound events, visual scenes, and multi-frame actions by description.
+- Find speech, sound events, visual scenes, and multi-frame actions by description.
 - Ask grounded questions and inspect the supporting boards, frames, or clips.
 - Group recurring faces and render highlighted actor overlays.
 - Keep personal, client, or project libraries separate.
@@ -144,13 +144,13 @@ vidxp index create <media-id>
 vidxp search scene "a yellow taxi on a city street"
 
 # Find an action or event
-vidxp search videoprism "a person opens a door and walks outside"
+vidxp search action "a person opens a door and walks outside"
 
 # Find a sound event
 vidxp search sound "a dog barking over traffic noise"
 
 # Find something that was said
-vidxp search dialogue "the bread just came out of the oven"
+vidxp search speech "the bread just came out of the oven"
 ```
 
 Results include the source video, timestamps, match score, and the evidence
@@ -208,7 +208,7 @@ approximately 3 GiB.
 
 | Capability | Approximate model download |
 |---|---:|
-| Dialogue search | 2.64 GiB |
+| Speech search | 2.64 GiB |
 | Sound event search | 0.94 GiB |
 | Scene search | 1.43 GiB |
 | Action search | 0.93 GiB |

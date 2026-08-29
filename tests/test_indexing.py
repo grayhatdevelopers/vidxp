@@ -16,9 +16,9 @@ from vidxp.capabilities.contracts import (
     CapabilityExecutor,
     CapabilityPlugin,
 )
-from vidxp.capabilities.dialogue.indexing import (
+from vidxp.capabilities.speech.indexing import (
     build_dialogue_phrases,
-    index_dialogue,
+    index_speech,
     transcribe_video,
 )
 from vidxp.capabilities.scene.indexing import (
@@ -141,9 +141,9 @@ class IndexingTests(unittest.TestCase):
             split="test",
             run_id="asr",
             video_id="video-1",
-            enabled_modalities=("dialogue",),
+            enabled_modalities=("speech",),
             capability_options={
-                "dialogue": {"embedding_batch_size": 2},
+                "speech": {"embedding_batch_size": 2},
             },
         )
         source = VideoSource(
@@ -158,15 +158,15 @@ class IndexingTests(unittest.TestCase):
         encoder = FakeEncoder()
         with (
             patch(
-                "vidxp.capabilities.dialogue.indexing.get_embedder",
+                "vidxp.capabilities.speech.indexing.get_embedder",
                 return_value=encoder,
             ),
             patch(
-                "vidxp.capabilities.dialogue.indexing.transcribe_video",
+                "vidxp.capabilities.speech.indexing.transcribe_video",
                 side_effect=AssertionError("transcription was used"),
             ),
         ):
-            stats = index_dialogue(
+            stats = index_speech(
                 source,
                 config=config,
                 storage=storage,
@@ -202,7 +202,7 @@ class IndexingTests(unittest.TestCase):
                 "silent.mp4",
                 config=IndexConfig(
                     video_id="video-1",
-                    enabled_modalities=("dialogue",),
+                    enabled_modalities=("speech",),
                 ),
                 cancellation=CancellationToken(),
                 runtime=self.runtime(),
