@@ -43,8 +43,11 @@ leaderboards before implementation.
 Local evaluation has a narrower purpose: verify preprocessing, timestamps,
 memory, latency, index size, failure behavior, and regressions in this repository.
 It does not substitute a tiny private sample for broad published comparisons.
-Promptfoo is therefore not required for component-model selection; an agent
-evaluation harness would answer a different question.
+Promptfoo is therefore not required for component-model selection. It is the
+selected runner for the separate [Codex MCP-on/MCP-off agent
+ablation](agent_ablation.md), where paired task execution, repetitions, traces,
+and usage accounting are part of the question. VidXP's Python benchmark code
+continues to own dataset preparation and deterministic temporal scoring.
 
 ## Current provider direction
 

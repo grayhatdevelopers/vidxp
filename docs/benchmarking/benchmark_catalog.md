@@ -57,6 +57,15 @@ review and benchmark stability improve.
 See [execution readiness](execution_readiness.md) for the corrected implementation
 boundary and per-benchmark engineering classification.
 
+## Agent-level system ablation
+
+Published model and dataset benchmarks establish component quality, but they do
+not measure the value of exposing this repository through MCP to a working
+agent. The separate [Codex MCP-on/MCP-off protocol](agent_ablation.md) uses
+Promptfoo to run paired LongVALE-derived tasks while keeping the model, prompt,
+media, permissions, and scoring fixed. It is a VidXP system experiment, not a
+new model leaderboard or a substitute for LongVALE's official evaluator.
+
 ## Verdict meanings
 
 - **Directly runnable:** no task-definition changes are needed.

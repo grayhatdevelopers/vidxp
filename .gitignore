@@ -2,6 +2,9 @@
 /venv
 /chroma_data
 /benchmark_runs/
+/benchmarks/codex-mcp/.promptfoo/
+/benchmarks/codex-mcp/results/
+/benchmarks/codex-mcp/workspace/
 /audio.wav
 /video.mp4
 /dist/

@@ -18,6 +18,7 @@ installation and product usage, start with the main
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
 | Environmental-sound retrieval | Implementation complete; benchmark pending | FineLAP stores global ten-second windows and dense timestamped sound activations; no VidXP quality score is claimed yet |
 | LongVALE combined evaluation | Next adapter and pilot | Validate vision, environmental sound, and speech together on one evaluation archive before scheduling the full run |
+| Codex MCP ablation | Runnable scaffold; not run | Promptfoo pairs the same Codex video tasks with and without VidXP MCP; no agent result is claimed yet |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
 
 Read [current results](results.md) for the scores, plain-language metric
@@ -32,6 +33,7 @@ definitions, honest comparisons, and the next benchmark decision.
 | Understand the benchmark-ready Python structure | [Core contract](core_contract.md) |
 | See which benchmarks exist and what each measures | [Benchmark catalog](benchmark_catalog.md) |
 | Understand the current model and benchmark choices | [Multimodal model direction](model_selection.md) |
+| Run the Codex MCP-on/MCP-off experiment | [Codex agent ablation](agent_ablation.md) |
 | Find exact published competitor scores | [Published comparison results](published_results.md) |
 | Review the relevant papers | [Research-paper inventory](research_papers.md) |
 | Audit what was checked in each paper | [Paper-validation ledger](paper_validation.md) |

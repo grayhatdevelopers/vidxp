@@ -1,0 +1,20 @@
+{
+  "name": "vidxp-codex-mcp-eval",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Paired Codex evaluation with and without the local VidXP MCP server",
+  "engines": {
+    "node": ">=22.22.0"
+  },
+  "scripts": {
+    "check": "promptfoo validate -c promptfooconfig.yaml",
+    "preflight": "node scripts/preflight.mjs",
+    "eval:smoke": "npm run preflight && promptfoo eval -c promptfooconfig.yaml --filter-first-n 2 --repeat 1 --no-cache --no-share",
+    "eval:pilot": "npm run preflight && promptfoo eval -c promptfooconfig.yaml --repeat 3 --no-cache --no-share",
+    "view": "promptfoo view"
+  },
+  "devDependencies": {
+    "@openai/codex-sdk": "0.151.0",
+    "promptfoo": "0.122.2"
+  }
+}
