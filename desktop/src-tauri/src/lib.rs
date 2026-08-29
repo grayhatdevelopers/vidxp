@@ -5572,7 +5572,7 @@ mod tests {
         )
         .expect("selection");
 
-        assert_eq!(selected, ["speech", "scene", "action"]);
+        assert_eq!(selected, ["action", "scene", "speech"]);
         assert!(selected_capabilities(&manifest, &["other".into()]).is_err());
     }
 
@@ -5812,7 +5812,7 @@ mod tests {
         let manifest = manifest().expect("manifest");
 
         assert_eq!(
-            capability_command_arguments(&manifest, "doctor", &["speech".into(), "scene".into()]),
+            capability_command_arguments(&manifest, "doctor", &["scene".into(), "speech".into()]),
             ["doctor", "--json", "--modalities", "scene,speech"]
         );
         assert_eq!(
