@@ -193,6 +193,7 @@ ordinary MCP tools.
 
 - [Python, HTTP, and MCP installation](INSTALLATION_GUIDE.md)
 - [Local HTTP API and MCP server](docs/local-api.md)
+- [Premiere Pro extension](docs/integrations/premiere-pro.md)
 - [ChatGPT and Codex plugin integration](docs/integrations/openai-plugin.md)
 - [Optional capability packages](INSTALLATION_GUIDE.md#optional-dependency-extras)
 - [Coolify server setup](docs/deployment/coolify.md)

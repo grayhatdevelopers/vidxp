@@ -1,0 +1,11 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "uxp",
+      "request": "attach",
+      "name": "Attach to VidXP Premiere UXP",
+      "manifestPath": "${workspaceFolder}/premiere/dist/manifest.json"
+    }
+  ]
+}

@@ -13,10 +13,12 @@ function read(path: string) {
 describe('Desktop packaging and documentation contracts', () => {
   it('packages the project license and complete third-party notices', () => {
     const config = JSON.parse(read('desktop/src-tauri/tauri.conf.json'));
-    expect(config.bundle.resources).toEqual(expect.arrayContaining([
-      '../THIRD_PARTY_NOTICES.txt',
-      '../../LICENSE',
-    ]));
+    expect(config.bundle.resources).toMatchObject({
+      '../THIRD_PARTY_NOTICES.txt': 'THIRD_PARTY_NOTICES.txt',
+      '../../LICENSE': 'LICENSE',
+      '../../premiere/packages/vidxp-premiere-cep.zxp': 'premiere/vidxp-premiere-cep.zxp',
+      '../../premiere/packages/vidxp-premiere-uxp.ccx': 'premiere/vidxp-premiere-uxp.ccx',
+    });
 
     const notices = read('desktop/THIRD_PARTY_NOTICES.txt');
     expect(notices).toContain('VIDXP PROJECT LICENSE');

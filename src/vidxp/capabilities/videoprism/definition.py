@@ -45,6 +45,7 @@ def model_manifest(
 
 DEFINITION = CapabilityDefinition(
     name="videoprism",
+    label="Temporal video search",
     description="Index and search temporal video clips with VideoPrism.",
     extra="videoprism",
     config_model=VideoPrismConfig,

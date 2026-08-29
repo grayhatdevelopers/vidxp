@@ -13,6 +13,7 @@ from vidxp.application_models import (
     CreateIndexCommand,
     DependencyCheckResult,
     IndexStatus,
+    Identifier,
     InvalidRequestError,
     ListMediaCommand,
     MediaAsset,
@@ -87,6 +88,33 @@ class ControlPlaneApplication:
             return self.capabilities.get(name)
         except CapabilityRequestError as exc:
             raise ResourceNotFoundError("capability") from exc
+
+    @application_boundary
+    def select_index_modalities(
+        self,
+        requested: tuple[Identifier, ...] | None,
+    ) -> tuple[str, ...]:
+        """Resolve an optional capability selection to indexable names."""
+
+        registry = self.capabilities.registry
+        indexable = registry.index_names()
+        selected = (
+            indexable
+            if requested is None
+            else registry.validate_names(requested)
+        )
+        unsupported = tuple(
+            name for name in selected if name not in indexable
+        )
+        if unsupported:
+            raise CapabilityRequestError(
+                "Indexing does not support these capabilities: "
+                + ", ".join(unsupported)
+                + ".",
+                field="modalities",
+                reason="capability_not_indexable",
+            )
+        return selected
 
     @application_boundary
     def index_status(self) -> IndexStatus:

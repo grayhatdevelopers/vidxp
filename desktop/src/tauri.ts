@@ -134,7 +134,8 @@ export interface LocalTargetInspection extends Omit<WireTargetInspection, 'valid
 export interface CapabilitySpec {
   extra: string;
   label: string;
-  description?: string;
+  description: string;
+  models: { cache_key: string; download_size_bytes: number }[];
 }
 
 export interface SurfaceSpec {
@@ -146,6 +147,7 @@ export interface SurfaceSpec {
 
 export interface RuntimeManifest {
   package_version: string;
+  managed_runtime_estimated_size_bytes: number;
   capabilities: Record<string, CapabilitySpec>;
   surfaces: Record<string, SurfaceSpec>;
 }
@@ -264,6 +266,33 @@ export interface CodexPluginInstallResult {
   detail: string;
 }
 
+export type PremiereHostKind = 'cep' | 'uxp' | 'unsupported';
+
+export interface PremiereInstallation {
+  display_name: string;
+  version: string;
+  executable: string;
+  host_kind: PremiereHostKind;
+  compatible: boolean;
+}
+
+export interface PremiereIntegrationState {
+  installations: PremiereInstallation[];
+  platform_supported: boolean;
+  installer_available: boolean;
+  cep_package_available: boolean;
+  uxp_package_available: boolean;
+  cep_installed: boolean;
+  uxp_installed: boolean;
+  detail: string;
+}
+
+export interface PremiereInstallResult {
+  installed_hosts: PremiereHostKind[];
+  opened_packages: string[];
+  detail: string;
+}
+
 interface WireInstallTransitionResult {
   install: InstallRuntimeResult;
   setup: WireTargetState;
@@ -355,14 +384,18 @@ export function cancelManagedSetup(draftId: string): Promise<TargetSetupState> {
   return invoke<WireTargetState>('cancel_managed_setup', { draftId }).then(normalizeState);
 }
 
+export function cancelManagedSetupOperation(draftId: string): Promise<void> {
+  return invoke('cancel_managed_setup_operation', { draftId });
+}
+
 export function runtimeManifest(): Promise<RuntimeManifest> { return invoke('runtime_manifest'); }
 export function runtimeStatus(): Promise<RuntimeStatus> { return invoke('runtime_status'); }
 export function modelDirectoryInventory(directory?: string): Promise<ModelDirectoryInventory> {
   return invoke('model_directory_inventory', { directory: directory || null });
 }
 export function chooseModelDirectory(): Promise<string | null> { return invoke('choose_model_directory'); }
-export function installMediaRuntime(draftId: string): Promise<RuntimeStatus> {
-  return invoke('install_media_runtime', { draftId });
+export function installMediaRuntime(draftId: string, totalSteps: number): Promise<RuntimeStatus> {
+  return invoke('install_media_runtime', { draftId, totalSteps });
 }
 export function installRuntime(request: InstallRuntimeRequest): Promise<InstallTransitionResult> {
   return invoke<WireInstallTransitionResult>('install_runtime', { request }).then((result) => ({
@@ -385,6 +418,9 @@ export function configureExternalInstallation(capabilities: string[], surfaces: 
 }
 export function mcpClientConfig(): Promise<string> { return invoke('mcp_client_config'); }
 export function installCodexPlugin(): Promise<CodexPluginInstallResult> { return invoke('install_codex_plugin'); }
+export function premiereIntegrationState(): Promise<PremiereIntegrationState> { return invoke('premiere_integration_state'); }
+export function installPremiereExtensions(): Promise<PremiereInstallResult> { return invoke('install_premiere_extensions'); }
+export function uninstallPremiereExtensions(): Promise<void> { return invoke('uninstall_premiere_extensions'); }
 export function localWorkerStatus(): Promise<LocalWorkerStatus> { return invoke('local_worker_status'); }
 export function startLocalWorker(): Promise<LocalWorkerStatus> { return invoke('start_local_worker'); }
 export function stopLocalWorker(): Promise<LocalWorkerStatus> { return invoke('stop_local_worker'); }

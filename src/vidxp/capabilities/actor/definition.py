@@ -68,6 +68,7 @@ def model_manifest(
 
 DEFINITION = CapabilityDefinition(
     name="actor",
+    label="Actor recognition",
     description="Index, inspect, and render actor clusters.",
     extra="actor",
     config_model=ActorConfig,

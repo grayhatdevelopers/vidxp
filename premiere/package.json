@@ -1,0 +1,52 @@
+{
+  "name": "vidxp-premiere-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.6.0",
+  "engines": {
+    "node": "^22.19.0 || ^24.15.0 || ^26.0.0",
+    "npm": ">=11.6.0"
+  },
+  "scripts": {
+    "clean": "rimraf dist ccx coverage",
+    "build": "npm run clean && npm run build:uxp && npm run build:cep",
+    "build:uxp": "cross-env BOLT_MODE=build vite build --mode uxp",
+    "build:cep": "vite build --mode cep && node scripts/prepare-cep.mjs",
+    "package:uxp": "cross-env BOLT_MODE=package vite build --mode uxp",
+    "package": "npm run clean && npm run package:uxp && npm run build:cep && node scripts/package-extensions.mjs",
+    "ccx-install": "cross-env BOLT_ACTION=ccx-install vite --mode uxp",
+    "ccx-uninstall": "cross-env BOLT_ACTION=ccx-uninstall vite --mode uxp",
+    "dev": "concurrently -k -n build,types \"cross-env BOLT_MODE=dev vite build --mode uxp --watch\" \"tsc --watch --noEmit --preserveWatchOutput\"",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "check": "npm run typecheck && npm run lint && npm run test:run && npm run build"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@adobe/cc-ext-uxp-types": "7.3.1",
+    "@adobe/eslint-plugin-premierepro": "26.3.0",
+    "@adobe/premierepro": "26.3.0",
+    "@eslint/js": "9.39.2",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.1",
+    "concurrently": "10.0.5",
+    "cross-env": "10.1.0",
+    "eslint": "9.39.2",
+    "eslint-plugin-react-hooks": "7.0.1",
+    "rimraf": "6.1.3",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.65.0",
+    "vite": "8.2.2",
+    "vite-uxp-plugin": "1.3.8",
+    "vitest": "4.1.11",
+    "zxp-signer": "1.0.6"
+  }
+}

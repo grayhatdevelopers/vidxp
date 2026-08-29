@@ -2,6 +2,8 @@ import { Alert, Badge, Button, Checkbox, Code, Group, Loader, Modal, Stack, Text
 import { IconActivityHeartbeat, IconCopy, IconExternalLink, IconPlugConnected, IconPlayerPlay, IconPlayerStop, IconRefresh, IconSettings, IconShare, IconTerminal2 } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 
+import { PremiereIntegration } from './PremiereIntegration';
+
 import {
   errorMessage,
   browserServiceStatus,
@@ -38,26 +40,18 @@ interface TargetSummaryProps {
   opening?: boolean;
   onRecheck: () => Promise<void>;
   onManageManaged: () => void;
+  onSetUpPremiere: () => void;
   onSetupChanged: (setup: TargetSetupState) => void;
   onChooseAnother: () => void;
   onOpen: () => Promise<void>;
 }
-
-const CAPABILITY_LABELS: Record<string, string> = {
-  actor: 'Actor recognition',
-  dialogue: 'Dialogue search',
-  media: 'Video tools',
-  scene: 'Visual scene search',
-  sound: 'Sound event search',
-  videoprism: 'Temporal video search',
-};
 
 interface WorkerFailure {
   title: string;
   detail: string;
 }
 
-export function TargetSummary({ profile, validationError, checking, operationPending, opening, onRecheck, onManageManaged, onSetupChanged, onChooseAnother, onOpen }: TargetSummaryProps) {
+export function TargetSummary({ profile, validationError, checking, operationPending, opening, onRecheck, onManageManaged, onSetUpPremiere, onSetupChanged, onChooseAnother, onOpen }: TargetSummaryProps) {
   const executable = profile.display_executable;
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [server, setServer] = useState<LocalServerStatus | null>(null);
@@ -89,7 +83,17 @@ export function TargetSummary({ profile, validationError, checking, operationPen
   const serverAvailable = runtimeCompatible && profile.surfaces.includes('server');
   const failedChecks = doctor?.checks.filter((check) => !check.ok) ?? [];
 
-  const capabilityLabel = (capability: string) => CAPABILITY_LABELS[capability] ?? capability;
+  const capabilityLabel = (capability: string) => capability === 'media'
+    ? 'Video tools'
+    : externalManifest?.capabilities[capability]?.label ?? capability;
+
+  useEffect(() => {
+    let active = true;
+    void runtimeManifest().then((manifest) => {
+      if (active) setExternalManifest(manifest);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     setDoctor(null);
@@ -231,7 +235,7 @@ export function TargetSummary({ profile, validationError, checking, operationPen
     setExternalFailure(null);
     setExternalTechnical(null);
     try {
-      const manifest = await runtimeManifest();
+      const manifest = externalManifest ?? await runtimeManifest();
       setExternalManifest(manifest);
       if (needsRuntimeUpdate) {
         const defaultSurfaces = Object.entries(manifest.surfaces).filter(([, surface]) => surface.default).map(([id]) => id);
@@ -395,6 +399,13 @@ export function TargetSummary({ profile, validationError, checking, operationPen
           <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={opening} disabled={Boolean(validationError) || desktopSurfaceUnavailable || operationPending} onClick={() => void onOpen()}>Open VidXP</Button>
         </Group>
       </div>
+
+      <PremiereIntegration
+        operationPending={operationPending}
+        serverEnabled={serverAvailable}
+        canConfigureDependency={profile.kind === 'managed'}
+        onConfigureDependency={profile.kind === 'managed' ? onSetUpPremiere : () => void openExternalSetup()}
+      />
 
       <div className="setupPanel runtimeControlPanel">
         <Title order={2} className="panelTitle">Health and background services</Title>

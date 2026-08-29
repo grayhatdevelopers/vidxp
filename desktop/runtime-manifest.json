@@ -6,6 +6,7 @@
   "dependency_index": "https://pypi.org/simple",
   "python_version": "3.14.6",
   "uv_version": "0.12.0",
+  "managed_runtime_estimated_size_bytes": 3221225472,
   "surfaces": {
     "worker": {
       "extra": "local-worker",
@@ -28,30 +29,8 @@
     "server": {
       "extra": "server",
       "label": "App integration service",
-      "description": "Run an API and network-style MCP connection for other software. It is private by default and can be shared on your local network with bearer-token authentication.",
+      "description": "Connect other apps through VidXP's private local API. Local-network sharing is optional and requires bearer-token authentication.",
       "default": false
-    }
-  },
-  "capabilities": {
-    "dialogue": {
-      "extra": "dialogue",
-      "modality": "dialogue",
-      "label": "Dialogue search"
-    },
-    "scene": {
-      "extra": "scene",
-      "modality": "scene",
-      "label": "Visual scene search"
-    },
-    "actor": {
-      "extra": "actor",
-      "modality": "actor",
-      "label": "Actor recognition"
-    },
-    "videoprism": {
-      "extra": "videoprism",
-      "modality": "videoprism",
-      "label": "Temporal video search"
     }
   },
   "media_runtime": {

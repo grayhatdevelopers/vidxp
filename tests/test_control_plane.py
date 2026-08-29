@@ -52,6 +52,30 @@ def media_asset(media_id: str, filename: str) -> MediaAsset:
 
 
 class ControlPlaneWorkspaceTests(unittest.TestCase):
+    def test_select_index_modalities_defaults_and_rejects_non_indexable_names(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            application = ControlPlaneApplication(
+                layout=RepositoryLayout(root=root),
+                capabilities=CapabilityService(create_capability_registry()),
+                media=Mock(),
+                artifacts=Mock(),
+                index_status=lambda: None,
+                model_cache=root / "models",
+            )
+
+            defaults = application.select_index_modalities(None)
+            selected = application.select_index_modalities(("scene", "sound"))
+            with self.assertRaises(ApplicationError) as raised:
+                application.select_index_modalities(("query",))
+
+        self.assertEqual(
+            defaults,
+            ("dialogue", "sound", "scene", "actor", "videoprism"),
+        )
+        self.assertEqual(selected, ("scene", "sound"))
+        self.assertEqual(raised.exception.detail.code, "invalid_request")
+
     def test_index_preflight_rejects_unknown_capability_with_next_action(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

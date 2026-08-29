@@ -47,6 +47,7 @@ Start in `definition.py`. It must export one frozen, Pydantic-validated
 Every capability declares:
 
 - a stable internal `name`;
+- a product-facing `label`;
 - a short human-readable `description`;
 - the package `extra` that installs its dependencies;
 - its Pydantic configuration model; and
@@ -138,7 +139,8 @@ meaning may make existing indexes invalid. When it does, require a rebuild and
 keep the previous index active until the replacement passes validation. State
 the rebuild requirement in both the release note and user documentation.
 
-If a model contract is displayed by Desktop, regenerate the checked-in catalog:
+Regenerate the checked-in Desktop catalogs after changing a capability label,
+description, package extra, or model contract:
 
 ```bash
 npm --prefix desktop run model-catalog:write
@@ -152,7 +154,13 @@ Review the generated diff rather than editing the catalog by hand.
 After the definition and executor are ready, connect them with a
 `CapabilityPlugin` named `PLUGIN`. Register that plugin explicitly in
 `src/vidxp/capabilities/registry.py`. For an ordinary capability, the registry
-is the only central runtime file that should change.
+is the only central Python runtime file that should change.
+
+Desktop derives the capability's package extra, modality, product label,
+description, and model download plan from the generated capability catalog.
+Do not add the capability to `desktop/runtime-manifest.json` or a UI label map.
+Add a Desktop test that verifies the generated manifest produces the expected
+package specification for the new capability.
 
 Generic commands discover capability names and operations from the registry.
 Most capabilities therefore need no CLI code. Add `cli.py` only when the
