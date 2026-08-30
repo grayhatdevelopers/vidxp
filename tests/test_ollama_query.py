@@ -130,6 +130,7 @@ class OllamaQueryModelTests(unittest.TestCase):
                 "json_schema",
             )
             self.assertEqual(request["model"], "contract-model")
+            self.assertEqual(request["reasoning_effort"], "none")
 
 
 if __name__ == "__main__":

@@ -84,6 +84,47 @@ The generated configuration runs `vidxp-mcp` as a local process. See
 [Connect VidXP to Codex or ChatGPT](integrations/openai-plugin.md) for Codex
 setup and for the different requirements of hosted AI clients.
 
+### Enable local grounded answers
+
+Ordinary search and timestamped evidence do not require a language model.
+`query_video` and `vidxp query` can additionally use a self-hosted Ollama model
+to rewrite a question into searches and draft claims from citable textual
+evidence. VidXP falls back to deterministic evidence retrieval when Ollama is
+not configured or unavailable.
+
+Install and start [Ollama](https://ollama.com/download), then explicitly
+download VidXP's recommended model:
+
+```bash
+ollama pull qwen3.5:4b-q4_K_M
+```
+
+Set the Ollama OpenAI-compatible address before starting `vidxp-mcp`,
+`vidxp-api`, or a CLI query. VidXP selects `qwen3.5:4b-q4_K_M` when the model
+setting is omitted:
+
+```bash
+export VIDXP_SLM_BASE_URL=http://127.0.0.1:11434/v1
+vidxp query "When does the taxi arrive?"
+```
+
+In PowerShell, set the same value with:
+
+```powershell
+$env:VIDXP_SLM_BASE_URL = "http://127.0.0.1:11434/v1"
+vidxp query "When does the taxi arrive?"
+```
+
+The official Q4_K_M model download is approximately 3.4 GB. It runs locally,
+so there is no model API fee or numbered hosted-model run; it still uses local
+storage, memory, compute time, and electricity. VidXP does not download the
+model automatically or bundle it with the Python or Desktop packages.
+
+The current query adapter sends structured search evidence, not video or audio
+bytes, to Qwen. Speech transcripts can support generated factual claims.
+Scene, action, and sound matches remain timestamped, inspectable retrieval
+evidence until a later media-enrichment layer supplies citable descriptions.
+
 ## Add videos through MCP
 
 The available method depends on how the MCP client connects.

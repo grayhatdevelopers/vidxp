@@ -5,7 +5,7 @@ Collection index: [Benchmarking research](README.md)
 Status: Current decision record; FineLAP and VideoPrism are implemented, while
 other candidate providers remain planned unless architecture says otherwise
 
-Last verified: 2026-08-27
+Last verified: 2026-08-30
 
 ## Product requirement
 
@@ -59,6 +59,8 @@ continues to own dataset preparation and deterministic temporal scoring.
 | Visual scene/action retrieval | Evaluate [Qwen3-VL-Embedding-2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B) as the practical candidate | Qwen3-VL-Embedding-8B as the quality ceiling; VideoPrism as the incumbent control | MVEB's text-video table ranks Qwen 8B and 2B first and second. The checked table has no directly comparable VideoPrism row, so this is stronger current selection evidence, not proof that VideoPrism lost a head-to-head. |
 | Visual temporal grounding | Evaluate [TimeLens2-4B](https://github.com/MCG-NJU/TimeLens2) after candidate retrieval | TimeLens2-8B and existing temporal baselines | The published 4B average nearly matches 8B at much lower cost. TimeLens2 is visual-only and cannot replace the sound or speech channels. |
 | Cross-modal fusion | Keep modality-specific providers and fuse timestamped candidates | A unified permissive audio-video-text encoder can be a later comparison | Separate providers preserve provenance, allow independent upgrades, and match the evidence that different model families lead different modalities and tasks. |
+| Query planning and answer synthesis | [Qwen3.5 4B](https://huggingface.co/Qwen/Qwen3.5-4B) through official Ollama `qwen3.5:4b-q4_K_M` | Qwen3.5 9B as a higher-memory comparison | The 4B model has strong published instruction-following and agent results while its official Q4_K_M artifact is approximately 3.4 GB, about half the 9B artifact. VidXP needs bounded schema generation over retrieved evidence, not a second retrieval encoder. |
+| Future media evidence enrichment | Reuse Qwen3.5 vision for selected keyframes before adding another model | Evaluate an audio-video model only for top uncitable sound/action hits | The current adapter sends JSON evidence, so multimodal model support alone changes nothing. Media inputs must remain timestamp-bound derived evidence and must not replace FineLAP, scene, action, or speech retrieval. |
 
 Before promotion, every new checkpoint still needs an immutable revision, artifact
 hash, license review, safe-loading review, dependency fit, and a bounded real-media
@@ -74,6 +76,8 @@ Scores are comparable only within the named paper and task.
 | [MVEB text-video leaderboard](https://arxiv.org/abs/2606.14958) | Qwen3-VL-Embedding-8B: 60.9 mean; 2B: 58.1; LCO-Embedding-Omni-7B: 56.8 | Prefer Qwen 2B for the practical visual candidate and 8B only when maximizing published quality. |
 | [TimeLens2 visual grounding](https://github.com/MCG-NJU/TimeLens2) | Seven-dataset average mIoU: 47.7 for 4B and 48.0 for 8B | Start with 4B; the 0.3-point gain does not justify making 8B the default candidate. |
 | [AEGBench](https://arxiv.org/abs/2607.04383) | PE-A-Frame Large: 0.389 mIoU, 0.407 event-F1, 0.607 segment-F1 in the checked table | Use a released specialist to test exact open-vocabulary sound intervals. |
+| [Qwen3.5 4B model card](https://huggingface.co/Qwen/Qwen3.5-4B) | Vendor-reported MMLU-Pro 79.1, IFEval 89.8, BFCL-V4 50.3, and TAU2-Bench 79.9; native 262,144-token context | Select the first local planner/synthesizer from published quality evidence; validate only schema retention, grounding, resource use, and failure behavior in VidXP. |
+| [Official Ollama Q4_K_M artifact](https://ollama.com/library/qwen3.5:4b-q4_K_M) | 4.66B parameters, Q4_K_M, approximately 3.4 GB, Apache-2.0 | Use the official cross-platform build and an explicit pull instead of bundling weights or relying on a community conversion. |
 
 VideoPrism remains a credible multi-frame video encoder. The decision above does
 not reject it on quality. It rejects two unsupported claims: that implementation

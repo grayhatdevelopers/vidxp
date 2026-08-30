@@ -313,6 +313,16 @@ clients, or public access, use the supported server deployment instead.
 See [Local API and MCP server](docs/local-api.md) for authentication, uploads,
 and sharing behavior.
 
+## Optional local grounded answers
+
+VidXP search does not require a language model. To let CLI, HTTP, or MCP
+queries plan searches and draft grounded answers locally, run Ollama and pull
+the recommended Qwen3.5 4B model. The model is an additional approximately
+3.4 GB download and has no per-run API charge.
+
+The complete setup and its current evidence limitations are documented under
+[Enable local grounded answers](docs/local-api.md#enable-local-grounded-answers).
+
 ## Optional dependency extras
 
 Most users should choose one of the package profiles above. The individual

@@ -864,8 +864,17 @@ evidence fallback. Typed JSON alone is never treated as proof of grounding.
 The result records the configured provider/model identity and plan for
 reproducibility.
 
-The default SLM model ID, immutable revision/digest, and quantization are
-intentionally unset until candidate models pass:
+The default local query model is the official Ollama
+`qwen3.5:4b-q4_K_M` artifact: Qwen3.5 4B with Q4_K_M quantization. Enabling a
+self-hosted Ollama base URL selects that model unless an operator explicitly
+overrides it. VidXP sets temperature zero, disables reasoning output, and
+requires the native JSON schemas for both planning and synthesis. Model weights
+remain an explicit Ollama download and are never bundled or pulled during
+application setup.
+
+Published model results select the integration candidate; the repository gate
+does not attempt to reproduce general model leaderboards. Promotion still
+requires the narrow checks that can fail specifically in VidXP:
 
 - both output schemas
 - adversarial-plan rejection
@@ -875,10 +884,12 @@ intentionally unset until candidate models pass:
 - offline-cache behavior
 - license and redistribution review
 
-Until that gate passes, the provider is fixed to self-hosted Ollama but no arbitrary
-caller-provided model string is accepted. Ollama runs as an internal optional `slm`
-Compose profile with a persistent model cache; deterministic evidence retrieval
-remains available when it is disabled.
+The provider remains fixed to self-hosted Ollama. Ollama runs as an internal
+optional `slm` Compose profile with a persistent model cache; deterministic
+evidence retrieval remains available when it is disabled. The current adapter
+receives typed retrieval evidence rather than media bytes. Direct keyframe,
+video, and audio enrichment is a separate application-layer step, not an
+implicit capability of selecting a multimodal checkpoint.
 
 ## 17. Artifact and snippet delivery
 

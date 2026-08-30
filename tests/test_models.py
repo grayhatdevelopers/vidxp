@@ -44,7 +44,7 @@ from vidxp.model_contracts import (
     model_artifact_path,
 )
 from vidxp.runtime import ModelRuntime, resolve_backends
-from vidxp.settings import VidXPSettings
+from vidxp.settings import DEFAULT_LOCAL_QUERY_MODEL, VidXPSettings
 
 
 class ModelTests(unittest.TestCase):
@@ -761,8 +761,13 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(settings.runtime_backend, "cuda:0")
         self.assertNotIn("database_url", VidXPSettings.model_fields)
         self.assertNotIn("chroma_server_url", VidXPSettings.model_fields)
-        with self.assertRaises(ValidationError):
-            VidXPSettings(slm_base_url="http://localhost:11434/v1")
+        default_slm = VidXPSettings(
+            slm_base_url="http://localhost:11434/v1"
+        )
+        self.assertEqual(
+            default_slm.slm_model,
+            DEFAULT_LOCAL_QUERY_MODEL,
+        )
         with self.assertRaises(ValidationError):
             VidXPSettings(
                 slm_base_url="https://ollama.com/v1",
@@ -779,6 +784,9 @@ class ModelTests(unittest.TestCase):
         )
         self.assertEqual(slm.slm_model, "evaluated-model")
 
+        with self.assertRaises(ValidationError):
+            VidXPSettings(slm_model=DEFAULT_LOCAL_QUERY_MODEL)
+
     def test_only_optional_slm_environment_values_ignore_empty_strings(self):
         with patch.dict(
             os.environ,
@@ -792,6 +800,18 @@ class ModelTests(unittest.TestCase):
 
         self.assertIsNone(settings.slm_base_url)
         self.assertIsNone(settings.slm_model)
+
+        with patch.dict(
+            os.environ,
+            {
+                "VIDXP_SLM_BASE_URL": "http://localhost:11434/v1",
+                "VIDXP_SLM_MODEL": "",
+            },
+            clear=True,
+        ):
+            settings = VidXPSettings(_env_file=None)
+
+        self.assertEqual(settings.slm_model, DEFAULT_LOCAL_QUERY_MODEL)
 
         with (
             patch.dict(
