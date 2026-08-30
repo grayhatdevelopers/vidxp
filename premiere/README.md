@@ -19,7 +19,9 @@ Shared React workflow (`src/ui`)
 The UI receives a `PremiereAdapter`; it does not import a host API. The UXP
 adapter alone imports Premiere's `premierepro` module. The CEP adapter alone
 uses `evalScript`, and its ExtendScript bridge returns bounded JSON. Indexing,
-polling, search, status, capability discovery, and selection rules are shared.
+polling, grounded queries, status, capability discovery, and selection rules
+are shared. Grounded queries use the public durable job contract and preserve
+ranked moments when answer generation falls back to evidence-only mode.
 
 UXP renders Adobe's built-in Spectrum widgets through the typed control
 wrapper. CEP renders native HTML controls through that same wrapper because

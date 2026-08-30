@@ -72,14 +72,19 @@ newer before claiming host support.
 - Close and reopen the panel during a job. Record the current POC behavior; job
   recovery across panel reload is not yet implemented.
 
-## Search
+## Grounded queries
 
-- Search all indexed media with each searchable capability individually and in
-  combination.
-- Search one selected VidXP media item and confirm every result belongs to it.
-- Confirm each result shows the correct source name, time range, capability
-  labels, rank, and score.
-- Search for no-match text, stop the worker, and use an unprepared capability;
+- Ask about all indexed media with each searchable capability individually and
+  in combination.
+- Ask about one selected VidXP media item and confirm every evidence item and
+  ranked moment belongs to it.
+- With **Local grounded answers** enabled, confirm generated statements show
+  numbered citations that resolve to the displayed source name, time range,
+  capability, and evidence text.
+- Stop the local answer model and confirm the panel labels the result as
+  evidence-only while retaining ranked moments, capability labels, ranks, and
+  scores.
+- Ask a no-match question, stop the worker, and use an unprepared capability;
   confirm empty, unavailable, and model-remediation states are readable.
 
 ## Safety and cleanup

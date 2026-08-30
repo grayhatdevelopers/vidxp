@@ -97,14 +97,56 @@ export interface FusedSearchResult {
   moments: FusedMoment[];
 }
 
-export interface VidXPJob {
+export interface GroundedClaim {
+  text: string;
+  evidence_ids: string[];
+}
+
+export interface QueryModelIdentity {
+  provider: "ollama";
+  model: string;
+}
+
+export interface MomentEvidence {
+  kind: "moment";
+  evidence_id: string;
+  media_id: string;
+  modality: string;
+  start: number;
+  end: number;
+  display_text?: string;
+}
+
+export interface ActorEvidence {
+  kind: "actor";
+  evidence_id: string;
+  media_id: string;
+  modality: "actor";
+  start: number;
+  end: number;
+  display_text: string;
+}
+
+export type QueryEvidence = MomentEvidence | ActorEvidence;
+
+export interface QueryAnswer {
+  question: string;
+  mode: "generated" | "evidence_only" | "no_evidence";
+  model?: QueryModelIdentity;
+  claims: GroundedClaim[];
+  evidence: QueryEvidence[];
+  moments: FusedMoment[];
+  fallback_reason?: string;
+}
+
+export interface VidXPJob<TResult> {
   job_id: string;
   kind: string;
   state: string;
   progress?: JobProgress;
   result?: {
     kind: string;
-    result: FusedSearchResult;
+    result: TResult;
   };
   error?: ErrorDetail;
   terminal: boolean;

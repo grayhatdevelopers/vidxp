@@ -1,6 +1,7 @@
 import type {
   CapabilitySummary,
   MediaIngestionStatus,
+  QueryAnswer,
   VidXPJob,
   WorkspaceOverview,
 } from "./types";
@@ -15,8 +16,8 @@ export interface VidXPClientOptions {
   sleep?: Sleep;
 }
 
-export interface SearchRequest {
-  query: string;
+export interface QueryRequest {
+  question: string;
   modalities: string[];
   mediaId?: string;
   topK?: number;
@@ -101,14 +102,17 @@ export class VidXPClient {
     return status;
   }
 
-  submitSearch(request: SearchRequest, idempotencyKey: string): Promise<VidXPJob> {
-    const query = request.query.trim();
-    if (!query) throw new Error("Enter something to search for.");
-    return this.request<VidXPJob>("/api/v1/jobs/search", {
+  submitQuery(
+    request: QueryRequest,
+    idempotencyKey: string,
+  ): Promise<VidXPJob<QueryAnswer>> {
+    const question = request.question.trim();
+    if (!question) throw new Error("Enter a question or description.");
+    return this.request<VidXPJob<QueryAnswer>>("/api/v1/jobs/query", {
       method: "POST",
       headers: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify({
-        query,
+        question,
         modalities: request.modalities,
         media_id: request.mediaId || null,
         top_k: request.topK ?? 20,
@@ -116,20 +120,22 @@ export class VidXPClient {
     });
   }
 
-  getJob(jobId: string): Promise<VidXPJob> {
-    return this.request<VidXPJob>(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
+  getJob<TResult>(jobId: string): Promise<VidXPJob<TResult>> {
+    return this.request<VidXPJob<TResult>>(
+      `/api/v1/jobs/${encodeURIComponent(jobId)}`,
+    );
   }
 
-  async waitForJob(
-    initial: VidXPJob,
-    onProgress: (job: VidXPJob) => void,
+  async waitForJob<TResult>(
+    initial: VidXPJob<TResult>,
+    onProgress: (job: VidXPJob<TResult>) => void,
     signal?: AbortSignal,
-  ): Promise<VidXPJob> {
+  ): Promise<VidXPJob<TResult>> {
     let job = initial;
     while (!job.terminal) {
       onProgress(job);
       await this.wait(job.poll_after_seconds, signal);
-      job = await this.getJob(job.job_id);
+      job = await this.getJob<TResult>(job.job_id);
     }
     onProgress(job);
     if (job.state !== "succeeded") {

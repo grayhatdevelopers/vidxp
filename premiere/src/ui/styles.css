@@ -424,6 +424,72 @@ sp-checkbox {
   line-height: 1.4;
 }
 
+.claims,
+.evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.claims li {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.citations {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 5px;
+  color: var(--accent-bright);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.evidence-list {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.evidence-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.evidence-list li > div {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.evidence-list strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.evidence-list li > div > span,
+.evidence-list p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.evidence-number {
+  flex: none;
+  color: var(--accent-bright);
+  font-size: 9px;
+  font-weight: 700;
+}
+
 .results ol {
   display: flex;
   flex-direction: column;

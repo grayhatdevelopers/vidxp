@@ -5,7 +5,11 @@ import {
   VidXPClient,
   type VidXPFetch,
 } from "../src/services/vidxp/client";
-import type { MediaIngestionStatus, VidXPJob } from "../src/services/vidxp/types";
+import type {
+  MediaIngestionStatus,
+  QueryAnswer,
+  VidXPJob,
+} from "../src/services/vidxp/types";
 
 const ingestion: MediaIngestionStatus = {
   session_id: "ingestion-1",
@@ -51,19 +55,20 @@ describe("VidXPClient", () => {
     });
   });
 
-  it("polls a search job and returns its typed result", async () => {
-    const completed: VidXPJob = {
+  it("polls a grounded query job and returns its typed result", async () => {
+    const completed: VidXPJob<QueryAnswer> = {
       job_id: "job-1",
-      kind: "search",
+      kind: "query",
       state: "succeeded",
       terminal: true,
       poll_after_seconds: 0,
       result: {
-        kind: "search",
+        kind: "query",
         result: {
-          query_id: "query-1",
-          query: "door opens",
-          modalities: ["scene"],
+          question: "What happens after the door opens?",
+          mode: "evidence_only",
+          claims: [],
+          evidence: [],
           moments: [],
         },
       },
@@ -75,9 +80,9 @@ describe("VidXPClient", () => {
       fetchImpl: fetchImpl as VidXPFetch,
       sleep,
     });
-    const queued: VidXPJob = {
+    const queued: VidXPJob<QueryAnswer> = {
       job_id: "job-1",
-      kind: "search",
+      kind: "query",
       state: "queued",
       terminal: false,
       poll_after_seconds: 1,
@@ -86,7 +91,45 @@ describe("VidXPClient", () => {
     const result = await client.waitForJob(queued, vi.fn());
 
     expect(sleep).toHaveBeenCalledWith(1000);
-    expect(result.result?.result.query_id).toBe("query-1");
+    expect(result.result?.result.question).toBe("What happens after the door opens?");
+  });
+
+  it("submits Premiere questions to the grounded query contract", async () => {
+    const queued: VidXPJob<QueryAnswer> = {
+      job_id: "query-job-1",
+      kind: "query",
+      state: "queued",
+      terminal: false,
+      poll_after_seconds: 1,
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(queued, 202));
+    const client = new VidXPClient({
+      baseUrl: "http://127.0.0.1:32191",
+      fetchImpl: fetchImpl as VidXPFetch,
+    });
+
+    await client.submitQuery(
+      {
+        question: " What happens after the door slams? ",
+        modalities: ["scene", "sound", "speech"],
+        mediaId: "media-1",
+        topK: 20,
+      },
+      "query-request-key",
+    );
+
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(url).toBe("http://127.0.0.1:32191/api/v1/jobs/query");
+    expect(init.method).toBe("POST");
+    expect(headers.get("Idempotency-Key")).toBe("query-request-key");
+    if (typeof init.body !== "string") throw new Error("Expected a JSON request body.");
+    expect(JSON.parse(init.body)).toEqual({
+      question: "What happens after the door slams?",
+      modalities: ["scene", "sound", "speech"],
+      media_id: "media-1",
+      top_k: 20,
+    });
   });
 
   it("surfaces safe API remediation without exposing the bearer token", async () => {

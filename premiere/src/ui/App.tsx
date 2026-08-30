@@ -19,6 +19,8 @@ import {
 import type {
   CapabilitySummary,
   FusedMoment,
+  QueryAnswer,
+  QueryEvidence,
   WorkspaceOverview,
 } from "../services/vidxp/types";
 import {
@@ -73,6 +75,7 @@ export function App({ fetchImpl, premiere }: AppProps) {
   const [notice, setNotice] = useState<Notice>();
   const [query, setQuery] = useState("");
   const [mediaScope, setMediaScope] = useState("");
+  const [answer, setAnswer] = useState<QueryAnswer>();
   const [moments, setMoments] = useState<FusedMoment[]>([]);
 
   const loadLibrary = useCallback(async () => {
@@ -207,10 +210,12 @@ export function App({ fetchImpl, premiere }: AppProps) {
     if (!client || !query.trim()) return;
     const controller = beginOperation();
     setNotice(undefined);
+    setAnswer(undefined);
+    setMoments([]);
     try {
-      const initial = await client.submitSearch(
+      const initial = await client.submitQuery(
         {
-          query,
+          question: query,
           modalities: searchModalities,
           mediaId: mediaScope || undefined,
           topK: 20,
@@ -228,18 +233,26 @@ export function App({ fetchImpl, premiere }: AppProps) {
         controller.signal,
       );
       const result = completed.result?.result;
-      if (!result) throw new Error("VidXP completed the search without a result payload.");
+      if (!result) throw new Error("VidXP completed the question without a result payload.");
+      setAnswer(result);
       setMoments(result.moments);
-      if (result.moments.length === 0) {
+      if (result.mode === "no_evidence") {
         setNotice({
           tone: "warning",
-          title: "No matching moments",
-          message: "Try a broader description, another search feature, or the complete indexed library.",
+          title: "No matching evidence",
+          message: "Try a broader question, another search feature, or the complete indexed library.",
+        });
+      } else if (result.mode === "evidence_only") {
+        setNotice({
+          tone: "warning",
+          title: "Showing evidence without a generated answer",
+          message: "VidXP ranked the supporting moments, but the local answer model was unavailable or could not produce a valid cited response.",
         });
       }
       setOperation({ status: "idle" });
     } catch (error) {
       if (!controller.signal.aborted) {
+        setAnswer(undefined);
         setMoments([]);
         setOperation({ status: "error", message: messageOf(error) });
       }
@@ -405,15 +418,15 @@ export function App({ fetchImpl, premiere }: AppProps) {
       <section className="section search-section">
         <div className="section-heading">
           <div>
-            <h2>Search moments</h2>
-            <p>Search one indexed video or the complete active VidXP library.</p>
+            <h2>Ask indexed media</h2>
+            <p>Get a cited answer and its supporting moments from one video or the complete library.</p>
           </div>
         </div>
         <SpectrumTextArea
           className="query-field"
-          label="What happens in the moment?"
+          label="What do you want to know or find?"
           value={query}
-          placeholder="A door slams while someone says we need to leave…"
+          placeholder="What happens after the door slams?"
           onValueChange={setQuery}
         />
         <label className="field">
@@ -446,7 +459,7 @@ export function App({ fetchImpl, premiere }: AppProps) {
           }
           onPress={() => void search()}
         >
-          {operation.status === "searching" ? "Searching…" : "Search indexed media"}
+          {operation.status === "searching" ? "Answering…" : "Ask VidXP"}
         </SpectrumButton>
       </section>
 
@@ -481,8 +494,84 @@ export function App({ fetchImpl, premiere }: AppProps) {
         </section>
       )}
 
+      <GroundedAnswer answer={answer} workspace={workspace} />
       <SearchResults moments={moments} workspace={workspace} />
     </main>
+  );
+}
+
+export function GroundedAnswer({
+  answer,
+  workspace,
+}: {
+  answer?: QueryAnswer;
+  workspace?: WorkspaceOverview;
+}) {
+  if (!answer || answer.mode === "no_evidence") return null;
+  const names = mediaNames(workspace);
+  const evidenceNumbers = new Map(
+    answer.evidence.map((evidence, index) => [evidence.evidence_id, index + 1]),
+  );
+  return (
+    <section className="section grounded-answer">
+      <div className="section-heading">
+        <div>
+          <h2>{answer.mode === "generated" ? "Grounded answer" : "Retrieved evidence"}</h2>
+          <p>
+            {answer.mode === "generated" && answer.model
+              ? `Generated locally with ${answer.model.model}; every statement links to indexed evidence.`
+              : "VidXP returned ranked evidence without generating an answer."}
+          </p>
+        </div>
+      </div>
+      {answer.claims.length > 0 && (
+        <ol className="claims">
+          {answer.claims.map((claim, index) => (
+            <li key={`${index}-${claim.text}`}>
+              <span>{claim.text}</span>
+              <span className="citations" aria-label="Supporting evidence">
+                {claim.evidence_ids.map((evidenceId) => (
+                  <span key={evidenceId} title={`Evidence ${evidenceNumbers.get(evidenceId) ?? "?"}`}>
+                    [{evidenceNumbers.get(evidenceId) ?? "?"}]
+                  </span>
+                ))}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+      <ol className="evidence-list">
+        {answer.evidence.map((evidence, index) => (
+          <EvidenceItem
+            key={evidence.evidence_id}
+            evidence={evidence}
+            number={index + 1}
+            mediaName={names.get(evidence.media_id) ?? evidence.media_id}
+          />
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function EvidenceItem({
+  evidence,
+  number,
+  mediaName,
+}: {
+  evidence: QueryEvidence;
+  number: number;
+  mediaName: string;
+}) {
+  return (
+    <li>
+      <span className="evidence-number">[{number}]</span>
+      <div>
+        <strong>{mediaName}</strong>
+        <span>{formatTime(evidence.start)} – {formatTime(evidence.end)} · {evidence.modality}</span>
+        {evidence.display_text && <p>{evidence.display_text}</p>}
+      </div>
+    </li>
   );
 }
 
@@ -605,9 +694,7 @@ function SearchResults({
   workspace?: WorkspaceOverview;
 }) {
   if (moments.length === 0) return null;
-  const names = new Map(
-    workspace?.media.map((media) => [media.media_id, media.original_filename]) ?? [],
-  );
+  const names = mediaNames(workspace);
   return (
     <section className="section results">
       <div className="section-heading">
@@ -632,6 +719,12 @@ function SearchResults({
         ))}
       </ol>
     </section>
+  );
+}
+
+function mediaNames(workspace?: WorkspaceOverview): Map<string, string> {
+  return new Map(
+    workspace?.media.map((media) => [media.media_id, media.original_filename]) ?? [],
   );
 }
 
