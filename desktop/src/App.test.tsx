@@ -96,7 +96,7 @@ describe('desktop target lifecycle', () => {
       browser: { extra: 'frontend', label: 'Browser interface', description: 'Open VidXP in your browser.', default: true },
       mcp: { extra: 'mcp', label: 'AI assistant integration', description: 'Connect a compatible AI app.', default: false },
       server: { extra: 'server', label: 'App integration service', description: 'Let other local apps connect.', default: false },
-    } });
+    }, local_answers: { engine: 'ollama', model: 'qwen3.5:4b-q4_K_M', download_size_bytes: 3650722202, label: 'Local grounded answers', description: 'Turn search evidence into cited answers locally.' } });
     mocks.runtimeStatus.mockResolvedValue({ state: 'never_configured', ready: false, runtime_profile: null, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'C:\\Models', detail: 'No managed runtime yet.' });
     mocks.modelDirectoryInventory.mockResolvedValue({ directory: 'C:\\Models', exists: false, readable: true, total_bytes: 0, file_count: 0, recognized_models: [], empty: true, verification_required: false, truncated: false, detail: 'Empty.' });
     mocks.installMediaRuntime.mockResolvedValue({ ready: true });
@@ -514,6 +514,23 @@ describe('desktop target lifecycle', () => {
 
     expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({
       surfaces: ['worker', 'browser', 'mcp', 'server'],
+    }));
+  });
+
+  it('installs the approved local answer model without asking for a URL', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await enterManaged(user);
+
+    await user.click(screen.getByRole('checkbox', { name: /Local grounded answers/i }));
+    expect(screen.getByText(/There is no URL to enter/i)).toBeVisible();
+    expect(screen.getByText(/grounded-answer model adds 3.40 GiB/i)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Install VidXP' }));
+
+    expect(mocks.installMediaRuntime).toHaveBeenCalledWith('draft-1', 9);
+    expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      local_answers: true,
+      draft_id: 'draft-1',
     }));
   });
 

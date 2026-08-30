@@ -92,6 +92,17 @@ to rewrite a question into searches and draft claims from citable textual
 evidence. VidXP falls back to deterministic evidence retrieval when Ollama is
 not configured or unavailable.
 
+For VidXP Desktop, open **Setup options** and enable **Local grounded
+answers**. Desktop performs the Ollama health check, asks before installing a
+supported system package, downloads the approved model with visible progress,
+and carries the non-secret local provider settings into every managed surface,
+including copied stdio MCP JSON and **Set up in Codex**. If Desktop starts
+`ollama serve`, it supervises and stops only that owned process. It never stops
+an Ollama app or service that was already running.
+
+The commands below are only for command-line installations and custom
+deployments.
+
 Install and start [Ollama](https://ollama.com/download), then explicitly
 download VidXP's recommended model:
 
@@ -117,8 +128,11 @@ vidxp query "When does the taxi arrive?"
 
 The official Q4_K_M model download is approximately 3.4 GB. It runs locally,
 so there is no model API fee or numbered hosted-model run; it still uses local
-storage, memory, compute time, and electricity. VidXP does not download the
-model automatically or bundle it with the Python or Desktop packages.
+storage, memory, compute time, and electricity. Desktop downloads it only when
+the user selects the feature; CLI users pull it explicitly. VidXP never bundles
+the model with the Python or Desktop packages. A reused external Ollama service
+continues to own its model storage; VidXP does not claim those files are in its
+search-model cache.
 
 The current query adapter sends structured search evidence, not video or audio
 bytes, to Qwen. Speech transcripts can support generated factual claims.

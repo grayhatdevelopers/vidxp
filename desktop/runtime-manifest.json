@@ -7,6 +7,13 @@
   "python_version": "3.14.6",
   "uv_version": "0.12.0",
   "managed_runtime_estimated_size_bytes": 3221225472,
+  "local_answers": {
+    "engine": "ollama",
+    "model": "qwen3.5:4b-q4_K_M",
+    "download_size_bytes": 3650722202,
+    "label": "Local grounded answers",
+    "description": "Turn VidXP search evidence into cited answers on this computer. Setup reuses or installs Ollama and downloads the approved Qwen 3.5 4B model."
+  },
   "surfaces": {
     "worker": {
       "extra": "local-worker",

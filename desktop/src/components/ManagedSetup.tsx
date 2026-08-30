@@ -59,6 +59,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
   const [premiere, setPremiere] = useState<PremiereIntegrationState | null>(null);
   const [premiereEnabled, setPremiereEnabled] = useState(premiereRequested);
   const [prepareDuringInstall, setPrepareDuringInstall] = useState(true);
+  const [localAnswers, setLocalAnswers] = useState(false);
   const [modelDirectory, setModelDirectory] = useState('');
   const [inventory, setInventory] = useState<ModelDirectoryInventory | null>(null);
   const [operation, setOperation] = useState<ManagedOperation | null>('load');
@@ -122,6 +123,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
       setSurfaces(shouldEnablePremiere ? [...new Set([...nextSurfaces, 'worker', 'server'])] : nextSurfaces);
       setPremiereEnabled(shouldEnablePremiere);
       setModelDirectory(nextStatus.model_directory);
+      setLocalAnswers(recoverable ? Boolean(nextStatus.local_answers) : false);
       setPrepareDuringInstall(!recoverable);
       setInventory(nextInventory);
       setMessage(nextStatus.ready ? 'VidXP is ready.' : nextStatus.detail);
@@ -235,6 +237,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
       surfaces: premiereEnabled ? [...new Set([...surfaces, 'worker', 'server'])] : [...surfaces],
       premiere: premiereEnabled,
       prepare_models: prepareDuringInstall,
+      local_answers: localAnswers,
       model_directory: modelDirectory || undefined,
       draft_id: draftId,
     };
@@ -246,13 +249,13 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
     setSetupProgress({
       draft_id: draftId,
       current: 1,
-      total: captured.prepare_models ? 8 : 7,
+      total: (captured.prepare_models ? 8 : 7) + (captured.local_answers ? 1 : 0),
       stage: 'video-tools',
       message: 'Checking FFmpeg and required video codecs',
     });
     try {
       setMessage('Checking FFmpeg and required codecs…');
-      await installMediaRuntime(draftId, captured.prepare_models ? 8 : 7);
+      await installMediaRuntime(draftId, (captured.prepare_models ? 8 : 7) + (captured.local_answers ? 1 : 0));
       if (status?.state === 'broken' && status.runtime_profile && !dirty) {
         const repaired = await runtimeStatus();
         if (repaired.ready) {
@@ -311,7 +314,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
     setSetupProgress((current) => ({
       draft_id: draftId,
       current: current?.current ?? 1,
-      total: current?.total ?? (prepareDuringInstall ? 8 : 7),
+      total: current?.total ?? (prepareDuringInstall ? 8 : 7) + (localAnswers ? 1 : 0),
       stage: current?.stage ?? 'cancelling',
       message: 'Stopping setup safely',
       model_message: current?.model_message,
@@ -371,6 +374,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
     !sameValues(capabilities, status?.capabilities ?? [])
     || !sameValues(surfaces, status?.surfaces ?? [])
     || modelDirectory !== status?.model_directory
+    || localAnswers !== Boolean(status?.local_answers)
   );
   const premiereNeedsInstall = premiereEnabled && !premiere?.cep_installed && !premiere?.uxp_installed;
 
@@ -383,6 +387,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
     setPremiereEnabled(keepPremiere);
     setSurfaces(keepPremiere ? [...new Set([...status.surfaces, 'worker', 'server'])] : status.surfaces);
     setModelDirectory(status.model_directory);
+    setLocalAnswers(Boolean(status.local_answers));
     setInventory(null);
     setFailure(null);
     try {
@@ -395,7 +400,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
   const isBusy = operation !== null;
   const attentionTitle = /ffmpeg|ffprobe/i.test(message) ? 'Video tools need attention' : 'VidXP needs attention';
   const progressCurrent = setupProgress?.current ?? 1;
-  const progressTotal = setupProgress?.total ?? (prepareDuringInstall ? 8 : 7);
+  const progressTotal = setupProgress?.total ?? (prepareDuringInstall ? 8 : 7) + (localAnswers ? 1 : 0);
   const selectedModelDownloads = new Map<string, number>();
   for (const capability of capabilities) {
     for (const model of manifest?.capabilities[capability]?.models ?? []) {
@@ -407,7 +412,15 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
   }
   const selectedModelBytes = [...selectedModelDownloads.values()].reduce((total, bytes) => total + bytes, 0);
   const managedRuntimeBytes = manifest?.managed_runtime_estimated_size_bytes ?? 0;
-  const plannedSetupBytes = managedRuntimeBytes + selectedModelBytes;
+  const localAnswerSpec = manifest?.local_answers ?? {
+    engine: 'ollama',
+    model: 'qwen3.5:4b-q4_K_M',
+    download_size_bytes: 3650722202,
+    label: 'Local grounded answers',
+    description: 'Turn VidXP search evidence into cited answers on this computer.',
+  };
+  const localAnswerModelBytes = localAnswers ? localAnswerSpec.download_size_bytes : 0;
+  const plannedSetupBytes = managedRuntimeBytes + selectedModelBytes + localAnswerModelBytes;
   const capabilityModelSummary = capabilities
     .map((id) => {
       const capability = manifest?.capabilities[id];
@@ -501,6 +514,22 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
           </div>
 
           <div className="setupPanel">
+            <Title order={2} className="panelTitle" mb="md">Grounded answers</Title>
+            <Checkbox
+              checked={localAnswers}
+              disabled={isBusy}
+              onChange={(event) => setLocalAnswers(event.currentTarget.checked)}
+              label={localAnswerSpec.label}
+              description={`${localAnswerSpec.description} Model download: ${formatBytes(localAnswerSpec.download_size_bytes)}.`}
+            />
+            {localAnswers && (
+              <Alert mt="md" color="blue" title="VidXP manages the connection">
+                VidXP checks for Ollama, asks before installing it, starts only a VidXP-owned service when needed, and configures the browser, API, worker, Premiere, and MCP surfaces automatically. There is no URL to enter.
+              </Alert>
+            )}
+          </div>
+
+          <div className="setupPanel">
             <Title order={2} className="panelTitle" mb="md">Interfaces and integrations</Title>
             <Stack gap="xs">
               {premiere?.platform_supported && (
@@ -520,11 +549,11 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
 
           <div className="setupPanel">
             <Group justify="space-between" align="center" wrap="nowrap">
-              <div className="folderCopy"><Text fw={650}>Downloaded model storage</Text><Text size="sm" className="mutedText">VidXP keeps the files needed by your selected search features here.</Text>{modelDirectory && <details className="technicalDetails"><summary>Storage location</summary><Text size="sm" className="pathText">{displayPath(modelDirectory)}</Text></details>}</div>
+              <div className="folderCopy"><Text fw={650}>Downloaded model storage</Text><Text size="sm" className="mutedText">VidXP keeps search models here. A reused external Ollama service continues to own its existing model store.</Text>{modelDirectory && <details className="technicalDetails"><summary>Storage location</summary><Text size="sm" className="pathText">{displayPath(modelDirectory)}</Text></details>}</div>
               <Button variant="default" leftSection={<IconFolderOpen aria-hidden="true" size={16} />} loading={operation === 'folder'} disabled={isBusy} onClick={() => void chooseFolder()}>Change location…</Button>
             </Group>
             <Alert mt="md" color="blue" title="Plan for local storage">
-              <Text size="sm">The managed runtime can use approximately {formatBytes(managedRuntimeBytes)}. Selected model downloads total up to {formatBytes(selectedModelBytes)}.</Text>
+              <Text size="sm">The managed runtime can use approximately {formatBytes(managedRuntimeBytes)}. Selected model downloads total up to {formatBytes(selectedModelBytes)}.{localAnswers ? ` The grounded-answer model adds ${formatBytes(localAnswerModelBytes)}.` : ''}</Text>
               <Text size="sm" mt="xs">{capabilityModelSummary}</Text>
               <Text size="sm" mt="xs">Plan for approximately {formatBytes(plannedSetupBytes)} locally, plus temporary installation space, indexes, and videos. Valid cached model files are reused.</Text>
             </Alert>
@@ -566,6 +595,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
           <Text fw={700}>VidXP is installed</Text>
           <Text size="sm">Search: {status.capabilities.map((id) => manifest?.capabilities[id]?.label || id).join(', ') || 'none selected'}</Text>
           <Text size="sm">Processing and access: {status.surfaces.map((id) => manifest?.surfaces[id]?.label || id).join(', ') || 'command line only'}</Text>
+          <Text size="sm">Grounded answers: {status.local_answers ? localAnswerSpec.model : 'not installed'}</Text>
           <details className="technicalDetails"><summary>Technical details</summary><Text size="xs">Version {status.package_version}</Text><Text size="xs" className="pathText">Models: {displayPath(status.model_directory)}</Text></details>
         </div>
       )}
@@ -608,7 +638,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
               <Text size="sm" className="mutedText">{setupElapsed}s elapsed</Text>
             </Group>
             <Progress value={(progressCurrent / progressTotal) * 100} size="lg" animated />
-            {setupProgress?.stage === 'models'
+            {(setupProgress?.stage === 'models' || setupProgress?.stage === 'local-answers')
               && setupProgress.model_message && (
                 <Stack gap={6}>
                   <Group justify="space-between" align="baseline" wrap="nowrap">

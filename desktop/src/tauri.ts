@@ -150,6 +150,13 @@ export interface RuntimeManifest {
   managed_runtime_estimated_size_bytes: number;
   capabilities: Record<string, CapabilitySpec>;
   surfaces: Record<string, SurfaceSpec>;
+  local_answers: {
+    engine: string;
+    model: string;
+    download_size_bytes: number;
+    label: string;
+    description: string;
+  };
 }
 
 export interface RuntimeStatus {
@@ -160,6 +167,7 @@ export interface RuntimeStatus {
   capabilities: string[];
   surfaces: string[];
   model_directory: string;
+  local_answers: boolean;
   detail: string;
 }
 
@@ -185,6 +193,7 @@ export interface InstallRuntimeRequest {
   capabilities: string[];
   surfaces: string[];
   prepare_models: boolean;
+  local_answers: boolean;
   model_directory?: string;
   draft_id: string;
 }
@@ -205,6 +214,7 @@ export interface InstallRuntimeResult {
   capabilities: string[];
   surfaces: string[];
   model_directory: string;
+  local_answers: boolean;
   prepared: boolean;
 }
 

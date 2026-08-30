@@ -1108,6 +1108,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         config = stdio_client_config(
             command=r"C:\VidXP\vidxp-mcp.exe",
             repository="library",
+            environment={},
         )
         self.assertEqual(
             config,
@@ -1138,6 +1139,24 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             rendered["mcpServers"]["vidxp"]["args"],
             ["--repository", "library"],
+        )
+
+    def test_stdio_config_carries_only_local_query_runtime_environment(self):
+        config = stdio_client_config(
+            command="vidxp-mcp",
+            environment={
+                "VIDXP_SLM_BASE_URL": "http://127.0.0.1:11434/v1",
+                "VIDXP_SLM_MODEL": "qwen3.5:4b-q4_K_M",
+                "VIDXP_HTTP_STATIC_BEARER_TOKEN": "must-not-leak",
+            },
+        )
+
+        self.assertEqual(
+            config["mcpServers"]["vidxp"]["env"],
+            {
+                "VIDXP_SLM_BASE_URL": "http://127.0.0.1:11434/v1",
+                "VIDXP_SLM_MODEL": "qwen3.5:4b-q4_K_M",
+            },
         )
 
     def test_stdio_check_performs_handshake_and_tool_probe(self):

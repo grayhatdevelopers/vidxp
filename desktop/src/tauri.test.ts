@@ -77,6 +77,7 @@ describe('desktop IPC adapter', () => {
       capabilities: ['actor'],
       surfaces: ['browser'],
       prepare_models: false,
+      local_answers: false,
       draft_id: draft.id,
     };
     invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce({

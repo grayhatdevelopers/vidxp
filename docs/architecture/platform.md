@@ -869,8 +869,18 @@ The default local query model is the official Ollama
 self-hosted Ollama base URL selects that model unless an operator explicitly
 overrides it. VidXP sets temperature zero, disables reasoning output, and
 requires the native JSON schemas for both planning and synthesis. Model weights
-remain an explicit Ollama download and are never bundled or pulled during
-application setup.
+are never bundled. Desktop setup pulls the approved artifact only after the
+user selects local grounded answers and approves any required Ollama install;
+CLI and server operators pull it explicitly.
+
+Desktop treats the provider as an optional supervised system dependency. It
+first probes the loopback `/api/version` and `/api/tags` contracts, reuses an
+existing healthy service without taking ownership, or starts a child
+`ollama serve` process that its existing process-tree supervisor owns. The
+model pull uses Ollama's streaming `/api/pull` contract. Desktop persists only
+the feature selection, injects the private `/v1` endpoint and approved model
+into managed processes, and includes the same non-secret environment in stdio
+MCP configuration. It never stops an externally owned Ollama service.
 
 Published model results select the integration candidate; the repository gate
 does not attempt to reproduce general model leaderboards. Promotion still

@@ -316,9 +316,23 @@ and sharing behavior.
 ## Optional local grounded answers
 
 VidXP search does not require a language model. To let CLI, HTTP, or MCP
-queries plan searches and draft grounded answers locally, run Ollama and pull
-the recommended Qwen3.5 4B model. The model is an additional approximately
-3.4 GB download and has no per-run API charge.
+queries plan searches and draft grounded answers locally, enable **Local
+grounded answers** in VidXP Desktop setup. Desktop checks for a compatible
+loopback Ollama service, asks before installing Ollama through the supported
+Windows or macOS package manager when needed, and explicitly downloads the
+approved Qwen3.5 4B model. Linux setup links to Ollama's official installation
+instructions instead of running a privileged script.
+
+This optional feature follows Ollama's platform floor: Windows 10 22H2 or
+newer, or macOS 14 or newer. VidXP Desktop itself can still run without local
+grounded answers on older supported systems.
+
+The model is an additional approximately 3.4 GB download and has no per-run
+API charge or numbered hosted-model allowance. It uses local storage, memory,
+compute time, and electricity. Desktop configures the private service address
+for its browser, worker, API, Premiere, and generated MCP/Codex setup; there is
+no URL field to fill in. A command-line-only installation remains available
+for developers and custom deployments.
 
 The complete setup and its current evidence limitations are documented under
 [Enable local grounded answers](docs/local-api.md#enable-local-grounded-answers).
