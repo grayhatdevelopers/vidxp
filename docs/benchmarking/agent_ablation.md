@@ -4,7 +4,7 @@ Collection index: [Benchmarking research](README.md)
 
 Status: Runnable scaffold; no agent results recorded
 
-Last verified: 2026-08-30
+Last verified: 2026-09-01
 
 This experiment measures whether access to VidXP through its local stdio MCP
 server improves a Codex agent's ability to find timestamped evidence in long
@@ -100,127 +100,47 @@ therefore does not replace LongVALE in this ablation.
 
 Promptfoo 0.122.2 requires Node.js 22.22.0 or newer. The benchmark-local
 `.npmrc` enforces that requirement so an unsupported runtime fails during
-installation instead of failing after Codex runs have begun. Install VidXP and
-the local evaluation dependencies:
+installation instead of failing after Codex runs have begun. You also need
+`uv` and the Codex CLI on `PATH`.
+
+From the repository root, run the automated setup:
 
 ```powershell
-uv sync --frozen --extra local-worker --extra mcp --extra benchmarks
-npm --prefix benchmarks/codex-mcp ci
+npm --prefix benchmarks/codex-mcp run setup
 ```
 
-The benchmark pins the Codex SDK directly and omits Promptfoo's unrelated
-optional provider packages from this install.
+The command installs the pinned Python and Node dependencies, creates isolated
+state outside the checkout, opens Codex login when authentication is absent,
+downloads and verifies the pinned LongVALE archive, copies the five pilot
+videos, prepares the four required capabilities, indexes the media, saves the
+evaluation environment in the ignored `benchmarks/codex-mcp/.env` file, and
+runs preflight. Accept the LongVALE dataset terms before running it. Do not copy
+or commit the generated `auth.json`.
 
-Create all mutable state outside the checkout. The paths below are examples;
-keep the same values for both conditions:
+By default, mutable state goes under the operating system's user data
+directory. Set only `VIDXP_EVAL_ROOT` when it needs to live elsewhere:
 
 ```powershell
-$evalRoot = Join-Path $env:LOCALAPPDATA 'VidXP\benchmarks\codex-mcp'
-$env:VIDXP_EVAL_CODEX_HOME = Join-Path $evalRoot 'codex-home'
-$env:VIDXP_EVAL_WORKSPACE = Join-Path $evalRoot 'workspace'
-$env:VIDXP_EVAL_DATA_DIR = Join-Path $evalRoot 'vidxp-data'
-$env:VIDXP_EVAL_INDEX_DIR = Join-Path $evalRoot 'vidxp-index'
-$env:VIDXP_MCP_COMMAND = (Resolve-Path '.venv\Scripts\vidxp-mcp.exe').Path
-$env:VIDXP_EVAL_REPOSITORY = 'default'
-$env:VIDXP_EVAL_DEVICE = 'cpu'
-$env:VIDXP_EVAL_MODEL = 'gpt-5.6-sol'
-$env:VIDXP_EVAL_REASONING = 'medium'
-
-New-Item -ItemType Directory -Force `
-  $env:VIDXP_EVAL_CODEX_HOME, `
-  $env:VIDXP_EVAL_WORKSPACE, `
-  (Join-Path $env:VIDXP_EVAL_WORKSPACE 'media'), `
-  $env:VIDXP_EVAL_DATA_DIR, `
-  $env:VIDXP_EVAL_INDEX_DIR | Out-Null
-
-$env:CODEX_HOME = $env:VIDXP_EVAL_CODEX_HOME
-codex login
-Remove-Item Env:CODEX_HOME
+$env:VIDXP_EVAL_ROOT = 'D:\vidxp-eval'
+npm --prefix benchmarks/codex-mcp run setup
 ```
 
-Do not copy or commit `auth.json`. The preflight rejects an isolated Codex
-configuration that declares any ambient `[mcp_servers]` section.
-
-## Fetch and index the pilot media
-
-Accept the LongVALE dataset terms before downloading. Fetch only the pinned
-annotation and part-nine evaluation archive:
-
-The commands below require the Hugging Face `hf` CLI. Install it separately if
-it is not already available; it is a dataset-transfer tool and is not part of
-VidXP's runtime dependency set.
-
-```powershell
-$artifactRoot = Join-Path $evalRoot 'longvale-artifacts'
-hf download ttgeng233/LongVALE `
-  longvale-annotations-eval.json `
-  raw_videos_test/LongVALE_test_1171_part_9.zip `
-  --repo-type dataset `
-  --revision 18889b01886e30c36b0d1c650ac4439ad460ee73 `
-  --local-dir $artifactRoot
-
-$archive = Join-Path $artifactRoot `
-  'raw_videos_test\LongVALE_test_1171_part_9.zip'
-(Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
-Expand-Archive -LiteralPath $archive -DestinationPath $artifactRoot
-```
-
-The printed hash must equal the pinned SHA-256 above. Copy the five selected
-MP4s into `$env:VIDXP_EVAL_WORKSPACE\media`, preserving their filenames:
-
-```powershell
-$sourceMedia = Join-Path $artifactRoot 'video_test_1171'
-$videoIds = @(
-  'ZYTmgi1pAIE',
-  'ZIdFAGJrlCw',
-  'ZGXCr5n8Frg',
-  '_py1WXVX4oc',
-  'ZVUAC3m48G0'
-)
-foreach ($videoId in $videoIds) {
-  Copy-Item -LiteralPath (Join-Path $sourceMedia "$videoId.mp4") `
-    -Destination (Join-Path $env:VIDXP_EVAL_WORKSPACE 'media')
-}
-```
-
-Prepare and index all four evidence paths:
-
-```powershell
-uv run --no-sync vidxp `
-  --data-dir $env:VIDXP_EVAL_DATA_DIR `
-  --index-dir $env:VIDXP_EVAL_INDEX_DIR `
-  prepare --modalities scene,action,sound,speech --yes
-
-foreach ($videoId in $videoIds) {
-  $mediaPath = Join-Path $env:VIDXP_EVAL_WORKSPACE "media\$videoId.mp4"
-  $asset = uv run --no-sync vidxp `
-    --data-dir $env:VIDXP_EVAL_DATA_DIR `
-    --index-dir $env:VIDXP_EVAL_INDEX_DIR `
-    media import $mediaPath --json | ConvertFrom-Json
-
-  uv run --no-sync vidxp `
-    --data-dir $env:VIDXP_EVAL_DATA_DIR `
-    --index-dir $env:VIDXP_EVAL_INDEX_DIR `
-    index create $asset.media_id `
-    --modality scene `
-    --modality action `
-    --modality sound `
-    --modality speech
-}
-```
+The setup is safe to rerun. Cached downloads and prepared models are reused,
+and indexing is skipped when all five videos and four modalities are already
+present. The benchmark pins the Codex SDK directly and omits Promptfoo's
+unrelated optional provider packages from the install.
 
 ## Validate before spending runs
 
-The following commands perform no Codex inference:
+Setup finishes by running preflight, which verifies the dedicated Codex
+authentication, absence of ambient MCP configuration, all five media files,
+the index paths, and a real VidXP MCP handshake. To repeat the configuration and
+preflight checks without setup or Codex inference, run:
 
 ```powershell
 npm --prefix benchmarks/codex-mcp run check
 npm --prefix benchmarks/codex-mcp run preflight
 ```
-
-Preflight verifies the dedicated Codex authentication, absence of ambient MCP
-configuration, all five media files, the index paths, and a real VidXP MCP
-handshake. Do not run the matrix if it fails.
 
 The first paid/allowance-consuming smoke is one task in both conditions: two
 Codex runs total.
