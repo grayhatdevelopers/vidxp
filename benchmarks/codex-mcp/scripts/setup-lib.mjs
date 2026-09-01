@@ -51,6 +51,9 @@ export function evaluationEnvironment({
     VIDXP_EVAL_REASONING: environment.VIDXP_EVAL_REASONING || 'medium',
     VIDXP_EVAL_ARTIFACT_DIR: paths.join(evaluationRoot, 'longvale-artifacts'),
     VIDXP_EVAL_ENV_FILE: paths.join(benchmarkRoot, '.env'),
+    ...(environment.VIDXP_MODEL_CACHE
+      ? { VIDXP_MODEL_CACHE: paths.resolve(environment.VIDXP_MODEL_CACHE) }
+      : {}),
   };
 }
 

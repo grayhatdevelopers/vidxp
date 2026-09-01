@@ -62,7 +62,7 @@ test('builds and serializes the environment consumed by Promptfoo', () => {
     benchmarkRoot: 'C:/repo/benchmarks/codex-mcp',
     repositoryRoot: 'C:/repo',
     evaluationRoot: 'C:/eval',
-    environment: {},
+    environment: { VIDXP_MODEL_CACHE: 'C:/shared-models' },
     platform: 'win32',
   });
   const serialized = serializeEnvironment(environment);
@@ -70,6 +70,7 @@ test('builds and serializes the environment consumed by Promptfoo', () => {
   assert.match(serialized, /VIDXP_EVAL_WORKSPACE="C:\/eval\/workspace"/);
   assert.match(serialized, /VIDXP_MCP_COMMAND="C:\/repo\/\.venv\/Scripts\/vidxp-mcp\.exe"/);
   assert.match(serialized, /VIDXP_EVAL_MODEL="gpt-5\.6-sol"/);
+  assert.match(serialized, /VIDXP_MODEL_CACHE="C:\/shared-models"/);
   assert.doesNotMatch(serialized, /VIDXP_EVAL_ENV_FILE/);
   assert.doesNotMatch(serialized, /VIDXP_EVAL_ARTIFACT_DIR/);
 });

@@ -92,7 +92,6 @@ async function main() {
   }
 
   run('uv', ['--version'], { capture: true });
-  run('codex', ['--version'], { capture: true });
 
   const evaluationRoot = defaultEvaluationRoot(process.env);
   const setupEnvironment = evaluationEnvironment({
@@ -125,14 +124,25 @@ async function main() {
   if (!bindingVersion) {
     throw new Error(`The Promptfoo lock does not declare ${bindingName}.`);
   }
+  const codexManifest = JSON.parse(readFileSync(
+    join(benchmarkRoot, 'node_modules', '@openai', 'codex', 'package.json'),
+    'utf8',
+  ));
+  const codexBindingName = `@openai/codex-${process.platform}-${process.arch}`;
+  const codexBindingVersion = codexManifest.optionalDependencies?.[codexBindingName];
+  if (!codexBindingVersion) {
+    throw new Error(`The pinned Codex package does not support ${process.platform}-${process.arch}.`);
+  }
   run(
     'npm',
     [
-      'install', '--no-save', '--package-lock=false', '--omit=optional',
+      'install', '--no-save', '--package-lock=false',
       `${bindingName}@${bindingVersion}`,
+      `${codexBindingName}@${codexBindingVersion}`,
     ],
     { cwd: benchmarkRoot },
   );
+  run('codex', ['--version'], { capture: true });
   run(
     process.execPath,
     [
@@ -221,8 +231,13 @@ async function main() {
     { env: commandEnvironment },
   );
 
-  if (!indexContainsPilot(readIndex(setupEnvironment), videoIds, modalities)) {
+  const currentIndex = readIndex(setupEnvironment);
+  if (!indexContainsPilot(currentIndex, videoIds, modalities)) {
     for (const videoId of videoIds) {
+      if (indexContainsPilot(currentIndex, [videoId], modalities)) {
+        process.stdout.write(`\n${videoId}.mp4 is already indexed; skipping.\n`);
+        continue;
+      }
       process.stdout.write(`\nIndexing ${videoId}.mp4\n`);
       const mediaPath = join(setupEnvironment.VIDXP_EVAL_WORKSPACE, 'media', `${videoId}.mp4`);
       const imported = JSON.parse(run(

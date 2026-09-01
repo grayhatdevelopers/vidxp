@@ -51,13 +51,24 @@ def build_dialogue_phrases(
     for segment_index, segment in enumerate(segments):
         words = segment.get("words") or []
         if words:
-            timestamped = [
-                word
-                for word in words
-                if str(word.get("word", word.get("text", ""))).strip()
-                and word.get("start") is not None
-                and word.get("end") is not None
-            ]
+            timestamped = []
+            for word in words:
+                text = str(word.get("word", word.get("text", ""))).strip()
+                start = word.get("start")
+                end = word.get("end")
+                if not text or start is None or end is None:
+                    continue
+                try:
+                    start_value, end_value = _valid_interval(
+                        start,
+                        end,
+                        f"Transcript word in segment {segment_index}",
+                    )
+                except (TypeError, ValueError):
+                    continue
+                timestamped.append(
+                    {"word": text, "start": start_value, "end": end_value}
+                )
             for offset in range(0, len(timestamped), words_per_phrase):
                 group = timestamped[offset:offset + words_per_phrase]
                 if not group:
@@ -67,10 +78,7 @@ def build_dialogue_phrases(
                     group[-1]["end"],
                     f"Transcript word group in segment {segment_index}",
                 )
-                text = " ".join(
-                    str(word.get("word", word.get("text", ""))).strip()
-                    for word in group
-                )
+                text = " ".join(str(word["word"]) for word in group)
                 phrases.append(
                     DialoguePhrase(
                         phrase_id=len(phrases),
@@ -79,7 +87,8 @@ def build_dialogue_phrases(
                         end=end,
                     )
                 )
-            continue
+            if timestamped:
+                continue
 
         text = str(segment.get("text", "")).strip()
         if not text:
