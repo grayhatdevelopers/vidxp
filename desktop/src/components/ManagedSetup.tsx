@@ -416,11 +416,16 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
     engine: 'ollama',
     model: 'qwen3.5:4b-q4_K_M',
     download_size_bytes: 3650722202,
+    managed_runtime: {
+      version: '0.32.5',
+      maximum_download_size_bytes: 1457824795,
+    },
     label: 'Local grounded answers',
     description: 'Turn VidXP search evidence into cited answers on this computer.',
   };
   const localAnswerModelBytes = localAnswers ? localAnswerSpec.download_size_bytes : 0;
-  const plannedSetupBytes = managedRuntimeBytes + selectedModelBytes + localAnswerModelBytes;
+  const localAnswerRuntimeBytes = localAnswers ? localAnswerSpec.managed_runtime.maximum_download_size_bytes : 0;
+  const plannedSetupBytes = managedRuntimeBytes + selectedModelBytes + localAnswerModelBytes + localAnswerRuntimeBytes;
   const capabilityModelSummary = capabilities
     .map((id) => {
       const capability = manifest?.capabilities[id];
@@ -524,7 +529,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
             />
             {localAnswers && (
               <Alert mt="md" color="blue" title="VidXP manages the connection">
-                VidXP checks for Ollama, asks before installing it, starts only a VidXP-owned service when needed, and configures the browser, API, worker, Premiere, and MCP surfaces automatically. There is no URL to enter.
+                VidXP reuses a healthy Ollama service or executable when available. Otherwise it asks before downloading a verified headless runtime into VidXP's private data; it never installs the Ollama desktop app. There is no URL to enter.
               </Alert>
             )}
           </div>
@@ -553,7 +558,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
               <Button variant="default" leftSection={<IconFolderOpen aria-hidden="true" size={16} />} loading={operation === 'folder'} disabled={isBusy} onClick={() => void chooseFolder()}>Change location…</Button>
             </Group>
             <Alert mt="md" color="blue" title="Plan for local storage">
-              <Text size="sm">The managed runtime can use approximately {formatBytes(managedRuntimeBytes)}. Selected model downloads total up to {formatBytes(selectedModelBytes)}.{localAnswers ? ` The grounded-answer model adds ${formatBytes(localAnswerModelBytes)}.` : ''}</Text>
+              <Text size="sm">The managed runtime can use approximately {formatBytes(managedRuntimeBytes)}. Selected model downloads total up to {formatBytes(selectedModelBytes)}.{localAnswers ? ` Grounded answers add up to ${formatBytes(localAnswerRuntimeBytes)} for the headless runtime and ${formatBytes(localAnswerModelBytes)} for the model.` : ''}</Text>
               <Text size="sm" mt="xs">{capabilityModelSummary}</Text>
               <Text size="sm" mt="xs">Plan for approximately {formatBytes(plannedSetupBytes)} locally, plus temporary installation space, indexes, and videos. Valid cached model files are reused.</Text>
             </Alert>
@@ -661,7 +666,11 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereR
               )}
             <div>
               <Text fw={650}>{setupProgress?.message ?? 'Starting managed setup'}</Text>
-              <Text size="sm" className="mutedText" mt="xs">The existing installation remains active until every step has completed and the replacement passes validation.</Text>
+              <Text size="sm" className="mutedText" mt="xs">
+                {setupProgress?.stage === 'local-answers'
+                  ? 'VidXP reuses Ollama or manages a private headless runtime. No separate app or setup window is involved.'
+                  : 'The existing installation remains active until every step has completed and the replacement passes validation.'}
+              </Text>
             </div>
             {cancelFailure && <Alert color="red" title="Could not stop setup" role="alert">{cancelFailure}</Alert>}
             <Group justify="flex-end">

@@ -154,6 +154,10 @@ export interface RuntimeManifest {
     engine: string;
     model: string;
     download_size_bytes: number;
+    managed_runtime: {
+      version: string;
+      maximum_download_size_bytes: number;
+    };
     label: string;
     description: string;
   };

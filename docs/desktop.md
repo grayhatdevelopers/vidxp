@@ -204,6 +204,17 @@ wait for user confirmation before running either one. On Linux, setup shows an
 APT, DNF, or manual command and leaves elevation to the user. Existing
 installations remain responsible for their own media setup.
 
+Local grounded answers do not justify installing another desktop application.
+Desktop reuses a healthy Ollama service without taking ownership, then checks
+for an existing executable. When neither is available on Windows x86-64 or
+macOS Apple Silicon, it downloads the pinned headless archive declared in
+`runtime-manifest.json`, verifies its byte count and SHA-256 digest, extracts it
+into Desktop's private application data, and starts `ollama serve` through the
+shared process supervisor. Downloads are cancellable, incomplete archives and
+staging directories are removed, and only a completely extracted version is
+activated. Linux and unsupported architectures require an external Ollama
+installation. Desktop never invokes an Ollama desktop-app installer.
+
 Starting Desktop shows the control panel without opening a browser. **Open
 VidXP** starts or reuses the browser service and opens one tab. Closing the
 configured window hides it in the system tray. **Quit VidXP** stops only the

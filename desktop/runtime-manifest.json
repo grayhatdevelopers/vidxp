@@ -11,8 +11,28 @@
     "engine": "ollama",
     "model": "qwen3.5:4b-q4_K_M",
     "download_size_bytes": 3650722202,
+    "managed_runtime": {
+      "version": "0.32.5",
+      "maximum_download_size_bytes": 1457824795,
+      "artifacts": {
+        "windows-x86_64": {
+          "url": "https://github.com/ollama/ollama/releases/download/v0.32.5/ollama-windows-amd64.zip",
+          "sha256": "7c941ae084569d298062d29f8139163a3187c76dbca0479c70d085e78fd8c7bb",
+          "download_size_bytes": 1457824795,
+          "archive": "zip",
+          "executable": "ollama.exe"
+        },
+        "macos-aarch64": {
+          "url": "https://github.com/ollama/ollama/releases/download/v0.32.5/ollama-darwin.tgz",
+          "sha256": "5789dd037a86adb328c72c11fc45e6c558452d07e5b50814a8bdb7b0fbdbcd81",
+          "download_size_bytes": 145747028,
+          "archive": "tar_gz",
+          "executable": "ollama"
+        }
+      }
+    },
     "label": "Local grounded answers",
-    "description": "Turn VidXP search evidence into cited answers on this computer. Setup reuses or installs Ollama and downloads the approved Qwen 3.5 4B model."
+    "description": "Turn VidXP search evidence into cited answers on this computer. Setup reuses Ollama when available or downloads a private headless runtime and the approved Qwen 3.5 4B model."
   },
   "surfaces": {
     "worker": {
