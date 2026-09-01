@@ -38,6 +38,7 @@ export function evaluationEnvironment({
 }) {
   const paths = platform === 'win32' ? win32 : posix;
   const executable = platform === 'win32' ? 'vidxp-mcp.exe' : 'vidxp-mcp';
+  const pythonExecutable = platform === 'win32' ? 'python.exe' : 'python';
   const scriptsDirectory = platform === 'win32' ? 'Scripts' : 'bin';
   return {
     VIDXP_EVAL_CODEX_HOME: paths.join(evaluationRoot, 'codex-home'),
@@ -47,6 +48,12 @@ export function evaluationEnvironment({
     VIDXP_EVAL_DATA_DIR: paths.join(evaluationRoot, 'vidxp-data'),
     VIDXP_EVAL_INDEX_DIR: paths.join(evaluationRoot, 'vidxp-index'),
     VIDXP_MCP_COMMAND: paths.join(repositoryRoot, '.venv', scriptsDirectory, executable),
+    PROMPTFOO_PYTHON: paths.join(
+      repositoryRoot,
+      '.venv',
+      scriptsDirectory,
+      pythonExecutable,
+    ),
     VIDXP_EVAL_REPOSITORY: environment.VIDXP_EVAL_REPOSITORY || 'default',
     VIDXP_EVAL_DEVICE: environment.VIDXP_EVAL_DEVICE || 'cpu',
     VIDXP_EVAL_MODEL: environment.VIDXP_EVAL_MODEL || 'gpt-5.6-sol',

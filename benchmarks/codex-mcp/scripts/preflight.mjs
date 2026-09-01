@@ -44,6 +44,27 @@ requireDirectory('VIDXP_EVAL_DATA_DIR');
 requireDirectory('VIDXP_EVAL_INDEX_DIR');
 requireDirectory('VIDXP_MODEL_CACHE');
 requireFile('VIDXP_MCP_COMMAND');
+const promptfooPython = requireFile('PROMPTFOO_PYTHON');
+
+const scorerRuntime = spawnSync(
+  promptfooPython,
+  [
+    '-c',
+    [
+      'import vidxp.composition',
+      'import vidxp.infrastructure.dbos_jobs',
+      'import vidxp.workflow_runtime',
+    ].join('; '),
+  ],
+  { cwd: repositoryRoot, encoding: 'utf8', stdio: 'pipe' },
+);
+if (scorerRuntime.status !== 0) {
+  throw new Error(
+    `Promptfoo scorer runtime cannot import VidXP:\n${scorerRuntime.stderr
+      || scorerRuntime.stdout
+      || scorerRuntime.error?.message}`,
+  );
+}
 
 if (!existsSync(join(codexHome, 'auth.json'))) {
   throw new Error('The isolated Codex home has no auth.json; sign in there before evaluating.');
