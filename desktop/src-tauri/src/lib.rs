@@ -59,7 +59,6 @@ const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
 const RUNTIME_CONSTRAINTS_FILE_NAME: &str = "runtime-constraints.txt";
 const MAX_SETUP_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 const MEDIA_RUNTIME_INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-const QUERY_RUNTIME_INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const QUERY_MODEL_PULL_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 static READINESS_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -98,6 +97,7 @@ struct LocalAnswersSpec {
     engine: String,
     model: String,
     download_size_bytes: u64,
+    managed_runtime: query_setup::ManagedRuntimeSpec,
     label: String,
     description: String,
 }
@@ -1549,6 +1549,14 @@ fn resolve_system_executable(name: &str) -> Option<PathBuf> {
     None
 }
 
+fn resolve_query_executable(
+    paths: &DesktopPaths,
+    spec: &query_setup::ManagedRuntimeSpec,
+) -> Option<PathBuf> {
+    resolve_system_executable("ollama")
+        .or_else(|| query_setup::managed_executable(&paths.private_data, spec))
+}
+
 fn combined_output(output: &background_process::BackgroundOutput) -> String {
     format!(
         "{}\n{}",
@@ -1641,6 +1649,11 @@ fn verified_media_runtime() -> Result<VerifiedMediaRuntime, String> {
 
 fn ollama_management_url(path: &str) -> String {
     format!("http://{}{path}", query_setup::OLLAMA_HOST)
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    format!("{:.2} GiB", bytes as f64 / GIB)
 }
 
 fn ollama_client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
@@ -1861,35 +1874,31 @@ async fn prepare_local_answers_runtime(
     draft_id: &str,
     current: u8,
     total_steps: u8,
-    model: &str,
+    spec: &LocalAnswersSpec,
     cancellation: background_process::CancellationToken,
 ) -> Result<(), String> {
     if let Some(error) = local_answer_platform_error() {
         return Err(error);
     }
     let server_ready = ollama_server_version().is_ok();
-    let mut executable = resolve_system_executable("ollama");
+    let mut executable = resolve_query_executable(paths, &spec.managed_runtime);
     if !server_ready && executable.is_none() {
-        let plan = query_setup::system_install_plan(resolve_system_executable).ok_or_else(|| {
-            if cfg!(target_os = "macos") {
-                "Local grounded answers require Ollama on macOS 14 or newer. Install the official Ollama app from https://ollama.com/download, then retry.".to_string()
-            } else if cfg!(target_os = "linux") {
-                "Local grounded answers require Ollama. Install it using the official Linux instructions at https://ollama.com/download/linux, then retry.".to_string()
-            } else {
-                "Local grounded answers require Ollama, but no supported automatic installer was found. Install it from https://ollama.com/download, then retry.".to_string()
-            }
+        let artifact = query_setup::current_artifact(&spec.managed_runtime).ok_or_else(|| {
+            "VidXP does not publish a managed headless Ollama runtime for this platform. Install Ollama from https://ollama.com/download, then retry."
+                .to_string()
         })?;
         let approved = app
             .dialog()
             .message(format!(
-                "Local grounded answers use Ollama and download {model} (approximately 3.4 GB, Apache-2.0).\n\nInstall Ollama with {}?\n\n{}",
-                plan.manager,
-                display_command(&plan.command)
+                "Local grounded answers require a local inference runtime and {} (approximately 3.4 GB, Apache-2.0).\n\nDownload the verified headless Ollama {} runtime ({}) into VidXP's private data? No Ollama desktop app will be installed.",
+                spec.model,
+                spec.managed_runtime.version,
+                human_bytes(artifact.download_size_bytes)
             ))
-            .title("Install local answer runtime")
+            .title("Download local answer runtime")
             .kind(MessageDialogKind::Info)
             .buttons(MessageDialogButtons::OkCancelCustom(
-                "Install".into(),
+                "Download".into(),
                 "Not now".into(),
             ))
             .blocking_show();
@@ -1901,40 +1910,56 @@ async fn prepare_local_answers_runtime(
             draft_id,
             current,
             total_steps,
-            format!("Installing Ollama with {}", plan.manager),
-            None,
-            None,
+            format!(
+                "Downloading the headless Ollama {} runtime",
+                spec.managed_runtime.version
+            ),
+            Some(0),
+            Some(artifact.download_size_bytes),
         );
-        let command = app
-            .shell()
-            .command(plan.command[0].clone())
-            .args(&plan.command[1..]);
-        supervised_output_with_timeout(
-            command.into(),
-            cancellation.clone(),
-            &format!("{} Ollama installation", plan.manager),
-            QUERY_RUNTIME_INSTALL_TIMEOUT,
-        )
-        .await?;
-        for _ in 0..10 {
-            executable = resolve_system_executable("ollama");
-            if executable.is_some() {
-                break;
-            }
-            thread::sleep(Duration::from_secs(1));
-        }
+        let download_app = app.clone();
+        let download_draft = draft_id.to_owned();
+        let private_data = paths.private_data.clone();
+        let managed_runtime = spec.managed_runtime.clone();
+        let runtime_version = managed_runtime.version.clone();
+        let runtime_cancellation = cancellation.clone();
+        executable = Some(
+            tauri::async_runtime::spawn_blocking(move || {
+                query_setup::install_managed_runtime(
+                    &private_data,
+                    &managed_runtime,
+                    &runtime_cancellation,
+                    |downloaded, total| {
+                        emit_local_answer_progress(
+                            &download_app,
+                            &download_draft,
+                            current,
+                            total_steps,
+                            format!("Downloading the headless Ollama {runtime_version} runtime"),
+                            Some(downloaded),
+                            Some(total),
+                        );
+                    },
+                )
+            })
+            .await
+            .map_err(|error| {
+                format!("Managed Ollama runtime preparation stopped unexpectedly: {error}")
+            })??,
+        );
     }
     let model_directory = paths.models.join("ollama");
     if let Some(executable) = executable {
         ensure_query_service(state, &executable, &model_directory)?;
     } else if !server_ready {
         return Err(
-            "Ollama installation finished, but VidXP could not locate its executable.".to_string(),
+            "The managed Ollama runtime finished downloading, but VidXP could not locate its executable."
+                .to_string(),
         );
     }
     let pull_app = app.clone();
     let pull_draft = draft_id.to_owned();
-    let pull_model = model.to_owned();
+    let pull_model = spec.model.clone();
     let pull_cancellation = cancellation;
     let installed = tauri::async_runtime::spawn_blocking(move || {
         pull_ollama_model(
@@ -1949,7 +1974,10 @@ async fn prepare_local_answers_runtime(
     .await
     .map_err(|error| format!("Local answer model preparation stopped unexpectedly: {error}"))??;
     if installed.digest.trim().is_empty() {
-        return Err(format!("Ollama did not report a digest for {model}."));
+        return Err(format!(
+            "Ollama did not report a digest for {}.",
+            spec.model
+        ));
     }
     Ok(())
 }
@@ -1977,8 +2005,9 @@ fn ensure_active_query_service(state: &DesktopState, paths: &DesktopPaths) -> Re
         return Ok(());
     }
     if ollama_server_version().is_err() {
-        let executable = resolve_system_executable("ollama").ok_or_else(|| {
-            "Local grounded answers are enabled, but Ollama is no longer installed. Open Setup options and repair VidXP."
+        let local_answers = manifest()?.local_answers;
+        let executable = resolve_query_executable(paths, &local_answers.managed_runtime).ok_or_else(|| {
+            "Local grounded answers are enabled, but their Ollama runtime is no longer available. Open Setup options and repair VidXP."
                 .to_string()
         })?;
         ensure_query_service(state, &executable, &paths.models.join("ollama"))?;
@@ -3461,7 +3490,7 @@ async fn install_runtime(
                 &request.draft_id,
                 2,
                 progress_total,
-                &manifest.local_answers.model,
+                &manifest.local_answers,
                 cancellation.token(),
             )
             .await?;
@@ -6132,6 +6161,41 @@ mod tests {
         assert_eq!(manifest.local_answers.engine, "ollama");
         assert_eq!(manifest.local_answers.model, "qwen3.5:4b-q4_K_M");
         assert_eq!(manifest.local_answers.download_size_bytes, 3_650_722_202);
+        assert_eq!(manifest.local_answers.managed_runtime.version, "0.32.5");
+        assert_eq!(
+            manifest
+                .local_answers
+                .managed_runtime
+                .maximum_download_size_bytes,
+            1_457_824_795
+        );
+        assert!(
+            manifest
+                .local_answers
+                .managed_runtime
+                .artifacts
+                .contains_key("windows-x86_64")
+        );
+        assert!(
+            manifest
+                .local_answers
+                .managed_runtime
+                .artifacts
+                .contains_key("macos-aarch64")
+        );
+        if let Some(artifact) =
+            super::query_setup::current_artifact(&manifest.local_answers.managed_runtime)
+        {
+            assert_eq!(artifact.sha256.len(), 64);
+            assert!(artifact.download_size_bytes > 0);
+            assert!(
+                artifact.download_size_bytes
+                    <= manifest
+                        .local_answers
+                        .managed_runtime
+                        .maximum_download_size_bytes
+            );
+        }
     }
 
     #[test]

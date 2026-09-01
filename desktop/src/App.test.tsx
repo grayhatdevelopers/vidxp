@@ -96,7 +96,7 @@ describe('desktop target lifecycle', () => {
       browser: { extra: 'frontend', label: 'Browser interface', description: 'Open VidXP in your browser.', default: true },
       mcp: { extra: 'mcp', label: 'AI assistant integration', description: 'Connect a compatible AI app.', default: false },
       server: { extra: 'server', label: 'App integration service', description: 'Let other local apps connect.', default: false },
-    }, local_answers: { engine: 'ollama', model: 'qwen3.5:4b-q4_K_M', download_size_bytes: 3650722202, label: 'Local grounded answers', description: 'Turn search evidence into cited answers locally.' } });
+    }, local_answers: { engine: 'ollama', model: 'qwen3.5:4b-q4_K_M', download_size_bytes: 3650722202, managed_runtime: { version: '0.32.5', maximum_download_size_bytes: 1457824795 }, label: 'Local grounded answers', description: 'Turn search evidence into cited answers locally.' } });
     mocks.runtimeStatus.mockResolvedValue({ state: 'never_configured', ready: false, runtime_profile: null, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'C:\\Models', detail: 'No managed runtime yet.' });
     mocks.modelDirectoryInventory.mockResolvedValue({ directory: 'C:\\Models', exists: false, readable: true, total_bytes: 0, file_count: 0, recognized_models: [], empty: true, verification_required: false, truncated: false, detail: 'Empty.' });
     mocks.installMediaRuntime.mockResolvedValue({ ready: true });
@@ -524,7 +524,7 @@ describe('desktop target lifecycle', () => {
 
     await user.click(screen.getByRole('checkbox', { name: /Local grounded answers/i }));
     expect(screen.getByText(/There is no URL to enter/i)).toBeVisible();
-    expect(screen.getByText(/grounded-answer model adds 3.40 GiB/i)).toBeVisible();
+    expect(screen.getByText(/Grounded answers add up to 1.36 GiB for the headless runtime and 3.40 GiB for the model/i)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Install VidXP' }));
 
     expect(mocks.installMediaRuntime).toHaveBeenCalledWith('draft-1', 9);
@@ -651,6 +651,15 @@ describe('desktop target lifecycle', () => {
     reportProgress?.({ draft_id: 'draft-1', current: 4, total: 8, stage: 'dependencies', message: 'Installing the selected search features' });
     expect(await screen.findByText('Step 4 of 8')).toBeVisible();
     expect(screen.getByText('Installing the selected search features')).toBeVisible();
+    reportProgress?.({
+      draft_id: 'draft-1',
+      current: 2,
+      total: 9,
+      stage: 'local-answers',
+      message: 'Preparing the local grounded-answer model',
+      model_message: 'Downloading the headless Ollama 0.32.5 runtime',
+    });
+    expect(await screen.findByText(/No separate app or setup window is involved/i)).toBeVisible();
     reportProgress?.({
       draft_id: 'draft-1',
       current: 7,

@@ -870,17 +870,22 @@ self-hosted Ollama base URL selects that model unless an operator explicitly
 overrides it. VidXP sets temperature zero, disables reasoning output, and
 requires the native JSON schemas for both planning and synthesis. Model weights
 are never bundled. Desktop setup pulls the approved artifact only after the
-user selects local grounded answers and approves any required Ollama install;
-CLI and server operators pull it explicitly.
+user selects local grounded answers and approves any required headless-runtime
+download; CLI and server operators pull it explicitly.
 
-Desktop treats the provider as an optional supervised system dependency. It
-first probes the loopback `/api/version` and `/api/tags` contracts, reuses an
-existing healthy service without taking ownership, or starts a child
-`ollama serve` process that its existing process-tree supervisor owns. The
-model pull uses Ollama's streaming `/api/pull` contract. Desktop persists only
-the feature selection, injects the private `/v1` endpoint and approved model
-into managed processes, and includes the same non-secret environment in stdio
-MCP configuration. It never stops an externally owned Ollama service.
+Desktop treats the provider as an optional supervised runtime. It first probes
+the loopback `/api/version` and `/api/tags` contracts and reuses an existing
+healthy service without taking ownership. It next reuses an existing Ollama
+executable. If neither is available on a supported Desktop target, it downloads
+the pinned official headless archive declared in the embedded runtime manifest,
+verifies its expected byte count and SHA-256 digest, and atomically activates it
+under Desktop's private application data. Desktop never installs the Ollama
+desktop app. It starts a child `ollama serve` process that its existing
+process-tree supervisor owns, and the model pull uses Ollama's streaming
+`/api/pull` contract. Desktop persists only the feature selection, injects the
+private `/v1` endpoint and approved model into managed processes, and includes
+the same non-secret environment in stdio MCP configuration. It never stops an
+externally owned Ollama service.
 
 Published model results select the integration candidate; the repository gate
 does not attempt to reproduce general model leaderboards. Promotion still
