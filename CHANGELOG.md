@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## [1.0.0-b](https://github.com/grayhatdevelopers/vidxp/compare/v0.4.0...v1.0.0-b) (2026-09-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* dialogue and videoprism are removed as capability names and package extras. Use speech and action, then rebuild existing indexes.
+
+### Features
+
+* align media capabilities and add grounded-query tooling ([#135](https://github.com/grayhatdevelopers/vidxp/issues/135)) ([10237cc](https://github.com/grayhatdevelopers/vidxp/commit/10237cc50c31255665bbead0b8d74a1082d6dcb0))
+* **media:** add filename and readiness filters to shared listing ([#126](https://github.com/grayhatdevelopers/vidxp/issues/126)) ([bdfd309](https://github.com/grayhatdevelopers/vidxp/commit/bdfd30955d2c19b14cc2db4f45e753d1be3c558b))
+* **premiere:** add installable media search for CEP and UXP ([#131](https://github.com/grayhatdevelopers/vidxp/issues/131)) ([ae2babd](https://github.com/grayhatdevelopers/vidxp/commit/ae2babd5f42f7a509d0be6017f626472f4e50241))
+* **sound:** add FineLAP audio event search ([#130](https://github.com/grayhatdevelopers/vidxp/issues/130)) ([c8942c6](https://github.com/grayhatdevelopers/vidxp/commit/c8942c6fda009a50bb18ceac887039a329cdb5fb))
+
+
+### Bug Fixes
+
+* **benchmarks:** complete local setup and CI scope ([#140](https://github.com/grayhatdevelopers/vidxp/issues/140)) ([24b916a](https://github.com/grayhatdevelopers/vidxp/commit/24b916affcb67f16c7add911c94ad6eaf6d45a73))
+* **desktop:** use a managed headless Ollama runtime ([#137](https://github.com/grayhatdevelopers/vidxp/issues/137)) ([438ae8a](https://github.com/grayhatdevelopers/vidxp/commit/438ae8aae512343bf81ea3cf25fb07efe0a44322))
+* **release:** update uv lock version structurally ([#138](https://github.com/grayhatdevelopers/vidxp/issues/138)) ([1debd61](https://github.com/grayhatdevelopers/vidxp/commit/1debd6140c1417acde30c51241b9fb5815bfcbe0))
+
 ## [0.4.0](https://github.com/grayhatdevelopers/vidxp/compare/v0.3.0...v0.4.0) (2026-08-17)
 
 
