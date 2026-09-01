@@ -6,6 +6,7 @@ import json
 from vidxp.application_models import (
     FusedMoment,
     FusedSearchResult,
+    FusionProfile,
     FusionProvenance,
     SearchHit,
     SearchResult,
@@ -23,7 +24,7 @@ def _query_id(
 ) -> str:
     identity = "\0".join(
         (
-            "rrf_v1",
+            "temporal_anchor_rrf_v1",
             query,
             ",".join(modalities),
             media_id or "*",
@@ -74,6 +75,32 @@ def _score(hits: list[SearchHit]) -> float:
             best_ranks.get(hit.modality, hit.rank),
         )
     return sum(1.0 / (RRF_RANK_CONSTANT + rank) for rank in best_ranks.values())
+
+
+def _overlaps(
+    hit: SearchHit,
+    *,
+    media_id: str,
+    start: float,
+    end: float,
+) -> bool:
+    return hit.media_id == media_id and hit.start <= end and hit.end >= start
+
+
+def _hit_identity(hit: SearchHit) -> tuple[str, str, str]:
+    return hit.generation_id, hit.modality, hit.source_id
+
+
+def _candidate_sort_key(candidate: dict) -> tuple:
+    return (
+        -candidate["score"],
+        -candidate["anchor_hit_count"],
+        candidate["anchor_best_rank"],
+        candidate["media_id"],
+        candidate["start"],
+        candidate["end"],
+        tuple(_hit_identity(hit) for hit in candidate["hits"]),
+    )
 
 
 def _moment_id(
@@ -136,51 +163,72 @@ def fuse_search_results(
     ) + tuple(sorted(set(by_modality) - set(requested_modalities)))
     ordered_results = tuple(by_modality[modality] for modality in searched_modalities)
     flattened = tuple(hit for result in ordered_results for hit in result.hits)
-    candidates = []
-    for hits in _connected_components(flattened):
-        ordered_hits = tuple(
-            sorted(
-                hits,
-                key=lambda hit: (
-                    hit.modality,
-                    hit.rank,
-                    hit.source_id,
-                ),
+    candidates_by_support: dict[tuple[tuple[str, str, str], ...], dict] = {}
+    for result in ordered_results:
+        for anchor_hits in _connected_components(result.hits):
+            anchor_start = min(hit.start for hit in anchor_hits)
+            anchor_end = max(hit.end for hit in anchor_hits)
+            supporting_hits = [
+                hit
+                for hit in flattened
+                if _overlaps(
+                    hit,
+                    media_id=anchor_hits[0].media_id,
+                    start=anchor_start,
+                    end=anchor_end,
+                )
+            ]
+            ordered_hits = tuple(
+                sorted(
+                    supporting_hits,
+                    key=lambda hit: (
+                        hit.modality,
+                        hit.rank,
+                        hit.source_id,
+                    ),
+                )
             )
-        )
-        candidates.append(
-            {
-                "score": _score(hits),
-                "media_id": hits[0].media_id,
-                "start": min(hit.start for hit in hits),
-                "end": max(hit.end for hit in hits),
-                "modalities": tuple(sorted({hit.modality for hit in hits})),
+            candidate = {
+                "score": _score(supporting_hits),
+                "anchor_hit_count": len(anchor_hits),
+                "anchor_best_rank": min(hit.rank for hit in anchor_hits),
+                "media_id": anchor_hits[0].media_id,
+                "start": anchor_start,
+                "end": anchor_end,
+                "modalities": tuple(
+                    sorted({hit.modality for hit in supporting_hits})
+                ),
                 "hits": ordered_hits,
             }
+            support_key = tuple(_hit_identity(hit) for hit in ordered_hits)
+            existing = candidates_by_support.get(support_key)
+            if existing is None or _candidate_sort_key(
+                candidate
+            ) < _candidate_sort_key(existing):
+                candidates_by_support[support_key] = candidate
+
+    candidates = list(candidates_by_support.values())
+    candidates.sort(key=_candidate_sort_key)
+    moments = []
+    for rank, candidate in enumerate(candidates[:top_k], start=1):
+        public_candidate = {
+            key: value
+            for key, value in candidate.items()
+            if key not in {"anchor_hit_count", "anchor_best_rank"}
+        }
+        moments.append(
+            FusedMoment(
+                rank=rank,
+                moment_id=_moment_id(
+                    snapshot_id=snapshot_id,
+                    media_id=candidate["media_id"],
+                    start=candidate["start"],
+                    end=candidate["end"],
+                    hits=candidate["hits"],
+                ),
+                **public_candidate,
+            )
         )
-    candidates.sort(
-        key=lambda item: (
-            -item["score"],
-            item["media_id"],
-            item["start"],
-            item["end"],
-            tuple(hit.source_id for hit in item["hits"]),
-        )
-    )
-    moments = tuple(
-        FusedMoment(
-            rank=rank,
-            moment_id=_moment_id(
-                snapshot_id=snapshot_id,
-                media_id=candidate["media_id"],
-                start=candidate["start"],
-                end=candidate["end"],
-                hits=candidate["hits"],
-            ),
-            **candidate,
-        )
-        for rank, candidate in enumerate(candidates[:top_k], start=1)
-    )
     return FusedSearchResult(
         query_id=_query_id(
             query,
@@ -190,8 +238,10 @@ def fuse_search_results(
         ),
         query=query,
         modalities=searched_modalities,
-        moments=moments,
+        moments=tuple(moments),
         fusion=FusionProvenance(
+            profile=FusionProfile.temporal_anchor,
+            overlap_rule="anchored_intervals",
             requested_modalities=requested_modalities,
             searched_modalities=searched_modalities,
         ),

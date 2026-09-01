@@ -89,6 +89,50 @@ class SearchFusionTests(unittest.TestCase):
 
         self.assertEqual(forward, reverse)
 
+    def test_continuous_fine_hits_set_boundary_without_losing_coarse_support(self):
+        action = SearchResult(
+            query_id="action:q",
+            query="rain followed by an engine",
+            modality="action",
+            hits=(hit("action", 1, 0, 8, "action:1"),),
+        )
+        scene = SearchResult(
+            query_id="scene:q",
+            query="rain followed by an engine",
+            modality="scene",
+            hits=tuple(
+                hit("scene", rank, start, start + 1, f"scene:{rank}")
+                for rank, start in enumerate(range(7), start=1)
+            ),
+        )
+        sound = SearchResult(
+            query_id="sound:q",
+            query="rain followed by an engine",
+            modality="sound",
+            hits=(
+                hit("sound", 1, 1.75, 2.0, "sound:1"),
+                hit("sound", 2, 2.0, 2.25, "sound:2"),
+            ),
+        )
+
+        result = fuse_search_results(
+            query="rain followed by an engine",
+            requested_modalities=("scene", "action", "sound"),
+            results=(scene, action, sound),
+            top_k=3,
+        )
+
+        self.assertEqual(
+            (result.moments[0].start, result.moments[0].end),
+            (0, 7),
+        )
+        self.assertEqual(
+            set(result.moments[0].modalities),
+            {"action", "scene", "sound"},
+        )
+        self.assertEqual(result.fusion.profile, "temporal_anchor_rrf_v1")
+        self.assertEqual(result.fusion.overlap_rule, "anchored_intervals")
+
     def test_rewritten_atomic_query_identity_changes_fused_identity(self):
         original = SearchResult(
             query_id="scene:original",

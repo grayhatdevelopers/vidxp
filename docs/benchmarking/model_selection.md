@@ -29,11 +29,16 @@ The current control uses separately indexed evidence:
 - FineLAP supplies global sound windows and dense timestamped activations; and
 - faster-whisper plus Qwen3 text embeddings supply timestamped speech evidence.
 
-Fusion groups every overlapping hit into a connected component, scores the
-component with reciprocal rank fusion, and returns the union from the earliest
-start to the latest end. A relevant coarse action hit can therefore expand a
-more precise sound or speech interval. Ranking and boundary accuracy are
-separate properties: a correct top candidate can still have avoidably poor IoU.
+Search now fetches up to four times the requested result count per modality,
+capped at 100, before returning the requested number of moments. Fusion groups
+adjacent hits from one modality, keeps overlapping hits from other modalities
+as supporting evidence, and uses the strongest continuous group as the returned
+boundary. This prevents one coarse action hit from automatically stretching a
+more precise scene or sound range.
+
+This is still a retrieval-based boundary estimate. An action-only result keeps
+the action record's roughly eight-second range, and no benchmark score is
+claimed for the new fusion profile yet.
 
 ## Separate the architectural questions
 
@@ -72,8 +77,8 @@ they do not establish a general retrieval architecture.
 | Environmental sound | FineLAP global and dense features | LAION-CLAP as a mature retrieval control; PE-A-Frame and AEGBench for boundaries | Implementation exists, but quality and boundary claims remain pending. |
 | Visual retrieval | VideoPrism action clips and SigLIP2 scene frames | MVEB places Qwen3-VL-Embedding highly, but does not compare VideoPrism | Qwen is a candidate, not a selected replacement. Run the same retrieval protocol before changing providers. |
 | Temporal units | Fixed action clips plus one-second scene records | Shot/scene segmentation and denser query-aware proposals | Open. Existing indexes do not have to be retained if another representation wins on quality and resource use. |
-| Boundary inference | Connected-component interval union | Shot-aware proposals and query-conditioned interval models | Open. Do not tune union thresholds before measuring the interval ceiling of the stored evidence. |
-| Fusion | Provenance-preserving reciprocal rank fusion | Learned audio-visual interaction or query-conditioned boundary scoring | Retain as the transparent control only. Provenance must survive any replacement. |
+| Boundary inference | Strongest continuous same-modality run, with overlapping evidence retained | Shot-aware proposals and query-conditioned interval models | Improved control; still open for action-only and learned boundaries. |
+| Fusion | Anchored reciprocal rank fusion | Learned audio-visual interaction or query-conditioned boundary scoring | Keep as the transparent control. Provenance must survive any replacement. |
 | Planner and synthesis | Structured evidence passed to the configured agent/model | Smaller local planners or selected media verification | Evaluate separately from retrieval. Agent prose cannot substitute for temporal evidence. |
 
 ## Decision measurements

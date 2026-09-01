@@ -81,6 +81,17 @@ from vidxp.evidence_delivery import EvidenceDeliveryService
 from vidxp.evidence_board import EvidenceBoardService
 
 
+FUSION_CANDIDATE_MULTIPLIER = 4
+MAX_FUSION_CANDIDATES_PER_MODALITY = 100
+
+
+def _fusion_candidate_depth(top_k: int) -> int:
+    return min(
+        MAX_FUSION_CANDIDATES_PER_MODALITY,
+        top_k * FUSION_CANDIDATE_MULTIPLIER,
+    )
+
+
 class VidXPApplication(ControlPlaneApplication):
     """The transport-neutral command and query boundary."""
 
@@ -542,7 +553,7 @@ class VidXPApplication(ControlPlaneApplication):
                             modality,
                             query=command.query,
                             media_id=command.media_id,
-                            top_k=command.top_k,
+                            top_k=_fusion_candidate_depth(command.top_k),
                             context=context,
                         )
                         for modality in selected
@@ -683,7 +694,7 @@ class VidXPApplication(ControlPlaneApplication):
                                     step.modality,
                                     query=step.query,
                                     media_id=command.media_id,
-                                    top_k=command.top_k,
+                                    top_k=_fusion_candidate_depth(command.top_k),
                                     context=context,
                                 )
                             )

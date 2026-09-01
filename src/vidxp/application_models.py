@@ -807,6 +807,7 @@ class WorkspaceOverview(ApplicationModel):
 
 class FusionProfile(StrEnum):
     reciprocal_rank = "rrf_v1"
+    temporal_anchor = "temporal_anchor_rrf_v1"
 
 
 class EvidenceDeliveryMode(StrEnum):
@@ -960,9 +961,12 @@ class SearchResult(ApplicationModel):
 
 
 class FusionProvenance(ApplicationModel):
-    profile: Literal[FusionProfile.reciprocal_rank] = FusionProfile.reciprocal_rank
+    profile: FusionProfile = FusionProfile.temporal_anchor
     rank_constant: int = Field(default=60, gt=0)
-    overlap_rule: Literal["connected_intervals"] = "connected_intervals"
+    overlap_rule: Literal[
+        "connected_intervals",
+        "anchored_intervals",
+    ] = "anchored_intervals"
     requested_modalities: tuple[Identifier, ...] = ()
     searched_modalities: tuple[Identifier, ...] = ()
 
