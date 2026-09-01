@@ -11,6 +11,7 @@ from vidxp.capabilities.sound.indexing import (
     iter_audio_windows,
     sound_records,
 )
+from vidxp.capabilities.sound.models import _offline_roberta_tokenizer
 from vidxp.capabilities.sound.operations import search_sound
 from vidxp.capabilities.sound.specs import (
     FINELAP_MODEL,
@@ -52,6 +53,26 @@ class SoundTests(unittest.TestCase):
         self.assertIn(ROBERTA_CONFIG.revision, ROBERTA_CONFIG.url)
         self.assertIn(ROBERTA_VOCAB.revision, ROBERTA_VOCAB.url)
         self.assertIn(ROBERTA_MERGES.revision, ROBERTA_MERGES.url)
+
+    @patch("transformers.RobertaTokenizer")
+    def test_offline_tokenizer_uses_transformers_5_asset_arguments(
+        self,
+        tokenizer_class,
+    ):
+        tokenizer = tokenizer_class.return_value
+        tokenizer.return_value = {"input_ids": [42]}
+
+        result = _offline_roberta_tokenizer(
+            vocab_path="vocab.json",
+            merges_path="merges.txt",
+        )
+
+        self.assertIs(result, tokenizer)
+        tokenizer_class.assert_called_once_with(
+            vocab="vocab.json",
+            merges="merges.txt",
+            model_max_length=512,
+        )
 
     def test_records_include_window_and_dense_activation_intervals(self):
         config = self.config()

@@ -117,6 +117,19 @@ def _load_finelap_class(snapshot: str, module_cache: str) -> type:
     )
 
 
+def _offline_roberta_tokenizer(*, vocab_path: str, merges_path: str) -> Any:
+    from transformers import RobertaTokenizer
+
+    tokenizer = RobertaTokenizer(
+        vocab=vocab_path,
+        merges=merges_path,
+        model_max_length=512,
+    )
+    if not tokenizer("sound", add_special_tokens=False)["input_ids"]:
+        raise RuntimeError("The prepared FineLAP tokenizer has no lexical tokens.")
+    return tokenizer
+
+
 def _load_finelap_model(
     model_class: type,
     snapshot: str,
@@ -134,7 +147,6 @@ def _load_finelap_model(
     immediately fills.
     """
     from transformers import AutoConfig, RobertaConfig, RobertaModel
-    from transformers import RobertaTokenizer
 
     module = sys.modules[model_class.__module__]
 
@@ -149,10 +161,9 @@ def _load_finelap_model(
     class OfflineRobertaTokenizer:
         @classmethod
         def from_pretrained(cls, *_args: Any, **_kwargs: Any) -> Any:
-            return RobertaTokenizer(
-                vocab_file=vocab_path,
-                merges_file=merges_path,
-                model_max_length=512,
+            return _offline_roberta_tokenizer(
+                vocab_path=vocab_path,
+                merges_path=merges_path,
             )
 
     module.RobertaModel = OfflineRobertaModel
