@@ -18,10 +18,32 @@ Detailed artifacts, hashes, commands, and evaluator behavior remain in the
 | Legacy full | HiREST | Released test: 776 known-video searches | Predictions generated, not scored | Public test boundaries are placeholders, so local scoring would be meaningless |
 | Current smoke | DiDeMo | Official test annotation index `0`; one video | Rank@1 **0**, Rank@5 **1**, mean IoU **0** | Real SigLIP2 execution, serialization, and official-evaluator check only |
 | Current smoke | HiREST | Two declared validation pairs over two videos | R@0.5 **50**, R@0.7 **50** | Real Qwen3 execution, multi-video storage, filtered search, serialization, and official-evaluator check only |
+| Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; one paired run | VidXP-on IoU **0.7493**; VidXP-off IoU **0.8824** | Harness, skill/MCP isolation, deterministic scoring, and reporting check only; not a held-out pilot or LongVALE result |
 
 The current-provider rows are deliberately tiny regression runs. Their
 percentages are not quality estimates and must not be compared with the full
 legacy rows. A current full-corpus score has not been run.
+
+## Codex MCP development smoke
+
+Evaluation `eval-J6s-2026-09-01T19:30:07` asked the same Codex model to locate
+one 0–6 second rain, wind, and engine event with and without VidXP. Both runs
+passed the harness contract.
+
+| Condition | Predicted interval | IoU | End error | Time | Total / uncached input / output tokens | Tool activity | Estimated cost |
+| --- | --- | ---: | ---: | ---: | --- | --- | ---: |
+| VidXP-on | 0–8.0075 s | 0.7493 | +2.0075 s | 74.552 s | 301,712 / 48,423 / 1,769 | one skill load; six VidXP MCP calls; one non-media shell call | $0.815355 |
+| VidXP-off | 0–6.8 s | 0.8824 | +0.8 s | 112.209 s | 329,961 / 35,906 / 3,623 | ten shell media-inspection calls | $0.812527 |
+
+The VidXP run used fewer total tokens and finished faster, but its provider-
+estimated cost was slightly higher because it used more uncached input. Cached
+and uncached input can have different rates; total tokens alone do not determine
+cost. Reasoning tokens are included in output tokens. Subscription-authenticated
+Codex usage is an account allowance or credit measurement, not an API invoice.
+
+This pair does not show that VidXP retrieved the wrong event. It shows that the
+returned interval was too long. The next diagnostic must inspect the raw stored
+and fused intervals before attributing the error to ranking, fusion, or a model.
 
 ## Runtime and model generations
 

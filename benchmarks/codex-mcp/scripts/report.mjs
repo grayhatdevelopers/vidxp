@@ -42,12 +42,45 @@ function seconds(milliseconds) {
   return Number.isFinite(milliseconds) ? `${(milliseconds / 1000).toFixed(3)}s` : 'n/a';
 }
 
+function secondsValue(value) {
+  return Number.isFinite(value) ? `${value.toFixed(3)}s` : 'n/a';
+}
+
 function integer(value) {
   return Number.isFinite(value) ? Math.round(value).toLocaleString('en-US') : 'n/a';
 }
 
 function money(value, digits = 6) {
   return Number.isFinite(value) ? `$${value.toFixed(digits)}` : 'n/a';
+}
+
+function tokenDifference(total, cached) {
+  return Number.isFinite(total) && Number.isFinite(cached)
+    ? Math.max(0, total - cached)
+    : null;
+}
+
+function boundaryError(predicted, expected) {
+  return Number.isFinite(predicted) && Number.isFinite(expected)
+    ? predicted - expected
+    : null;
+}
+
+function absolute(value) {
+  return Number.isFinite(value) ? Math.abs(value) : null;
+}
+
+function durationError(result) {
+  if (
+    !Number.isFinite(result.predictedStart)
+    || !Number.isFinite(result.predictedEnd)
+    || !Number.isFinite(result.expectedStart)
+    || !Number.isFinite(result.expectedEnd)
+  ) {
+    return null;
+  }
+  return (result.predictedEnd - result.predictedStart)
+    - (result.expectedEnd - result.expectedStart);
 }
 
 function interval(start, end) {
@@ -70,6 +103,10 @@ function signedMoney(value) {
   return `${value >= 0 ? '+' : '-'}$${Math.abs(value).toFixed(6)}`;
 }
 
+function signedSeconds(value) {
+  return Number.isFinite(value) ? `${signed(value)}s` : 'n/a';
+}
+
 export function summarizeResults(results) {
   return ['vidxp-on', 'vidxp-off'].map((condition) => {
     const selected = results.filter((result) => result.condition === condition);
@@ -81,13 +118,29 @@ export function summarizeResults(results) {
       recall03: mean(selected.map((result) => result.recall03)),
       recall05: mean(selected.map((result) => result.recall05)),
       recall07: mean(selected.map((result) => result.recall07)),
+      meanStartError: mean(selected.map((result) => (
+        absolute(boundaryError(result.predictedStart, result.expectedStart))
+      ))),
+      meanEndError: mean(selected.map((result) => (
+        absolute(boundaryError(result.predictedEnd, result.expectedEnd))
+      ))),
+      meanDurationError: mean(selected.map((result) => absolute(durationError(result)))),
       meanLatencyMs: mean(selected.map((result) => result.latencyMs)),
       totalLatencyMs: sum(selected.map((result) => result.latencyMs)),
-      totalTokens: sum(selected.map((result) => result.totalTokens)),
-      cachedTokens: sum(selected.map((result) => result.cachedTokens)),
-      completionTokens: sum(selected.map((result) => result.completionTokens)),
+      totalTokens: sumOrNull(selected.map((result) => result.totalTokens)),
+      promptTokens: sumOrNull(selected.map((result) => result.promptTokens)),
+      uncachedPromptTokens: sumOrNull(selected.map((result) => (
+        tokenDifference(result.promptTokens, result.cachedTokens)
+      ))),
+      cachedTokens: sumOrNull(selected.map((result) => result.cachedTokens)),
+      completionTokens: sumOrNull(selected.map((result) => result.completionTokens)),
+      reasoningTokens: sumOrNull(selected.map((result) => result.reasoningTokens)),
+      requests: sumOrNull(selected.map((result) => result.requests)),
       cost: sumOrNull(selected.map((result) => result.cost)),
+      agentItems: sum(selected.map((result) => result.agentItems)),
+      toolCalls: sum(selected.map((result) => result.toolCalls)),
       mcpCalls: sum(selected.map((result) => result.mcpCalls)),
+      shellCalls: sum(selected.map((result) => result.shellCalls)),
       mediaShellCalls: sum(selected.map((result) => result.mediaShellCalls)),
       skillLoads: sum(selected.map((result) => result.skillLoads)),
     };
@@ -129,12 +182,28 @@ export function loadLatestEvaluation() {
     for (const trace of traceRows) {
       const metadata = parseJson(trace.metadata);
       const spans = spansForTrace.all(trace.trace_id);
+      const itemIds = new Set();
+      let agentItems = 0;
+      let toolCalls = 0;
       let mcpCalls = 0;
+      let shellCalls = 0;
       let mediaShellCalls = 0;
       for (const span of spans) {
         const attributes = parseJson(span.attributes);
-        if (span.name.startsWith('mcp vidxp/')) {
-          mcpCalls += 1;
+        const itemId = attributes['codex.item.id'];
+        const itemType = attributes['codex.item.type'];
+        if (typeof itemId === 'string' && !itemIds.has(itemId)) {
+          itemIds.add(itemId);
+          agentItems += 1;
+          if (itemType === 'command_execution') {
+            shellCalls += 1;
+            toolCalls += 1;
+          } else if (typeof itemType === 'string' && itemType.endsWith('_tool_call')) {
+            toolCalls += 1;
+          }
+          if (itemType === 'mcp_tool_call' && attributes['codex.mcp.server'] === 'vidxp') {
+            mcpCalls += 1;
+          }
         }
         const command = attributes['codex.command'];
         if (
@@ -150,7 +219,13 @@ export function loadLatestEvaluation() {
           lastSpan = lastSpan === null ? span.end_time : Math.max(lastSpan, span.end_time);
         }
       }
-      traceStats.set(metadata.testIdx, { mcpCalls, mediaShellCalls });
+      traceStats.set(metadata.testIdx, {
+        agentItems,
+        toolCalls,
+        mcpCalls,
+        shellCalls,
+        mediaShellCalls,
+      });
     }
 
     const results = rows.map((row) => {
@@ -169,6 +244,10 @@ export function loadLatestEvaluation() {
         expectedEnd: testCase.vars?.expected_end,
         predictedStart: output.start_seconds,
         predictedEnd: output.end_seconds,
+        answer: output.answer,
+        modalities: Array.isArray(output.modalities) ? output.modalities : [],
+        sourceJobId: output.source_job_id,
+        evidenceCount: Array.isArray(output.evidence) ? output.evidence.length : 0,
         iou: Number.isFinite(namedScores.temporal_iou) ? namedScores.temporal_iou : 0,
         recall03: Number.isFinite(namedScores.r1_tiou_0_3)
           ? namedScores.r1_tiou_0_3
@@ -181,10 +260,16 @@ export function loadLatestEvaluation() {
           : 0,
         latencyMs: row.latency_ms,
         totalTokens: response.tokenUsage?.total,
+        promptTokens: response.tokenUsage?.prompt,
         cachedTokens: response.tokenUsage?.cached,
         completionTokens: response.tokenUsage?.completion,
+        reasoningTokens: response.tokenUsage?.completionDetails?.reasoning,
+        requests: response.tokenUsage?.numRequests,
         cost: row.cost,
+        agentItems: stats.agentItems || 0,
+        toolCalls: stats.toolCalls || 0,
         mcpCalls: stats.mcpCalls || 0,
+        shellCalls: stats.shellCalls || 0,
         mediaShellCalls: stats.mediaShellCalls || 0,
         skillLoads: Array.isArray(responseMetadata.skillCalls)
           ? responseMetadata.skillCalls.length
@@ -201,7 +286,7 @@ export function loadLatestEvaluation() {
   }
 }
 
-export function renderReport(evaluation, { showAll = false } = {}) {
+export function renderReport(evaluation, { showAll = false, showResponses = false } = {}) {
   const summaries = summarizeResults(evaluation.results);
   const created = Number.isFinite(evaluation.created_at)
     ? new Date(evaluation.created_at).toISOString()
@@ -217,17 +302,35 @@ export function renderReport(evaluation, { showAll = false } = {}) {
     'R@.3': fixed(summary.recall03, 3),
     'R@.5': fixed(summary.recall05, 3),
     'R@.7': fixed(summary.recall07, 3),
+    'start MAE': secondsValue(summary.meanStartError),
+    'end MAE': secondsValue(summary.meanEndError),
+    'duration MAE': secondsValue(summary.meanDurationError),
     'avg time': seconds(summary.meanLatencyMs),
     'total time': seconds(summary.totalLatencyMs),
   })));
-  console.log('Usage and tools:');
+  console.log('Token usage and estimated cost:');
   console.table(summaries.map((summary) => ({
     condition: summary.condition,
-    tokens: integer(summary.totalTokens),
-    cached: integer(summary.cachedTokens),
-    completion: integer(summary.completionTokens),
+    total: integer(summary.totalTokens),
+    input: integer(summary.promptTokens),
+    'input cached': integer(summary.cachedTokens),
+    'input uncached': integer(summary.uncachedPromptTokens),
+    output: integer(summary.completionTokens),
+    reasoning: integer(summary.reasoningTokens),
+    requests: integer(summary.requests),
     'est. cost': money(summary.cost),
+  })));
+  console.log(
+    '  Reasoning tokens are included in output tokens. Estimated cost is provider-reported; '
+    + 'cached and uncached input can have different rates, so total tokens alone do not determine cost.',
+  );
+  console.log('Agent activity:');
+  console.table(summaries.map((summary) => ({
+    condition: summary.condition,
+    items: summary.agentItems,
+    'tool calls': summary.toolCalls,
     MCP: summary.mcpCalls,
+    shell: summary.shellCalls,
     'ffmpeg/ffprobe': summary.mediaShellCalls,
     skill: summary.skillLoads,
   })));
@@ -239,9 +342,15 @@ export function renderReport(evaluation, { showAll = false } = {}) {
     const latencyPercent = off.meanLatencyMs
       ? Math.abs(latencyDelta) / off.meanLatencyMs * 100
       : null;
-    const tokenDelta = on.totalTokens - off.totalTokens;
-    const tokenPercent = off.totalTokens
+    const tokenDelta = Number.isFinite(on.totalTokens) && Number.isFinite(off.totalTokens)
+      ? on.totalTokens - off.totalTokens
+      : null;
+    const tokenPercent = Number.isFinite(tokenDelta) && off.totalTokens
       ? Math.abs(tokenDelta) / off.totalTokens * 100
+      : null;
+    const uncachedDelta = Number.isFinite(on.uncachedPromptTokens)
+      && Number.isFinite(off.uncachedPromptTokens)
+      ? on.uncachedPromptTokens - off.uncachedPromptTokens
       : null;
     console.log('VidXP-on minus VidXP-off:');
     console.log(`  mean IoU: ${signed(on.meanIou - off.meanIou, 4)}`);
@@ -252,10 +361,14 @@ export function renderReport(evaluation, { showAll = false } = {}) {
         : ''),
     );
     console.log(
-      `  total tokens: ${tokenDelta >= 0 ? '+' : ''}${integer(tokenDelta)}`
+      `  total tokens: ${Number.isFinite(tokenDelta) && tokenDelta >= 0 ? '+' : ''}${integer(tokenDelta)}`
       + (Number.isFinite(tokenPercent)
         ? ` (${tokenPercent.toFixed(1)}% ${tokenDelta <= 0 ? 'fewer' : 'more'})`
         : ''),
+    );
+    console.log(
+      `  uncached input tokens: ${Number.isFinite(uncachedDelta) && uncachedDelta >= 0 ? '+' : ''}`
+      + integer(uncachedDelta),
     );
     const costDelta = Number.isFinite(on.cost) && Number.isFinite(off.cost)
       ? on.cost - off.cost
@@ -275,9 +388,27 @@ export function renderReport(evaluation, { showAll = false } = {}) {
       pass: result.success ? 'yes' : 'NO',
       expected: interval(result.expectedStart, result.expectedEnd),
       predicted: interval(result.predictedStart, result.predictedEnd),
+      'start Δ': signedSeconds(boundaryError(result.predictedStart, result.expectedStart)),
+      'end Δ': signedSeconds(boundaryError(result.predictedEnd, result.expectedEnd)),
+      'duration Δ': signedSeconds(durationError(result)),
       IoU: fixed(result.iou, 4),
       time: seconds(result.latencyMs),
-      tokens: integer(result.totalTokens),
+    })));
+    console.log('Per-run usage and tools:');
+    console.table(evaluation.results.map((result) => ({
+      ...(tasks.size === 1 ? {} : { task: result.task }),
+      condition: result.condition,
+      total: integer(result.totalTokens),
+      input: integer(result.promptTokens),
+      cached: integer(result.cachedTokens),
+      uncached: integer(tokenDifference(result.promptTokens, result.cachedTokens)),
+      output: integer(result.completionTokens),
+      reasoning: integer(result.reasoningTokens),
+      tools: result.toolCalls,
+      MCP: result.mcpCalls,
+      shell: result.shellCalls,
+      media: result.mediaShellCalls,
+      skill: result.skillLoads,
       'est. cost': money(result.cost),
     })));
   } else {
@@ -291,6 +422,16 @@ export function renderReport(evaluation, { showAll = false } = {}) {
       console.log(`  ${failure.task} [${failure.condition}]: ${failure.reason}`);
     }
   }
+
+  if (showResponses) {
+    console.log('Responses:');
+    for (const result of evaluation.results) {
+      console.log(`  ${result.task} [${result.condition}]`);
+      console.log(`    answer: ${result.answer || 'n/a'}`);
+      console.log(`    modalities: ${result.modalities.length ? result.modalities.join(', ') : 'n/a'}`);
+      console.log(`    source job: ${result.sourceJobId || 'n/a'} | evidence items: ${result.evidenceCount}`);
+    }
+  }
 }
 
 export function printLatestReport(options = {}) {
@@ -299,7 +440,10 @@ export function printLatestReport(options = {}) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   try {
-    printLatestReport({ showAll: process.argv.includes('--all') });
+    printLatestReport({
+      showAll: process.argv.includes('--all'),
+      showResponses: process.argv.includes('--responses'),
+    });
   } catch (error) {
     console.error(`Could not report the latest evaluation: ${error.message}`);
     process.exitCode = 1;

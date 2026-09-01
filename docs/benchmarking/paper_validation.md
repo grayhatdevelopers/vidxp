@@ -18,15 +18,11 @@ actually evaluates, not what its title or abstract appears to imply.
   marked as context, custom evaluation, or artifact-blocked rather than being
   silently treated as executable comparisons.
 
-The inventory contained 57 paper rows when this validation pass began. The audit
-first added 18 omitted benchmark-defining, protocol-lineage, and direct-comparator
-papers, then the published-results pass added three directly relevant retrieval
-comparators that the first audit missed: MMMORRF, OmniEmbed-MultiVENT, and Q2E.
-The 2026-08-27 model-selection refresh added MAEB, MVEB, FineLAP, Auto-AEG/
-AEGBench, TimeLens2, and the OVSD-defining paper. The reconciled inventory now
-contains 85 unique paper rows. Every inventory paper's
-exact source URL appears in a
-paper-level ledger row below; the final coverage check found zero omissions.
+The inventory began with 57 paper rows. Later passes added omitted benchmark
+definitions, comparator papers, current component-model work, and the temporal
+representation/grounding lineage. Every inventory paper's exact source URL must
+also appear in a paper-level ledger row below; keep that coverage check current
+instead of relying on a historical row count.
 
 ## Current component-model selection
 
@@ -38,6 +34,20 @@ paper-level ledger row below; the final coverage check found zero omissions.
 | [Auto-AEG and AEGBench](https://arxiv.org/abs/2607.04383) | Full text, HTML tables, and dataset link checked | Open-vocabulary audio event grounding over 3,427 items/9,790 queries with difficulty-stratified hard cases | mIoU, recall/precision IoU, event F1, segment F1, and onset precision/recall | Direct environmental-sound boundary benchmark. Table 3 reports PE-A-Frame Large at 0.389 mIoU/0.407 event-F1/0.607 segment-F1; the larger trained Auto-AEG system is research ceiling context. |
 | [TimeLens2](https://github.com/MCG-NJU/TimeLens2) | Official paper/repository and released checkpoint table checked | Seven visual temporal-grounding datasets with 2B/4B/8B checkpoints | Average mIoU and per-dataset temporal-grounding metrics | The official release reports 47.7 average mIoU for 4B and 48.0 for 8B. Select 4B first; all variants are visual-only. |
 | [OVSD defining paper](https://research.ibm.com/publications/robust-and-efficient-video-scene-detection-using-optimal-sequential-grouping) | Primary IBM publication and later dataset-use records checked | Scene-boundary segmentation over open-licensed movies and animations | Scene-segmentation measures | Useful temporal-unit regression source only. OVSD contains no text-query retrieval, action, environmental-sound, speech, or fusion objective. |
+
+## Temporal representation and grounding evidence
+
+| Paper or release | Evidence checked | Actual experimental use | Measures/results reported | Validation outcome |
+| --- | --- | --- | --- | --- |
+| [LGSS](https://openaccess.thecvf.com/content_CVPR_2020/html/Rao_A_Local-to-Global_Approach_to_Multi-Modal_Movie_Scene_Segmentation_CVPR_2020_paper.html) | Full paper and supplementary material checked | MovieScenes: 21,000 scene segments from 150 movies; place, cast, action, and audio shot features | Scene-boundary AP, mIoU, recall, and recall near boundaries | Established evidence for multimodal shot-to-scene segmentation. It predicts scene boundaries, not natural-language moments. |
+| [ShotCoL](https://openaccess.thecvf.com/content/CVPR2021/html/Chen_Shot_Contrastive_Self-Supervised_Learning_for_Scene_Boundary_Detection_CVPR_2021_paper.html) | Full paper checked | MovieNet scene detection and 19,119 ad cue points from 3,975 movies/episodes | Scene-boundary and cue-point measures; label, parameter, and runtime comparisons | Reports competitive scene detection with 25% of labels, nine times fewer parameters, and seven times faster runtime. This supports efficient shot representations, not query retrieval. |
+| [BaSSL](https://github.com/kakaobrain/bassl) | Paper, official repository, checkpoint, and environment checked | MovieNet scene segmentation | Scene-boundary AP | Reproducible scene-boundary comparator with code/checkpoint. Its Python 3.7, PyTorch 1.7, and CUDA 11 environment is not a ready macOS product dependency. |
+| [NeighborNet](https://openaccess.thecvf.com/content/CVPR2024/html/Tan_Neighbor_Relations_Matter_in_Video_Scene_Detection_CVPR_2024_paper.html) | Full paper and official repository checked | Public video-scene detection datasets | Scene-boundary AP | Reports at least six AP points over released prior methods by adding neighboring-shot context. It remains a segmentation component. |
+| [UMT](https://openaccess.thecvf.com/content/CVPR2022/html/Liu_UMT_Unified_Multi-Modal_Transformers_for_Joint_Video_Moment_Retrieval_and_CVPR_2022_paper.html) | Full paper, official code, checkpoints, and environment checked | QVHighlights, Charades-STA, YouTube Highlights, and TVSum with aligned visual/audio features where applicable | Moment R@K/tIoU and mAP; highlight mAP/Hit@1 | Established audiovisual query-conditioned interval/highlight comparator. Checkpoints are target-trained and the official environment assumes CUDA 11.5/PyTorch 1.11. |
+| [BOLT](https://openaccess.thecvf.com/content/CVPR2025/html/Liu_BOLT_Boost_Large_Vision-Language_Model_Without_Training_for_Long-form_Video_CVPR_2025_paper.html) | Full paper, supplement, and official repository checked | Video-MME, LongVideoBench, MLVU, and multi-source noisy-video evaluation using CLIP query-frame similarity | Downstream VQA accuracy at fixed frame budgets | Inverse-transform sampling improves frame selection without training. It consumes pre-extracted frame features and returns selected frames, not start/end intervals, so it cannot resolve VidXP's boundary error alone. |
+| [Automatic Funny Scene Extraction](https://ojs.aaai.org/index.php/AAAI/article/view/41480) | Full paper and official publication record checked | TransNetV2 shots; MovieNet-SSeg and OVSD scene boundaries; humor datasets; curator review on five movies and 11 trailers | Scene AP/F1, humor F1/accuracy, and curator judgments | Relevant applied pipeline: segment into semantic scenes before task-specific ranking. The reported 98% proper scene ending is a five-movie human judgment, not arbitrary-query IoU; no public end-to-end implementation or checkpoint was identified. |
+| [FunnyNet](https://openaccess.thecvf.com/content/ACCV2022/papers/Liu_FunnyNet_Audiovisual_Learning_of_Funny_Moments_in_Videos_ACCV_2022_paper.pdf) and [FunnyNet-W](https://link.springer.com/article/10.1007/s11263-024-02000-2) | Both full papers and the public project/code pages checked | TBBT, MHD, MUStARD, Friends, UR-Funny, and in-the-wild humor examples | Dataset-specific funny-moment classification/detection measures | Establish an audiovisual, later audio-visual-text, humor-detection lineage and report audio as especially useful. The learned objective is domain-specific and is not evidence for arbitrary event queries. |
+| [AVicuna](https://ojs.aaai.org/index.php/AAAI/article/view/32784) | Full paper and official publication record checked | PU-VALOR with 114,081 pseudo-untrimmed examples plus audiovisual QA and dense localization tasks | Task-specific QA and dense temporal-localization measures | Shows that one trained model can align audio, video, text, and intervals. Its training/data/model scale makes it a research ceiling, not a first commodity-hardware integration. |
 
 ## Whole-system and multimodal benchmark definitions
 
@@ -149,7 +159,7 @@ paper-level ledger row below; the final coverage check found zero omissions.
 
 | Source | Evidence checked | Actual protocol | Validation outcome |
 | --- | --- | --- | --- |
-| [IARPA Janus Benchmark-B](https://openaccess.thecvf.com/content_cvpr_2017_workshops/w6/html/Whitelam_IARPA_Janus_Benchmark-B_CVPR_2017_paper.html) | Full text checked | Seven clustering sub-protocols of increasing subject/media scale; each input is an image plus a face box; B-cubed precision, recall, and F-measure | Formal face-clustering protocol, but not a video continuity test. Distribution has ended, so it is executable only if the team already holds a lawful copy. |
+| [IARPA Janus Benchmark-B](https://openaccess.thecvf.com/content_cvpr_2017_workshops/w6/html/Whitelam_IARPA_Janus_Benchmark-B_CVPR_2017_paper.html) | Full text and [NIST protocol](https://www.nist.gov/system/files/documents/2021/06/07/ijbb_challenge_documentation_readme.pdf) checked | Seven clustering sub-protocols of increasing subject/media scale; each input is an image plus a face box; B-cubed precision, recall, and F-measure | Formal face-clustering protocol, but not a video continuity test. Distribution has ended, so it is executable only if the team already holds a lawful copy. |
 
 ## Cross-cutting corrections
 

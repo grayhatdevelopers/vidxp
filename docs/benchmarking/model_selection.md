@@ -1,142 +1,129 @@
-# Multimodal model and benchmark direction
+# Multimodal retrieval and temporal-localization direction
 
 Collection index: [Benchmarking research](README.md)
 
-Status: Current decision record; FineLAP and VideoPrism are implemented, while
-other candidate providers remain planned unless architecture says otherwise
+Status: Current decision record; component providers are implemented, while the
+temporal architecture remains under evaluation
 
-Last verified: 2026-08-30
+Last verified: 2026-09-02
 
-## Product requirement
+## Required product behavior
 
-VidXP needs three independently searchable, timestamped evidence channels:
+VidXP must find inspectable evidence for visual events, environmental sounds,
+and speech, then return useful time ranges. Results must preserve modality and
+source provenance. That requirement does not prescribe separate indexes, one
+shared model, late fusion, or query-time processing; those are alternatives to
+measure.
 
-1. visual scenes and actions;
-2. environmental sounds, music, and other non-speech acoustic events; and
-3. spoken words through ASR and text retrieval.
+LongVALE is the closest combined benchmark because its event descriptions can
+depend on vision, generic audio, speech, or their temporal relationship. It does
+not determine the internal architecture.
 
-Query-time fusion must preserve which channel produced each hit. A shared
-embedding model is optional; collapsing the channels is not the requirement.
-LongVALE makes this boundary explicit because its events can depend on vision,
-generic audio, speech, or their temporal relationship.
+## Current implementation and known limitation
 
-## Repository baseline
+The current control uses separately indexed evidence:
 
-The history before this change contained no shipped CLAP provider or generic-sound
-capability. CLAP appears in the later landscape/roadmap research, not in the
-application implementation history, so it was not removed by the VideoPrism
-change. This branch now implements the missing layer with FineLAP; LAION-CLAP
-remains the mature comparison rather than the production provider.
+- VideoPrism action records contain 16 frames sampled at 2 frames per second,
+  producing non-overlapping intervals of about eight seconds;
+- scene records contain frames sampled at 1 frame per second;
+- FineLAP supplies global sound windows and dense timestamped activations; and
+- faster-whisper plus Qwen3 text embeddings supply timestamped speech evidence.
 
-VideoPrism is different: it is a current, separately registered temporal-video
-capability using `google/videoprism-lvt-base-f16r288` through Transformers. The
-new model direction keeps that implementation as the incumbent control while
-testing whether Qwen3-VL-Embedding improves text-to-video scene/action retrieval.
+Fusion groups every overlapping hit into a connected component, scores the
+component with reciprocal rank fusion, and returns the union from the earliest
+start to the latest end. A relevant coarse action hit can therefore expand a
+more precise sound or speech interval. Ranking and boundary accuracy are
+separate properties: a correct top candidate can still have avoidably poor IoU.
 
-## How models are selected
+## Separate the architectural questions
 
-Published benchmark tables, release history, licensing, adoption, artifact
-format, and runtime size are sufficient to choose the first integration
-candidates. VidXP does not need to spend model or agent runs recreating public
-leaderboards before implementation.
-
-Local evaluation has a narrower purpose: verify preprocessing, timestamps,
-memory, latency, index size, failure behavior, and regressions in this repository.
-It does not substitute a tiny private sample for broad published comparisons.
-Promptfoo is therefore not required for component-model selection. It is the
-selected runner for the separate [Codex MCP-on/MCP-off agent
-ablation](agent_ablation.md), where paired task execution, repetitions, traces,
-and usage accounting are part of the question. VidXP's Python benchmark code
-continues to own dataset preparation and deterministic temporal scoring.
-
-## Current provider direction
-
-| Role | First direction | Control or ceiling | Reason |
+| Layer | Question | Relevant research | What the evidence supports |
 | --- | --- | --- | --- |
-| Speech transcription and semantic search | Keep faster-whisper plus the current Qwen3 text-embedding path | Existing released-ASR benchmark paths | Speech and acoustic-event retrieval are different tasks; MAEB shows that no single audio encoder dominates linguistic and environmental-sound work. |
-| Environmental-sound retrieval | [FineLAP](https://github.com/xiquan-li/FineLAP), now integrated | [LAION-CLAP](https://github.com/LAION-AI/CLAP) as the mature native-Transformers baseline | FineLAP combines global audio-text retrieval with dense frame features and leads the checked same-table AudioCaps comparison. VidXP supplies fixed ten-second windowing and timestamped dense records. |
-| Open-vocabulary sound localization | FineLAP dense features, now stored; compare [PE-A-Frame](https://github.com/facebookresearch/perception_models) | AEGBench methods as research ceilings | Clip retrieval alone cannot identify exact sound intervals, especially repeated or overlapping events. FineLAP integration does not establish boundary quality until AEGBench or LongVALE is run. |
-| Visual scene/action retrieval | Evaluate [Qwen3-VL-Embedding-2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B) as the practical candidate | Qwen3-VL-Embedding-8B as the quality ceiling; VideoPrism as the incumbent control | MVEB's text-video table ranks Qwen 8B and 2B first and second. The checked table has no directly comparable VideoPrism row, so this is stronger current selection evidence, not proof that VideoPrism lost a head-to-head. |
-| Visual temporal grounding | Evaluate [TimeLens2-4B](https://github.com/MCG-NJU/TimeLens2) after candidate retrieval | TimeLens2-8B and existing temporal baselines | The published 4B average nearly matches 8B at much lower cost. TimeLens2 is visual-only and cannot replace the sound or speech channels. |
-| Cross-modal fusion | Keep modality-specific providers and fuse timestamped candidates | A unified permissive audio-video-text encoder can be a later comparison | Separate providers preserve provenance, allow independent upgrades, and match the evidence that different model families lead different modalities and tasks. |
-| Query planning and answer synthesis | [Qwen3.5 4B](https://huggingface.co/Qwen/Qwen3.5-4B) through official Ollama `qwen3.5:4b-q4_K_M` | Qwen3.5 9B as a higher-memory comparison | The 4B model has strong published instruction-following and agent results while its official Q4_K_M artifact is approximately 3.4 GB, about half the 9B artifact. VidXP needs bounded schema generation over retrieved evidence, not a second retrieval encoder. |
-| Future media evidence enrichment | Reuse Qwen3.5 vision for selected keyframes before adding another model | Evaluate an audio-video model only for top uncitable sound/action hits | The current adapter sends JSON evidence, so multimodal model support alone changes nothing. Media inputs must remain timestamp-bound derived evidence and must not replace FineLAP, scene, action, or speech retrieval. |
+| Temporal representation | Should candidates be fixed clips, dense frames, shots, scenes, or learned proposals? | LGSS, ShotCoL, BaSSL, NeighborNet, and the Prime Video funny-scene system | Shot-aware semantic units are an established alternative to arbitrary fixed windows, especially for edited long-form video. Scene boundaries alone do not locate brief events inside a scene. |
+| Candidate selection | Which evidence should a query send to a downstream model? | BOLT and adaptive-keyframe work | Query-conditioned sampling improves long-video VQA under a frame budget. BOLT selects frames; it does not predict an event interval. Its pre-extracted frame features are still an offline feature store. |
+| Interval prediction | How should start and end times be inferred? | Moment-DETR, UMT, QD-DETR, and UniVTG | Query-conditioned models directly predict moments or boundary scores. UMT and QD-DETR include audio on QVHighlights; this is not a visual-only research problem. |
+| Multimodal combination | Should modalities remain separate, interact before prediction, or use one model? | UMT, QD-DETR, AVicuna, LongVALE, and modality-specific systems | Late fusion is a transparent control, not a settled product direction. Learned audiovisual interaction is established, but available implementations vary in training assumptions and local-runtime fit. |
+| Answer synthesis | Should a language model inspect selected evidence? | BOLT and long-video VLM work | A language model may explain or verify timestamp-bound evidence. It must not invent boundaries that the retrieval/localization path cannot support. |
 
-Before promotion, every new checkpoint still needs an immutable revision, artifact
-hash, license review, safe-loading review, dependency fit, and a bounded real-media
-smoke test.
+These layers can be combined. Selecting a frame sampler does not select a
+boundary model, and selecting a scene detector does not select a fusion rule.
 
-## Published selection evidence
+## Maturity and applicability
 
-Scores are comparable only within the named paper and task.
+| Work | Maturity and artifacts | Direct use for VidXP | Important limit |
+| --- | --- | --- | --- |
+| [LGSS](https://openaccess.thecvf.com/content_CVPR_2020/html/Rao_A_Local-to-Global_Approach_to_Multi-Modal_Movie_Scene_Segmentation_CVPR_2020_paper.html), [ShotCoL](https://openaccess.thecvf.com/content/CVPR2021/html/Chen_Shot_Contrastive_Self-Supervised_Learning_for_Scene_Boundary_Detection_CVPR_2021_paper.html), [BaSSL](https://github.com/kakaobrain/bassl), and [NeighborNet](https://openaccess.thecvf.com/content/CVPR2024/html/Tan_Neighbor_Relations_Matter_in_Video_Scene_Detection_CVPR_2024_paper.html) | Peer-reviewed 2020–2024 lineage; multiple code releases and public scene benchmarks | Compare fixed action clips with shot- or scene-aligned candidates | Movie-scene segmentation is not arbitrary natural-language moment grounding. |
+| [Moment-DETR](https://github.com/jayleicn/moment_detr), [UMT](https://github.com/TencentARC/UMT), [QD-DETR](https://github.com/wjun0830/QD-DETR), and [UniVTG](https://github.com/showlab/UniVTG) | Peer-reviewed 2021–2023 work with official code and checkpoints | Established interval-prediction controls; UMT/QD-DETR test audiovisual input | Most checkpoints are target-trained and use older CUDA-oriented environments. Published scores are not zero-shot VidXP expectations. |
+| [BOLT](https://github.com/sming256/BOLT) | CVPR 2025 with official MIT-licensed code; recent and lightly maintained | Compare query-aware frame selection with uniform sampling | Evaluated on video question answering, not temporal IoU; no start/end output. |
+| [Automatic Funny Scene Extraction](https://ojs.aaai.org/index.php/AAAI/article/view/41480) | IAAI 2026 applied system; scene-localization modules reported operational at Prime Video; no public end-to-end code or checkpoint found | Evidence for shot detection, multimodal scene construction, then task-specific ranking | Its 98% localization figure is curator judgment of proper scene endings on five movies, not query-conditioned IoU. Humor classification does not generalize automatically to open queries. |
+| [TimeLens2](https://github.com/MCG-NJU/TimeLens2) | arXiv 2026 with released 2B/4B/8B checkpoints; too recent for independent maturity | Recent visual temporal-grounding ceiling | Visual-only and materially heavier than established interval baselines; not selected as the default. |
+| [AVicuna](https://ojs.aaai.org/index.php/AAAI/article/view/32784) | AAAI 2025 audiovisual temporal model trained on 114,081 pseudo-untrimmed examples | Evidence that a unified model can align audiovisual events and intervals | A trained 7B-class stack is not a drop-in commodity-hardware replacement. |
 
-| Source and task | Relevant result | Decision use |
+The funny-scene result belongs to a broader multimodal-humor lineage. FunnyNet
+(ACCV 2022) and FunnyNet-W (IJCV 2024) found that audio provides important cues
+for funny-moment detection. Those findings support retaining acoustic evidence;
+they do not establish a general retrieval architecture.
+
+## Current component status
+
+| Capability | Current control | Candidate evidence | Decision status |
+| --- | --- | --- | --- |
+| Speech | faster-whisper plus Qwen3 text embeddings | Released ASR and transcript-retrieval benchmarks | Retain as the control; speech and environmental sound remain distinct evidence types. |
+| Environmental sound | FineLAP global and dense features | LAION-CLAP as a mature retrieval control; PE-A-Frame and AEGBench for boundaries | Implementation exists, but quality and boundary claims remain pending. |
+| Visual retrieval | VideoPrism action clips and SigLIP2 scene frames | MVEB places Qwen3-VL-Embedding highly, but does not compare VideoPrism | Qwen is a candidate, not a selected replacement. Run the same retrieval protocol before changing providers. |
+| Temporal units | Fixed action clips plus one-second scene records | Shot/scene segmentation and denser query-aware proposals | Open. Existing indexes do not have to be retained if another representation wins on quality and resource use. |
+| Boundary inference | Connected-component interval union | Shot-aware proposals and query-conditioned interval models | Open. Do not tune union thresholds before measuring the interval ceiling of the stored evidence. |
+| Fusion | Provenance-preserving reciprocal rank fusion | Learned audio-visual interaction or query-conditioned boundary scoring | Retain as the transparent control only. Provenance must survive any replacement. |
+| Planner and synthesis | Structured evidence passed to the configured agent/model | Smaller local planners or selected media verification | Evaluate separately from retrieval. Agent prose cannot substitute for temporal evidence. |
+
+## Decision measurements
+
+Evaluate alternatives on identical media, queries, ground truth, and output
+rules. Report:
+
+- mean IoU and R@1 at tIoU 0.3, 0.5, and 0.7;
+- absolute start error, end error, and duration error;
+- candidate recall before boundary refinement and final top-k relevance;
+- indexing or preprocessing time, stored bytes, query latency, and peak memory;
+- results by modality and for genuinely joint queries; and
+- artifact license, pinned revision, operating-system support, and failure mode.
+
+Published tables guide candidate selection only when the task, inputs, output
+unit, training regime, and split match. A high whole-video retrieval score does
+not prove timestamp quality. A high VQA score does not prove retrieval. A
+target-trained temporal score is a ceiling, not a direct zero-shot comparison.
+
+## Bounded decision sequence
+
+1. Measure the best interval IoU representable by the current raw hits. This
+   distinguishes a representation ceiling from a ranking or fusion defect.
+2. Compare the current fixed units with shot-aligned, scene-aligned, and denser
+   candidates on the same development examples. Do not change the production
+   index format for this probe.
+3. If suitable candidates exist but their boundaries remain poor, compare an
+   established query-conditioned interval method before a recent multi-billion-
+   parameter model.
+4. Compare late fusion with audiovisual interaction only after the candidate
+   and boundary stages are measured separately.
+5. Promote a new architecture only after a bounded local runtime check and a
+   benchmark whose protocol matches the claimed behavior.
+
+The current Codex MCP smoke is diagnostic development data. It shows that the
+agent used the skill and MCP successfully and returned relevant evidence, but
+one paired task cannot select an architecture or support a LongVALE claim.
+
+## Benchmark roles and execution policy
+
+| Benchmark | Decision use | Does not establish |
 | --- | --- | --- |
-| [FineLAP, AudioCaps retrieval](https://aclanthology.org/2026.acl-long.473/) | FineLAP T→A/A→T R@1: 45.7/62.5; the paper's LAION-CLAP row: 35.1/44.2 | Select FineLAP for the first sound integration and retain CLAP as the mature control. |
-| [MVEB text-video leaderboard](https://arxiv.org/abs/2606.14958) | Qwen3-VL-Embedding-8B: 60.9 mean; 2B: 58.1; LCO-Embedding-Omni-7B: 56.8 | Prefer Qwen 2B for the practical visual candidate and 8B only when maximizing published quality. |
-| [TimeLens2 visual grounding](https://github.com/MCG-NJU/TimeLens2) | Seven-dataset average mIoU: 47.7 for 4B and 48.0 for 8B | Start with 4B; the 0.3-point gain does not justify making 8B the default candidate. |
-| [AEGBench](https://arxiv.org/abs/2607.04383) | PE-A-Frame Large: 0.389 mIoU, 0.407 event-F1, 0.607 segment-F1 in the checked table | Use a released specialist to test exact open-vocabulary sound intervals. |
-| [Qwen3.5 4B model card](https://huggingface.co/Qwen/Qwen3.5-4B) | Vendor-reported MMLU-Pro 79.1, IFEval 89.8, BFCL-V4 50.3, and TAU2-Bench 79.9; native 262,144-token context | Select the first local planner/synthesizer from published quality evidence; validate only schema retention, grounding, resource use, and failure behavior in VidXP. |
-| [Official Ollama Q4_K_M artifact](https://ollama.com/library/qwen3.5:4b-q4_K_M) | 4.66B parameters, Q4_K_M, approximately 3.4 GB, Apache-2.0 | Use the official cross-platform build and an explicit pull instead of bundling weights or relying on a community conversion. |
+| MAEB and MVEB | Broad component-embedding context | Long-video interval quality or VidXP system behavior |
+| OVSD and MovieNet scene segmentation | Temporal-unit and scene-boundary regression | Natural-language moment retrieval or multimodal fusion |
+| QVHighlights, Charades-STA, and related grounding sets | Query-conditioned interval and highlight evaluation | Generic zero-shot transfer unless the exact training regime says so |
+| AEGBench | Environmental-sound interval quality | Visual or speech retrieval |
+| LongVALE | Combined vision, sound, and speech temporal grounding | Actor clustering or unmeasured production performance |
+| Codex MCP ablation | End-to-end agent workflow, tool use, latency, and usage | Component-model leaderboard or full LongVALE result |
 
-VideoPrism remains a credible multi-frame video encoder. The decision above does
-not reject it on quality. It rejects two unsupported claims: that implementation
-friction still blocks it, and that it is automatically the first text-video
-retrieval pick despite being absent from the current common MVEB comparison.
-
-## What each dataset or benchmark contributes
-
-| Dataset or benchmark | Use in VidXP | Does not establish |
-| --- | --- | --- |
-| [MAEB](https://arxiv.org/abs/2602.16008) | Broad audio-embedding selection across speech, music, environmental sound, and audio-text tasks | Long-video timestamp accuracy or end-to-end VidXP quality |
-| [MVEB](https://arxiv.org/abs/2606.14958) | Common video-embedding selection across retrieval and other representation tasks, including paired video-only and audio-plus-video variants | A direct VideoPrism comparison, unrestricted temporal localization, or system latency |
-| [AEGBench](https://arxiv.org/abs/2607.04383) | Open-vocabulary environmental-sound interval grounding, including difficult and repeated events | Visual or speech retrieval |
-| [LongVALE](https://github.com/ttgeng233/LongVALE) | Primary combined target: Omni-TVG for vision, sound, and speech event localization in long videos | Actor clustering; its captioning tasks are relevant only if VidXP claims generation |
-| [FLARE](https://flarebench.github.io/) | Secondary long-video retrieval stress test with visual-only, audio-only, and hard joint queries | Human-authored-query generalization; the queries are model-generated and filtered |
-| [OVSD](https://research.ibm.com/publications/robust-and-efficient-video-scene-detection-using-optimal-sequential-grouping) | Open-licensed scene-boundary segmentation data and a useful temporal-unit regression set | Natural-language retrieval, action recognition, environmental-sound search, speech search, or cross-modal fusion |
-| [MultiVENT 2.0](https://huggingface.co/datasets/hltcoe/MultiVENT2.0) | Large-corpus event retrieval for visual, ASR, OCR, and metadata channels | Generic acoustic-event retrieval or moment boundaries |
-
-LongVALE supplies three tasks: omni-modal temporal grounding, dense video
-captioning, and segment captioning. Omni-TVG directly matches VidXP's search and
-timestamp contract. The two captioning tasks should not be adopted merely because
-they share the dataset.
-
-## Remaining benchmark gap
-
-A generic centralized audio or video embedding leaderboard is not new white
-space: MAEB and MVEB already provide that infrastructure in the MTEB ecosystem,
-and AEGBench, LongVALE, and FLARE cover adjacent temporal and multimodal slices.
-
-The defensible gap is narrower: a live, reproducible long-video system benchmark
-that combines scene/action, environmental-sound, and speech queries; scores both
-retrieval and exact boundaries; includes modality-isolation and fusion ablations;
-uses realistic queries; and reports latency, memory, index size, and
-commodity-hardware behavior. If VidXP publishes this, it should extend or
-interoperate with the MTEB/MOEB ecosystem instead of creating an isolated model
-leaderboard.
-
-## Cost and execution policy
-
-Reading published papers, leaderboards, model cards, and open benchmark metadata
-does not consume Codex, Claude, or model-inference runs. Downloading and running
-open checkpoints locally normally has no per-call API charge, but it does consume
-the machine's storage, memory, electricity, and time; dataset and checkpoint
-licenses can also restrict use.
-
-Metered model or agent comparisons are not part of the selection gate. Spend
-local compute only after the provider exists, using the smallest smoke that can
-catch integration defects. Schedule full MAEB, MVEB, LongVALE, FLARE, or AEGBench
-runs only when their result answers an approved paper or release question.
-
-## Implementation order
-
-1. Validate the implemented FineLAP sound capability on a bounded real-media
-   sample, then run the LongVALE one-archive adapter pilot.
-2. Compare LAION-CLAP as the mature integration baseline and PE-A-Frame where
-   boundary quality requires a specialist.
-3. Add or replace the visual video-embedding provider with
-   Qwen3-VL-Embedding-2B while keeping current and VideoPrism controls.
-4. Add TimeLens2-4B only after cheap candidate retrieval, for visual temporal
-   proposal or reranking work.
-5. Run LongVALE Omni-TVG and FLARE with all three evidence channels and frozen
-   fusion. Keep OVSD as a scene-boundary component test.
+Reading papers and inspecting open artifacts does not consume model inference.
+Running local checkpoints consumes storage, memory, electricity, and time.
+Metered agent runs require explicit approval. Full benchmark runs follow only
+after the bounded diagnostic identifies a decision that the run can resolve.

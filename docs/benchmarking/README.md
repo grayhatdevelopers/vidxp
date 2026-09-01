@@ -17,8 +17,8 @@ installation and product usage, start with the main
 | DiDeMo visual localization | Legacy full result + current smoke | The legacy CLIP stack completed 4,021 official test queries over 1,037 videos; the current SigLIP2 stack passed a one-annotation real execution smoke |
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
 | Environmental-sound retrieval | Implementation complete; benchmark pending | FineLAP stores global ten-second windows and dense timestamped sound activations; no VidXP quality score is claimed yet |
-| LongVALE combined evaluation | Next adapter and pilot | Validate vision, environmental sound, and speech together on one evaluation archive before scheduling the full run |
-| Codex MCP ablation | Runnable scaffold; not run | Promptfoo pairs the same Codex video tasks with and without VidXP MCP; no agent result is claimed yet |
+| LongVALE combined evaluation | Diagnostic before pilot | Measure whether current temporal units can represent the expected intervals before changing fusion or scheduling the held-out pilot |
+| Codex MCP ablation | Development smoke recorded | One paired task verified the harness and exposed a boundary-quality gap; the 54-run held-out pilot has not run |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
 
 Read [current results](results.md) for the scores, plain-language metric
@@ -53,13 +53,16 @@ together.
 The retained full DiDeMo and HiREST results establish separate legacy-provider
 visual and transcript baselines. Current SigLIP2 and Qwen3 checks establish
 adapter/runtime compatibility only; they do not yet provide full-corpus quality
-comparisons. VidXP now contributes separate visual, speech, and FineLAP sound
-evidence, including global windows and dense timestamps for music, alarms,
-barking, and other non-speech events. The next target is the LongVALE adapter and
-one-archive pilot. That work must measure the integration before any VidXP sound
-quality or combined-system claim is made. The
-[current model direction](model_selection.md) records the selection evidence and
-remaining controls.
+comparisons. VidXP now contributes visual, speech, and FineLAP sound evidence,
+including global windows and dense timestamps for non-speech events.
+
+The first Codex MCP development pair found the requested event in both
+conditions, while VidXP returned the coarser interval. Before the held-out
+LongVALE-derived pilot, measure whether that error is imposed by the indexed
+temporal units, the connected-component union, or both. Do not select a new
+model from one agent run. The [current model direction](model_selection.md)
+separates temporal representation, candidate selection, boundary inference,
+and multimodal combination so each can be evaluated independently.
 
 ## Evidence rules
 

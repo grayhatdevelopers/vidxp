@@ -74,11 +74,13 @@ checked 2026-08-27.
 
 | Checkpoint | Seven-dataset average mIoU | Selection use |
 | --- | ---: | --- |
-| TimeLens2-4B | 47.7 | First visual temporal-grounding candidate after cheap recall |
+| TimeLens2-4B | 47.7 | Recent visual temporal-grounding ceiling; no default selection without task-fit and runtime comparison |
 | TimeLens2-8B | 48.0 | Quality ceiling; not the practical default for a 0.3-point gain |
 
 Both checkpoints are visual-only. Neither evaluates environmental audio or spoken
-content, so neither can cover LongVALE's full task alone.
+content, so neither can cover LongVALE's full task alone. These results make
+TimeLens2 a recent ceiling; they do not select it over older, smaller, released
+temporal-grounding systems for VidXP.
 
 ### AEGBench: open-vocabulary sound boundaries
 
@@ -94,6 +96,23 @@ AEGBench contains 3,427 items and 9,790 queries with multiple hard-case labels,
 including repeated occurrence, polyphonic overlap, gradual boundaries, and long
 duration. It is a component benchmark, not evidence of end-to-end visual/sound/
 speech fusion.
+
+### Do not compare frame selection, scene endings, and interval IoU
+
+Three relevant research lines report different outputs and metrics:
+
+| Work | Reported result | Correct interpretation |
+| --- | --- | --- |
+| [BOLT](https://openaccess.thecvf.com/content/CVPR2025/html/Liu_BOLT_Boost_Large_Vision-Language_Model_Without_Training_for_Long-form_Video_CVPR_2025_paper.html) | The paper reports Video-MME accuracy increasing from 53.8 to 56.1 and MLVU from 58.9 to 63.4 under query-aware frame selection | VQA accuracy under a frame budget. BOLT returns selected frames, not an event interval, so these numbers cannot be compared with temporal IoU. |
+| [Automatic Funny Scene Extraction](https://ojs.aaai.org/index.php/AAAI/article/view/41480) | 18.3% relative AP improvement on OVSD, humor F1 0.834, 87% intended-funny curator judgment, and 98% proper scene localization on five full titles | Evidence for an applied shot-to-scene-to-ranking pipeline. The 98% is curator judgment of whether extracted scenes ended properly, not overlap with arbitrary natural-language intervals. |
+| [Off-the-Shelf VMR](https://proceedings.mlr.press/v203/diwan23a.html) | On its released 1,434-video QVHighlights validation subset, ShotDetect + CLIP + SimpleWatershed reaches R1@.5 48.33 and R1@.7 30.96 | Direct evidence that proposal construction changes zero-shot moment retrieval. It is subset-specific and has no official end-to-end release. |
+
+The established scene-segmentation papers and the query-conditioned grounding
+papers answer different questions. LGSS, ShotCoL, BaSSL, and NeighborNet assess
+whether adjacent shots form coherent scenes. Moment-DETR, UMT, QD-DETR, and
+UniVTG assess whether a query identifies one or more moments. UMT and QD-DETR
+also evaluate aligned audio features; visual-only grounding is not the only
+published design.
 
 ## Whole-system and multimodal retrieval
 

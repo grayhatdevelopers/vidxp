@@ -2,9 +2,9 @@
 
 Collection index: [Benchmarking research](README.md)
 
-Status: Runnable scaffold; no agent results recorded
+Status: Development smoke recorded; held-out pilot not run
 
-Last verified: 2026-09-01
+Last verified: 2026-09-02
 
 This experiment measures whether the complete VidXP agent integration improves
 a Codex agent's ability to find timestamped evidence in long videos. The
@@ -187,15 +187,23 @@ nine tasks in two conditions with three repetitions: 54 Codex runs total.
 ```
 
 Both commands finish with a comparison of pass counts, temporal IoU, recall at
-each IoU threshold, elapsed time, token usage, estimated cost, skill loading,
-and MCP or direct-media tool calls. Print the latest saved comparison again,
-without inference, with:
+each IoU threshold, boundary errors, elapsed time, token usage, estimated cost,
+skill loading, and MCP or direct-media tool calls. Token reporting separates
+total input, cached input, uncached input, output, and reasoning tokens. Reasoning
+is included in output. The provider estimate may charge cached and uncached
+input differently, so total-token ordering does not have to match estimated-cost
+ordering.
+
+Print the latest saved comparison again, without inference, with:
 
 ```bash
 ./benchmarks/codex-mcp/run results
 ```
 
-Add `--all` to include every per-run interval in a full pilot report.
+Add `--all` to include every per-run interval in a full pilot report. Add
+`--responses` to print each final answer, returned modalities, source job, and
+evidence count. The report also shows total agent items, all tool calls, VidXP
+MCP calls, shell calls, and the FFmpeg/ffprobe subset.
 
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:
@@ -221,6 +229,10 @@ Promptfoo reports usage, but it cannot determine the remaining ChatGPT-plan
 allowance or convert subscription-authenticated runs into an exact dollar
 charge; use the Codex account usage display for that limit.
 
+The recorded development pair is summarized in
+[Benchmark results](results.md#codex-mcp-development-smoke). It is retained to
+diagnose the harness and current temporal behavior, not as held-out evidence.
+
 ## Scoring and interpretation
 
 Each response must identify one interval. The deterministic scorer records
@@ -234,7 +246,8 @@ by that job. Report at least:
 
 - success rate and mean IoU by condition;
 - results by scene, action, sound, speech, and joint-modality task;
-- token usage, latency, failures, and retries;
+- input/cached/uncached/output/reasoning token usage, provider-estimated cost,
+  latency, failures, and requests;
 - skill and VidXP MCP tool trajectories for VidXP-on;
 - indexing time, index size, model preparation, and machine details; and
 - every excluded or failed task.
