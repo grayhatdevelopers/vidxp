@@ -13,7 +13,7 @@
     "check": "node scripts/require-node.mjs && node --env-file-if-exists=.env node_modules/promptfoo/dist/src/entrypoint.js validate -c promptfooconfig.yaml",
     "preflight": "node --env-file=.env scripts/preflight.mjs",
     "eval:smoke": "npm run preflight && npm run promptfoo -- eval -c promptfooconfig.yaml --filter-first-n 2 --repeat 1 --no-cache --no-share",
-    "eval:pilot": "npm run preflight && npm run promptfoo -- eval -c promptfooconfig.yaml --repeat 3 --no-cache --no-share",
+    "eval:pilot": "npm run preflight && npm run promptfoo -- eval -c promptfooconfig.yaml --filter-range 2: --repeat 3 --no-cache --no-share",
     "view": "npm run promptfoo -- view"
   },
   "devDependencies": {

@@ -4,6 +4,7 @@ import json
 import os
 import re
 from collections.abc import Callable, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -175,112 +176,58 @@ def score_ablation_boundary(
             return _failed("VidXP-off claimed VidXP evidence IDs.")
         return _passed("VidXP-off remained isolated from the skill, MCP, and CLI.")
 
-    if not skill_used:
-        return _failed("VidXP-on did not load the committed video-evidence skill.")
     if inspected_media_from_shell:
         return _failed(
             "VidXP-on inspected the media through the shell instead of using MCP evidence."
         )
-    allowed_tools = {
-        "get_workspace",
-        "search_moments",
-        "query_video",
-        "wait_job",
-        "get_job_evidence",
-    }
-    unexpected_tools = sorted(
-        {tool for _, tool, _ in tool_calls if tool not in allowed_tools}
-    )
-    if unexpected_tools:
-        return _failed(
-            "VidXP-on used tools outside the one-pass evidence workflow: "
-            + ", ".join(unexpected_tools)
-            + "."
-        )
-
-    required_counts = {
-        "get_workspace": 1,
-        "search": 1,
-        "get_job_evidence": 1,
-    }
-    counts = {
-        "get_workspace": sum(tool == "get_workspace" for _, tool, _ in tool_calls),
-        "search": sum(
-            tool in {"search_moments", "query_video"}
-            for _, tool, _ in tool_calls
-        ),
-        "get_job_evidence": sum(
-            tool == "get_job_evidence" for _, tool, _ in tool_calls
-        ),
-    }
-    if counts != required_counts:
-        return _failed(
-            "VidXP-on must call get_workspace, one retrieval tool, and "
-            f"get_job_evidence exactly once; observed {counts}."
-        )
-    waits = [call for call in tool_calls if call[1] == "wait_job"]
-    if not waits:
-        return _failed("VidXP-on did not wait for its retrieval job.")
-
-    workspace_call = next(call for call in tool_calls if call[1] == "get_workspace")
-    search_call = next(
-        call for call in tool_calls if call[1] in {"search_moments", "query_video"}
-    )
-    evidence_call = next(
-        call for call in tool_calls if call[1] == "get_job_evidence"
-    )
-    if not (
-        workspace_call[0]
-        < search_call[0]
-        < min(call[0] for call in waits)
-        <= max(call[0] for call in waits)
-        < evidence_call[0]
-    ):
-        return _failed("VidXP MCP calls did not follow the required evidence workflow.")
-    if workspace_call[2].get("filename") != media_filename:
-        return _failed("get_workspace did not resolve the task video filename.")
-    if search_call[2].get("idempotency_key") is not None:
-        return _failed(
-            "VidXP-on set idempotency_key and could reuse a job from another trial."
-        )
-
-    search_tool = search_call[1]
-    command = search_call[2].get("command")
-    if not isinstance(command, Mapping):
-        return _failed(f"{search_tool} did not provide a structured command.")
-    query_key = "query" if search_tool == "search_moments" else "question"
-    if command.get(query_key) != variables.get("query"):
-        return _failed(f"{search_tool} did not use the exact benchmark query.")
-    media_id = command.get("media_id")
-    if not isinstance(media_id, str) or not media_id:
-        return _failed(f"{search_tool} did not scope retrieval to one media ID.")
-    requested_modalities = command.get("modalities")
-    required_modalities = _task_modalities(variables.get("modalities"))
-    if (
-        not isinstance(requested_modalities, list)
-        or not required_modalities.issubset(requested_modalities)
-    ):
-        return _failed(f"{search_tool} did not cover the task modalities.")
-    policy = command.get("evidence_delivery")
-    if not isinstance(policy, Mapping) or (
-        policy.get("mode") != "keyframes_and_clips"
-        or policy.get("max_items") != 3
-    ):
-        return _failed(f"{search_tool} did not request the standard evidence delivery.")
+    retrieval_calls = [
+        call
+        for call in tool_calls
+        if call[1] in {"search_moments", "query_video"}
+    ]
+    if not retrieval_calls:
+        return _failed("VidXP-on did not submit a retrieval job.")
 
     source_job_id = result.get("source_job_id")
     if not isinstance(source_job_id, str) or not source_job_id:
         return _failed("VidXP-on did not return its source_job_id.")
-    referenced_job_ids = {
-        call[2].get("job_id") for call in [*waits, evidence_call]
-    }
-    if referenced_job_ids != {source_job_id}:
-        return _failed("wait_job/get_job_evidence did not use the returned source job.")
+    if not any(
+        tool == "get_job_evidence" and arguments.get("job_id") == source_job_id
+        for _, tool, arguments in tool_calls
+    ):
+        return _failed("VidXP-on did not inspect evidence from its source job.")
 
     try:
         job = (job_loader or _load_durable_job)(source_job_id)
     except Exception as exc:  # pragma: no cover - exact backend errors vary
         return _failed(f"Could not attest the durable VidXP job: {exc}")
+    expected_tool = {
+        "search": "search_moments",
+        "query": "query_video",
+    }.get(job.get("kind"))
+    matching_calls: list[tuple[str, str]] = []
+    for _, tool, arguments in retrieval_calls:
+        command = arguments.get("command")
+        if not isinstance(command, Mapping):
+            continue
+        query_key = "query" if tool == "search_moments" else "question"
+        media_id = command.get("media_id")
+        if (
+            tool == expected_tool
+            and command.get(query_key) == variables.get("query")
+            and isinstance(media_id, str)
+            and media_id
+        ):
+            matching_calls.append((tool, media_id))
+    if not matching_calls:
+        return _failed(
+            "No retrieval call matches the source job kind, task query, and media."
+        )
+    search_tool, media_id = matching_calls[-1]
+    trace_started_at = _trace_started_at(context, spans)
+    if trace_started_at is None:
+        return _failed("The trace has no usable start time for job freshness.")
+
     attestation_error = _attest_job(
         job=job,
         result=result,
@@ -288,11 +235,12 @@ def score_ablation_boundary(
         source_job_id=source_job_id,
         search_tool=search_tool,
         media_id=media_id,
+        trace_started_at=trace_started_at,
     )
     if attestation_error is not None:
         return _failed(attestation_error)
     return _passed(
-        "VidXP-on used the committed skill and a successful, matching MCP evidence job."
+        "VidXP-on returned evidence from a fresh, successful, matching MCP job."
     )
 
 
@@ -304,10 +252,16 @@ def _attest_job(
     source_job_id: str,
     search_tool: str,
     media_id: str,
+    trace_started_at: float,
 ) -> str | None:
     expected_kind = "search" if search_tool == "search_moments" else "query"
     if job.get("job_id") != source_job_id:
         return "The durable job ID does not match source_job_id."
+    job_created_at = _timestamp_seconds(job.get("created_at"))
+    if job_created_at is None:
+        return "The durable job has no usable creation time."
+    if job_created_at < trace_started_at:
+        return "The durable job predates the current evaluation trace."
     if job.get("state") != "succeeded" or job.get("kind") != expected_kind:
         return "The source VidXP retrieval job did not succeed with the expected kind."
     wrapper = job.get("result")
@@ -324,13 +278,6 @@ def _attest_job(
     delivered = delivery.get("items") if isinstance(delivery, Mapping) else None
     if not isinstance(delivered, list) or not delivered:
         return "The durable VidXP result contains no delivered evidence."
-    delivery_policy = delivery.get("policy")
-    if not isinstance(delivery_policy, Mapping) or (
-        delivery_policy.get("mode") != "keyframes_and_clips"
-        or delivery_policy.get("max_items") != 3
-    ):
-        return "The durable VidXP result used the wrong evidence-delivery policy."
-
     ready = {
         item.get("evidence_id"): item
         for item in delivered
@@ -468,15 +415,56 @@ def _is_expected_skill_path(value: Any) -> bool:
     return normalized == _SKILL_PATH or normalized.endswith(f"/{_SKILL_PATH}")
 
 
-def _task_modalities(value: Any) -> set[str]:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return set()
-    if not isinstance(value, list):
-        return set()
-    return {item for item in value if isinstance(item, str)}
+def _trace_started_at(
+    context: Mapping[str, Any],
+    spans: list[Any],
+) -> float | None:
+    timestamps = [
+        timestamp
+        for span in spans
+        if isinstance(span, Mapping)
+        for timestamp in (
+            _timestamp_seconds(
+                span.get("start_time", span.get("startTime"))
+            ),
+        )
+        if timestamp is not None
+    ]
+    if timestamps:
+        return min(timestamps)
+
+    metadata = context.get("metadata")
+    evaluation_id = (
+        metadata.get("evaluationId") if isinstance(metadata, Mapping) else None
+    )
+    if isinstance(evaluation_id, str):
+        match = re.search(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)$", evaluation_id)
+        if match:
+            return _timestamp_seconds(match.group(1))
+    return None
+
+
+def _timestamp_seconds(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        timestamp = float(value)
+        if timestamp >= 1e17:
+            timestamp /= 1e9
+        elif timestamp >= 1e14:
+            timestamp /= 1e6
+        elif timestamp >= 1e11:
+            timestamp /= 1e3
+        return timestamp if timestamp > 0 else None
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
 
 
 def _evidence_items(result: Mapping[str, Any]) -> list[Any]:

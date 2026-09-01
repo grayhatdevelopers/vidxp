@@ -113,9 +113,11 @@ def _ablation_fixture() -> tuple[str, dict, dict]:
                     },
                 },
                 _tool_span("get_workspace", {"filename": "video-1.mp4"}),
+                _tool_span("list_media", {"filename": "video-1.mp4"}),
                 _tool_span(
                     "search_moments",
                     {
+                        "idempotency_key": "fresh-search-0001",
                         "command": {
                             "media_id": "media-1",
                             "query": "the event",
@@ -136,6 +138,7 @@ def _ablation_fixture() -> tuple[str, dict, dict]:
         "job_id": job_id,
         "kind": "search",
         "state": "succeeded",
+        "created_at": "2026-09-02T00:00:10Z",
         "result": {
             "kind": "search",
             "result": {
@@ -177,6 +180,7 @@ def _ablation_fixture() -> tuple[str, dict, dict]:
 def _tool_span(name: str, arguments: dict) -> dict:
     return {
         "name": f"mcp vidxp/{name}",
+        "startTime": 1_788_307_200_000_000_000,
         "attributes": {
             "codex.mcp.server": "vidxp",
             "codex.mcp.tool": name,
@@ -223,25 +227,18 @@ def test_ablation_boundary_rejects_failed_job_or_shell_fallback() -> None:
     assert "through the shell" in fallback["reason"]
 
 
-def test_ablation_boundary_rejects_reusable_retrieval_job() -> None:
+def test_ablation_boundary_rejects_job_from_an_earlier_trace() -> None:
     output, context, job = _ablation_fixture()
-    search_span = next(
-        span
-        for span in context["trace"]["spans"]
-        if span.get("attributes", {}).get("codex.mcp.tool") == "search_moments"
-    )
-    arguments = json.loads(search_span["attributes"]["codex.mcp.input"])
-    arguments["idempotency_key"] = "reused-across-trials"
-    search_span["attributes"]["codex.mcp.input"] = json.dumps(arguments)
+    stale_job = {**job, "created_at": "2026-09-01T23:59:59Z"}
 
     result = score_ablation_boundary(
         output,
         context,
-        job_loader=lambda _job_id: job,
+        job_loader=lambda _job_id: stale_job,
     )
 
     assert result["pass"] is False
-    assert "could reuse a job" in result["reason"]
+    assert "predates" in result["reason"]
 
 
 def test_ablation_boundary_accepts_isolated_baseline() -> None:

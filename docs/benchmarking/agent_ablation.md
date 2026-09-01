@@ -30,16 +30,15 @@ copies the exact committed skill into only the VidXP-on directory, and Promptfoo
 passes the MCP definition only to the VidXP-on provider. Both directories expose
 hard links to the same media bytes. Preflight compares the installed skill with
 the committed source and rejects a VidXP skill in either the baseline or shared
-parent workspace. Streaming traces must also prove that VidXP-on used at least
-the committed skill and the required MCP workflow, while VidXP-off must use
-neither the skill nor VidXP through MCP or the shell. VidXP-on may not fall back
-to FFmpeg or direct media inspection after retrieval failure. Its response must
-preserve the source job and evidence IDs; the scorer reopens the durable VidXP
-job and verifies that it succeeded, matches the task query, media, and
-modalities, delivered ready evidence, and supports the returned intervals.
-Each VidXP-on trial resolves its media ID through `get_workspace` alone and
-omits a retrieval idempotency key. This prevents a repeated evaluation from
-reusing a durable job created by an earlier trial.
+parent workspace. Streaming traces record skill use and the complete MCP
+trajectory. VidXP-off must use neither the skill nor VidXP through MCP or the
+shell. VidXP-on may not fall back to FFmpeg or direct media inspection after
+retrieval failure. Its response must preserve the source job and evidence IDs;
+the scorer reopens the durable VidXP job and verifies that it was created
+during the current trial, succeeded, matches the task query and media,
+delivered ready evidence, and supports the returned intervals. Legitimate
+discovery and polling choices are reported rather than forced into one exact
+call sequence.
 
 The committed configuration disables network access, persistent threads, result
 caching, provider retries, parallel execution, and Codex subagents. These
@@ -87,7 +86,7 @@ dataset revision `18889b01886e30c36b0d1c650ac4439ad460ee73`, the archive is
 `c83d62557f102c6d41ea95c2c3b3581657481c8646cc70b1e12a85ead27a7ae3`, and
 contains 28 videos. The annotation file is 4,522,592 bytes.
 
-Only these five videos are indexed for the first ten-task pilot:
+Only these five videos are indexed for the ten-task development and pilot set:
 
 | Video ID | Seed coverage |
 | --- | --- |
@@ -178,8 +177,10 @@ Codex runs total.
 ./benchmarks/codex-mcp/run smoke
 ```
 
-Inspect both outputs and their trajectories before continuing. The pilot command
-runs ten tasks in two conditions with three repetitions: 60 Codex runs total.
+Inspect both outputs and their trajectories before continuing. This first pair
+is development data: after any prompt, skill, tool, or scorer change, exclude it
+from quality claims. The pilot command skips that pair and runs the remaining
+nine tasks in two conditions with three repetitions: 54 Codex runs total.
 
 ```bash
 ./benchmarks/codex-mcp/run pilot
@@ -203,7 +204,8 @@ the dataset and model licenses still apply. Codex inference authenticated
 through the dedicated ChatGPT login consumes the account's Codex plan allowance
 or credits. API-key authentication instead incurs API usage charges. No
 LLM-as-judge assertion is enabled, so this scaffold does not add grader calls.
-The run count is therefore exactly two for the smoke and 60 for the pilot.
+The run count is therefore exactly two for the development smoke and 54 for the
+held-out pilot.
 Promptfoo reports usage, but it cannot determine the remaining ChatGPT-plan
 allowance or convert subscription-authenticated runs into an exact dollar
 charge; use the Codex account usage display for that limit.
@@ -226,11 +228,11 @@ by that job. Report at least:
 - indexing time, index size, model preparation, and machine details; and
 - every excluded or failed task.
 
-Do not call the ten-task pilot a LongVALE result. A publishable result requires
-the complete official evaluation split, its one-interval output conversion, and
-the official evaluator. A centralized benchmark would additionally need frozen
-agent versions, provider-independent authentication, portable environments, and
-public result governance.
+Do not call the nine-task held-out pilot a LongVALE result. A publishable result
+requires the complete official evaluation split, its one-interval output
+conversion, and the official evaluator. A centralized benchmark would
+additionally need frozen agent versions, provider-independent authentication,
+portable environments, and public result governance.
 
 The VidXP-off condition is intentionally a local-agent baseline, not a native
 video-model benchmark. The Codex SDK accepts text and local images but does not

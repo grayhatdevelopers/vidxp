@@ -5,32 +5,19 @@ description: Use VidXP to search indexed videos and surface inspectable evidence
 
 # Find video evidence with VidXP
 
-## Workflow
+## Retrieve evidence
 
-1. Resolve the `vidxp` MCP tools, then call `get_workspace`. If the requested
-   video is not indexed, explain that it must be indexed first.
-2. Submit one retrieval job. Use `search_moments` to locate moments; use
-   `query_video` only when the user asks for a synthesized answer. Use
-   `command.query` with `search_moments` and `command.question` with
-   `query_video`. Set `command.media_id` when the user means one video.
-3. In that initial job, put exactly this inside `command`:
-   `"evidence_delivery": {"mode": "keyframes_and_clips", "max_items": 3}`.
-   This prepares the ranked board, standalone keyframes, and clips without a
-   second retrieval pass. Never send `command.materialize`.
-4. Call `wait_job` for bounded waits. Pass its `observation_token` as
-   `after_observation_token` on the next wait. When terminal, call
-   `get_job_evidence` once. It returns the concise evidence index and visual
-   content without the full structured job dump. Search and query may take
-   time; update the user when the stage changes or about once per minute, never
-   after every wait and never with an invented ETA.
-5. Surface the returned board, keyframes, and clips immediately. Do not call
-   `get_job`, repeat the search, materialize more evidence, create another
-   board, or perform a self-directed verification loop before showing the
-   initial evidence.
-6. Stop after the first evidence delivery. Only when the user explicitly asks
-   for another selection or format, use tile evidence IDs with
-   `materialize_job_evidence`, or use `create_evidence_board` for a custom
-   selection or `next_start_rank` continuation.
+- Resolve the indexed video and scope retrieval with its `media_id` when the
+  user means one video.
+- Use `search_moments` to locate events and `query_video` for a synthesized
+  answer. Use a fresh idempotency key for each new retrieval; reuse a key only
+  when retrying that same submission.
+- Request `keyframes_and_clips` evidence with at most three initial items when
+  standalone evidence is useful. Wait for the job to finish, then use
+  `get_job_evidence` to inspect the concise evidence result. Carry the returned
+  observation token between waits.
+- Prefer the initial ranked evidence. Do not start a verification loop or
+  materialize additional variants unless the user asks.
 
 ## Actor scope
 
@@ -54,6 +41,5 @@ description: Use VidXP to search indexed videos and surface inspectable evidence
   not replace or precede the evidence.
 - Preserve the source job and evidence IDs. Describe scores as retrieval scores,
   and distinguish a visible appearance from a dialogue or caption mention.
-- Stop waiting on success, failure, or cancellation. An empty result means no
-  matching indexed evidence was found, not that the event is absent from the
-  original video.
+- An empty result means no matching indexed evidence was found, not that the
+  event is absent from the original video.
