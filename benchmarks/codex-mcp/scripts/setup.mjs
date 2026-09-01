@@ -108,6 +108,11 @@ async function main() {
     'uv',
     ['sync', '--frozen', '--extra', 'local-worker', '--extra', 'mcp', '--extra', 'benchmarks'],
   );
+  run(
+    'uv',
+    ['run', '--no-sync', 'vidxp', 'init', '--yes'],
+    { env: commandEnvironment },
+  );
   run('npm', ['ci'], { cwd: benchmarkRoot });
 
   const glibcVersion = process.report?.getReport().header.glibcVersionRuntime;
