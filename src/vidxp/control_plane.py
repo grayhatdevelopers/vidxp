@@ -13,6 +13,7 @@ from vidxp.application_models import (
     CreateIndexCommand,
     DependencyCheckResult,
     IndexStatus,
+    Identifier,
     InvalidRequestError,
     ListMediaCommand,
     MediaAsset,
@@ -89,6 +90,33 @@ class ControlPlaneApplication:
             raise ResourceNotFoundError("capability") from exc
 
     @application_boundary
+    def select_index_modalities(
+        self,
+        requested: tuple[Identifier, ...] | None,
+    ) -> tuple[str, ...]:
+        """Resolve an optional capability selection to indexable names."""
+
+        registry = self.capabilities.registry
+        indexable = registry.index_names()
+        selected = (
+            indexable
+            if requested is None
+            else registry.validate_names(requested)
+        )
+        unsupported = tuple(
+            name for name in selected if name not in indexable
+        )
+        if unsupported:
+            raise CapabilityRequestError(
+                "Indexing does not support these capabilities: "
+                + ", ".join(unsupported)
+                + ".",
+                field="modalities",
+                reason="capability_not_indexable",
+            )
+        return selected
+
+    @application_boundary
     def index_status(self) -> IndexStatus:
         stored = self._read_index_status()
         payload = (
@@ -117,6 +145,9 @@ class ControlPlaneApplication:
     @application_boundary
     def workspace(self, command: ListMediaCommand) -> WorkspaceOverview:
         page = self.list_media(command)
+        # Workspace actions are repository-level guidance, so compare against
+        # repository-wide totals rather than a potentially filtered page total.
+        repository_media_total = self.list_media(ListMediaCommand(page_size=1)).total
         index = self.index_status()
         snapshot = self._read_active_snapshot()
         capabilities = self.list_capabilities()
@@ -166,7 +197,7 @@ class ControlPlaneApplication:
         next_actions = []
         if page.total == 0:
             next_actions.append("register_media")
-        if page.total > len(indexed_media) or any(
+        if repository_media_total > len(indexed_media) or any(
             item.media_id not in indexed_media for item in page.items
         ):
             next_actions.append("index_media")

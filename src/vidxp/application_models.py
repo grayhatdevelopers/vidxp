@@ -308,6 +308,7 @@ class CapabilityIdentityMode(StrEnum):
 
 class CapabilitySummary(ApplicationModel):
     name: str = Field(min_length=1)
+    label: str = Field(min_length=1)
     description: str = Field(min_length=1)
     install_extra: str = Field(min_length=1)
     supports_indexing: bool
@@ -397,6 +398,15 @@ class ListMediaCommand(ApplicationModel):
         min_length=1,
         max_length=512,
         description="Opaque next_cursor from the previous list_media page.",
+    )
+    filename: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Filter media records by filename.",
+    )
+    state: MediaState | None = Field(
+        default=None,
+        description="Filter media records by readiness/state.",
     )
 
 

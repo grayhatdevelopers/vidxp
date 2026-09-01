@@ -39,6 +39,8 @@ from vidxp.application_models import (
     JobWaitResult,
     IndexStatus,
     MediaAsset,
+    MediaPage,
+    MediaUploadSessionStatus,
     Principal,
     SearchCommand,
     SearchJobResult,
@@ -55,7 +57,11 @@ from vidxp.authentication import create_authenticator
 from vidxp.authorization import AuthorizationPolicy
 from vidxp.core.media import MediaState, MediaStream
 from vidxp.core.artifacts import ArtifactKind, ArtifactState
-from vidxp.core.uploads import UploadState
+from vidxp.core.uploads import (
+    UploadSessionState,
+    UploadState,
+    UploadTransferBackend,
+)
 from vidxp.job_service import JobService
 from vidxp.ports import LocalFileResource
 from vidxp.readiness_service import ReadinessService
@@ -67,6 +73,7 @@ MEDIA_ID = "123456781234423481234567890abcde"
 JOB_ID = "223456781234423481234567890abcde"
 IDEMPOTENCY_KEY = "323456781234423481234567890abcde"
 ARTIFACT_ID = "423456781234423481234567890abcde"
+INGESTION_ID = "523456781234423481234567890abcde"
 TOKEN = "a" * 32
 
 
@@ -100,6 +107,35 @@ def queued_job() -> Job:
         kind=JobKind.index,
         state=JobState.queued,
         queue=JobQueue.cpu,
+    )
+
+
+def ingestion_status() -> MediaUploadSessionStatus:
+    now = datetime.now(timezone.utc)
+    return MediaUploadSessionStatus(
+        session_id=INGESTION_ID,
+        session_state=UploadSessionState.closed,
+        aggregate_state="processing",
+        transfer_backend=UploadTransferBackend.local_path,
+        resumable=False,
+        index_after_import=True,
+        index_modalities=("scene", "speech"),
+        expires_at=now.replace(year=now.year + 1),
+        maximum_files=10,
+        maximum_file_bytes=50 * 1024 * 1024 * 1024,
+        maximum_aggregate_bytes=50 * 1024 * 1024 * 1024,
+        file_count=2,
+        total_bytes=20,
+        reserved_file_count=2,
+        reserved_bytes=20,
+        uploaded_file_count=2,
+        uploaded_bytes=20,
+        ready_file_count=0,
+        searchable_file_count=0,
+        failed_file_count=0,
+        index_failed_file_count=0,
+        status="VidXP is importing the selected Premiere media.",
+        next_action="Poll this ingestion for progress.",
     )
 
 
@@ -170,6 +206,7 @@ class ApiTests(unittest.TestCase):
         mcp_limit: int = 4 * 1024 * 1024,
         allowed_origins: tuple[str, ...] = (),
         remote_uploads: bool = False,
+        bind_host: str = "127.0.0.1",
     ) -> HttpApplicationContext:
         settings = VidXPSettings(
             repository_root=root,
@@ -205,6 +242,7 @@ class ApiTests(unittest.TestCase):
             http_max_json_body_bytes=json_limit,
             mcp_max_request_body_bytes=mcp_limit,
             http_allowed_origins=allowed_origins,
+            http_bind_host=bind_host,
             upload_public_endpoint=(
                 "http://localhost:8080/uploads/"
                 if remote_uploads
@@ -372,6 +410,160 @@ class ApiTests(unittest.TestCase):
         command = context.application.workspace.call_args.args[0]
         self.assertEqual(command.page_size, 25)
 
+    def test_list_media_passes_filters_to_application(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.application.list_media.return_value = MediaPage(
+                items=(),
+                total=0,
+            )
+            with TestClient(create_app(context=context)) as client:
+                response = client.get(
+                    "/api/v1/media",
+                    params={
+                        "page_size": 10,
+                        "filename": "clip.mp4",
+                        "state": "ready",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        command = context.application.list_media.call_args.args[0]
+        self.assertEqual(command.page_size, 10)
+        self.assertEqual(command.filename, "clip.mp4")
+        self.assertEqual(command.state, MediaState.ready)
+
+    def test_workspace_passes_filters_to_application(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.application.workspace.return_value = WorkspaceOverview(
+                media_total=0,
+                index=IndexStatus(
+                    schema_version=2,
+                    state="missing",
+                    stage="status",
+                    message="No index.",
+                ),
+                next_actions=("register_media",),
+            )
+            with TestClient(create_app(context=context)) as client:
+                response = client.get(
+                    "/api/v1/workspace",
+                    params={
+                        "filename": "batch",
+                        "state": "pending",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        command = context.application.workspace.call_args.args[0]
+        self.assertEqual(command.filename, "batch")
+        self.assertEqual(command.state, MediaState.pending)
+
+    def test_local_ingestion_api_delegates_to_durable_batch_workflow(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory), remote_uploads=True)
+            status = ingestion_status()
+            context.application.select_index_modalities.return_value = (
+                "scene",
+                "speech",
+            )
+            assert context.uploads is not None
+            context.uploads.create_local_ingestion.return_value = status
+            context.uploads.get_status.return_value = status
+            with TestClient(create_app(context=context)) as client:
+                created = client.post(
+                    "/api/v1/media/local-ingestions",
+                    headers={"Idempotency-Key": IDEMPOTENCY_KEY},
+                    json={
+                        "paths": [
+                            "C:/Premiere/interview.mp4",
+                            "C:/Premiere/b-roll.mov",
+                        ],
+                        "index_after_import": True,
+                        "modalities": ["scene", "speech"],
+                    },
+                )
+                fetched = client.get(
+                    f"/api/v1/media/local-ingestions/{INGESTION_ID}"
+                )
+
+        self.assertEqual(created.status_code, 202)
+        self.assertEqual(
+            created.headers["location"],
+            f"/api/v1/media/local-ingestions/{INGESTION_ID}",
+        )
+        self.assertEqual(created.json()["transfer_backend"], "local_path")
+        self.assertEqual(fetched.status_code, 200)
+        context.application.select_index_modalities.assert_called_once_with(
+            ("scene", "speech")
+        )
+        call = context.uploads.create_local_ingestion.call_args
+        self.assertEqual(
+            call.args[0],
+            (
+                "C:/Premiere/interview.mp4",
+                "C:/Premiere/b-roll.mov",
+            ),
+        )
+        self.assertTrue(call.kwargs["index_after_import"])
+        self.assertEqual(
+            call.kwargs["index_modalities"],
+            ("scene", "speech"),
+        )
+        context.uploads.get_status.assert_called_once_with(
+            INGESTION_ID,
+            principal=context.authenticator.authenticate(None),
+        )
+
+    def test_local_ingestion_api_reports_an_unconfigured_runtime(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            with TestClient(create_app(context=context)) as client:
+                response = client.post(
+                    "/api/v1/media/local-ingestions",
+                    headers={"Idempotency-Key": IDEMPOTENCY_KEY},
+                    json={
+                        "paths": ["C:/Premiere/interview.mp4"],
+                        "modalities": ["scene"],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["error"]["code"],
+            "local_ingestion_unavailable",
+        )
+
+    def test_local_ingestion_api_is_not_exposed_by_a_shared_server(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(
+                Path(directory),
+                auth=HttpAuthMode.static,
+                remote_uploads=True,
+                bind_host="0.0.0.0",
+            )
+            with TestClient(create_app(context=context)) as client:
+                response = client.post(
+                    "/api/v1/media/local-ingestions",
+                    headers={
+                        **self.auth(),
+                        "Idempotency-Key": IDEMPOTENCY_KEY,
+                    },
+                    json={
+                        "paths": ["C:/Premiere/interview.mp4"],
+                        "modalities": ["scene"],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["error"]["code"],
+            "local_ingestion_unavailable",
+        )
+        assert context.uploads is not None
+        context.uploads.create_local_ingestion.assert_not_called()
+
     def test_repository_scopes_are_enforced_per_operation(self):
         with TemporaryDirectory() as directory:
             context = self.context(
@@ -536,7 +728,7 @@ class ApiTests(unittest.TestCase):
                     details={
                         "model": "publisher/model",
                         "partial_files_preserved": True,
-                        "remediation": "vidxp prepare --modalities dialogue",
+                        "remediation": "vidxp prepare --modalities speech",
                     },
                     retryable=True,
                 ),
@@ -703,7 +895,7 @@ class ApiTests(unittest.TestCase):
                     json={
                         "question": "What happens after the taxi arrives?",
                         "media_id": MEDIA_ID,
-                        "modalities": ["scene", "dialogue"],
+                        "modalities": ["scene", "speech"],
                         "top_k": 5,
                     },
                 )
@@ -716,7 +908,7 @@ class ApiTests(unittest.TestCase):
             QueryVideoCommand(
                 question="What happens after the taxi arrives?",
                 media_id=MEDIA_ID,
-                modalities=("scene", "dialogue"),
+                modalities=("scene", "speech"),
                 top_k=5,
             ),
         )

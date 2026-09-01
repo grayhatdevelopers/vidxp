@@ -20,6 +20,12 @@ class CiScopeTests(unittest.TestCase):
             Scope(run_suite=True, run_container=False, run_desktop=True),
         )
 
+    def test_benchmark_changes_skip_product_artifact_builds(self):
+        self.assertEqual(
+            classify(["benchmarks/codex-mcp/scripts/setup.mjs"]),
+            Scope(run_suite=True, run_container=False, run_desktop=False),
+        )
+
     def test_product_and_workflow_changes_validate_containers(self):
         for path in (
             "src/vidxp/new_feature.py",

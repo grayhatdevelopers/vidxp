@@ -14,6 +14,7 @@ from vidxp.local_probe import (
     DESKTOP_LAUNCH_PROTOCOL_VERSION,
     PRODUCT_ID,
     build_desktop_probe,
+    desktop_capability_catalog,
     desktop_model_cache_catalog,
     _resolved_launcher_path,
 )
@@ -37,7 +38,13 @@ class LocalProbeTests(unittest.TestCase):
             patch("vidxp.local_probe._module_available", return_value=True),
             patch(
                 "vidxp.local_probe._installed_search_capabilities",
-                return_value=["actor", "dialogue", "scene", "videoprism"],
+                return_value=[
+                    "actor",
+                    "speech",
+                    "scene",
+                    "sound",
+                    "action",
+                ],
             ),
             patch(
                 "vidxp.local_probe.media_runtime_is_initialized",
@@ -85,7 +92,7 @@ class LocalProbeTests(unittest.TestCase):
         )
         self.assertEqual(
             payload["search_capabilities"],
-            ["actor", "dialogue", "scene", "videoprism"],
+            ["actor", "speech", "scene", "sound", "action"],
         )
         self.assertTrue(all(surface["launchable"] for surface in payload["surfaces"].values()))
 
@@ -98,6 +105,17 @@ class LocalProbeTests(unittest.TestCase):
         self.assertEqual(
             payload["compatibility"]["code"],
             "contract_compatible",
+        )
+
+    def test_desktop_capability_catalog_comes_from_model_contracts(self):
+        catalog = desktop_capability_catalog()
+
+        sound = catalog["capabilities"]["sound"]
+        self.assertEqual(sound["label"], "Sound event search")
+        self.assertEqual(sound["extra"], "sound")
+        self.assertEqual(
+            sum(model["download_size_bytes"] for model in sound["models"]),
+            981_760_363,
         )
 
     def test_missing_optional_frontend_does_not_make_product_incompatible(self):
@@ -247,7 +265,7 @@ class LocalProbeTests(unittest.TestCase):
     def test_desktop_model_catalog_is_derived_from_canonical_specs(self):
         catalog = desktop_model_cache_catalog()
 
-        self.assertEqual(len(catalog), 6)
+        self.assertEqual(len(catalog), 10)
         self.assertEqual(
             {item["id"] for item in catalog},
             {
@@ -255,6 +273,10 @@ class LocalProbeTests(unittest.TestCase):
                 "google/videoprism-lvt-base-f16r288",
                 "Qwen/Qwen3-Embedding-0.6B",
                 "dropbox-dash/faster-whisper-large-v3-turbo",
+                "AndreasXi/FineLAP",
+                "FacebookAI/roberta-base config",
+                "FacebookAI/roberta-base vocab",
+                "FacebookAI/roberta-base merges",
                 "yunet",
                 "sface",
             },

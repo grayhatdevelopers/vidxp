@@ -1,0 +1,122 @@
+[
+  {
+    "id": "longvale-part9-ZYT-rain-wind-engine",
+    "dataset": "LongVALE evaluation",
+    "video_id": "ZYTmgi1pAIE",
+    "media_relpath": "media/ZYTmgi1pAIE.mp4",
+    "duration_seconds": 75.809067,
+    "event_index": 0,
+    "query": "heavy rain and howling wind over a desolate landscape, followed by an engine starting and revving",
+    "expected_start": 0.0,
+    "expected_end": 6.0,
+    "modalities": ["scene", "sound", "action"]
+  },
+  {
+    "id": "longvale-part9-ZYT-bell-subscribe",
+    "dataset": "LongVALE evaluation",
+    "video_id": "ZYTmgi1pAIE",
+    "media_relpath": "media/ZYTmgi1pAIE.mp4",
+    "duration_seconds": 75.809067,
+    "event_index": 2,
+    "query": "a ringing bell echoes while SUBSCRIBE flashes over a starry night sky",
+    "expected_start": 70.07,
+    "expected_end": 75.742,
+    "modalities": ["scene", "sound"]
+  },
+  {
+    "id": "longvale-part9-ZId-car-siren",
+    "dataset": "LongVALE evaluation",
+    "video_id": "ZIdFAGJrlCw",
+    "media_relpath": "media/ZIdFAGJrlCw.mp4",
+    "duration_seconds": 296.4,
+    "event_index": 0,
+    "query": "a red car speeds down a winding road as a siren suddenly blares",
+    "expected_start": 7.68,
+    "expected_end": 10.2,
+    "modalities": ["action", "sound"]
+  },
+  {
+    "id": "longvale-part9-ZId-engine-rev",
+    "dataset": "LongVALE evaluation",
+    "video_id": "ZIdFAGJrlCw",
+    "media_relpath": "media/ZIdFAGJrlCw.mp4",
+    "duration_seconds": 296.4,
+    "event_index": 3,
+    "query": "the driver gestures while revving the Cayenne Coupe engine to demonstrate its exhaust sound",
+    "expected_start": 25.56,
+    "expected_end": 27.56,
+    "modalities": ["action", "sound"]
+  },
+  {
+    "id": "longvale-part9-ZId-sketch",
+    "dataset": "LongVALE evaluation",
+    "video_id": "ZIdFAGJrlCw",
+    "media_relpath": "media/ZIdFAGJrlCw.mp4",
+    "duration_seconds": 296.4,
+    "event_index": 8,
+    "query": "a hand sketches the sleek lines of a car among other automotive drawings",
+    "expected_start": 88.8,
+    "expected_end": 90.83646258503401,
+    "modalities": ["scene", "action"]
+  },
+  {
+    "id": "longvale-part9-ZGX-office-speech",
+    "dataset": "LongVALE evaluation",
+    "video_id": "ZGXCr5n8Frg",
+    "media_relpath": "media/ZGXCr5n8Frg.mp4",
+    "duration_seconds": 222.28,
+    "event_index": 2,
+    "query": "Changlin Dou sits at his office desk and describes bringing innovative medicine to the Chinese market",
+    "expected_start": 22.24,
+    "expected_end": 39.8,
+    "modalities": ["scene", "speech"]
+  },
+  {
+    "id": "longvale-part9-py-signing",
+    "dataset": "LongVALE evaluation",
+    "video_id": "_py1WXVX4oc",
+    "media_relpath": "media/_py1WXVX4oc.mp4",
+    "duration_seconds": 73.139733,
+    "event_index": 2,
+    "query": "a woman signs the phrase Find words you know against a blue dotted background",
+    "expected_start": 9.509,
+    "expected_end": 24.591,
+    "modalities": ["scene", "action"]
+  },
+  {
+    "id": "longvale-part9-py-phone-ring",
+    "dataset": "LongVALE evaluation",
+    "video_id": "_py1WXVX4oc",
+    "media_relpath": "media/_py1WXVX4oc.mp4",
+    "duration_seconds": 73.139733,
+    "event_index": 4,
+    "query": "Website coming in 2018 appears in purple letters while a telephone rings",
+    "expected_start": 70.136,
+    "expected_end": 73.139,
+    "modalities": ["scene", "sound"]
+  },
+  {
+    "id": "longvale-part9-ZVU-stir-and-cover",
+    "dataset": "LongVALE evaluation",
+    "video_id": "ZVUAC3m48G0",
+    "media_relpath": "media/ZVUAC3m48G0.mp4",
+    "duration_seconds": 247.16,
+    "event_index": 2,
+    "query": "a hand stirs chicken casserole in a green pot and secures the lid",
+    "expected_start": 190.24,
+    "expected_end": 192.84,
+    "modalities": ["scene", "action"]
+  },
+  {
+    "id": "longvale-part9-ZVU-casserole-drumbeat",
+    "dataset": "LongVALE evaluation",
+    "video_id": "ZVUAC3m48G0",
+    "media_relpath": "media/ZVUAC3m48G0.mp4",
+    "duration_seconds": 247.16,
+    "event_index": 4,
+    "query": "a close-up shows the completed chicken casserole as a simple drumbeat plays",
+    "expected_start": 242.88,
+    "expected_end": 247.08,
+    "modalities": ["scene", "sound"]
+  }
+]

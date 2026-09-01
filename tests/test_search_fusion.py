@@ -43,13 +43,13 @@ class SearchFusionTests(unittest.TestCase):
         dialogue = SearchResult(
             query_id="dialogue:q",
             query="taxi",
-            modality="dialogue",
-            hits=(hit("dialogue", 1, 2.5, 3.5, "dialogue:1"),),
+            modality="speech",
+            hits=(hit("speech", 1, 2.5, 3.5, "dialogue:1"),),
         )
 
         result = fuse_search_results(
             query="taxi",
-            requested_modalities=("scene", "dialogue"),
+            requested_modalities=("scene", "speech"),
             results=(scene, dialogue),
         )
 
@@ -70,12 +70,12 @@ class SearchFusionTests(unittest.TestCase):
         dialogue = SearchResult(
             query_id="dialogue:q",
             query="taxi",
-            modality="dialogue",
-            hits=(hit("dialogue", 1, 1, 2, "dialogue:1"),),
+            modality="speech",
+            hits=(hit("speech", 1, 1, 2, "dialogue:1"),),
         )
         arguments = {
             "query": "taxi",
-            "requested_modalities": ("scene", "dialogue"),
+            "requested_modalities": ("scene", "speech"),
         }
 
         forward = fuse_search_results(

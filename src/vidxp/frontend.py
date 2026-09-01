@@ -130,10 +130,11 @@ VIDEOPRISM_DETAIL_LABELS = {
 }
 CAPABILITY_LABELS = {
     "actor": "Actor groups",
-    "dialogue": "Dialogue search",
+    "speech": "Speech search",
     "natural-language": "Ask a question",
     "scene": "Scene search",
-    "videoprism": "Temporal action search (VideoPrism)",
+    "sound": "Sound event search (FineLAP)",
+    "action": "Action and motion search",
 }
 
 
@@ -408,7 +409,7 @@ def _run_indexing(
                 scene_sample_fps=scene_sample_fps,
                 capability_options=(
                     {
-                        "videoprism": {
+                        "action": {
                             "sample_fps": videoprism_sample_fps,
                         }
                     }
@@ -465,7 +466,7 @@ def _videoprism_sample_fps_control(
     *,
     disabled: bool,
 ) -> float | None:
-    if "videoprism" not in modalities:
+    if "action" not in modalities:
         return None
     return float(
         st.selectbox(
@@ -709,7 +710,7 @@ def _render_search_result(result):
         "Closest sampled scene"
         if search_type == "scene"
         else "Closest temporal action clip"
-        if search_type == "videoprism"
+        if search_type == "action"
         else "Closest supporting evidence"
         if search_type == "natural-language"
         else f"Closest {search_type} match"
@@ -721,7 +722,7 @@ def _render_search_result(result):
             "It does not identify the first occurrence and is not reliable "
             "for counting people."
         )
-    elif search_type == "videoprism":
+    elif search_type == "action":
         st.caption(
             "VideoPrism ranks short multi-frame clips, making it better suited "
             "to actions and events than single-frame scene search."
@@ -754,7 +755,7 @@ def _select_video(busy, media_id, media_page):
     assets = tuple(
         asset
         for asset in (media_page.items if media_page is not None else ())
-        if asset.state == MediaState.ready
+        if getattr(asset, "state", None) == MediaState.ready
     )
     media_id = _default_media_id(media_id, assets)
     if media_id is not None:
@@ -880,7 +881,7 @@ def _search_controls(ready, uploaded_video, available_modalities):
                     else "For example: What happens after the taxi arrives?"
                     if search_type == "natural-language"
                     else "For example: A person opens a door and walks out."
-                    if search_type == "videoprism"
+                    if search_type == "action"
                     else "For example: Chef makes pizza and cuts it up."
                 ),
                 disabled=not ready,
@@ -907,7 +908,7 @@ def run():
     service = _configured_service()
     st.title("VidXP")
     st.caption(
-        "Index and search video by dialogue, scene, temporal clips, and actor."
+        "Index and search video by speech, sound, scenes, actions, and actors."
     )
     st.caption(f"Index repository: {service.layout.root}")
     if notice := st.session_state.pop(MEDIA_NOTICE_KEY, None):
@@ -998,7 +999,9 @@ def run():
             media_id = indexed_media[0]
             st.session_state[MEDIA_ID_KEY] = media_id
     try:
-        media_page = service.list_media(ListMediaCommand(page_size=100))
+        media_page = service.list_media(
+            ListMediaCommand(page_size=100, state=MediaState.ready)
+        )
     except ApplicationError:
         media_page = None
         st.warning(

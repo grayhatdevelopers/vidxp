@@ -27,7 +27,9 @@ def _is_documentation(path: str) -> bool:
 
 
 def _is_container_neutral(path: str) -> bool:
-    return path.startswith((".agents/", "desktop/", "plugins/", "tests/"))
+    return path.startswith(
+        (".agents/", "benchmarks/", "desktop/", "plugins/", "tests/")
+    )
 
 
 def _affects_desktop(path: str) -> bool:
@@ -47,6 +49,7 @@ def _is_unknown_product_path(path: str) -> bool:
         (
             ".agents/",
             ".github/",
+            "benchmarks/",
             "desktop/",
             "plugins/",
             "src/",

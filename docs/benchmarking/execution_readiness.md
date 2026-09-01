@@ -1,5 +1,10 @@
 # Benchmark execution readiness
 
+> **Historical assessment:** Statements below that generic sound was unsupported
+> accurately describe the implementation when this assessment was written. The
+> active [multimodal model direction](model_selection.md) now records the shipped
+> FineLAP sound layer and places LongVALE and FLARE adapter validation next.
+
 Collection index: [Benchmarking research](README.md)
 
 Status: Historical pre-implementation assessment
@@ -31,7 +36,7 @@ Allowed benchmark plumbing includes:
 - temporal de-duplication or non-maximum suppression;
 - fixed sliding-window proposals;
 - benchmark-specific prediction serializers and evaluator invocation;
-- non-learned score or rank fusion over existing scene and dialogue outputs;
+- non-learned score or rank fusion over existing scene and speech outputs;
 - modality-specific indexing, batching, resumability, and timing instrumentation.
 
 These changes do not alter the benchmark task and do not invalidate comparison with
@@ -248,7 +253,7 @@ approved.
 
 ### LongVALE and FLARE
 
-Fixed late fusion over existing scene and dialogue rankings is permitted baseline
+Fixed late fusion over existing scene and speech rankings is permitted baseline
 logic. It makes official retrieval or temporal-grounding runs technically possible.
 VidXP still lacks generic sound-event recognition; the result must say so and must
 not be described as full omni-modal coverage.

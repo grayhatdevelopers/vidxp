@@ -33,13 +33,16 @@ Approximate model downloads are:
 
 | Feature | Download |
 |---|---:|
-| Dialogue search | 2.64 GiB |
+| Speech search | 2.63 GiB |
+| Sound event search | 0.91 GiB |
 | Scene search | 1.43 GiB |
 | Action search | 0.93 GiB |
 | Actor matching | 37 MiB |
 
 The Desktop-managed runtime can use about 3 GiB in addition to selected models.
-A complete local setup uses about 8.1 GiB before adding videos and indexes.
+All five model sets total about 5.95 GiB, so a complete local setup uses about
+8.95 GiB before temporary installation space, videos, and indexes. Desktop
+calculates the storage plan from the features currently selected during setup.
 
 ## Desktop app
 
@@ -77,6 +80,13 @@ setup leaves the previous working setup available.
 - **AI assistant integration** lets a local MCP-compatible assistant use VidXP.
 - **App integration service** lets other local applications use the HTTP API or
   Streamable HTTP MCP.
+- **Premiere Pro extension** installs the matching Adobe panel and automatically
+  includes local video processing plus the private app integration service.
+
+The [Premiere Pro extension](docs/integrations/premiere-pro.md) searches media
+that is already loaded in an editing project. Desktop includes both supported
+Adobe extension packages; users do not need the source repository or a
+JavaScript toolchain.
 
 Choose where models should be stored, then decide whether to download them
 during setup. VidXP displays the required downloads before starting them.
@@ -92,6 +102,37 @@ After setup finishes:
 
 Browser and API sharing are off by default. If you enable sharing, use it only
 on a trusted local network and follow the warning shown by Desktop.
+
+### Install the Premiere Pro extension
+
+On Windows, VidXP supports Premiere Pro 23.0 or newer with two packaged host
+variants:
+
+- Premiere Pro 23.0 through 25.5 uses the CEP extension;
+- Premiere Pro 25.6 or newer uses the UXP extension.
+
+In Desktop setup, select **Premiere Pro extension** and the search features you
+want. Desktop automatically includes local video processing and its private app
+service, then detects standard Premiere installations and installs the matching
+package through Adobe Creative Cloud's plugin installer. If Adobe requires
+confirmation or elevation, finish the Creative Cloud prompt. Restart Premiere
+after installation.
+
+For an existing Desktop-managed VidXP installation, select **Set up Premiere**
+on the summary screen. Desktop opens the same setup flow with the Premiere
+requirements already selected. **Install for Premiere** remains available there
+for reinstalling or retrying only the Adobe package.
+
+For Premiere Pro 23.2, open the panel from **Window > Extensions (Legacy) >
+VidXP Search**. For Premiere Pro 25.6 or newer, use **Window > UXP Plugins >
+VidXP Search**. If both Premiere generations are installed, Desktop installs
+both packages; their host ranges do not overlap.
+
+Plain loopback HTTP is blocked by Premiere UXP on macOS. Desktop therefore does
+not claim the 25.6+ macOS panel as usable until the integration has a trusted
+local HTTPS transport. The CEP package can use its native local transport on
+supported macOS Premiere versions, but still requires host validation before a
+release claims support.
 
 ## Command line
 
@@ -159,8 +200,9 @@ asking for confirmation. Download only selected features when preferred:
 
 ```bash
 vidxp prepare --modalities scene
-vidxp prepare --modalities dialogue,actor
-vidxp prepare --modalities videoprism  # action search
+vidxp prepare --modalities speech,actor
+vidxp prepare --modalities action
+vidxp prepare --modalities sound       # music and environmental sounds
 ```
 
 For a noninteractive script, add `--yes`. Indexing and search commands do not
@@ -190,11 +232,14 @@ vidxp index create <media-id>
 # Find a visual scene
 vidxp search scene "a yellow taxi on a city street"
 
-# Find an action or event (`videoprism` is the CLI name for action search)
-vidxp search videoprism "a person opens a door and walks outside"
+# Find an action or motion across multiple frames
+vidxp search action "a person opens a door and walks outside"
+
+# Find music or an environmental sound
+vidxp search sound "an alarm ringing"
 
 # Find something that was said
-vidxp search dialogue "the bread just came out of the oven"
+vidxp search speech "the bread just came out of the oven"
 ```
 
 Add `--media-id <media-id>` to a search command to restrict results to one
@@ -268,6 +313,33 @@ clients, or public access, use the supported server deployment instead.
 See [Local API and MCP server](docs/local-api.md) for authentication, uploads,
 and sharing behavior.
 
+## Optional local grounded answers
+
+VidXP search does not require a language model. To let CLI, HTTP, or MCP
+queries plan searches and draft grounded answers locally, enable **Local
+grounded answers** in VidXP Desktop setup. Desktop checks for a compatible
+loopback Ollama service and then for an existing Ollama executable. When neither
+is available on Windows x86-64 or macOS Apple Silicon, Desktop asks before
+downloading a pinned, checksum-verified headless runtime into VidXP's private
+data. It does not install the Ollama desktop app. Linux setup links to Ollama's
+official installation instructions instead of running a privileged script.
+
+This optional feature follows Ollama's platform floor: Windows 10 22H2 or
+newer, or macOS 14 or newer. VidXP Desktop itself can still run without local
+grounded answers on older supported systems.
+
+The model is an additional approximately 3.4 GB download. When Desktop must
+provide the headless runtime, that download is up to approximately 1.36 GiB;
+reusing Ollama avoids it. Local answers have no per-run API charge or numbered
+hosted-model allowance, but they use local storage, memory, compute time, and
+electricity. Desktop configures the private service address for its browser,
+worker, API, Premiere, and generated MCP/Codex setup; there is no URL field to
+fill in. A command-line-only installation remains available for developers and
+custom deployments.
+
+The complete setup and its current evidence limitations are documented under
+[Enable local grounded answers](docs/local-api.md#enable-local-grounded-answers).
+
 ## Optional dependency extras
 
 Most users should choose one of the package profiles above. The individual
@@ -276,9 +348,10 @@ assembling a custom installation:
 
 | Extra | Adds |
 |---|---|
-| `dialogue` | Transcription, dialogue embeddings, and storage |
+| `speech` | Transcription, speech embeddings, and storage |
+| `sound` | Music and environmental-sound search and storage |
 | `scene` | Scene search and storage |
-| `videoprism` | Action search and storage |
+| `action` | Multi-frame action and motion search plus storage |
 | `actor` | Actor matching and storage |
 | `all` | Every built-in search feature |
 | `local-worker` | All search features plus local job processing |
@@ -358,6 +431,11 @@ to be indexed again. VidXP reports this instead of silently replacing a working
 index. Prepare the required models, re-index the affected videos, and keep the
 old repository until you have checked the replacement results.
 
+The current public capability names are `scene`, `action`, `sound`, `speech`,
+and `actor`. VidXP does not translate removed capability names.
+If an older repository reports an incompatible index schema, rebuild it using
+the current names.
+
 ## Data locations
 
 VidXP stores data outside the current working directory:
@@ -403,6 +481,44 @@ vidxp doctor
 ```
 
 Review the suggested package-manager command before approving it.
+
+### Windows Desktop is stuck while checking FFmpeg
+
+Select **Cancel setup**. VidXP stops the package-manager process and keeps the
+previous installation and your setup choices. If an older Desktop release does
+not show that button, use **Quit VidXP** from the system tray. If it does not
+respond, end **VidXP Desktop** in Task Manager. End `winget.exe` there too if it
+continues running after VidXP has closed.
+
+Open a new PowerShell window so it receives any PATH changes made by WinGet,
+then check whether FFmpeg finished installing:
+
+```powershell
+winget list --id Gyan.FFmpeg --exact
+where.exe ffmpeg
+where.exe ffprobe
+```
+
+If WinGet lists `Gyan.FFmpeg` and both executables are found, reopen VidXP
+Desktop and retry setup. If the package is missing, or WinGet lists it but the
+executables are still not found, repair the package:
+
+```powershell
+winget install --id Gyan.FFmpeg --exact --source winget --force --silent `
+  --disable-interactivity --accept-package-agreements `
+  --accept-source-agreements
+```
+
+Open another new PowerShell window and verify the result:
+
+```powershell
+ffmpeg -hide_banner -version
+ffprobe -hide_banner -version
+ffmpeg -hide_banner -encoders | findstr /i "libx264 aac"
+```
+
+The final command should list both `libx264` and `aac`. Reopen VidXP Desktop
+and retry setup after all three commands succeed.
 
 ### Linux or Windows starts downloading NVIDIA packages
 

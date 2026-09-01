@@ -11,7 +11,7 @@ from vidxp.core.contracts import (
 )
 from vidxp.core.manifest import COMPLETION_FILE, ManifestStore
 from vidxp.capabilities.contracts import CapabilityIndexResult
-from vidxp.capabilities.dialogue.specs import FASTER_WHISPER_MODEL
+from vidxp.capabilities.speech.specs import FASTER_WHISPER_MODEL
 from vidxp.core.runner import (
     _RunLock,
     index_video as _index_video,
@@ -364,7 +364,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_transcript_only_run_does_not_request_transcription_dependencies(self):
         with TemporaryDirectory() as directory:
-            config = self._config(directory, ("dialogue",))
+            config = self._config(directory, ("speech",))
             source = VideoSource(
                 video_id="video-1",
                 transcript=(
@@ -379,7 +379,7 @@ class RunnerTests(unittest.TestCase):
                     dependency_check,
                 ),
                 patch(
-                    "vidxp.capabilities.dialogue.operations.index_dialogue",
+                    "vidxp.capabilities.speech.operations.index_speech",
                     return_value={"dialogue_phrases": 1},
                 ),
                 patch(
@@ -392,7 +392,7 @@ class RunnerTests(unittest.TestCase):
         dependency_check.assert_called_once()
         self.assertEqual(
             dependency_check.call_args.args,
-            (("dialogue",),),
+            (("speech",),),
         )
         self.assertIs(dependency_check.call_args.kwargs["source"], source)
 
@@ -400,7 +400,7 @@ class RunnerTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "second.mp4"
             path.write_bytes(b"video")
-            config = self._config(directory, ("dialogue",))
+            config = self._config(directory, ("speech",))
             supplied = VideoSource(
                 video_id="video-1",
                 transcript=(
@@ -411,7 +411,7 @@ class RunnerTests(unittest.TestCase):
             with (
                 patch("vidxp.core.runner.require_dependencies"),
                 patch(
-                    "vidxp.capabilities.dialogue.operations.index_dialogue",
+                    "vidxp.capabilities.speech.operations.index_speech",
                     return_value={"dialogue_phrases": 1},
                 ),
                 patch(
@@ -473,7 +473,7 @@ class RunnerTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "video.mp4"
             path.write_bytes(b"same-video")
-            config = self._config(directory, ("dialogue",))
+            config = self._config(directory, ("speech",))
             first = VideoSource(
                 video_id="video-1",
                 path=path,
@@ -491,7 +491,7 @@ class RunnerTests(unittest.TestCase):
             with (
                 patch("vidxp.core.runner.require_dependencies"),
                 patch(
-                    "vidxp.capabilities.dialogue.operations.index_dialogue",
+                    "vidxp.capabilities.speech.operations.index_speech",
                     return_value={"dialogue_phrases": 1},
                 ),
                 patch(
@@ -514,12 +514,12 @@ class RunnerTests(unittest.TestCase):
                     {"text": "hello", "start": 0.0, "end": 1.0},
                 ),
             )
-            config = self._config(directory, ("dialogue",))
+            config = self._config(directory, ("speech",))
             storage = FakeStorage()
             with (
                 patch("vidxp.core.runner.require_dependencies"),
                 patch(
-                    "vidxp.capabilities.dialogue.operations.index_dialogue",
+                    "vidxp.capabilities.speech.operations.index_speech",
                     return_value={"dialogue_phrases": 1},
                 ),
                 patch(

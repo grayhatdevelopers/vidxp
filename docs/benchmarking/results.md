@@ -34,7 +34,7 @@ this rerun:
 - NVIDIA GeForce RTX 3060 Laptop GPU with 4 GiB VRAM present but unused;
 - CPU-only PyTorch execution.
 
-| Generation | Dialogue embedding | Scene embedding | Sampling/window | Transcription in these benchmarks |
+| Generation | Speech embedding | Scene embedding | Sampling/window | Transcription in these benchmarks |
 |---|---|---|---|---|
 | Legacy full, 2026-07-27 | `all-MiniLM-L6-v2` | OpenAI CLIP `ViT-B/32` through `clip-anytorch` | HiREST 0.8-duration window; DiDeMo fixed 30-frame stride and max chunk pooling | Released HiREST SRTs; WhisperX `large-v2` was not exercised |
 | Current smoke, 2026-07-30 | `Qwen/Qwen3-Embedding-0.6B` at `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3` | `google/siglip2-base-patch16-224` at `75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2` | HiREST same 0.8-duration window; DiDeMo source-aware 1.0 sample/sec and max chunk pooling | Released HiREST SRTs; faster-whisper `large-v3-turbo` was not exercised |
@@ -48,14 +48,14 @@ legacy revision metadata after the fact.
 ## Multimodal comparison contract
 
 Natural-language answer prose is not an official benchmark prediction format.
-Benchmark runs continue to preserve atomic scene and dialogue hits, raw
+Benchmark runs continue to preserve atomic scene and speech hits, raw
 distances, and the existing dataset serializers. When a dataset contains both
 eligible modalities, reports must show three fixed rows:
 
 | Retrieval path | What is compared |
 |---|---|
 | Scene only | The existing visual retrieval output |
-| Dialogue only | The existing transcript retrieval output |
+| Speech only | The existing transcript retrieval output |
 | Fixed RRF fusion | Overlap-connected intervals ranked with `rrf_v1`, `k=60` |
 
 No fused benchmark score is reported until the same frozen dataset inputs and
@@ -152,20 +152,25 @@ The result is a useful legacy validation baseline, not a final held-out paper
 result. The current two-video Qwen3 smoke establishes compatibility only; it
 does not supersede this score.
 
-## Next benchmark: LongVALE
+## Next combined benchmark
 
-LongVALE is the next useful experiment because it combines visual and spoken
-evidence in longer videos. The immediate work is limited to:
+The FineLAP environmental-sound layer is implemented but has no VidXP quality
+result yet. LongVALE is the primary next experiment because it contains visual,
+generic-audio, and spoken evidence in long videos. The work is ordered as follows:
 
-1. Convert LongVALE event descriptions into VidXP visual and dialogue searches.
-2. Combine those two result lists using one fixed rule.
-3. Return the single start/end range required by the official evaluator.
-4. Process one of the nine evaluation archives to measure runtime, temporary
+1. Complete a bounded real-media FineLAP integration smoke and record resource use.
+2. Convert LongVALE event descriptions into visual, sound, and speech searches.
+3. Combine those result lists using one fixed, provenance-preserving rule.
+4. Return the single start/end range required by the official evaluator.
+5. Process one of the nine evaluation archives to measure runtime, temporary
    storage, and index growth.
-5. Run the complete evaluation only if that pilot finishes cleanly.
+6. Run the complete evaluation only if that pilot finishes cleanly.
 
-VidXP does not currently understand general sound events. Sound-only misses must
-remain in the official result and be disclosed rather than filtered out.
+VidXP now indexes general sound events, but implementation is not evidence of
+retrieval or boundary quality. The full LongVALE query set must remain in the
+official denominator, including sound-only misses. See
+[multimodal model direction](model_selection.md) for the selection evidence and
+benchmark roles.
 
 ## Sources and reproduction
 

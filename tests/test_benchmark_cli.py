@@ -179,12 +179,12 @@ assert cli.benchmark_app is not None
             self.assertRaises(typer.BadParameter) as raised,
         ):
             benchmark_cli._require_benchmark_dependencies(
-                "dialogue",
+                "speech",
                 include_benchmark_extra=True,
             )
 
         self.assertIn(
-            'pip install "vidxp[dialogue,benchmarks]"',
+            'pip install "vidxp[speech,benchmarks]"',
             str(raised.exception),
         )
 

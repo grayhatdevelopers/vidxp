@@ -11,7 +11,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import quote
 
 
-INDEX_SCHEMA_VERSION = 6
+INDEX_SCHEMA_VERSION = 7
 MANIFEST_SCHEMA_VERSION = 2
 
 
@@ -211,7 +211,7 @@ class IndexConfig:
             "storage_directory": "chroma_data",
         }
         if "enabled_modalities" not in changes:
-            defaults["enabled_modalities"] = ("dialogue", "scene", "actor")
+            defaults["enabled_modalities"] = ("speech", "scene", "actor")
         defaults.update(changes)
         return cls(**defaults)
 

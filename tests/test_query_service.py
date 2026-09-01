@@ -111,14 +111,14 @@ class GroundedQueryServiceTests(unittest.TestCase):
 
         plan, reason = service.plan(
             self.command,
-            search_modalities=("scene", "dialogue"),
+            search_modalities=("scene", "speech"),
             actor_overview=False,
         )
 
         self.assertEqual(reason, "query_plan_rejected")
         self.assertEqual(
             [step.modality for step in plan.steps],
-            ["scene", "dialogue"],
+            ["scene", "speech"],
         )
 
     def test_provider_failure_uses_deterministic_retrieval_plan(self):
@@ -184,7 +184,7 @@ class GroundedQueryServiceTests(unittest.TestCase):
         plan = QueryPlan(
             steps=(
                 SearchMomentsPlanStep(
-                    modality="dialogue",
+                    modality="speech",
                     query="taxi",
                 ),
             )
@@ -202,8 +202,8 @@ class GroundedQueryServiceTests(unittest.TestCase):
                 ),
             )
         )
-        atomic = result(text="the taxi arrived", modality="dialogue")
-        fused_result = fused("dialogue", atomic)
+        atomic = result(text="the taxi arrived", modality="speech")
+        fused_result = fused("speech", atomic)
         evidence = service.evidence(
             snapshot=self.snapshot,
             fused=fused_result,
@@ -225,14 +225,14 @@ class GroundedQueryServiceTests(unittest.TestCase):
         plan = QueryPlan(
             steps=(
                 SearchMomentsPlanStep(
-                    modality="dialogue",
+                    modality="speech",
                     query="taxi",
                 ),
             )
         )
-        atomic = result(text="the taxi arrived", modality="dialogue")
+        atomic = result(text="the taxi arrived", modality="speech")
         service = GroundedQueryService()
-        fused_result = fused("dialogue", atomic)
+        fused_result = fused("speech", atomic)
         evidence = service.evidence(
             snapshot=self.snapshot,
             fused=fused_result,
@@ -265,14 +265,14 @@ class GroundedQueryServiceTests(unittest.TestCase):
         )
 
     def test_generated_answer_preserves_rejected_plan_provenance(self):
-        atomic = result(text="the taxi arrived", modality="dialogue")
-        fused_result = fused("dialogue", atomic)
+        atomic = result(text="the taxi arrived", modality="speech")
+        fused_result = fused("speech", atomic)
         service = GroundedQueryService(
             FakeQueryModel(
                 QueryPlan(
                     steps=(
                         SearchMomentsPlanStep(
-                            modality="dialogue",
+                            modality="speech",
                             query="taxi",
                         ),
                     )
@@ -331,7 +331,7 @@ class GroundedQueryServiceTests(unittest.TestCase):
         atomic = SearchResult(
             query_id="dialogue:many",
             query="taxi",
-            modality="dialogue",
+            modality="speech",
             hits=tuple(
                 SearchHit(
                     rank=index + 1,
@@ -342,7 +342,7 @@ class GroundedQueryServiceTests(unittest.TestCase):
                     end=float(index * 2 + 1),
                     score=-float(index + 1),
                     raw_distance=float(index + 1),
-                    modality="dialogue",
+                    modality="speech",
                     source_id=f"dialogue:{index}",
                     metadata={"text": f"line {index}"},
                 )
@@ -351,7 +351,7 @@ class GroundedQueryServiceTests(unittest.TestCase):
         )
         fused_result = fuse_search_results(
             query="taxi",
-            requested_modalities=("dialogue",),
+            requested_modalities=("speech",),
             results=(atomic,),
             top_k=201,
         )

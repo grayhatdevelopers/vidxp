@@ -17,18 +17,37 @@ from vidxp.application_models import (
     CreateUploadIntentCommand,
     ErrorCategory,
     ListMediaCommand,
+    LocalMediaIngestionCommand,
     MediaAsset,
     MediaPage,
+    MediaUploadSessionStatus,
     Principal,
     UploadIntent,
     UploadIntentId,
+    UploadSessionId,
 )
 from vidxp.api_models import UploadIntentResponse
 from vidxp.composition import HttpApplicationContext
 from vidxp.core.identifiers import MediaId
+from vidxp.core.media import MediaState
+from vidxp.network_share import is_loopback_host
 
 
 router = APIRouter(prefix="/media", tags=["media"])
+
+
+def _local_ingestion_service(
+    service: HttpApplicationContext,
+):
+    if service.uploads is None or not is_loopback_host(
+        service.settings.http_bind_host
+    ):
+        raise ApplicationError(
+            "local_ingestion_unavailable",
+            ErrorCategory.unavailable,
+            "Local media ingestion is not configured for this HTTP service.",
+        )
+    return service.uploads
 
 
 def _upload_response(
@@ -157,6 +176,62 @@ def import_media(
         staged.unlink(missing_ok=True)
 
 
+@router.post(
+    "/local-ingestions",
+    response_model=MediaUploadSessionStatus,
+    status_code=202,
+    operation_id="ingestLocalMedia",
+    summary="Ingest local media paths",
+    description=(
+        "Local runtime only: register and optionally index up to ten media "
+        "paths that are available to the VidXP process. Poll the returned "
+        "session for per-file progress."
+    ),
+    dependencies=[Depends(write_principal)],
+)
+def create_local_ingestion(
+    command: LocalMediaIngestionCommand,
+    response: Response,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+    actor: Annotated[Principal, Depends(write_principal)],
+    idempotency_key: HttpIdempotencyKey,
+) -> MediaUploadSessionStatus:
+    uploads = _local_ingestion_service(service)
+    selected = service.application.select_index_modalities(command.modalities)
+    status = uploads.create_local_ingestion(
+        command.paths,
+        principal=actor,
+        request_key=scoped_request_key(
+            service,
+            actor,
+            operation="local-media-ingestion",
+            idempotency_key=idempotency_key,
+        ),
+        index_after_import=command.index_after_import,
+        index_modalities=selected,
+    )
+    response.headers["Location"] = (
+        f"/api/v1/media/local-ingestions/{status.session_id}"
+    )
+    return status
+
+
+@router.get(
+    "/local-ingestions/{ingestion_id}",
+    response_model=MediaUploadSessionStatus,
+    operation_id="getLocalMediaIngestion",
+    summary="Get local media ingestion status",
+    dependencies=[Depends(read_principal)],
+)
+def get_local_ingestion(
+    ingestion_id: UploadSessionId,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+    actor: Annotated[Principal, Depends(read_principal)],
+) -> MediaUploadSessionStatus:
+    uploads = _local_ingestion_service(service)
+    return uploads.get_status(ingestion_id, principal=actor)
+
+
 @router.get(
     "",
     response_model=MediaPage,
@@ -176,9 +251,22 @@ def list_media(
         str | None,
         Query(min_length=1, max_length=512),
     ] = None,
+    filename: Annotated[
+        str | None,
+        Query(min_length=1),
+    ] = None,
+    state: Annotated[
+        MediaState | None,
+        Query(),
+    ] = None,
 ) -> MediaPage:
     return service.application.list_media(
-        ListMediaCommand(page_size=page_size, cursor=cursor)
+        ListMediaCommand(
+            page_size=page_size,
+            cursor=cursor,
+            filename=filename,
+            state=state,
+        )
     )
 
 

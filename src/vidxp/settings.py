@@ -27,6 +27,7 @@ from vidxp.repository_layout import RepositoryLayout
 
 
 DEFAULT_HTTP_PORT = 32191
+DEFAULT_LOCAL_QUERY_MODEL = "qwen3.5:4b-q4_K_M"
 _TUSD_EXACT_ORIGIN = re.compile(
     r"(?P<scheme>https|http)://(?P<host>"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
@@ -333,7 +334,7 @@ class VidXPSettings(BaseSettings):
 
     @model_validator(mode="before")
     @classmethod
-    def _derive_storage_paths(cls, value):
+    def _derive_storage_paths_and_query_model(cls, value):
         if not isinstance(value, dict):
             return value
         configured = dict(value)
@@ -349,6 +350,10 @@ class VidXPSettings(BaseSettings):
             "model_cache",
             default_model_directory(data_directory),
         )
+        if configured.get("slm_base_url") not in {None, ""} and configured.get(
+            "slm_model"
+        ) in {None, ""}:
+            configured["slm_model"] = DEFAULT_LOCAL_QUERY_MODEL
         return configured
 
     @field_validator("slm_base_url", "slm_model", mode="before")
