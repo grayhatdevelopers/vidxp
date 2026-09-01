@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import {
   copyFileSync,
+  cpSync,
   createReadStream,
   existsSync,
+  linkSync,
   mkdirSync,
   readFileSync,
   writeFileSync,
@@ -29,9 +32,32 @@ const archiveHash = 'c83d62557f102c6d41ea95c2c3b3581657481c8646cc70b1e12a85ead27
 const archiveRelativePath = join('raw_videos_test', 'LongVALE_test_1171_part_9.zip');
 const annotationFilename = 'longvale-annotations-eval.json';
 const modalities = ['scene', 'action', 'sound', 'speech'];
+const evidenceSkillSource = join(
+  repositoryRoot,
+  'plugins',
+  'vidxp',
+  'skills',
+  'vidxp-find-video-evidence',
+);
 
 function executableName(command) {
   return process.platform === 'win32' && command === 'npm' ? 'npm.cmd' : command;
+}
+
+function installedDesktopModelCache() {
+  const candidates = [];
+  if (process.platform === 'darwin') {
+    candidates.push(join(homedir(), 'Library', 'Application Support', 'VidXP', 'models'));
+  } else if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    candidates.push(join(process.env.LOCALAPPDATA, 'VidXP', 'models'));
+  } else if (process.platform === 'linux') {
+    candidates.push(join(
+      process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'),
+      'VidXP',
+      'models',
+    ));
+  }
+  return candidates.find((candidate) => existsSync(candidate));
 }
 
 function formatCommand(command, args) {
@@ -94,10 +120,18 @@ async function main() {
   run('uv', ['--version'], { capture: true });
 
   const evaluationRoot = defaultEvaluationRoot(process.env);
+  const desktopModelCache = installedDesktopModelCache();
+  const setupSourceEnvironment = {
+    ...process.env,
+    ...(process.env.VIDXP_MODEL_CACHE || !desktopModelCache
+      ? {}
+      : { VIDXP_MODEL_CACHE: desktopModelCache }),
+  };
   const setupEnvironment = evaluationEnvironment({
     benchmarkRoot,
     repositoryRoot,
     evaluationRoot,
+    environment: setupSourceEnvironment,
   });
   const commandEnvironment = { ...process.env, ...setupEnvironment };
   const tasks = JSON.parse(readFileSync(manifestPath, 'utf8'));
@@ -156,6 +190,10 @@ async function main() {
     setupEnvironment.VIDXP_EVAL_CODEX_HOME,
     setupEnvironment.VIDXP_EVAL_WORKSPACE,
     join(setupEnvironment.VIDXP_EVAL_WORKSPACE, 'media'),
+    setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE,
+    join(setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE, 'media'),
+    setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE,
+    join(setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE, 'media'),
     setupEnvironment.VIDXP_EVAL_DATA_DIR,
     setupEnvironment.VIDXP_EVAL_INDEX_DIR,
     setupEnvironment.VIDXP_EVAL_ARTIFACT_DIR,
@@ -165,6 +203,19 @@ async function main() {
   if (!existsSync(setupEnvironment.VIDXP_MCP_COMMAND)) {
     throw new Error(`VidXP MCP executable was not created at ${setupEnvironment.VIDXP_MCP_COMMAND}.`);
   }
+  if (!existsSync(join(evidenceSkillSource, 'SKILL.md'))) {
+    throw new Error(`VidXP evidence skill was not found at ${evidenceSkillSource}.`);
+  }
+  cpSync(
+    evidenceSkillSource,
+    join(
+      setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE,
+      '.agents',
+      'skills',
+      'vidxp-find-video-evidence',
+    ),
+    { recursive: true, force: true },
+  );
   writeFileSync(
     setupEnvironment.VIDXP_EVAL_ENV_FILE,
     serializeEnvironment(setupEnvironment),
@@ -217,8 +268,29 @@ async function main() {
     if (!existsSync(source)) {
       throw new Error(`The LongVALE archive did not contain ${source}.`);
     }
-    copyFileSync(source, join(setupEnvironment.VIDXP_EVAL_WORKSPACE, 'media', `${videoId}.mp4`));
+    const sharedMedia = join(setupEnvironment.VIDXP_EVAL_WORKSPACE, 'media', `${videoId}.mp4`);
+    copyFileSync(source, sharedMedia);
+    for (const conditionWorkspace of [
+      setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE,
+      setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE,
+    ]) {
+      const conditionMedia = join(conditionWorkspace, 'media', `${videoId}.mp4`);
+      if (!existsSync(conditionMedia)) {
+        linkSync(sharedMedia, conditionMedia);
+      }
+    }
   }
+
+  run(
+    'uv',
+    [
+      'run', '--no-sync', 'vidxp',
+      '--data-dir', setupEnvironment.VIDXP_EVAL_DATA_DIR,
+      '--index-dir', setupEnvironment.VIDXP_EVAL_INDEX_DIR,
+      'jobs', 'stop-worker',
+    ],
+    { env: commandEnvironment },
+  );
 
   run(
     'uv',
@@ -274,8 +346,9 @@ async function main() {
 
   process.stdout.write(
     '\nSetup complete. Run:\n'
-      + '  npm --prefix benchmarks/codex-mcp run eval:smoke\n'
-      + '  npm --prefix benchmarks/codex-mcp run eval:pilot\n',
+      + '  ./benchmarks/codex-mcp/run smoke\n'
+      + '  ./benchmarks/codex-mcp/run pilot\n'
+      + '  ./benchmarks/codex-mcp/run view\n',
   );
 }
 

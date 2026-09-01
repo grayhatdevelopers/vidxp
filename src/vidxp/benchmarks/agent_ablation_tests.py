@@ -10,7 +10,7 @@ _MODALITIES = frozenset({"scene", "action", "sound", "speech"})
 
 
 def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Expand one task manifest into matched MCP-on and MCP-off cases."""
+    """Expand one task manifest into matched VidXP-on and VidXP-off cases."""
 
     options = config or {}
     manifest = Path(options.get("manifest", ""))
@@ -23,8 +23,8 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
         raise ValueError("The agent-ablation manifest must not be empty.")
     providers = options.get("providers", {})
     conditions = (
-        ("mcp-on", providers.get("mcp_on", "codex-vidxp-mcp"), True),
-        ("mcp-off", providers.get("mcp_off", "codex-no-mcp"), False),
+        ("vidxp-on", providers.get("vidxp_on", "codex-vidxp"), True),
+        ("vidxp-off", providers.get("vidxp_off", "codex-baseline"), False),
     )
 
     generated: list[dict[str, Any]] = []
@@ -34,10 +34,15 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
         if task["id"] in task_ids:
             raise ValueError(f"Duplicate agent-ablation task ID: {task['id']}")
         task_ids.add(task["id"])
-        for condition, provider, expected_mcp in conditions:
+        for condition, provider, expected_vidxp in conditions:
             variables = dict(task)
+            # Promptfoo expands array-valued vars into separate test cases.
+            # Keep modalities reportable without multiplying each task.
+            variables["modalities"] = json.dumps(
+                task["modalities"], separators=(",", ":")
+            )
             variables["condition"] = condition
-            variables["expected_mcp"] = expected_mcp
+            variables["expected_vidxp"] = expected_vidxp
             generated.append(
                 {
                     "description": f"{task['id']} [{condition}]",

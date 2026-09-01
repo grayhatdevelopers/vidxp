@@ -66,22 +66,178 @@ def test_temporal_grounding_rejects_null_or_out_of_bounds_intervals() -> None:
     assert bounds_result["pass"] is False
 
 
-def test_ablation_boundary_requires_mcp_only_in_the_on_condition() -> None:
-    trace = {
-        "spans": [
-            {
-                "name": "MCP tool call",
-                "attributes": {"tool.name": "mcp__vidxp__search_moments"},
-            }
-        ]
+def _ablation_fixture() -> tuple[str, dict, dict]:
+    job_id = "job-1"
+    evidence_id = "evidence-1"
+    output = json.dumps(
+        {
+            "video_id": "video-1",
+            "answer": "The event occurs.",
+            "start_seconds": 10,
+            "end_seconds": 20,
+            "modalities": ["sound"],
+            "source_job_id": job_id,
+            "evidence": [
+                {
+                    "evidence_id": evidence_id,
+                    "start_seconds": 10,
+                    "end_seconds": 20,
+                    "modality": "sound",
+                    "description": "The event is audible.",
+                }
+            ],
+        }
+    )
+    context = {
+        "vars": {
+            "expected_vidxp": True,
+            "video_id": "video-1",
+            "media_relpath": "media/video-1.mp4",
+            "query": "the event",
+            "modalities": '["sound"]',
+        },
+        "trace": {
+            "spans": [
+                {
+                    "name": "exec /bin/zsh",
+                    "attributes": {
+                        "promptfoo.skill.name": "vidxp-find-video-evidence",
+                        "promptfoo.skill.path": (
+                            "/eval/workspace/vidxp-on/.agents/skills/"
+                            "vidxp-find-video-evidence/SKILL.md"
+                        ),
+                        "codex.command": (
+                            "sed -n 1,240p "
+                            ".agents/skills/vidxp-find-video-evidence/SKILL.md"
+                        ),
+                    },
+                },
+                _tool_span("get_workspace", {"filename": "video-1.mp4"}),
+                _tool_span(
+                    "search_moments",
+                    {
+                        "command": {
+                            "media_id": "media-1",
+                            "query": "the event",
+                            "modalities": ["scene", "sound"],
+                            "evidence_delivery": {
+                                "mode": "keyframes_and_clips",
+                                "max_items": 3,
+                            },
+                        }
+                    },
+                ),
+                _tool_span("wait_job", {"job_id": job_id}),
+                _tool_span("get_job_evidence", {"job_id": job_id}),
+            ]
+        },
+    }
+    job = {
+        "job_id": job_id,
+        "kind": "search",
+        "state": "succeeded",
+        "result": {
+            "kind": "search",
+            "result": {
+                "query": "the event",
+                "moments": [
+                    {
+                        "hits": [
+                            {
+                                "media_id": "media-1",
+                                "video_id": "video-1",
+                            }
+                        ]
+                    }
+                ],
+                "evidence_delivery": {
+                    "policy": {
+                        "mode": "keyframes_and_clips",
+                        "max_items": 3,
+                    },
+                    "items": [
+                        {
+                            "evidence_id": evidence_id,
+                            "media_id": "media-1",
+                            "modalities": ["scene", "sound"],
+                            "state": "ready",
+                            "range": {
+                                "source_start_seconds": 9,
+                                "source_end_seconds": 21,
+                            },
+                        }
+                    ],
+                },
+            },
+        },
+    }
+    return output, context, job
+
+
+def _tool_span(name: str, arguments: dict) -> dict:
+    return {
+        "name": f"mcp vidxp/{name}",
+        "attributes": {
+            "codex.mcp.server": "vidxp",
+            "codex.mcp.tool": name,
+            "codex.mcp.input": json.dumps(arguments),
+        },
     }
 
-    assert score_ablation_boundary(
-        "{}", {"vars": {"expected_mcp": True}, "trace": trace}
-    )["pass"]
-    assert not score_ablation_boundary(
-        "{}", {"vars": {"expected_mcp": False}, "trace": trace}
-    )["pass"]
+
+def test_ablation_boundary_attests_successful_vidxp_evidence_job() -> None:
+    output, context, job = _ablation_fixture()
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is True
+
+
+def test_ablation_boundary_rejects_failed_job_or_shell_fallback() -> None:
+    output, context, job = _ablation_fixture()
+    failed_job = {**job, "state": "failed", "result": None}
+    failed = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: failed_job,
+    )
+    context["trace"]["spans"].append(
+        {
+            "name": "exec /bin/zsh",
+            "attributes": {"codex.command": "ffmpeg -i media/video-1.mp4"},
+        }
+    )
+    fallback = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert failed["pass"] is False
+    assert "did not succeed" in failed["reason"]
+    assert fallback["pass"] is False
+    assert "through the shell" in fallback["reason"]
+
+
+def test_ablation_boundary_accepts_isolated_baseline() -> None:
+    output = json.dumps(
+        {
+            "source_job_id": None,
+            "evidence": [{"evidence_id": None}],
+        }
+    )
+    trace = {"spans": [{"name": "agent response", "attributes": {}}]}
+
+    result = score_ablation_boundary(
+        output,
+        {"vars": {"expected_vidxp": False}, "trace": trace},
+    )
+
+    assert result["pass"] is True
 
 
 def test_ablation_boundary_rejects_direct_vidxp_cli_bypass() -> None:
@@ -95,7 +251,7 @@ def test_ablation_boundary_rejects_direct_vidxp_cli_bypass() -> None:
     }
 
     result = score_ablation_boundary(
-        "{}", {"vars": {"expected_mcp": False}, "trace": trace}
+        "{}", {"vars": {"expected_vidxp": False}, "trace": trace}
     )
 
     assert result["pass"] is False
@@ -129,12 +285,20 @@ def test_generator_pairs_each_manifest_task_across_conditions(
     tests = generate_tests(
         {
             "manifest": str(manifest),
-            "providers": {"mcp_on": "on", "mcp_off": "off"},
+            "providers": {"vidxp_on": "on", "vidxp_off": "off"},
         }
     )
 
     assert [test["providers"] for test in tests] == [["on"], ["off"]]
-    assert [test["vars"]["expected_mcp"] for test in tests] == [True, False]
+    assert [test["vars"]["expected_vidxp"] for test in tests] == [True, False]
+    assert [test["vars"]["modalities"] for test in tests] == [
+        '["sound"]',
+        '["sound"]',
+    ]
+    assert [test["metadata"]["modalities"] for test in tests] == [
+        ["sound"],
+        ["sound"],
+    ]
 
 
 def test_committed_pilot_expands_to_ten_matched_pairs(
@@ -146,13 +310,13 @@ def test_committed_pilot_expands_to_ten_matched_pairs(
     tests = generate_tests(
         {
             "manifest": "tasks/longvale-part9-pilot.json",
-            "providers": {"mcp_on": "on", "mcp_off": "off"},
+            "providers": {"vidxp_on": "on", "vidxp_off": "off"},
         }
     )
 
     assert len(tests) == 20
     assert {test["metadata"]["condition"] for test in tests} == {
-        "mcp-on",
-        "mcp-off",
+        "vidxp-on",
+        "vidxp-off",
     }
     assert len({test["metadata"]["task_id"] for test in tests}) == 10

@@ -1,4 +1,4 @@
-# Codex evaluation with and without VidXP MCP
+# Codex evaluation with and without the VidXP integration
 
 Collection index: [Benchmarking research](README.md)
 
@@ -6,27 +6,37 @@ Status: Runnable scaffold; no agent results recorded
 
 Last verified: 2026-09-01
 
-This experiment measures whether access to VidXP through its local stdio MCP
-server improves a Codex agent's ability to find timestamped evidence in long
-videos. It is a product-level ablation, not a replacement for published model
-benchmarks such as MAEB, MVEB, or AEGBench.
+This experiment measures whether the complete VidXP agent integration improves
+a Codex agent's ability to find timestamped evidence in long videos. The
+integration consists of the shipped video-evidence skill and the local stdio
+MCP server. It is a product-level ablation, not a replacement for published
+model benchmarks such as MAEB, MVEB, or AEGBench.
 
 ## What the comparison holds constant
 
 Every task runs once in each condition with the same Codex model, reasoning
-effort, prompt, media workspace, filesystem sandbox, network policy, output
-schema, and fresh thread:
+effort, prompt, media bytes, filesystem sandbox, network policy, output schema,
+and fresh thread:
 
 | Condition | VidXP access | Purpose |
 | --- | --- | --- |
-| `codex-vidxp-mcp` | The local `vidxp-mcp` stdio server | Measure the complete agent-plus-VidXP workflow |
-| `codex-no-mcp` | No MCP server and no direct VidXP CLI use | Measure what the same Codex agent can recover from the local media without VidXP |
+| `codex-vidxp` | The committed `vidxp-find-video-evidence` skill and local `vidxp-mcp` server | Measure the complete installed agent-plus-VidXP workflow |
+| `codex-baseline` | No VidXP skill, MCP server, or direct VidXP CLI use | Measure what the same Codex agent can recover from local media without VidXP |
 
-The two conditions use an isolated `CODEX_HOME` that contains authentication but
-no ambient MCP servers, plugins, or skills. Promptfoo receives the MCP definition
-through the Codex provider's `cli_config`; the MCP-off provider receives no such
-definition. Streaming traces must prove that MCP-on used at least one VidXP tool
-and MCP-off neither used a VidXP tool nor invoked the VidXP CLI through the shell.
+The conditions share an isolated `CODEX_HOME` that contains authentication but
+no ambient MCP configuration. They use separate working directories so Codex's
+repository skill discovery cannot leak the VidXP skill into the baseline. Setup
+copies the exact committed skill into only the VidXP-on directory, and Promptfoo
+passes the MCP definition only to the VidXP-on provider. Both directories expose
+hard links to the same media bytes. Preflight compares the installed skill with
+the committed source and rejects a VidXP skill in either the baseline or shared
+parent workspace. Streaming traces must also prove that VidXP-on used at least
+the committed skill and the required MCP workflow, while VidXP-off must use
+neither the skill nor VidXP through MCP or the shell. VidXP-on may not fall back
+to FFmpeg or direct media inspection after retrieval failure. Its response must
+preserve the source job and evidence IDs; the scorer reopens the durable VidXP
+job and verifies that it succeeded, matches the task query, media, and
+modalities, delivered ready evidence, and supports the returned intervals.
 
 The committed configuration disables network access, persistent threads, result
 caching, provider retries, parallel execution, and Codex subagents. These
@@ -98,28 +108,30 @@ therefore does not replace LongVALE in this ablation.
 
 ## Prepare the isolated environment
 
-Promptfoo 0.122.2 requires Node.js 22.22.0 or newer. The benchmark-local
-`.npmrc` enforces that requirement so an unsupported runtime fails during
-installation instead of failing after Codex runs have begun. You also need
-`uv` and the Codex CLI on `PATH`. The setup verifies FFmpeg and ffprobe and,
-when they are absent, installs them through a supported package manager. On a
-fresh macOS machine, install Homebrew before running setup so VidXP can install
-FFmpeg automatically.
+Promptfoo 0.122.2 requires Node.js 22.22.0 or newer. On macOS and Linux, the
+benchmark runner selects a compatible Node installation automatically,
+including Homebrew's versioned Node 22 installation. You do not need to change
+`PATH` in each terminal. You also need `uv` and the Codex CLI on `PATH`. The
+setup verifies FFmpeg and ffprobe and, when they are absent, installs them
+through a supported package manager. On a fresh macOS machine, install Homebrew
+and `node@22` before running setup. Setup can then install FFmpeg automatically
+when needed.
 
 From the repository root, run the automated setup:
 
-```powershell
-npm --prefix benchmarks/codex-mcp run setup
+```bash
+./benchmarks/codex-mcp/run setup
 ```
 
 The command installs the pinned Python and Node dependencies, creates isolated
-state outside the checkout, initializes the system media runtime, opens Codex
-login when authentication is absent, downloads and verifies the pinned
-LongVALE archive, copies the five pilot videos, prepares the four required
-capabilities, indexes the media, saves the evaluation environment in the
-ignored `benchmarks/codex-mcp/.env` file, and runs preflight. Accept the
-LongVALE dataset terms before running it. Do not copy or commit the generated
-`auth.json`.
+state outside the checkout, installs the committed VidXP evidence skill only in
+the VidXP-on workspace, initializes the system media runtime, opens Codex login
+when authentication is absent, downloads and verifies the pinned LongVALE
+archive, links the same five pilot videos into both condition workspaces,
+prepares the four required capabilities, indexes the media, saves the evaluation
+environment in the ignored `benchmarks/codex-mcp/.env` file, and runs preflight.
+Accept the LongVALE dataset terms before running it. Do not copy or commit the
+generated `auth.json`.
 
 By default, mutable state goes under the operating system's user data
 directory. Set only `VIDXP_EVAL_ROOT` when it needs to live elsewhere:
@@ -130,35 +142,55 @@ npm --prefix benchmarks/codex-mcp run setup
 ```
 
 The setup is safe to rerun. Cached downloads and prepared models are reused,
-and indexing is skipped when all five videos and four modalities are already
-present. The benchmark pins the Codex SDK directly and omits Promptfoo's
-unrelated optional provider packages from the install.
+including VidXP Desktop's existing model cache when it is present. Set
+`VIDXP_MODEL_CACHE` before setup to select another prepared cache. Indexing is
+skipped when all five videos and four modalities are already present. Setup
+stops only its isolated local worker before applying the configuration; durable
+jobs remain recoverable. The saved model-cache path is passed explicitly into
+the benchmark's MCP process with model downloads disabled, so the process uses
+the same prepared artifacts that setup verified. The benchmark pins the Codex
+SDK directly and omits Promptfoo's unrelated optional provider packages from
+the install.
 
 ## Validate before spending runs
 
 Setup finishes by running preflight, which verifies the dedicated Codex
-authentication, absence of ambient MCP configuration, all five media files,
-the index paths, and a real VidXP MCP handshake. To repeat the configuration and
-preflight checks without setup or Codex inference, run:
+authentication, absence of ambient MCP configuration, skill isolation, all
+five media files in both conditions, and the index paths. It then starts the
+exact configured VidXP MCP process, checks required tools and prepared models,
+and verifies that every pilot video is ready and indexed for all four
+modalities. This makes a missing or incorrectly forwarded model cache fail
+before a Codex run. To repeat the checks without setup, Codex inference, or
+VidXP model inference, run:
 
-```powershell
-npm --prefix benchmarks/codex-mcp run check
-npm --prefix benchmarks/codex-mcp run preflight
+```bash
+./benchmarks/codex-mcp/run check
+./benchmarks/codex-mcp/run preflight
 ```
 
 The first paid/allowance-consuming smoke is one task in both conditions: two
 Codex runs total.
 
-```powershell
-npm --prefix benchmarks/codex-mcp run eval:smoke
+```bash
+./benchmarks/codex-mcp/run smoke
 ```
 
 Inspect both outputs and their trajectories before continuing. The pilot command
 runs ten tasks in two conditions with three repetitions: 60 Codex runs total.
 
-```powershell
-npm --prefix benchmarks/codex-mcp run eval:pilot
+```bash
+./benchmarks/codex-mcp/run pilot
 ```
+
+Open the saved local results in Promptfoo's browser interface without running
+another evaluation:
+
+```bash
+./benchmarks/codex-mcp/run view
+```
+
+The viewer opens `http://localhost:15500` and continues running until you press
+`Ctrl-C`.
 
 Promptfoo Community and the repository's Python evaluation code are no-cost
 open-source software. The local MCP server and local VidXP processing create no
@@ -176,13 +208,18 @@ charge; use the Codex account usage display for that limit.
 ## Scoring and interpretation
 
 Each response must identify one interval. The deterministic scorer records
-temporal IoU, R@1 at tIoU 0.3/0.5/0.7, interval validity, and whether the expected
-MCP boundary was respected. Report at least:
+temporal IoU, R@1 at tIoU 0.3/0.5/0.7, interval validity, and whether the
+expected VidXP boundary was respected. Promptfoo traces supply skill use, MCP
+tool names, ordering, and inputs; because its Codex trace adapter does not
+retain MCP result bodies, the scorer uses the returned source job ID to verify
+the authoritative result directly in VidXP's durable job store. It also matches
+each returned evidence ID, modality, and interval to ready evidence delivered
+by that job. Report at least:
 
 - success rate and mean IoU by condition;
 - results by scene, action, sound, speech, and joint-modality task;
 - token usage, latency, failures, and retries;
-- VidXP MCP tool trajectories for MCP-on;
+- skill and VidXP MCP tool trajectories for VidXP-on;
 - indexing time, index size, model preparation, and machine details; and
 - every excluded or failed task.
 
@@ -192,10 +229,10 @@ the official evaluator. A centralized benchmark would additionally need frozen
 agent versions, provider-independent authentication, portable environments, and
 public result governance.
 
-The MCP-off condition is intentionally a local-agent baseline, not a native
+The VidXP-off condition is intentionally a local-agent baseline, not a native
 video-model benchmark. The Codex SDK accepts text and local images but does not
 accept video or audio inputs directly. With the network disabled and the
-workspace read-only, MCP-off may use installed read-only shell inspection tools
-but cannot call VidXP or persist extracted media. Report this limitation with
-the results; component-model quality remains covered by the published benchmark
-record elsewhere in this collection.
+workspace read-only, VidXP-off may use installed read-only shell inspection
+tools but cannot call VidXP or persist extracted media. Report this limitation
+with the results; component-model quality remains covered by the published
+benchmark record elsewhere in this collection.

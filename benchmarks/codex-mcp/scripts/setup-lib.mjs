@@ -42,6 +42,8 @@ export function evaluationEnvironment({
   return {
     VIDXP_EVAL_CODEX_HOME: paths.join(evaluationRoot, 'codex-home'),
     VIDXP_EVAL_WORKSPACE: paths.join(evaluationRoot, 'workspace'),
+    VIDXP_EVAL_VIDXP_ON_WORKSPACE: paths.join(evaluationRoot, 'workspace', 'vidxp-on'),
+    VIDXP_EVAL_VIDXP_OFF_WORKSPACE: paths.join(evaluationRoot, 'workspace', 'vidxp-off'),
     VIDXP_EVAL_DATA_DIR: paths.join(evaluationRoot, 'vidxp-data'),
     VIDXP_EVAL_INDEX_DIR: paths.join(evaluationRoot, 'vidxp-index'),
     VIDXP_MCP_COMMAND: paths.join(repositoryRoot, '.venv', scriptsDirectory, executable),
@@ -51,9 +53,10 @@ export function evaluationEnvironment({
     VIDXP_EVAL_REASONING: environment.VIDXP_EVAL_REASONING || 'medium',
     VIDXP_EVAL_ARTIFACT_DIR: paths.join(evaluationRoot, 'longvale-artifacts'),
     VIDXP_EVAL_ENV_FILE: paths.join(benchmarkRoot, '.env'),
-    ...(environment.VIDXP_MODEL_CACHE
-      ? { VIDXP_MODEL_CACHE: paths.resolve(environment.VIDXP_MODEL_CACHE) }
-      : {}),
+    VIDXP_MODEL_CACHE: paths.resolve(
+      environment.VIDXP_MODEL_CACHE
+        || paths.join(evaluationRoot, 'vidxp-data', 'models'),
+    ),
   };
 }
 

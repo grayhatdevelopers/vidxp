@@ -2,7 +2,7 @@
   "name": "vidxp-codex-mcp-eval",
   "private": true,
   "version": "0.0.0",
-  "description": "Paired Codex evaluation with and without the local VidXP MCP server",
+  "description": "Paired Codex evaluation with and without the VidXP agent integration",
   "engines": {
     "node": ">=22.22.0"
   },

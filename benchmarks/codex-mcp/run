@@ -1,0 +1,52 @@
+#!/bin/sh
+
+set -eu
+
+benchmark_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+if [ -x /opt/homebrew/opt/node@22/bin/node ]; then
+    node_dir=/opt/homebrew/opt/node@22/bin
+elif [ -x /usr/local/opt/node@22/bin/node ]; then
+    node_dir=/usr/local/opt/node@22/bin
+elif command -v node >/dev/null 2>&1; then
+    node_dir=$(dirname -- "$(command -v node)")
+else
+    echo "Node.js 22.22.0 or newer is required." >&2
+    exit 1
+fi
+
+PATH="$node_dir:$PATH"
+export PATH
+
+cd "$benchmark_dir"
+node scripts/require-node.mjs
+
+command=${1:-}
+if [ "$#" -gt 0 ]; then
+    shift
+fi
+
+case "$command" in
+    setup)
+        exec npm run setup -- "$@"
+        ;;
+    check)
+        exec npm run check -- "$@"
+        ;;
+    preflight)
+        exec npm run preflight -- "$@"
+        ;;
+    smoke)
+        exec npm run eval:smoke
+        ;;
+    pilot)
+        exec npm run eval:pilot
+        ;;
+    view)
+        exec npm run promptfoo -- view --yes "$@"
+        ;;
+    *)
+        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot|view}" >&2
+        exit 2
+        ;;
+esac

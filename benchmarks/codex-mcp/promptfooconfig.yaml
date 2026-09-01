@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
-description: VidXP Codex MCP-on versus MCP-off temporal evidence evaluation
+description: VidXP integration-on versus integration-off temporal evidence evaluation
 
 prompts:
   - id: video-evidence-task
@@ -8,12 +8,12 @@ prompts:
 
 providers:
   - id: openai:codex-sdk
-    label: codex-vidxp-mcp
+    label: codex-vidxp
     config:
       model: "{{ env.VIDXP_EVAL_MODEL | default('gpt-5.6-sol') }}"
       model_reasoning_effort: "{{ env.VIDXP_EVAL_REASONING | default('medium') }}"
       maxRetries: 0
-      working_dir: "{{ env.VIDXP_EVAL_WORKSPACE }}"
+      working_dir: "{{ env.VIDXP_EVAL_VIDXP_ON_WORKSPACE }}"
       skip_git_repo_check: true
       sandbox_mode: read-only
       approval_policy: never
@@ -30,6 +30,7 @@ providers:
           - start_seconds
           - end_seconds
           - modalities
+          - source_job_id
           - evidence
         properties:
           video_id:
@@ -46,7 +47,6 @@ providers:
               - "null"
           modalities:
             type: array
-            uniqueItems: true
             items:
               type: string
               enum:
@@ -54,17 +54,26 @@ providers:
                 - action
                 - sound
                 - speech
+          source_job_id:
+            type:
+              - string
+              - "null"
           evidence:
             type: array
             items:
               type: object
               additionalProperties: false
               required:
+                - evidence_id
                 - start_seconds
                 - end_seconds
                 - modality
                 - description
               properties:
+                evidence_id:
+                  type:
+                    - string
+                    - "null"
                 start_seconds:
                   type: number
                 end_seconds:
@@ -86,6 +95,9 @@ providers:
         mcp_servers:
           vidxp:
             command: "{{ env.VIDXP_MCP_COMMAND }}"
+            env:
+              VIDXP_MODEL_CACHE: "{{ env.VIDXP_MODEL_CACHE }}"
+              VIDXP_ALLOW_MODEL_DOWNLOADS: "false"
             args:
               - --repository
               - "{{ env.VIDXP_EVAL_REPOSITORY | default('default') }}"
@@ -97,12 +109,12 @@ providers:
               - "{{ env.VIDXP_EVAL_DEVICE | default('cpu') }}"
 
   - id: openai:codex-sdk
-    label: codex-no-mcp
+    label: codex-baseline
     config:
       model: "{{ env.VIDXP_EVAL_MODEL | default('gpt-5.6-sol') }}"
       model_reasoning_effort: "{{ env.VIDXP_EVAL_REASONING | default('medium') }}"
       maxRetries: 0
-      working_dir: "{{ env.VIDXP_EVAL_WORKSPACE }}"
+      working_dir: "{{ env.VIDXP_EVAL_VIDXP_OFF_WORKSPACE }}"
       skip_git_repo_check: true
       sandbox_mode: read-only
       approval_policy: never
@@ -122,8 +134,8 @@ tests:
     config:
       manifest: tasks/longvale-part9-pilot.json
       providers:
-        mcp_on: codex-vidxp-mcp
-        mcp_off: codex-no-mcp
+        vidxp_on: codex-vidxp
+        vidxp_off: codex-baseline
 
 evaluateOptions:
   cache: false

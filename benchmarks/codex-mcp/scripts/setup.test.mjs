@@ -68,9 +68,23 @@ test('builds and serializes the environment consumed by Promptfoo', () => {
   const serialized = serializeEnvironment(environment);
 
   assert.match(serialized, /VIDXP_EVAL_WORKSPACE="C:\/eval\/workspace"/);
+  assert.match(serialized, /VIDXP_EVAL_VIDXP_ON_WORKSPACE="C:\/eval\/workspace\/vidxp-on"/);
+  assert.match(serialized, /VIDXP_EVAL_VIDXP_OFF_WORKSPACE="C:\/eval\/workspace\/vidxp-off"/);
   assert.match(serialized, /VIDXP_MCP_COMMAND="C:\/repo\/\.venv\/Scripts\/vidxp-mcp\.exe"/);
   assert.match(serialized, /VIDXP_EVAL_MODEL="gpt-5\.6-sol"/);
   assert.match(serialized, /VIDXP_MODEL_CACHE="C:\/shared-models"/);
   assert.doesNotMatch(serialized, /VIDXP_EVAL_ENV_FILE/);
   assert.doesNotMatch(serialized, /VIDXP_EVAL_ARTIFACT_DIR/);
+});
+
+test('always records the model cache used by the isolated runtime', () => {
+  const environment = evaluationEnvironment({
+    benchmarkRoot: '/repo/benchmarks/codex-mcp',
+    repositoryRoot: '/repo',
+    evaluationRoot: '/eval',
+    environment: {},
+    platform: 'linux',
+  });
+
+  assert.equal(environment.VIDXP_MODEL_CACHE, '/eval/vidxp-data/models');
 });
