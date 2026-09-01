@@ -101,7 +101,10 @@ therefore does not replace LongVALE in this ablation.
 Promptfoo 0.122.2 requires Node.js 22.22.0 or newer. The benchmark-local
 `.npmrc` enforces that requirement so an unsupported runtime fails during
 installation instead of failing after Codex runs have begun. You also need
-`uv` and the Codex CLI on `PATH`.
+`uv` and the Codex CLI on `PATH`. The setup verifies FFmpeg and ffprobe and,
+when they are absent, installs them through a supported package manager. On a
+fresh macOS machine, install Homebrew before running setup so VidXP can install
+FFmpeg automatically.
 
 From the repository root, run the automated setup:
 
@@ -110,12 +113,13 @@ npm --prefix benchmarks/codex-mcp run setup
 ```
 
 The command installs the pinned Python and Node dependencies, creates isolated
-state outside the checkout, opens Codex login when authentication is absent,
-downloads and verifies the pinned LongVALE archive, copies the five pilot
-videos, prepares the four required capabilities, indexes the media, saves the
-evaluation environment in the ignored `benchmarks/codex-mcp/.env` file, and
-runs preflight. Accept the LongVALE dataset terms before running it. Do not copy
-or commit the generated `auth.json`.
+state outside the checkout, initializes the system media runtime, opens Codex
+login when authentication is absent, downloads and verifies the pinned
+LongVALE archive, copies the five pilot videos, prepares the four required
+capabilities, indexes the media, saves the evaluation environment in the
+ignored `benchmarks/codex-mcp/.env` file, and runs preflight. Accept the
+LongVALE dataset terms before running it. Do not copy or commit the generated
+`auth.json`.
 
 By default, mutable state goes under the operating system's user data
 directory. Set only `VIDXP_EVAL_ROOT` when it needs to live elsewhere:
