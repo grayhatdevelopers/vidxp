@@ -726,10 +726,7 @@ class PackagingTests(unittest.TestCase):
             }
             self.assertEqual(
                 generic_files,
-                {
-                    "uv.lock",
-                    "desktop/src-tauri/Cargo.toml",
-                },
+                {"desktop/src-tauri/Cargo.toml"},
                 filename,
             )
             toml_files = {
@@ -740,6 +737,9 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(
                 toml_files,
                 {
+                    "uv.lock": (
+                        '$.package[?(@.name.value=="vidxp")].version'
+                    ),
                     "desktop/src-tauri/Cargo.lock": (
                         '$.package[?(@.name.value=="vidxp-desktop")].version'
                     )
@@ -815,11 +815,15 @@ class PackagingTests(unittest.TestCase):
             if package["name"] == "vidxp-desktop"
         )
         self.assertEqual(desktop_lock["version"], version)
-        self.assertIn(
-            version_marker,
-            (ROOT / "uv.lock").read_text(encoding="utf-8"),
-            "uv.lock",
+        uv_lock = tomllib.loads(
+            (ROOT / "uv.lock").read_text(encoding="utf-8")
         )
+        project_lock = next(
+            package
+            for package in uv_lock["package"]
+            if package["name"] == "vidxp"
+        )
+        self.assertEqual(project_lock["version"], version)
         self.assertNotIn(
             f"vidxp=={version}",
             (
