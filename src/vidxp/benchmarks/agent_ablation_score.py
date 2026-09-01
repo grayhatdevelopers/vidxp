@@ -239,6 +239,10 @@ def score_ablation_boundary(
         return _failed("VidXP MCP calls did not follow the required evidence workflow.")
     if workspace_call[2].get("filename") != media_filename:
         return _failed("get_workspace did not resolve the task video filename.")
+    if search_call[2].get("idempotency_key") is not None:
+        return _failed(
+            "VidXP-on set idempotency_key and could reuse a job from another trial."
+        )
 
     search_tool = search_call[1]
     command = search_call[2].get("command")

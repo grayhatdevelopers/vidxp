@@ -223,6 +223,27 @@ def test_ablation_boundary_rejects_failed_job_or_shell_fallback() -> None:
     assert "through the shell" in fallback["reason"]
 
 
+def test_ablation_boundary_rejects_reusable_retrieval_job() -> None:
+    output, context, job = _ablation_fixture()
+    search_span = next(
+        span
+        for span in context["trace"]["spans"]
+        if span.get("attributes", {}).get("codex.mcp.tool") == "search_moments"
+    )
+    arguments = json.loads(search_span["attributes"]["codex.mcp.input"])
+    arguments["idempotency_key"] = "reused-across-trials"
+    search_span["attributes"]["codex.mcp.input"] = json.dumps(arguments)
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is False
+    assert "could reuse a job" in result["reason"]
+
+
 def test_ablation_boundary_accepts_isolated_baseline() -> None:
     output = json.dumps(
         {

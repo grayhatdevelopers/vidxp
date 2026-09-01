@@ -11,7 +11,10 @@ not use the network, read benchmark annotations, or invoke the VidXP CLI from
 the shell. Base the result on inspected evidence rather than the filename or
 query alone. When VidXP evidence is available, preserve the completed retrieval
 job ID as source_job_id and preserve the supporting evidence ID on every
-evidence entry. Do not inspect the media with shell tools after using VidXP. In
-a condition without VidXP, set source_job_id and every evidence_id to null. If
-the evidence cannot be inspected, return null start and end values and explain
-the limitation. Return only the requested JSON object.
+evidence entry. When VidXP tools are available, pass the media-path filename to
+get_workspace and resolve its media ID there without calling list_media. Omit
+idempotency_key from the retrieval call so this evaluation creates a fresh job.
+Do not inspect the media with shell tools after using VidXP. In a condition
+without VidXP, set source_job_id and every evidence_id to null. If the evidence
+cannot be inspected, return null start and end values and explain the
+limitation. Return only the requested JSON object.

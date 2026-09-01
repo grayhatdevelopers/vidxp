@@ -37,6 +37,9 @@ to FFmpeg or direct media inspection after retrieval failure. Its response must
 preserve the source job and evidence IDs; the scorer reopens the durable VidXP
 job and verifies that it succeeded, matches the task query, media, and
 modalities, delivered ready evidence, and supports the returned intervals.
+Each VidXP-on trial resolves its media ID through `get_workspace` alone and
+omits a retrieval idempotency key. This prevents a repeated evaluation from
+reusing a durable job created by an earlier trial.
 
 The committed configuration disables network access, persistent threads, result
 caching, provider retries, parallel execution, and Codex subagents. These
