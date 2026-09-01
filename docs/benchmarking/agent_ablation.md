@@ -186,6 +186,17 @@ nine tasks in two conditions with three repetitions: 54 Codex runs total.
 ./benchmarks/codex-mcp/run pilot
 ```
 
+Both commands finish with a comparison of pass counts, temporal IoU, recall at
+each IoU threshold, elapsed time, token usage, estimated cost, skill loading,
+and MCP or direct-media tool calls. Print the latest saved comparison again,
+without inference, with:
+
+```bash
+./benchmarks/codex-mcp/run results
+```
+
+Add `--all` to include every per-run interval in a full pilot report.
+
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:
 

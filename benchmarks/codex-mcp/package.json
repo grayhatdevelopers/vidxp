@@ -8,12 +8,13 @@
   },
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "test:setup": "node --test scripts/setup.test.mjs",
+    "test:setup": "node --no-warnings --test scripts/setup.test.mjs scripts/report.test.mjs",
     "promptfoo": "node --env-file=.env node_modules/promptfoo/dist/src/entrypoint.js",
     "check": "node scripts/require-node.mjs && node --env-file-if-exists=.env node_modules/promptfoo/dist/src/entrypoint.js validate -c promptfooconfig.yaml",
     "preflight": "node --env-file=.env scripts/preflight.mjs",
-    "eval:smoke": "npm run preflight && npm run promptfoo -- eval -c promptfooconfig.yaml --filter-first-n 2 --repeat 1 --no-cache --no-share",
-    "eval:pilot": "npm run preflight && npm run promptfoo -- eval -c promptfooconfig.yaml --filter-range 2: --repeat 3 --no-cache --no-share",
+    "eval:smoke": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs smoke",
+    "eval:pilot": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs pilot",
+    "report": "node --env-file-if-exists=.env --no-warnings scripts/report.mjs",
     "view": "npm run promptfoo -- view"
   },
   "devDependencies": {
