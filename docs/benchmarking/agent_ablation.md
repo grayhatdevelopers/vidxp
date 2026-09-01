@@ -108,6 +108,9 @@ uv sync --frozen --extra local-worker --extra mcp --extra benchmarks
 npm --prefix benchmarks/codex-mcp ci
 ```
 
+The benchmark pins the Codex SDK directly and omits Promptfoo's unrelated
+optional provider packages from this install.
+
 Create all mutable state outside the checkout. The paths below are examples;
 keep the same values for both conditions:
 

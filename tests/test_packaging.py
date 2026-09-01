@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -587,6 +588,30 @@ class PackagingTests(unittest.TestCase):
             compose,
         )
         self.assertNotIn("ollama pull", compose.lower())
+
+    def test_bundled_chroma_service_is_not_published(self):
+        compose = (ROOT / "compose.coolify.yaml").read_text(
+            encoding="utf-8"
+        )
+        service = re.search(
+            r"(?ms)^  chroma:\n(?P<body>.*?)(?=^  [a-z0-9_-]+:\n|\Z)",
+            compose,
+        )
+
+        self.assertIsNotNone(service)
+        body = service.group("body")
+        self.assertNotRegex(body, r"(?m)^    ports:\s*$")
+        self.assertNotRegex(body, r"(?m)^    network_mode:\s*host\s*$")
+
+    def test_codex_benchmark_omits_unused_optional_providers(self):
+        benchmark = ROOT / "benchmarks" / "codex-mcp"
+        npm_config = (benchmark / ".npmrc").read_text(encoding="utf-8")
+        package = json.loads(
+            (benchmark / "package.json").read_text(encoding="utf-8")
+        )
+
+        self.assertIn("omit=optional", npm_config.splitlines())
+        self.assertIn("@openai/codex-sdk", package["devDependencies"])
 
     def test_desktop_manifest_matches_published_package_contract(self):
         project = tomllib.loads(
