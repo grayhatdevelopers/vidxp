@@ -35,16 +35,16 @@ classifiers = [
 ]
 dynamic = ["optional-dependencies"]
 dependencies = [
-  "dbos>=2.28,<3",
-  "filelock>=3.32,<4",
-  "packaging>=26.2,<27",
-  "platformdirs>=4.11,<5",
-  "pydantic>=2.13.4,<3",
-  "pydantic-settings>=2.14.2,<3",
+  "dbos>=2.31.0,<3",
+  "filelock>=3.32.4,<4",
+  "packaging>=26.3,<27",
+  "platformdirs>=4.11.5,<5",
+  "pydantic>=2.13.5,<3",
+  "pydantic-settings>=2.15.0,<3",
   "pyjwt>=2.13,<3",
   "rich>=15,<16",
-  "sqlalchemy>=2.0.51,<2.1",
-  "typer>=0.27,<1",
+  "sqlalchemy>=2.0.52,<2.1",
+  "typer>=0.27.2,<1",
 ]
 
 [project.scripts]
