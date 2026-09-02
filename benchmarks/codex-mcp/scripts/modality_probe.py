@@ -7,7 +7,7 @@ import shlex
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from vidxp.application_models import ListMediaCommand, MediaState, SearchResult
 from vidxp.benchmarks.agent_ablation_score import interval_iou
@@ -89,8 +89,13 @@ def _search_all(
     config: IndexConfig,
     runtime: ModelRuntimePort,
     storage: IndexStore,
+    filters: Mapping[str, Any] | None = None,
 ) -> tuple[SearchResult, dict[str, Any]]:
-    record_count = storage.count_records(modality, video_id=media_id)
+    record_count = storage.count_records(
+        modality,
+        video_id=media_id,
+        filters=filters,
+    )
     if record_count == 0:
         raise RuntimeError(f"no {modality} records are indexed for this task")
     started = time.perf_counter()
@@ -100,6 +105,7 @@ def _search_all(
         runtime=runtime,
         top_k=record_count,
         video_id=media_id,
+        filters=filters,
         storage=storage,
     )
     elapsed_seconds = time.perf_counter() - started

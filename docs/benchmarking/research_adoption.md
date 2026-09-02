@@ -59,6 +59,7 @@ it cannot be cited as a general or research-derived solution.
 | [Zero-shot Video Moment Retrieval With Off-the-Shelf Models](https://proceedings.mlr.press/v203/diwan23a.html) (Diwan et al., PMLR 2023) | PySceneDetect proposals, one-fps CLIP scoring, then similarity-threshold watershed merging; reported settings were tuned on QVHighlights `val-filt` | Closest simple frozen-encoder baseline and executable method specification, but the split and thresholds are dataset-specific and no official implementation was found | **Candidate** for a faithfully reproduced zero-shot control, not a production recipe |
 | [Zero-Shot Video Moment Retrieval From Frozen Vision-Language Models](https://openaccess.thecvf.com/content/WACV2024/html/Luo_Zero-Shot_Video_Moment_Retrieval_From_Frozen_Vision-Language_Models_WACV_2024_paper.html) (Luo et al., WACV 2024) | Splits compound queries into single-action queries, refines frozen VLM features, clusters each into proposals, and combines overlapping proposal sets | Directly relevant to compound queries. Its `k = 6` clustering and refinement settings were selected on Charades-STA, and no official code was located | **Candidate**; reproduce before borrowing its query decomposition or proposal logic |
 | [Training-free Video Temporal Grounding](https://arxiv.org/abs/2408.16219) (Zheng et al., ECCV 2024) | Uses an LLM to decompose and order sub-events, VLM dynamic/static scoring, then filters and integrates proposals | Peer-reviewed with [official code](https://github.com/minghangz/TFVTG) and useful for ordered compound queries; the release uses BLIP2, stored or query-time LLM output, proposal enumeration, and hard-coded CUDA execution | **Candidate** for a compound-query baseline, not a direct macOS or default local path |
+| [Language-based Audio Moment Retrieval](https://h-munakata.github.io/Language-based-Audio-Moment-Retrieval/) (Munakata et al., ICASSP 2025) | Encodes one-second-hop audio clips, then uses a trained QD-DETR-style network to model temporal and text-audio interactions and predict intervals | Direct long-audio task with released data, features, and code. On its real UnAV-100 subset, AM-DETR improved R1@0.7 by 9 points over a tuned sliding-window baseline. | **Candidate** trained sound-interval control; it does not justify a hand-written merge rule for FineLAP records |
 | [Anchor-Aware Similarity Cohesion](https://openaccess.thecvf.com/content/CVPR2025/html/Tan_Anchor-Aware_Similarity_Cohesion_in_Target_Frames_Enables_Predicting_Temporal_Moment_CVPR_2025_paper.html) (Tan et al., CVPR 2025) | Trains query-conditioned feature alignment and a 2D boundary detector around the highest-relevance frame | Official code exists and boundary ablations are strong, but it is supervised, visual-only, and uses dataset-specific convolution widths | **Candidate** trained boundary ceiling; unrelated to the reverted custom “anchor” heuristic |
 | [Lighthouse](https://aclanthology.org/2024.emnlp-demo.6/) (Nishimura et al., EMNLP 2024) | Reproduces six trained moment/highlight models behind one inference API | Apache-2.0 code, checkpoints, and CPU inference exist; video input is capped at 150 seconds and CPU guidance uses CLIP-only features | **Candidate** executable control surface, especially for QD-DETR; not a new localization algorithm |
 | [UniVTG](https://github.com/showlab/UniVTG) (Lin et al., ICCV 2023) | A pretrained temporal head unifies interval, saliency-curve, and point labels | Official MIT code and checkpoints; practical inference claim, but benchmark adaptation remains GPU-oriented and visual-only | **Candidate** established trained interval control |
@@ -76,6 +77,8 @@ it cannot be cited as a general or research-derived solution.
 | `p2s_asg_vidxp_v1` | Point-to-Span v1, Section 3.1 | Adaptive smoothing, peak prominence `0.05`, one-second peak distance, and adaptive expansion; the paper's final NMS setting is applied before fusion | Existing modality encoders; normalized squared-L2-to-cosine conversion; per-modality sample rates; integer smoothing width and edge padding; FineLAP activations only; native speech-span pass-through; early NMS at tIoU `0.8`; RRF span fusion. Query decomposition, reranking, and injection are excluded. | On the 0–6 s development case, control `0–8.0075`/IoU `0.7493`; adaptation `0.64–6.72`/IoU `0.7976`. Only sound generated a span; scene and action generated none. The direct-inspection agent baseline reached IoU `0.8824`. | **Concluded diagnostic**; retain the code, but do not batch-evaluate or adopt this adaptation by itself |
 | `videoprism_overlap_control_v1` | CTAP and Barrios et al. establish overlapping temporal windows; Point-to-Span evaluates fixed sizes including four seconds | Configurable stride between VideoPrism action clips plus an isolated benchmark command that combines the alternative action result with the saved non-action probe | VideoPrism still receives 16 frames. Window duration is `16 / sample_fps`; stride is `clip_stride_samples / sample_fps`. The frozen profile uses four-second windows with a two-second stride. The exact 50% overlap is a VidXP experiment setting. | Action rank 1 became `0–4.0204`, but the top three overlapping action hits joined into `0–8.0244`; fused IoU fell from `0.7493` to `0.7477`. Records grew from 10 to 38; indexing took 165.094 s and 11,929,970 bytes. | **Concluded development control**; shorter overlapping records are not sufficient under connected-component union |
 | `diwan_shotdetect_siglip2_v1` | Diwan et al., ShotDetect without postprocessing | PySceneDetect content proposals at the paper's no-postprocessing threshold `53`, ranked by the maximum contained scene score | PySceneDetect `0.7`; OpenCV backend; existing global 1 fps SigLIP2 records instead of per-shot CLIP-ViT-B/32 sampling. A VidXP-only variant keeps the complete scene-proposal ranking, assigns each proposal the best overlapping top-three rank from every non-scene modality, then applies RRF. SimpleWatershed is excluded because its `0.7` threshold was tuned for CLIP on QVHighlights `val-filt`. | Development IoU rose from `0.7493` to `0.8902`. Across eight held-out tasks, the best single-shot oracle reached mean IoU `0.5219` and candidate recall at tIoU `0.5` of `0.375`. On the six scene-comparable tasks, scene-only mean IoU was `0.2841`; RRF reduced it to `0.1175`, helping none and reducing one `0.9995`-IoU scene result to `0.0`. | **Rejected as a product rule**; retain as a benchmark control |
+| `manual_modality_query_ceiling_v1` | Luo et al. and TFVTG motivate compound-query decomposition; neither defines per-modality rewriting | Manually retain only the task content relevant to each declared modality | VidXP wording ceiling; no model, timestamps, retrieval results, or video inspection used to produce phrases | Target-overlap top-three coverage changed from 7/16 to 8/16; nine ranks improved, five were unchanged, and two worsened | **Concluded diagnostic**; do not adopt manual or mandatory rewriting |
+| `finelap_separate_streams_v1` | FineLAP, Sections 3.2-3.3 | Query its global window and dense activation representations separately | Existing ten-second windows and manual sound phrases; no learned long-audio interval head or final stream-combination rule | Mixed sound ranking found target evidence in the top three on 0/4 tasks; separate lists did so on 3/4. Drumbeat still missed both lists. | **Supported correction principle, not a complete product rule**; do not mix raw records into one ranking |
 
 Code: `src/vidxp/benchmarks/point_to_span.py` and
 `benchmarks/codex-mcp/scripts/compare_point_to_span.py` for the concluded span
@@ -83,7 +86,9 @@ diagnostic; `src/vidxp/capabilities/action/indexing.py` and
 `benchmarks/codex-mcp/scripts/action_representation.py` for the representation
 control; `src/vidxp/benchmarks/shot_proposals.py` and
 `benchmarks/codex-mcp/scripts/shot_proposal_control.py` for the disjoint-shot
-control.
+control; and `benchmarks/codex-mcp/scripts/query_routing_control.py` with
+`benchmarks/codex-mcp/tasks/longvale-part9-modality-queries.json` for the wording
+and FineLAP stream controls.
 
 ## Verified failure and next comparison
 
@@ -134,12 +139,22 @@ at least one hit that overlapped multiple proposals.
 Only proposal detection and max scene scoring come from Diwan et al.; the RRF
 assignment is VidXP-specific and rejected. None of the eight held-out
 annotations crosses a detected boundary after a `0.05`-second tolerance, so
-this slice says nothing about multi-shot merging. The next controls must test
-within-shot interval prediction and query-conditioned audiovisual interaction
-separately. [UniVTG](https://github.com/showlab/UniVTG) is the established
-visual interval control; [UMT](https://openaccess.thecvf.com/content/CVPR2022/html/Liu_UMT_Unified_Multi-Modal_Transformers_for_Joint_Video_Moment_Retrieval_and_CVPR_2022_paper.html)
-is the established trained visual-audio ceiling. Neither is adopted or implied
-to fit the local runtime without its own artifact and resource validation.
+this slice says nothing about multi-shot merging.
+
+The next completed control isolated query wording and FineLAP's two sound
+representations. Manual per-modality wording was inconsistent. Keeping
+FineLAP's clip and frame results separate recovered target evidence in a
+top-three list on three of four sound tasks, compared with zero when VidXP mixed
+both representations. This establishes the immediate sound-search correction
+principle but not a final ranking or boundary rule. FineLAP explicitly does not
+evaluate long-form audio moment retrieval; AM-DETR is the direct trained
+long-audio comparator.
+
+UniVTG and UMT remain later comparison models, not the next implementation.
+UniVTG is a trained visual model that predicts time intervals from a query and
+video features. UMT is a trained audio-visual model for moment and highlight
+prediction. Neither fixes VidXP's current FineLAP stream mixing, and neither has
+been selected for the local product.
 
 ## Required record for future adoption
 

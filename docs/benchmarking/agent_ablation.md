@@ -295,6 +295,20 @@ proposals, and states whether each reference crosses a detected boundary. Shot
 detection makes no model calls; the required probes for this pilot make 16
 local text-embedding calls in total. This is not a Promptfoo or Codex run.
 
+Compare the saved full-query rankings with a frozen manual wording ceiling and
+FineLAP's clip/frame paths:
+
+```bash
+./benchmarks/codex-mcp/run queries
+```
+
+This command uses the eight saved held-out probes as the baseline, makes 32
+local text-embedding calls, and writes one ignored JSON report. It does not run
+Codex or Promptfoo. The manual phrases use only content stated in the task query
+and are not an automatic planner result. For sound, the report separately ranks
+FineLAP's whole-window and dense-activation records; it does not invent a final
+merge rule.
+
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:
 

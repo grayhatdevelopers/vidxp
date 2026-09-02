@@ -184,6 +184,42 @@ calls. Detecting shots across four unique videos took about `17` seconds, with n
 model calls or index writes. Peak memory was not measured. This is a local
 component comparison, not an agent or Promptfoo pilot run.
 
+### Query wording and FineLAP stream control
+
+A second local control compared the unchanged full query with manually separated
+modality phrases on the same eight held-out tasks. The phrases used only content
+stated in each task query; they did not use timestamps, retrieved results, or
+video inspection. This is a wording ceiling, not an automatic planner result.
+
+| Ranking check over 16 task-modality pairs | Full query | Separated phrase |
+| --- | ---: | ---: |
+| Target-overlapping evidence in top 3 | 7 | 8 |
+| Best-boundary record in top 3 | 4 | 7 |
+
+Nine target-overlap ranks improved, five were unchanged, and two worsened. The
+mixed result rejects query rewriting as the immediate product fix. For example,
+the phone-ring sound rank improved from 22 to 1, while the stir-and-cover scene
+rank fell from 1 to 41.
+
+FineLAP uses separate audio projectors for whole-clip retrieval and frame-level
+event localization. VidXP currently stores both outputs in one sound collection
+and ranks them together. Filtering the existing index into those published
+paths changed sound candidate recall:
+
+| Sound task | Current mixed rank | 10-second window rank | Dense activation rank |
+| --- | ---: | ---: | ---: |
+| Car siren | 431 | 2 | 177 |
+| Engine rev | 147 | 3 | 141 |
+| Phone ring | 22 | 8 | 1 |
+| Drumbeat | 1,020 | 13 | 829 |
+
+The target entered a top-three list on three of four tasks instead of zero of
+four. A short sound phrase produced the same three-task coverage when used for
+both streams. This supports keeping FineLAP's clip and frame rankings separate;
+it does not define how to turn both lists into one final interval. The control
+made 32 local text-embedding calls in about `14` seconds, with no Codex/API
+calls or index writes.
+
 ## Runtime and model generations
 
 The legacy and current checks used the same physical laptop, as confirmed for

@@ -56,6 +56,15 @@ cannot use that transition and still returns the full 0–8.0075-second action
 record. The dense evidence therefore supports a boundary near seven seconds;
 it does not justify changing the result to the annotated six seconds by hand.
 
+The held-out sound trace found a separate ranking defect. FineLAP deliberately
+uses one audio projector for whole-clip retrieval and another for frame-level
+event localization. VidXP currently stores both outputs together and asks one
+vector search to rank them. On four held-out sound tasks, the mixed search put
+target evidence in the top three zero times. Separate window and activation
+searches did so on three tasks. The remaining drumbeat task missed both lists.
+This supports separating the two FineLAP paths, but it does not supply a final
+long-audio interval rule.
+
 ## Separate the architectural questions
 
 | Layer | Question | Relevant research | What the evidence supports |
@@ -90,7 +99,7 @@ they do not establish a general retrieval architecture.
 | Capability | Current control | Candidate evidence | Decision status |
 | --- | --- | --- | --- |
 | Speech | faster-whisper plus Qwen3 text embeddings | Released ASR and transcript-retrieval benchmarks | Retain as the control; speech and environmental sound remain distinct evidence types. |
-| Environmental sound | FineLAP global and dense features | LAION-CLAP as a mature retrieval control; PE-A-Frame and AEGBench for boundaries | Implementation exists, but quality and boundary claims remain pending. |
+| Environmental sound | FineLAP global and dense features, currently mixed in one ranking | FineLAP's separate clip/frame paths; AM-DETR for trained long-audio intervals; AEGBench for event boundaries | Separate FineLAP rankings recovered target evidence in a top-three list on 3/4 held-out sound tasks versus 0/4 mixed. Fix the stream boundary before selecting a long-audio interval model. |
 | Visual retrieval | VideoPrism action clips and SigLIP2 scene frames | MVEB places Qwen3-VL-Embedding highly, but does not compare VideoPrism | Qwen is a candidate, not a selected replacement. Run the same retrieval protocol before changing providers. |
 | Temporal units | Fixed action clips plus one-second scene records | Shot/scene segmentation and denser query-aware proposals | ShotDetect alone is insufficient: five of eight held-out references cannot reach tIoU `0.5` with any single shot. Existing indexes do not have to be retained if another representation wins on quality and resource use. |
 | Boundary inference | Connected-component interval union | Point-to-Span adaptive expansion; UniVTG and UMT interval heads | Fixed-window widening is confirmed, while the shot oracle shows that content cuts do not supply reliable within-shot boundaries. |
@@ -136,11 +145,14 @@ target-trained temporal score is a ceiling, not a direct zero-shot comparison.
    The best-shot oracle reached mean IoU `0.5219`, but only three of eight shots
    reached tIoU `0.5`. Reject this RRF adaptation and do not promote ShotDetect
    to the product boundary rule.
-6. Evaluate the two unresolved layers separately. Use UniVTG as an established
-   visual interval-prediction control for within-shot boundaries. Treat UMT as
-   a trained visual-audio ceiling for query-conditioned interaction, not as a
-   local-runtime selection. Check artifact revisions, licenses, macOS runtime,
-   memory, and identical held-out metrics before implementing either path.
+6. Keep FineLAP's whole-window and dense-activation rankings separate. The
+   held-out control improved sound target top-three coverage from 0/4 to 3/4.
+   Do not invent a quota or merge rule: first compare a complete long-audio
+   interval method against the current output.
+7. Use AM-DETR as the direct trained sound-interval comparator. It models a
+   sequence of short audio clips and predicts start/end times. UniVTG is a later
+   visual-only interval comparator; UMT is a later trained audio-visual
+   comparator. Neither is the next product implementation.
 
 The current Codex MCP smoke is diagnostic development data. It shows that the
 agent used the skill and MCP successfully and returned relevant evidence, but
