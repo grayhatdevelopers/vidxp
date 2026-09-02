@@ -86,9 +86,13 @@ single-modality result. Therefore the fused interval is a coarse evidence
 envelope, not a claim of an exact event boundary. The agent should inspect the
 contained records or delivered clip before making a precise statement.
 
-No replacement boundary model has been selected. Point-to-Span, overlapping
-action windows, and shot-proposal fusion remain concluded benchmark controls,
-not product behavior. Their exact results and deviations are recorded in the
+No replacement boundary model has been selected. The overlapping-action
+control did produce a near-target shorter record, but the existing union joined
+it to its neighbors. A held-out follow-up then tested a simple coarse-to-fine
+path without union. Fine candidate recall improved, but the coarse gate and
+similarity ranking missed most answers, so that path is not a product fix.
+Point-to-Span and shot-proposal fusion also remain concluded benchmark controls.
+Their exact results and deviations are recorded in the
 [research adoption record](research_adoption.md).
 
 ## Next product check

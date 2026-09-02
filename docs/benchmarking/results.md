@@ -119,18 +119,47 @@ samples. This produces nominal four-second windows every two seconds:
 | Four-second, two-second-stride records | 0–4.0204 s | 0–8.0244 s | 0.7477 | 38 |
 
 The alternative's first three action hits were `0–4.0204`, `2.002–6.0224`,
-and `4.004–8.0244` seconds. Connected-component fusion joined all three, so a
-representation capable of expressing the target boundary still returned a
-wider interval. The run took 165.094 seconds to index 38 VideoPrism batches,
-used 11,929,970 index bytes, and took 0.512 seconds plus one text-embedding call
-to query. Point-to-Span ASG produced no action candidate on this curve because
-its strongest score is the first sample and `scipy.signal.find_peaks` does not
-treat an endpoint as a peak.
+and `4.004–8.0244` seconds. The second hit closely expressed the annotated
+`0–6`-second endpoint, but connected-component fusion joined all three and
+returned the wider interval. This experiment replaced the normal action index;
+it did not retain eight-second records as a first stage or rerank the shorter
+records inside them. The run took 165.094 seconds to index 38 VideoPrism
+batches, used 11,929,970 index bytes, and took 0.512 seconds plus one
+text-embedding call to query. Point-to-Span ASG produced no action candidate on
+this curve because its strongest score is the first sample and
+`scipy.signal.find_peaks` does not treat an endpoint as a peak.
 
-This rejects shorter overlapping records as a sufficient fix by themselves.
-It also confirms the next layer: proposal selection or boundary inference must
-avoid transitive union of adjacent same-modality windows. Do not run this
-profile across the held-out agent tasks.
+This rejects only shorter overlapping records fed unchanged into the current
+union. It does not reject the finer representation: selecting or reranking its
+records without transitive union remained unevaluated at this stage.
+
+The subsequent local comparison covered all five frozen held-out tasks that
+declare action evidence. It compared the current eight-second records, the
+four-second records ranked over the whole video, and a two-stage path that
+kept fine records whose midpoint fell inside a top-three coarse record. The
+two-stage path returned one fine record without interval union.
+
+| Method | Mean top-1 IoU | R@1 at 0.5 | Top-3 candidate recall at 0.5 | Full-list candidate recall at 0.5 |
+| --- | ---: | ---: | ---: | ---: |
+| Current eight-second records | 0.0680 | 0.00 | 0.00 | 0.20 |
+| Four-second records, whole video | 0.1297 | 0.20 | 0.40 | 0.60 |
+| Top-three coarse records, then four-second records | 0.1297 | 0.20 | 0.40 | 0.40 |
+
+Fine windows therefore improved the available candidates without producing a
+reliable top result. Car-siren had a qualifying fine record at rank 13, but the
+coarse top three missed its region. Engine-rev's near-target record ranked 48.
+Sketch had a qualifying record at rank 3, while stir-and-cover succeeded at
+rank 1 with IoU `0.6484`. A four-second record cannot represent the 15-second
+signing reference; its best possible IoU was `0.2666`.
+
+The fine indexes contained 307 records instead of 79 across three videos. The
+first run measured 1,176.264 seconds of indexing; their durable generation
+manifests record 1,175.579 seconds of build time and 5,966,316 committed bytes.
+The shared profile store was 133,068,596 bytes including the earlier development
+video. The comparison made five new local text-embedding calls and no Codex or
+API calls. It rejects the tested coarse-top-three gate as a product rule. It
+does not reject overlapping records as candidate evidence; their remaining
+failure is ranking and variable-duration selection.
 
 The next development control used the no-postprocessing ShotDetect path from
 Diwan et al. PySceneDetect found three disjoint proposals. Existing SigLIP2

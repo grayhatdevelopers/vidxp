@@ -4,7 +4,9 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +46,38 @@ def _directory_size(path: Path) -> int:
     return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
 
 
+def _generation_metrics(
+    index_directory: Path,
+    *,
+    snapshot_id: str,
+    media_id: str,
+) -> dict[str, Any]:
+    indexes = index_directory / "indexes"
+    snapshot = json.loads(
+        (indexes / "snapshots" / f"{snapshot_id}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    reference = snapshot["generations"][media_id]
+    manifest = json.loads(
+        (
+            indexes
+            / "generations"
+            / reference["generation_id"]
+            / "manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    video = manifest["videos"][media_id]
+    created = datetime.fromisoformat(manifest["created_at"])
+    completed = datetime.fromisoformat(manifest["completed_at"])
+    return {
+        "generation_id": reference["generation_id"],
+        "generation_wall_seconds": (completed - created).total_seconds(),
+        "visual_indexing_seconds": video["stages"]["visual_indexing"]["seconds"],
+        "committed_generation_bytes": reference["store_size_bytes_at_commit"],
+    }
+
+
 def _metrics(start: float, end: float, task: dict[str, Any]) -> dict[str, float]:
     expected_start = float(task["expected_start"])
     expected_end = float(task["expected_end"])
@@ -53,6 +87,87 @@ def _metrics(start: float, end: float, task: dict[str, Any]) -> dict[str, float]
         "end_error_seconds": end - expected_end,
         "duration_error_seconds": (end - start) - (expected_end - expected_start),
     }
+
+
+def _ranked_records(probe: dict[str, Any]) -> list[dict[str, Any]]:
+    return sorted(probe["records"], key=lambda record: record["retrieval_rank"])
+
+
+def _record_metrics(
+    record: dict[str, Any],
+    task: dict[str, Any],
+) -> dict[str, Any]:
+    result = {
+        "start_seconds": record["start_seconds"],
+        "end_seconds": record["end_seconds"],
+        "retrieval_rank": record["retrieval_rank"],
+        **_metrics(
+            float(record["start_seconds"]),
+            float(record["end_seconds"]),
+            task,
+        ),
+    }
+    if "coarse_parent_ranks" in record:
+        result["coarse_parent_ranks"] = record["coarse_parent_ranks"]
+    return result
+
+
+def _candidate_summary(
+    records: list[dict[str, Any]],
+    task: dict[str, Any],
+    *,
+    top_k: int,
+) -> dict[str, Any]:
+    if not records:
+        raise RuntimeError("the action comparison has no candidate records")
+    top_records = records[:top_k]
+    top_metrics = [_record_metrics(record, task) for record in top_records]
+    all_metrics = [_record_metrics(record, task) for record in records]
+    return {
+        "top_retrieved": top_metrics[0],
+        "top_k": top_metrics,
+        "best_in_top_k": max(
+            top_metrics,
+            key=lambda item: item["temporal_iou"],
+        ),
+        "best_candidate_oracle": max(
+            all_metrics,
+            key=lambda item: item["temporal_iou"],
+        ),
+        "candidate_count": len(records),
+    }
+
+
+def _coarse_to_fine_summary(
+    coarse_probe: dict[str, Any],
+    fine_probe: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    top_k: int,
+) -> dict[str, Any]:
+    coarse = _ranked_records(coarse_probe)[:top_k]
+    fine = _ranked_records(fine_probe)
+    selected = []
+    for record in fine:
+        midpoint = (
+            float(record["start_seconds"]) + float(record["end_seconds"])
+        ) / 2.0
+        parent_ranks = [
+            parent["retrieval_rank"]
+            for parent in coarse
+            if float(parent["start_seconds"])
+            <= midpoint
+            <= float(parent["end_seconds"])
+        ]
+        if parent_ranks:
+            selected.append({**record, "coarse_parent_ranks": parent_ranks})
+    summary = _candidate_summary(selected, task, top_k=top_k)
+    summary["coarse_gate"] = _candidate_summary(coarse, task, top_k=top_k)
+    summary["gate_rule"] = (
+        "fine-window midpoint falls inside any of the top-k coarse windows"
+    )
+    summary["boundary_rule"] = "return one ranked fine window without union"
+    return summary
 
 
 def _saved_result(
@@ -168,6 +283,11 @@ def compare_action_representation(
                 ) > 0
 
         if not reused_index:
+            print(
+                f"Indexing fine action windows for {task_id}...",
+                file=sys.stderr,
+                flush=True,
+            )
             started = time.perf_counter()
             application.create_index(
                 CreateIndexCommand(
@@ -177,6 +297,11 @@ def compare_action_representation(
                 )
             )
             indexing_seconds = time.perf_counter() - started
+            print(
+                f"Indexed fine action windows in {indexing_seconds:.3f}s.",
+                file=sys.stderr,
+                flush=True,
+            )
             config = application.index_backend.active_config(
                 application.index_directory,
                 device=application.device,
@@ -231,9 +356,33 @@ def compare_action_representation(
         base_probe["modalities"]["action"]["record_count"]
     )
     action_records = int(action_probe["record_count"])
+    generation_metrics = _generation_metrics(
+        index_directory,
+        snapshot_id=config.snapshot_id,
+        media_id=media.media_id,
+    )
+    coarse_probe = base_probe["modalities"]["action"]
+    comparison = {
+        "current_coarse": _candidate_summary(
+            _ranked_records(coarse_probe),
+            task,
+            top_k=top_k,
+        ),
+        "fine_only": _candidate_summary(
+            _ranked_records(action_probe),
+            task,
+            top_k=top_k,
+        ),
+        "coarse_to_fine": _coarse_to_fine_summary(
+            coarse_probe,
+            action_probe,
+            task,
+            top_k=top_k,
+        ),
+    }
     output = profile_root / f"{task_id}.json"
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "task_id": task_id,
         "profile": profile,
         "research_role": (
@@ -254,10 +403,12 @@ def compare_action_representation(
                 else None
             ),
         },
+        "multiscale_comparison": comparison,
         "resource_use": {
             "index_reused": reused_index,
-            "indexing_seconds": indexing_seconds,
-            "index_bytes": _directory_size(index_directory),
+            "indexing_seconds_this_run": indexing_seconds,
+            "profile_store_bytes": _directory_size(index_directory),
+            **generation_metrics,
             "control_action_record_count": control_action_records,
             "action_record_count": action_records,
             "action_record_count_multiplier": action_records / control_action_records,
@@ -285,8 +436,230 @@ def compare_action_representation(
         "action_best_individual_interval_oracle": action_probe[
             "best_individual_interval_oracle"
         ],
+        "multiscale_comparison": comparison,
         "resource_use": payload["resource_use"],
     }
+
+
+def _method_summary(results: list[dict[str, Any]], method: str) -> dict[str, Any]:
+    top = [
+        result["multiscale_comparison"][method]["top_retrieved"]
+        for result in results
+    ]
+    best_top_k = [
+        result["multiscale_comparison"][method]["best_in_top_k"]
+        for result in results
+    ]
+    oracle = [
+        result["multiscale_comparison"][method]["best_candidate_oracle"]
+        for result in results
+    ]
+
+    def rates(values: list[dict[str, Any]]) -> dict[str, float]:
+        return {
+            f"tiou_{threshold}": sum(
+                item["temporal_iou"] >= threshold for item in values
+            )
+            / len(values)
+            for threshold in (0.3, 0.5, 0.7)
+        }
+
+    return {
+        "tasks": len(results),
+        "mean_top1_iou": sum(item["temporal_iou"] for item in top) / len(top),
+        "top1_threshold_rates": rates(top),
+        "top_k_candidate_recall": rates(best_top_k),
+        "oracle_threshold_rates": rates(oracle),
+        "mean_best_in_top_k_iou": sum(
+            item["temporal_iou"] for item in best_top_k
+        )
+        / len(best_top_k),
+        "mean_oracle_iou": sum(item["temporal_iou"] for item in oracle)
+        / len(oracle),
+        "mean_absolute_start_error_seconds": sum(
+            abs(item["start_error_seconds"]) for item in top
+        )
+        / len(top),
+        "mean_absolute_end_error_seconds": sum(
+            abs(item["end_error_seconds"]) for item in top
+        )
+        / len(top),
+    }
+
+
+def compare_held_out(
+    *,
+    sample_fps: float,
+    stride_samples: int,
+) -> dict[str, Any]:
+    _load_environment()
+    tasks = json.loads(
+        (
+            Path(__file__).resolve().parent.parent
+            / "tasks"
+            / "longvale-part9-pilot.json"
+        ).read_text(encoding="utf-8")
+    )
+    selected = [task for task in tasks[2:] if "action" in task["modalities"]]
+    missing = [
+        task["id"]
+        for task in selected
+        if not _output_path(task["id"], None).is_file()
+    ]
+    if missing:
+        raise RuntimeError(
+            "missing held-out probes; run './benchmarks/codex-mcp/run probe "
+            f"TASK_ID' for: {', '.join(missing)}"
+        )
+
+    results = []
+    for index, task in enumerate(selected, start=1):
+        print(
+            f"[{index}/{len(selected)}] {task['id']}",
+            file=sys.stderr,
+            flush=True,
+        )
+        results.append(
+            compare_action_representation(
+                task["id"],
+                sample_fps=sample_fps,
+                stride_samples=stride_samples,
+            )
+        )
+    methods = {
+        method: _method_summary(results, method)
+        for method in ("current_coarse", "fine_only", "coarse_to_fine")
+    }
+    unique_video_resources: dict[str, dict[str, Any]] = {}
+    for task, result in zip(selected, results):
+        unique_video_resources.setdefault(task["video_id"], result["resource_use"])
+
+    profile, settings = _profile(sample_fps, stride_samples)
+    evaluation_root = Path(_required_environment("VIDXP_EVAL_DATA_DIR")).parent
+    output = evaluation_root / "action-representations" / profile / "held-out.json"
+    aggregate = {
+        "schema_version": 1,
+        "scope": "five frozen held-out action tasks across three videos",
+        "task_ids": [task["id"] for task in selected],
+        "method": {
+            "research_basis": [
+                "CTAP (Gao et al., ECCV 2018)",
+                (
+                    "Localizing Moments in Long Video via Multimodal Guidance "
+                    "(Barrios et al., ICCV 2023)"
+                ),
+            ],
+            "vidxp_choices": {
+                **settings,
+                "coarse_top_k": 3,
+                "gate_rule": (
+                    "fine-window midpoint falls inside any top-three coarse window"
+                ),
+                "boundary_rule": "return one ranked fine window without union",
+            },
+            "excluded": [
+                "multimodal fusion",
+                "query rewriting",
+                "agent or MCP execution",
+                "learned boundary prediction",
+            ],
+        },
+        "methods": methods,
+        "per_task": [
+            {
+                "task_id": task["id"],
+                "expected_start": task["expected_start"],
+                "expected_end": task["expected_end"],
+                "current_coarse": result["multiscale_comparison"][
+                    "current_coarse"
+                ],
+                "fine_only": result["multiscale_comparison"]["fine_only"],
+                "coarse_to_fine": result["multiscale_comparison"][
+                    "coarse_to_fine"
+                ],
+            }
+            for task, result in zip(selected, results)
+        ],
+        "resource_use": {
+            "unique_videos": len(unique_video_resources),
+            "fine_indexing_seconds_this_run": sum(
+                resource["indexing_seconds_this_run"]
+                for resource in unique_video_resources.values()
+            ),
+            "recorded_generation_wall_seconds": sum(
+                resource["generation_wall_seconds"]
+                for resource in unique_video_resources.values()
+            ),
+            "recorded_visual_indexing_seconds": sum(
+                resource["visual_indexing_seconds"]
+                for resource in unique_video_resources.values()
+            ),
+            "fine_action_records": sum(
+                resource["action_record_count"]
+                for resource in unique_video_resources.values()
+            ),
+            "current_action_records": sum(
+                resource["control_action_record_count"]
+                for resource in unique_video_resources.values()
+            ),
+            "fine_generation_bytes": sum(
+                resource["committed_generation_bytes"]
+                for resource in unique_video_resources.values()
+            ),
+            "profile_store_bytes": max(
+                resource["profile_store_bytes"]
+                for resource in unique_video_resources.values()
+            ),
+            "new_fine_text_embedding_calls": len(results),
+            "coarse_probe_results_reused": True,
+            "live_product_text_embedding_calls_per_task": 2,
+            "codex_calls": 0,
+            "api_calls": 0,
+        },
+    }
+    output.write_text(
+        json.dumps(aggregate, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {**aggregate, "output": str(output)}
+
+
+def _print_held_out(result: dict[str, Any]) -> None:
+    print("Held-out VideoPrism multiscale comparison")
+    print("Method             top1 IoU   >=.3   >=.5   >=.7   top3@.5  oracle@.5")
+    for key, label in (
+        ("current_coarse", "Current 8-second"),
+        ("fine_only", "Fine-only"),
+        ("coarse_to_fine", "Coarse-to-fine"),
+    ):
+        metrics = result["methods"][key]
+        top1 = metrics["top1_threshold_rates"]
+        top_k = metrics["top_k_candidate_recall"]
+        oracle = metrics["oracle_threshold_rates"]
+        print(
+            f"{label:<18} {metrics['mean_top1_iou']:>8.4f} "
+            f"{top1['tiou_0.3']:>7.3f} {top1['tiou_0.5']:>7.3f} "
+            f"{top1['tiou_0.7']:>7.3f} {top_k['tiou_0.5']:>9.3f} "
+            f"{oracle['tiou_0.5']:>10.3f}"
+        )
+    print("\nTask                          current    fine   coarse→fine")
+    for task in result["per_task"]:
+        print(
+            f"{task['task_id'].removeprefix('longvale-part9-'):<29} "
+            f"{task['current_coarse']['top_retrieved']['temporal_iou']:>7.4f} "
+            f"{task['fine_only']['top_retrieved']['temporal_iou']:>7.4f} "
+            f"{task['coarse_to_fine']['top_retrieved']['temporal_iou']:>13.4f}"
+        )
+    resources = result["resource_use"]
+    print(
+        "\nResource use: "
+        f"{resources['fine_action_records']} fine records versus "
+        f"{resources['current_action_records']} current records; "
+        f"{resources['recorded_generation_wall_seconds']:.3f}s recorded build time; "
+        f"{resources['new_fine_text_embedding_calls']} new local text embeddings; "
+        "0 Codex/API calls."
+    )
+    print(f"Full evidence: {result['output']}")
 
 
 def main() -> int:
@@ -295,21 +668,32 @@ def main() -> int:
             "Index and compare one isolated overlapping VideoPrism representation."
         )
     )
-    parser.add_argument("task_id")
+    parser.add_argument("task_id", nargs="?")
+    parser.add_argument("--held-out", action="store_true")
     parser.add_argument("--sample-fps", type=float, required=True)
     parser.add_argument("--stride-samples", type=int, required=True)
     arguments = parser.parse_args()
-    print(
-        json.dumps(
-            compare_action_representation(
-                arguments.task_id,
+    if arguments.held_out == (arguments.task_id is not None):
+        parser.error("provide one task ID or --held-out")
+    if arguments.held_out:
+        _print_held_out(
+            compare_held_out(
                 sample_fps=arguments.sample_fps,
                 stride_samples=arguments.stride_samples,
-            ),
-            indent=2,
-            sort_keys=True,
+            )
         )
-    )
+    else:
+        print(
+            json.dumps(
+                compare_action_representation(
+                    arguments.task_id,
+                    sample_fps=arguments.sample_fps,
+                    stride_samples=arguments.stride_samples,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+        )
     return 0
 
 

@@ -269,6 +269,21 @@ speech probe, and reports action retrieval, fused IoU, indexing time, index
 bytes, record count, and query time. It makes no Codex calls, but it does run
 VideoPrism indexing and one action text embedding. Confirm before running it.
 
+After every held-out action task has a saved probe, compare the current,
+fine-only, and coarse-to-fine action paths with:
+
+```bash
+./benchmarks/codex-mcp/run representation --held-out \
+  --sample-fps 4 \
+  --stride-samples 8
+```
+
+The coarse-to-fine control keeps a four-second record when its midpoint lies
+inside any top-three eight-second result. It preserves the fine similarity
+order and returns one record without union. The report includes top-1 IoU,
+top-three and full-list candidate recall, per-task intervals and ranks, index
+cost, and model-call counts. It makes no Codex or API calls.
+
 Reproduce the concluded disjoint shot-proposal control:
 
 ```bash

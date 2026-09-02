@@ -58,7 +58,7 @@ multiplier was selected after one development example and has no general claim.
 | ID | Source and scope | Recorded result | Decision |
 | --- | --- | --- | --- |
 | `p2s_asg_vidxp_v1` | Point-to-Span v1, Section 3.1 only; VidXP score curves and early NMS replace the unreproduced full pipeline | Development IoU changed from `0.7493` to `0.7976`; only sound produced a span, below the direct-inspection agent's `0.8824` | Concluded diagnostic; not adopted |
-| `videoprism_overlap_control_v1` | CTAP/Barrios et al. motivate overlapping windows; VidXP tested four-second windows at a two-second stride | Fusion still returned about eight seconds; IoU fell to `0.7477` and action records grew from 10 to 38 | Concluded control; not adopted |
+| `videoprism_overlap_control_v1` | CTAP/Barrios et al. motivate overlapping windows; VidXP replaced the normal action index with four-second windows at a two-second stride | On five held-out action tasks, full-list candidate recall at tIoU 0.5 rose from `0.20` to `0.60` and top-1 recall from `0.00` to `0.20`; a top-three coarse gate reduced candidate recall to `0.40` | Overlapping records remain useful candidates. Current union and the tested coarse gate are rejected; no product selector is adopted |
 | `diwan_shotdetect_siglip2_v1` | Diwan et al. ShotDetect proposals, scored with existing SigLIP 2 records; VidXP added proposal-level RRF | Development IoU reached `0.8902`; on six scene-comparable held-out tasks RRF reduced mean IoU from `0.2841` to `0.1175` | Proposal-level RRF rejected; code retained as a control |
 | `manual_modality_query_ceiling_v1` | Luo et al. and TFVTG motivate decomposition, but manual modality wording is a VidXP ceiling rather than either published method | Top-three target coverage changed from 7/16 to 8/16; nine ranks improved and two worsened | Mandatory rewriting rejected |
 | `finelap_separate_streams_v1` | FineLAP Sections 3.2–3.3; global windows and dense activations queried separately | Top-three target coverage changed from 0/4 mixed to 3/4 across separate lists | Supports the product rule not to cross-rank the raw outputs; no local-activation product surface selected |
@@ -73,6 +73,11 @@ changes.
 - The saved development run found the correct opening region. Its
   `0–8.0075`-second result was wider than the `0–6` reference because the
   eight-second action record set the component endpoint.
+- The overlapping-action control exposed a finer near-target record. It tested
+  both a replacement index and, in the held-out follow-up, an
+  eight-second-to-four-second search path. Fine candidate availability improved,
+  but the coarse gate missed one viable region and similarity ranking usually
+  did not select the best fine record.
 - FineLAP's global and local records cannot be treated as one raw-distance
   ranking. Standard sound search now uses global clips for candidate selection
   and local activations for the final sound hits.
