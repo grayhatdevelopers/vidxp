@@ -65,32 +65,30 @@ it cannot be cited as a general or research-derived solution.
 | [Point-to-Span](https://arxiv.org/abs/2512.10363) and [GranAlign](https://arxiv.org/abs/2601.00584) | P2S expands similarity peaks adaptively and refines with ordered subqueries; GranAlign rewrites queries and generates query-aware captions at two semantic granularities | Both address real zero-shot failure modes and publish ablations. Both add query-time model work; no official public code was found in the checked paper surfaces | **Candidates** for long-video and semantic-granularity comparisons, not implementation instructions |
 | [NumPro](https://openaccess.thecvf.com/content/CVPR2025/html/Wu_Number_it_Temporal_Grounding_Videos_like_Flipping_Manga_CVPR_2025_paper.html) and [Moment-GPT](https://arxiv.org/abs/2501.07972) | NumPro overlays frame numbers for a video LLM; Moment-GPT rewrites queries, generates spans, and uses multiple frozen MLLMs to score them | Both target direct MLLM timestamping. They alter media or add heavy query-time inference and do not use VidXP's indexed multimodal evidence | **Not selected** for the first product experiment |
 
-## Product-aligned direction
+## Verified failure and next comparison
 
-The current failure is not evidence for one replacement. It exposes three
-separate questions, in this order:
+The saved post-FineLAP-fix development run ranks the correct opening region
+first in action, scene, and sound. Its 0–8.0075-second output is wider than the
+0–6-second reference because the connected-component union preserves the full
+eight-second action record. The earlier random sound result predates commit
+`343bd27` and must not be used to diagnose current ranking.
 
-1. **Candidate recall:** does any current raw hit overlap the ground-truth event?
-2. **Temporal representation:** can current hit boundaries express the event, or
-   do fixed clips impose the error?
-3. **Boundary inference and fusion:** given adequate evidence, does connected
-   union choose the wrong start or end?
+This evidence narrows the next work to interval localization; it does not
+support replacing the encoders, indexes, or product architecture. The first
+comparison uses the same prepared LongVALE media and queries:
 
-The first bounded comparison should preserve identical queries and media, then
-measure:
+- current RRF-ranked connected-component union;
+- Diwan et al.'s 2023 zero-shot proposal, matching, and post-processing method;
+  and
+- TFVTG's ECCV 2024 dynamic/static proposal scoring and ordered sub-event
+  integration.
 
-- current raw-hit oracle IoU;
-- current connected-union output;
-- a faithful simple zero-shot proposal baseline from Diwan et al.; and
-- one established trained control through Lighthouse or UniVTG.
-
-STITCH is the most product-aligned recent temporal-unit candidate because its
-video-side chunks are reusable across queries. REZE is the clearest recent
-boundary-extraction candidate because it separates recognition scores from the
-deterministic interval readout. Their recency means both remain experiments,
-not decisions. No production change should be made until candidate recall,
-IoU, latency, memory, index size, artifact license, and macOS viability are
-reported on the same examples.
+RRF remains the coarse ranker in the VidXP control. Neither its paper nor the
+two localization papers justify an arbitrary candidate multiplier. Retrieval
+depth and final output count must be measured separately and recorded as an
+original VidXP execution choice unless a subsequently adopted method defines
+them. REZE and STITCH remain later research candidates, not the immediate
+implementation direction.
 
 ## Required record for future adoption
 

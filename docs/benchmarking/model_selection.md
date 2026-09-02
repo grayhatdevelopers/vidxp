@@ -39,6 +39,14 @@ start to the latest end. A relevant coarse action hit can therefore expand a
 more precise sound or speech interval. Ranking and boundary accuracy are
 separate properties: a correct top candidate can still have avoidably poor IoU.
 
+The completed post-FineLAP-fix trace demonstrates this failure directly. For a
+0–6 second event, action rank 1 covered 0–8.0075 seconds, scene ranks 1–3 covered
+1.001–4.004 seconds, and sound ranks 1–3 covered 1.76–2.24 seconds. Fusion ranked
+that opening component first but returned 0–8.0075 seconds because interval
+union preserved the full action record. This trace does not show an
+encoder-ranking failure; it does not establish ranking quality beyond this
+development query.
+
 ## Separate the architectural questions
 
 | Layer | Question | Relevant research | What the evidence supports |
@@ -76,7 +84,7 @@ they do not establish a general retrieval architecture.
 | Environmental sound | FineLAP global and dense features | LAION-CLAP as a mature retrieval control; PE-A-Frame and AEGBench for boundaries | Implementation exists, but quality and boundary claims remain pending. |
 | Visual retrieval | VideoPrism action clips and SigLIP2 scene frames | MVEB places Qwen3-VL-Embedding highly, but does not compare VideoPrism | Qwen is a candidate, not a selected replacement. Run the same retrieval protocol before changing providers. |
 | Temporal units | Fixed action clips plus one-second scene records | Shot/scene segmentation and denser query-aware proposals | Open. Existing indexes do not have to be retained if another representation wins on quality and resource use. |
-| Boundary inference | Connected-component interval union | Shot-aware proposals and query-conditioned interval models | Open. Do not tune union thresholds before measuring the interval ceiling of the stored evidence. |
+| Boundary inference | Connected-component interval union | Diwan et al. proposal matching and post-processing; TFVTG dynamic/static localization | The fixed-window widening failure is confirmed. Compare named localization controls before changing production behavior. |
 | Fusion | RRF scoring inside connected interval components | Learned audio-visual interaction or query-conditioned boundary scoring | Retain as the transparent control only. RRF is paper-derived; connected grouping and interval union are VidXP-specific. Provenance must survive any replacement. |
 | Planner and synthesis | Structured evidence passed to the configured agent/model | Smaller local planners or selected media verification | Evaluate separately from retrieval. Agent prose cannot substitute for temporal evidence. |
 
@@ -99,19 +107,18 @@ target-trained temporal score is a ceiling, not a direct zero-shot comparison.
 
 ## Bounded decision sequence
 
-1. Measure raw-hit candidate recall and the best interval IoU representable by
-   the current hits. This distinguishes missing evidence from a representation,
-   ranking, or fusion defect.
-2. Compare the current fixed units with shot-aligned, scene-aligned, and denser
-   candidates on the same development examples. Do not change the production
-   index format for this probe.
-3. If suitable candidates exist but their boundaries remain poor, compare one
-   established trained interval control and one faithful zero-shot extraction
-   control before changing production behavior.
-4. Compare late fusion with audiovisual interaction only after the candidate
-   and boundary stages are measured separately.
-5. Promote a new architecture only after a bounded local runtime check and a
-   benchmark whose protocol matches the claimed behavior.
+1. Treat the current RRF result as coarse retrieval. The completed trace already
+   establishes correct top-region ranking for the development case; do not rerun
+   the obsolete pre-tokenization failure.
+2. On the prepared LongVALE tasks, compare current interval union with two
+   paper-faithful zero-shot controls: Diwan et al.'s
+   proposal/matching/post-processing pipeline and TFVTG's dynamic/static
+   proposal scoring with ordered sub-event integration. Keep their published
+   settings and report every deviation.
+3. Report IoU, boundary errors, candidate recall, latency, memory, and model
+   calls. Change production localization only if the same method improves more
+   than the single development query. Encoder, index, and multimodal-fusion
+   changes remain out of scope for this comparison.
 
 The current Codex MCP smoke is diagnostic development data. It shows that the
 agent used the skill and MCP successfully and returned relevant evidence, but

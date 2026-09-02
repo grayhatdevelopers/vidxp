@@ -17,8 +17,8 @@ installation and product usage, start with the main
 | DiDeMo visual localization | Legacy full result + current smoke | The legacy CLIP stack completed 4,021 official test queries over 1,037 videos; the current SigLIP2 stack passed a one-annotation real execution smoke |
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
 | Environmental-sound retrieval | Implementation complete; benchmark pending | FineLAP stores global ten-second windows and dense timestamped sound activations; no VidXP quality score is claimed yet |
-| LongVALE combined evaluation | Diagnostic before pilot | Measure whether current temporal units can represent the expected intervals before changing fusion or scheduling the held-out pilot |
-| Codex MCP ablation | Development smoke recorded | One paired task verified the harness and exposed a boundary-quality gap; the 54-run held-out pilot has not run |
+| LongVALE combined evaluation | Localization comparison before pilot | Compare the current interval union with named zero-shot localization controls on the prepared tasks before scheduling the held-out pilot |
+| Codex MCP ablation | Development smoke traced | One paired task verified the harness and exposed a fixed-window boundary error; the 54-run held-out pilot has not run |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
 
 Read [current results](results.md) for the scores, plain-language metric
@@ -57,14 +57,15 @@ adapter/runtime compatibility only; they do not yet provide full-corpus quality
 comparisons. VidXP now contributes visual, speech, and FineLAP sound evidence,
 including global windows and dense timestamps for non-speech events.
 
-The first Codex MCP development pair found the requested event in both
-conditions, while VidXP returned the coarser interval. Before the held-out
-LongVALE-derived pilot, measure whether that error is imposed by candidate
-recall, indexed temporal units, connected-component union, or a combination of
-them. Do not select a new model from one agent run. The
-[current model direction](model_selection.md) separates the architectural
-questions, and the [research adoption record](research_adoption.md) distinguishes
-implemented research from candidates and original VidXP behavior.
+The first Codex MCP development pair found the requested opening event. Its
+post-fix raw trace shows that action, scene, and sound all ranked evidence from
+the correct region first for that query. The returned interval remained too
+long because an eight-second action record set the end of the
+connected-component union. This
+diagnosis does not justify changing an encoder or index. The next bounded work
+compares interval localization methods inside the retrieved region. See the
+[current model direction](model_selection.md) for the execution order and the
+[research adoption record](research_adoption.md) for exact method provenance.
 
 ## Evidence rules
 

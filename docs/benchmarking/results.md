@@ -41,9 +41,27 @@ and uncached input can have different rates; total tokens alone do not determine
 cost. Reasoning tokens are included in output tokens. Subscription-authenticated
 Codex usage is an account allowance or credit measurement, not an API invoice.
 
-This pair does not show that VidXP retrieved the wrong event. It shows that the
-returned interval was too long. The next diagnostic must inspect the raw stored
-and fused intervals before attributing the error to ranking, fusion, or a model.
+The saved post-FineLAP-fix job confirms that retrieval found the correct
+opening region:
+
+| Stage | Highest-ranked evidence |
+| --- | --- |
+| Action | 0–8.0075 s, rank 1 |
+| Scene | 1.001–2.002 s, 2.002–3.003 s, and 3.003–4.004 s, ranks 1–3 |
+| Sound | 1.76–1.92 s, 1.92–2.08 s, and 2.08–2.24 s, ranks 1–3 |
+| Fused | 0–8.0075 s, rank 1 |
+
+The ranking failure seen in an earlier run came from the FineLAP tokenization
+bug fixed by commit `343bd27`; it is not evidence about the current system. In
+the current run, the fixed eight-second action record overlaps the finer scene
+and sound hits. Connected-component union therefore adopts the action record's
+full end time. This explains the +2.0075-second error.
+
+The request also used `top_k = 3`, which the current application passes to each
+modality as both retrieval depth and final output depth. That is a separate
+candidate-depth limitation: a later boundary stage cannot use lower-ranked
+fine-grained evidence that was never retrieved. It does not by itself explain
+the eight-second endpoint in this example.
 
 ## Runtime and model generations
 
