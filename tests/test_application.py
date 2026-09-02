@@ -537,7 +537,7 @@ class ApplicationTests(unittest.TestCase):
         self.assertIsInstance(result, FusedSearchResult)
         self.assertEqual(result.modalities, ("indexed",))
         self.assertEqual(calls[0][1].query, "yellow taxi")
-        self.assertEqual(calls[0][1].top_k, 28)
+        self.assertEqual(calls[0][1].top_k, 7)
         self.assertIs(
             calls[0][0].storage,
             manager.__enter__.return_value,

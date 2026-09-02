@@ -78,7 +78,7 @@ eligible modalities, reports must show three fixed rows:
 |---|---|
 | Scene only | The existing visual retrieval output |
 | Speech only | The existing transcript retrieval output |
-| Anchored RRF fusion | Continuous same-modality ranges ranked with supporting modalities by `temporal_anchor_rrf_v1`, `k=60` |
+| Fixed RRF fusion | Overlap-connected intervals ranked with `rrf_v1`, `k=60` |
 
 No fused benchmark score is reported until the same frozen dataset inputs and
 evaluator used by the atomic rows have been run. Generated `QueryAnswer` claims
