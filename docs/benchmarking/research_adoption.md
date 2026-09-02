@@ -75,9 +75,12 @@ eight-second action record. The earlier random sound result predates commit
 
 This evidence narrows the next work to interval localization; it does not
 support replacing the encoders, indexes, or product architecture. Both named
-methods require a dense similarity sequence, which the saved `top_k = 3` search
-result does not contain. The first comparison must therefore export the full
-per-frame curve for the same prepared LongVALE media and queries, then measure:
+visual methods require a dense similarity sequence, which the saved `top_k = 3`
+search result does not contain. The product diagnostic must first export every
+indexed score and interval for each task modality without treating scores from
+different models as calibrated. Visual curves can feed the named controls;
+FineLAP activations must be evaluated as sound evidence, not forced through a
+visual paper's method. The comparison then measures:
 
 - current RRF-ranked connected-component union;
 - Diwan et al.'s 2023 zero-shot proposal, matching, and post-processing method;

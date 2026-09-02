@@ -110,9 +110,12 @@ target-trained temporal score is a ceiling, not a direct zero-shot comparison.
 1. Treat the current RRF result as coarse retrieval. The completed trace already
    establishes correct top-region ranking for the development case; do not rerun
    the obsolete pre-tokenization failure.
-2. Export the dense per-frame similarity curve required by the localization
-   papers. The public search result is insufficient: `top_k = 3` retained only
-   three scene and three sound intervals in the traced run.
+2. Export every indexed score and interval for each task modality. Preserve
+   model-specific distances and representations rather than combining them as
+   calibrated values. The public result is insufficient: `top_k = 3` retained
+   only three scene and three sound intervals in the traced run. Dense visual
+   scores can then feed visual-localization controls, while FineLAP activation
+   scores test sound boundaries separately.
 3. Compare current interval union with Diwan et al.'s
    proposal/matching/post-processing pipeline and TFVTG's dynamic/static
    proposal scoring. A reproduction using the papers' encoders is a research
