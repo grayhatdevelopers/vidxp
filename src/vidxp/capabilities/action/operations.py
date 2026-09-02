@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import string
 from typing import Any, Mapping
 
 from vidxp.capabilities.contracts import CapabilityContext
@@ -31,6 +32,11 @@ REQUIRED_METADATA = frozenset(
 )
 
 
+def canonicalize_videoprism_text(text: str) -> str:
+    punctuation = str.maketrans(string.punctuation, " " * len(string.punctuation))
+    return " ".join(text.translate(punctuation).lower().split()) + "."
+
+
 def videoprism_embedding(
     query: str,
     runtime: ModelRuntimePort,
@@ -39,7 +45,7 @@ def videoprism_embedding(
 
     provider = get_videoprism_model(runtime)
     inputs = provider.processor(
-        text=[query],
+        text=[canonicalize_videoprism_text(query)],
         padding="max_length",
         max_length=64,
         truncation=True,

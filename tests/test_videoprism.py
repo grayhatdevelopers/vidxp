@@ -11,12 +11,21 @@ from vidxp.capabilities.action.indexing import (
     process_videoprism_samples,
 )
 from vidxp.capabilities.action.models import normalize_pooled_output
+from vidxp.capabilities.action.operations import canonicalize_videoprism_text
 from vidxp.capabilities.action.specs import VIDEOPRISM_MODEL
 from vidxp.core.contracts import CancellationToken, IndexConfig
 from vidxp.core.video import FrameSample, VideoInfo
 
 
 class VideoPrismTests(unittest.TestCase):
+    def test_text_uses_the_official_videoprism_canonicalization(self):
+        self.assertEqual(
+            canonicalize_videoprism_text(
+                "  A car engine REVS loudly, then a siren sounds!  "
+            ),
+            "a car engine revs loudly then a siren sounds.",
+        )
+
     def test_provider_pooler_dimension_is_removed(self):
         import torch
 

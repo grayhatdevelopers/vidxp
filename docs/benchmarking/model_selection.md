@@ -31,12 +31,18 @@ VidXP builds reusable local indexes for separate evidence types:
 - faster-whisper and Qwen3 Embedding produce timestamped speech evidence;
 - FineLAP retrieves environmental-sound clips;
 - SigLIP 2 retrieves sampled visual frames;
-- VideoPrism retrieves multi-frame action clips; and
+- VideoPrism ranks fixed multi-frame clips by global text-video similarity; and
 - reciprocal rank fusion groups overlapping results into coarse candidate
   moments while preserving their source records.
 
 This modular path remains the product control. No current evidence requires
 replacing every provider or moving to a single trained temporal model.
+
+VideoPrism's published action results do not validate this fixed-window
+ranking as temporal action localization. A direct conformance check found that
+the pinned Transformers port matches Google's official Flax checkpoint; the
+remaining action failure is therefore in the product's global-similarity
+ranking design, not the converted model weights.
 
 An optional small language model may plan searches or summarize retrieved
 evidence. That is a VidXP product option, not a paper-derived requirement. It
@@ -95,19 +101,25 @@ Point-to-Span and shot-proposal fusion also remain concluded benchmark controls.
 Their exact results and deviations are recorded in the
 [research adoption record](research_adoption.md).
 
-## Next product check
+## Next action correction
 
-Do not add another model or temporal rule for the current correction. After the
-two-stage sound search is committed, rerun the existing paired Codex smoke only
-with maintainer approval. Compare the same answer and evidence fields, temporal
-metrics, token categories, elapsed time, estimated cost, and tool-call counts.
+Do not tune fusion, window overlap, or query wording again for this failure.
+The held-out comparison already showed that useful fine windows exist but raw
+VideoPrism similarity ranks most of them too low.
 
-Use that result to answer two concrete questions:
+The replacement boundary is now explicit: keep VidXP's action API and reusable
+index, but replace global clip ranking with a trained temporal grounder that
+consumes a sequence of visual features and predicts intervals. An et al.,
+[HieraMamba](https://openaccess.thecvf.com/content/CVPR2026/html/An_HieraMamba_Video_Temporal_Grounding_via_Hierarchical_Anchor-Mamba_Pooling_CVPR_2026_paper.html),
+CVPR 2026, establishes the long-video multi-scale grounding design. An, Jain,
+and Grauman, [UniversalVTG](https://arxiv.org/abs/2604.08522), 2026, adds one
+cross-domain checkpoint and is the closest technical product candidate.
 
-1. Does the agent receive relevant, inspectable sound evidence without the
-   mixed FineLAP ranking?
-2. Does VidXP reach a similarly grounded conclusion with less agent work than
-   direct video inspection?
-
-Only a measured remaining failure should open a new model or localization
-decision. Candidate papers stay in the inventory until that decision exists.
+Neither release can be adopted unchanged: both depend on a CUDA-oriented Mamba
+stack, and the checked repositories do not provide a top-level product license.
+The next implementation task is therefore a bounded compatibility decision:
+confirm a lawful checkpoint and a CPU or Apple-Silicon runtime for that exact
+grounder. If either requirement fails, reject it and evaluate the Apache-2.0
+Lighthouse CPU path as the fallback, recording its 150-second input limit. Do
+not change product ranking until one candidate passes that gate on the frozen
+action tasks.

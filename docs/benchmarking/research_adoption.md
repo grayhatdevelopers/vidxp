@@ -30,7 +30,7 @@ labeled as such.
 | --- | --- | --- | --- |
 | Li et al., [FineLAP](https://aclanthology.org/2026.acl-long.473/), ACL 2026, Sections 3.2–3.3 | Released global and local audio representations in `src/vidxp/capabilities/sound/` | Supplies environmental-sound retrieval and timestamped activation features | Standard search uses global clips to select regions, then ranks only local activations inside them. The two-stage orchestration, ten-second windows, 0.16-second records, context metadata, and fallback are VidXP choices. |
 | Cormack, Clarke, and Buettcher, [Reciprocal Rank Fusion](https://doi.org/10.1145/1571941.1572114), SIGIR 2009 | Rank-only formula with `k = 60` in `src/vidxp/search_fusion.py` | Combines modality rankings without treating their raw distances as one scale | Connected temporal grouping, one best rank per modality, and interval union are VidXP controls, not parts of the paper. |
-| Zhao et al., [VideoPrism](https://arxiv.org/abs/2402.13217), ICML 2024 | Released video encoder in `src/vidxp/capabilities/action/` | Supplies motion-aware clip embeddings | VidXP's non-overlapping 16-frame records are not a VideoPrism boundary method. |
+| Zhao et al., [VideoPrism](https://arxiv.org/abs/2402.13217), ICML 2024, and Google's public LvT checkpoint | Global video-text embeddings and official text canonicalization in `src/vidxp/capabilities/action/` | Supplies cross-modal similarity for short action clips | VidXP's fixed windows and long-video ranking are not VideoPrism methods. The paper's action results use task-specific evaluation heads and do not validate raw similarity as temporal action localization. |
 | Tschannen et al., [SigLIP 2](https://arxiv.org/abs/2502.14786), 2025 | Released image-text encoder in `src/vidxp/capabilities/scene/` | Supplies visual-semantic frame retrieval | VidXP samples at 1 fps. These records are sampled frames, not detected semantic scenes. |
 | Radford et al., [Whisper](https://arxiv.org/abs/2212.04356), ICML 2023, and Zhang et al., [Qwen3 Embedding](https://arxiv.org/abs/2506.05176), 2025 | Speech recognition and text embeddings in `src/vidxp/capabilities/speech/` | Produces timestamped, searchable transcript evidence | `faster-whisper` is the runtime implementation. Segmentation, storage, and retrieval are VidXP choices. |
 
@@ -43,6 +43,7 @@ activations.
 | Behavior | Exact status |
 | --- | --- |
 | Fixed VideoPrism records | Sixteen frames sampled at 2 fps form a record of about eight seconds. No paper was adopted to select this temporal unit. |
+| Raw VideoPrism similarity ranking | Global LvT cosine similarity ranks the fixed records. This is a product control, not the action-localization method evaluated in the paper. |
 | One-second SigLIP 2 records | They provide dense visual evidence, not shot or scene boundaries. |
 | FineLAP two-stage search | Global records choose candidate regions. Local records are reranked inside those regions and supply the returned timestamps. Their raw distances are never compared across representations. This orchestration is original VidXP engineering. |
 | Connected-interval grouping | Every overlapping hit, including transitive overlaps, enters one component. This is VidXP logic. |
@@ -78,13 +79,24 @@ changes.
   eight-second-to-four-second search path. Fine candidate availability improved,
   but the coarse gate missed one viable region and similarity ranking usually
   did not select the best fine record.
+- The pinned Transformers port matches Google's official Flax checkpoint on an
+  identical 16-frame input: video and text embedding cosine parity rounded to
+  `1.0`, and all six checked similarity scores differed by less than `0.000051`.
+  The port is not the observed ranking failure. VidXP did omit the official
+  query canonicalization; that provider-contract bug is corrected in the
+  action search path. On the five held-out action tasks, the correction left
+  mean top-1 IoU at `0.1297` and did not improve any threshold rate; it is a
+  conformance fix, not the ranking solution.
 - FineLAP's global and local records cannot be treated as one raw-distance
   ranking. Standard sound search now uses global clips for candidate selection
   and local activations for the final sound hits.
 - RRF is useful as a transparent ranking control, but the current temporal
   grouping and union do not provide exact boundaries.
-- No evidence from these controls selects AM-DETR, UMT, UniVTG, or another
-  model as the next product implementation.
+- The action replacement must consume a temporal feature sequence and predict
+  intervals. Another global clip-similarity model does not address the measured
+  failure. HieraMamba and UniversalVTG directly study this design, but their
+  released CUDA/Mamba runtime and unresolved repository licensing prevent a
+  current CPU product adoption.
 - The next approved agent comparison should test whether VidXP supplies enough
   evidence for a similarly grounded answer with fewer tokens, less time, or
   fewer media-inspection calls. IoU remains one diagnostic within that result.
