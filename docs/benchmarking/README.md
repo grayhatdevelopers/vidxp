@@ -33,6 +33,7 @@ definitions, honest comparisons, and the next benchmark decision.
 | Understand the benchmark-ready Python structure | [Core contract](core_contract.md) |
 | See which benchmarks exist and what each measures | [Benchmark catalog](benchmark_catalog.md) |
 | Understand the current model and benchmark choices | [Multimodal model direction](model_selection.md) |
+| See exactly which paper-derived ideas are in the product | [Research adoption record](research_adoption.md) |
 | Run the Codex MCP-on/MCP-off experiment | [Codex agent ablation](agent_ablation.md) |
 | Find exact published competitor scores | [Published comparison results](published_results.md) |
 | Review the relevant papers | [Research-paper inventory](research_papers.md) |
@@ -58,11 +59,12 @@ including global windows and dense timestamps for non-speech events.
 
 The first Codex MCP development pair found the requested event in both
 conditions, while VidXP returned the coarser interval. Before the held-out
-LongVALE-derived pilot, measure whether that error is imposed by the indexed
-temporal units, the connected-component union, or both. Do not select a new
-model from one agent run. The [current model direction](model_selection.md)
-separates temporal representation, candidate selection, boundary inference,
-and multimodal combination so each can be evaluated independently.
+LongVALE-derived pilot, measure whether that error is imposed by candidate
+recall, indexed temporal units, connected-component union, or a combination of
+them. Do not select a new model from one agent run. The
+[current model direction](model_selection.md) separates the architectural
+questions, and the [research adoption record](research_adoption.md) distinguishes
+implemented research from candidates and original VidXP behavior.
 
 ## Evidence rules
 

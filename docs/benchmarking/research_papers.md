@@ -6,7 +6,8 @@ Status: Paper-level benchmark-use audit active
 
 Last verified: 2026-09-02
 
-Related decision record: [Published benchmark catalog](benchmark_catalog.md)
+Related records: [Published benchmark catalog](benchmark_catalog.md) and
+[research adoption record](research_adoption.md)
 
 This inventory contains papers that introduce a serious candidate benchmark,
 establish an evaluation protocol, or provide a close baseline for an implemented
@@ -16,6 +17,28 @@ paper mentioning video retrieval, CLIP, ASR, or face recognition.
 The paper-writing team can review these later. This workstream's immediate use is
 to trace which datasets, metrics, baselines, and public artifacts each paper
 actually relies on.
+
+## Coverage method and limit
+
+The pre-2023 search is anchored by the peer-reviewed
+[TPAMI survey](https://doi.org/10.1109/TPAMI.2023.3258628) and
+[ACM TOMM survey](https://doi.org/10.1145/3532626), which organize temporal
+sentence grounding into proposal-based, proposal-free, reinforcement-learning,
+and weakly supervised families. The post-2022 update follows the papers and
+artifacts in those families through CVPR, ICCV, ECCV, WACV, NeurIPS, ACL,
+EMNLP, SIGIR, AAAI, and arXiv through the verification date.
+
+For the current boundary failure, inclusion requires at least one of:
+
+- a method for temporal units, candidate generation, boundary inference, or
+  multimodal combination;
+- a zero-shot or deployable interval baseline; or
+- an evaluation that can distinguish candidate recall from boundary quality.
+
+This is a scoped product-research inventory, not a claim that every temporal
+grounding paper ever published is listed. Newly found work must be placed in a
+method family and checked at method, experiment, artifact, and product-fit
+levels; matching a title or abstract is insufficient.
 
 ## Reading order
 
@@ -36,8 +59,8 @@ Start with these papers before reviewing individual model variants:
    prediction.
 9. **Automatic Funny Scene Extraction**, FunnyNet, and FunnyNet-W for applied
    semantic-scene construction and multimodal event ranking.
-10. **Zero-shot Video Moment Retrieval With Off-the-Shelf Models** for the closest
-   methodological comparison to VidXP's untuned CLIP retrieval.
+10. **Diwan et al., Luo et al., TFVTG, REZE, Point-to-Span, and STITCH** for the
+   zero-shot proposal, boundary, compound-query, and reusable-index families.
 11. **HiREST** and **QuerYD** for speech-backed retrieval options.
 12. **BCL** for unknown-number video face clustering and its WCP/NMI protocol.
 13. **VPCD** and **C1C** for stronger person/track constraints and dataset context.
@@ -69,6 +92,7 @@ Start with these papers before reviewing individual model variants:
 | [SAVE: Speech-Aware Video Representation Learning for Video-Text Retrieval](https://openaccess.thecvf.com/content/CVPR2026/html/Zhao_SAVE_Speech-Aware_Video_Representation_Learning_for_Video-Text_Retrieval_CVPR_2026_paper.html) | CVPR 2026 | MSR-VTT-9k/7k, VATEX, Charades, LSMDC | Speech-aware whole-video retrieval, but not timestamp localization |
 | [LongVALE](https://openaccess.thecvf.com/content/CVPR2025/papers/Geng_LongVALE_Vision-Audio-Language-Event_Benchmark_Towards_Time-Aware_Omni-Modal_Perception_of_Long_Videos_CVPR_2025_paper.pdf) | CVPR 2025 | Introduces LongVALE | Strongest peer-reviewed vision–audio–speech temporal target; no actor task |
 | [MultiVENT 2.0](https://openaccess.thecvf.com/content/CVPR2025/papers/Kriz_MultiVENT_2.0_A_Massive_Multilingual_Benchmark_for_Event-Centric_Video_Retrieval_CVPR_2025_paper.pdf) | CVPR 2025 | Introduces MultiVENT 2.0 | Large-corpus visual, speech/ASR, embedded-text/OCR, and description-metadata retrieval; whole videos rather than moments |
+| [Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods](https://doi.org/10.1145/1571941.1572114) | SIGIR 2009 | TREC ranked-list fusion experiments | Original source for VidXP's adopted rank-only fusion and `k = 60`; it does not define temporal grouping or interval boundaries |
 | [MMMORRF: Multimodal Multilingual Modularized Reciprocal Rank Fusion](https://doi.org/10.1145/3726302.3730157) | SIGIR 2025 | MultiVENT 2.0 and TVR | Direct frames+OCR+ASR fixed-fusion pipeline comparator with exact full-test results |
 | [MAGMaR Shared Task System Description: Video Retrieval with OmniEmbed](https://arxiv.org/abs/2506.09409) | arXiv/MAGMaR presentation 2025 | MultiVENT 2.0 official shared-task test | Provides zero-shot and target-trained unified-embedding results plus a released checkpoint; no archival workshop paper was found |
 | [Q2E: Query-to-Event Decomposition for Zero-Shot Multilingual Text-to-Video Retrieval](https://aclanthology.org/2025.ijcnlp-long.121/) | IJCNLP-AACL 2025 | Original MultiVENT, MSR-VTT 1k-A, and MSVD | Training-free visual/Whisper rank-fusion comparator; the original MultiVENT protocol must not be conflated with MultiVENT 2.0 |
@@ -87,6 +111,7 @@ portable judged benchmark covering all of VidXP.
 | --- | --- | --- | --- |
 | [Multi-modal Video Search by Examples: A Video Quality Impact Analysis](https://pure.ulster.ac.uk/ws/files/222412425/IET_Computer_Vision_-_2024_-_Wu_-_Multi_modal_video_search_by_examples_A_video_quality_impact_analysis.pdf) | IET Computer Vision 2024 | Faces, scenes, speakers, ASR, fusion, approximate search over BBC video | Closest functional analogue; BBC data and judgments are not portable |
 | [WISE: A Multimodal Search Engine for Visual Scenes, Audio, Objects, Faces, Speech, and Metadata](https://www.robots.ox.ac.uk/~vgg/publications/2026/sridhar2026wise/) | SIGIR 2026 | Scene/object/face, acoustic event, WhisperX speech, metadata, composite queries | Open-source system; deployments and latency context, no portable judged protocol |
+| [Lighthouse: A User-Friendly Library for Reproducible Video Moment Retrieval and Highlight Detection](https://aclanthology.org/2024.emnlp-demo.6/) | EMNLP Demo 2024 | Six MR-HD models, three feature families, and five datasets behind one API | Best maintained reproduction surface for a trained interval control; CPU inference exists, with a 150-second video limit and CLIP-only CPU guidance |
 | [ContextIQ](https://openaccess.thecvf.com/content/WACV2025/html/Chaubey_ContextIQ_A_Multimodal_Expert-Based_Video_Retrieval_System_for_Contextual_Advertising_WACV_2025_paper.html) | WACV 2025 | Video, audio, transcript, and metadata experts | Whole-video reference; supplemental annotations but no public implementation |
 | [Collaborative Experts](https://www.robots.ox.ac.uk/~vgg/research/collaborative-experts/) | BMVC 2019 | Appearance, motion, scene, ASR, OCR, audio experts | Public models/features and corrected results; whole-video task |
 | [Multi-Modal Transformer for Video Retrieval](https://www.ecva.net/papers/eccv_2020/papers_ECCV/papers/123490205.pdf) | ECCV 2020 | RGB, motion, scene, face, OCR, speech, audio experts | Multi-stream whole-video retrieval context |
@@ -124,10 +149,20 @@ infrastructure make it unsuitable as the first executable benchmark.
 | [Moment-DETR: End-to-End Video Moment Retrieval with Natural Language](https://proceedings.neurips.cc/paper/2021/hash/62e0973455fd26eb03e91d5741a4a3bb-Abstract.html) | NeurIPS 2021 | Introduces QVHighlights | Primary modern interval/saliency benchmark |
 | [UMT: Unified Multi-Modal Transformers for Joint Video Moment Retrieval and Highlight Detection](https://openaccess.thecvf.com/content/CVPR2022/html/Liu_UMT_Unified_Multi-Modal_Transformers_for_Joint_Video_Moment_Retrieval_and_CVPR_2022_paper.html) | CVPR 2022 | QVHighlights, Charades-STA, YouTube Highlights, TVSum | Established query-conditioned interval/highlight model with aligned visual and audio features; official code and checkpoints exist |
 | [Zero-shot Video Moment Retrieval With Off-the-Shelf Models](https://proceedings.mlr.press/v203/diwan23a.html) | Transfer Learning for NLP Workshop, PMLR 2023 | QVHighlights filtered validation set (1,434 videos) | Nearest zero-shot comparison, but its shot proposals and watershed merging go beyond raw frame-level CLIP scoring |
+| [Zero-Shot Video Moment Retrieval From Frozen Vision-Language Models](https://openaccess.thecvf.com/content/WACV2024/html/Luo_Zero-Shot_Video_Moment_Retrieval_From_Frozen_Vision-Language_Models_WACV_2024_paper.html) | WACV 2024 | Charades-STA, ActivityNet Captions, and TACoS, including OOD splits | Strict zero-shot proposal method: query-conditioned frozen features, clustering, and bottom-up combination for compound queries; hyperparameters were selected on Charades-STA and no official code was found |
+| [Training-free Video Temporal Grounding using Large-scale Pre-trained Models](https://arxiv.org/abs/2408.16219) | ECCV 2024 | Charades-STA and ActivityNet Captions, including cross-dataset/OOD tests | Official-code compound-query baseline using LLM sub-event ordering plus VLM dynamic/static proposal scoring; adds query-time large-model work |
 | [TALL: Temporal Activity Localization via Language Query](https://arxiv.org/abs/1705.02101) | ICCV 2017 | Introduces Charades-STA | Established, relatively manageable known-video interval benchmark |
 | [Towards a Complete Benchmark on Video Moment Localization](https://proceedings.mlr.press/v238/chae24a.html) | AISTATS 2024 | ActivityNet Captions, Charades-STA, DiDeMo, TACoS, YouCook2, MSR-VTT, TVR; MoLEF framework | Cross-dataset bias, cost, and benchmark-methodology review; not a new dataset or zero-shot baseline |
 | [QD-DETR: Query-Dependent Video Representation for Moment Retrieval and Highlight Detection](https://github.com/wjun0830/QD-DETR) | CVPR 2023 | QVHighlights, Charades-STA, TVSum | Supervised moment/highlight comparator; no experimental Ego4D, TACoS, DiDeMo, MSR-VTT, or ActivityNet result |
 | [UniVTG: Towards Unified Video-Language Temporal Grounding](https://github.com/showlab/UniVTG) | ICCV 2023 | QVHighlights, Ego4D NLQ, Charades-STA, TACoS, YouTube Highlights, TVSum, QFVS | Broad pretrained/supervised temporal-label comparator; only explicitly marked rows are zero-shot |
+| [Anchor-Aware Similarity Cohesion in Target Frames Enables Predicting Temporal Moment Boundaries in 2D](https://openaccess.thecvf.com/content/CVPR2025/html/Tan_Anchor-Aware_Similarity_Cohesion_in_Target_Frames_Enables_Predicting_Temporal_Moment_CVPR_2025_paper.html) | CVPR 2025 | QVHighlights, Charades-STA, and ActivityNet Captions | Official-code supervised boundary model around the highest-relevance frame; strong boundary ablations, but visual-only and dataset-specific |
+| [Number It: Temporal Grounding Videos Like Flipping Manga](https://openaccess.thecvf.com/content/CVPR2025/html/Wu_Number_it_Temporal_Grounding_Videos_like_Flipping_Manga_CVPR_2025_paper.html) | CVPR 2025 | Standard VTG benchmarks with training-free and fine-tuned video-LLM settings | Makes timestamps visually legible by overlaying frame numbers; useful direct-MLLM control but changes media and does not use reusable indexed evidence |
+| [Zero-shot Video Moment Retrieval via Off-the-shelf Multimodal Large Language Models](https://arxiv.org/abs/2501.07972) | arXiv 2025 | QVHighlights, ActivityNet Captions, and Charades-STA | Moment-GPT rewrites queries, generates spans, and scores them with several frozen models; high query-time complexity and no accepted venue verified |
+| [Point to Span: Zero-Shot Moment Retrieval for Navigating Unseen Hour-Long Videos](https://arxiv.org/abs/2512.10363) | arXiv 2025 | MAD and MomentSeeker | Training-free adaptive peak expansion plus ordered-subquery refinement for hour-long video; highly relevant search-then-refine method, but no official code was found |
+| [GranAlign: Granularity-Aware Alignment Framework for Zero-Shot Video Moment Retrieval](https://arxiv.org/abs/2601.00584) | AAAI 2026 | QVHighlights, Charades-STA, and ActivityNet Captions | Training-free dual-granularity query rewrite and query-aware caption alignment; accuracy evidence is useful but adds query-time LLM/VLM work and lacks checked official code |
+| [UniversalVTG: A Universal and Lightweight Foundation Model for Video Temporal Grounding](https://arxiv.org/abs/2604.08522) | arXiv 2026 | GoalStep-StepGrounding, Ego4D-NLQ, TACoS, Charades-STA, and ActivityNet Captions | One cross-dataset-trained interval model with official checkpoint/API; current evaluation and feature extraction require CUDA and a separately licensed upstream component |
+| [REZE: Recognition-Based Zero-Shot Extraction for Video Temporal Grounding](https://arxiv.org/abs/2608.04480) | arXiv 2026 | Charades-STA, ActivityNet Captions, and QVHighlights | Separates frozen-VLM clip recognition from deterministic single/multi-interval extraction; unusually complete ablations, but very recent, inference-heavy, and no public code found |
+| [Training-Free Temporal Abstraction for General Video Understanding](https://arxiv.org/abs/2608.27929) | arXiv 2026, submitted to NeurIPS | Kinetics-GEBD, TAPOS, ActivityNet Captions, QVHighlights, and long-video QA sets | STITCH makes query-independent semantic chunks reusable across retrieval and reasoning; closest fit to an offline index, but days old with only an anonymized submission artifact |
 | [BOLT: Boost Large Vision-Language Model Without Training for Long-form Video Understanding](https://openaccess.thecvf.com/content/CVPR2025/html/Liu_BOLT_Boost_Large_Vision-Language_Model_Without_Training_for_Long-form_Video_CVPR_2025_paper.html) | CVPR 2025 | Video-MME, LongVideoBench, MLVU, and a multi-source retrieval setting | Query-aware frame-selection evidence only; it improves downstream VQA but does not emit temporal intervals |
 | [A Local-to-Global Approach to Multi-Modal Movie Scene Segmentation](https://openaccess.thecvf.com/content_CVPR_2020/html/Rao_A_Local-to-Global_Approach_to_Multi-Modal_Movie_Scene_Segmentation_CVPR_2020_paper.html) | CVPR 2020 | Introduces MovieScenes and LGSS | Established multimodal shot-to-scene segmentation; architecture context and temporal-unit benchmark, not text-query grounding |
 | [Shot Contrastive Self-Supervised Learning for Scene Boundary Detection](https://openaccess.thecvf.com/content/CVPR2021/html/Chen_Shot_Contrastive_Self-Supervised_Learning_for_Scene_Boundary_Detection_CVPR_2021_paper.html) | CVPR 2021 | MovieNet scene boundaries and AdCuepoints | Efficient self-supervised shot representations; scene-boundary component evidence only |

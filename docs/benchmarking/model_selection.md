@@ -7,6 +7,10 @@ temporal architecture remains under evaluation
 
 Last verified: 2026-09-02
 
+Research provenance: [Research adoption record](research_adoption.md). That
+record is authoritative for what is implemented; papers listed here are not
+adopted unless it says so there.
+
 ## Required product behavior
 
 VidXP must find inspectable evidence for visual events, environmental sounds,
@@ -39,9 +43,9 @@ separate properties: a correct top candidate can still have avoidably poor IoU.
 
 | Layer | Question | Relevant research | What the evidence supports |
 | --- | --- | --- | --- |
-| Temporal representation | Should candidates be fixed clips, dense frames, shots, scenes, or learned proposals? | LGSS, ShotCoL, BaSSL, NeighborNet, and the Prime Video funny-scene system | Shot-aware semantic units are an established alternative to arbitrary fixed windows, especially for edited long-form video. Scene boundaries alone do not locate brief events inside a scene. |
-| Candidate selection | Which evidence should a query send to a downstream model? | BOLT and adaptive-keyframe work | Query-conditioned sampling improves long-video VQA under a frame budget. BOLT selects frames; it does not predict an event interval. Its pre-extracted frame features are still an offline feature store. |
-| Interval prediction | How should start and end times be inferred? | Moment-DETR, UMT, QD-DETR, and UniVTG | Query-conditioned models directly predict moments or boundary scores. UMT and QD-DETR include audio on QVHighlights; this is not a visual-only research problem. |
+| Temporal representation | Should candidates be fixed clips, dense frames, shots, scenes, or learned proposals? | LGSS, ShotCoL, BaSSL, NeighborNet, Diwan et al., and STITCH | Shot-aware and embedding-change units are established alternatives to arbitrary fixed windows. Scene boundaries alone do not locate brief events inside a scene; STITCH is a very recent preprint, not established product evidence. |
+| Candidate selection | Which evidence should a query send to a downstream model? | BOLT, Point-to-Span, and adaptive-keyframe work | Query-conditioned sampling helps under a frame budget, while Point-to-Span addresses long-video proposal growth. BOLT selects frames rather than intervals; Point-to-Span is training-free but lacks a checked public implementation. |
+| Interval prediction | How should start and end times be inferred? | Moment-DETR, UMT, QD-DETR, UniVTG, REZE, and Anchor-Aware Similarity Cohesion | Trained models directly predict intervals or boundary scores; REZE instead aggregates frozen-VLM confidence curves. These have different training, compute, and artifact assumptions and must be compared as separate controls. |
 | Multimodal combination | Should modalities remain separate, interact before prediction, or use one model? | UMT, QD-DETR, AVicuna, LongVALE, and modality-specific systems | Late fusion is a transparent control, not a settled product direction. Learned audiovisual interaction is established, but available implementations vary in training assumptions and local-runtime fit. |
 | Answer synthesis | Should a language model inspect selected evidence? | BOLT and long-video VLM work | A language model may explain or verify timestamp-bound evidence. It must not invent boundaries that the retrieval/localization path cannot support. |
 
@@ -73,7 +77,7 @@ they do not establish a general retrieval architecture.
 | Visual retrieval | VideoPrism action clips and SigLIP2 scene frames | MVEB places Qwen3-VL-Embedding highly, but does not compare VideoPrism | Qwen is a candidate, not a selected replacement. Run the same retrieval protocol before changing providers. |
 | Temporal units | Fixed action clips plus one-second scene records | Shot/scene segmentation and denser query-aware proposals | Open. Existing indexes do not have to be retained if another representation wins on quality and resource use. |
 | Boundary inference | Connected-component interval union | Shot-aware proposals and query-conditioned interval models | Open. Do not tune union thresholds before measuring the interval ceiling of the stored evidence. |
-| Fusion | Provenance-preserving reciprocal rank fusion | Learned audio-visual interaction or query-conditioned boundary scoring | Retain as the transparent control only. Provenance must survive any replacement. |
+| Fusion | RRF scoring inside connected interval components | Learned audio-visual interaction or query-conditioned boundary scoring | Retain as the transparent control only. RRF is paper-derived; connected grouping and interval union are VidXP-specific. Provenance must survive any replacement. |
 | Planner and synthesis | Structured evidence passed to the configured agent/model | Smaller local planners or selected media verification | Evaluate separately from retrieval. Agent prose cannot substitute for temporal evidence. |
 
 ## Decision measurements
@@ -95,14 +99,15 @@ target-trained temporal score is a ceiling, not a direct zero-shot comparison.
 
 ## Bounded decision sequence
 
-1. Measure the best interval IoU representable by the current raw hits. This
-   distinguishes a representation ceiling from a ranking or fusion defect.
+1. Measure raw-hit candidate recall and the best interval IoU representable by
+   the current hits. This distinguishes missing evidence from a representation,
+   ranking, or fusion defect.
 2. Compare the current fixed units with shot-aligned, scene-aligned, and denser
    candidates on the same development examples. Do not change the production
    index format for this probe.
-3. If suitable candidates exist but their boundaries remain poor, compare an
-   established query-conditioned interval method before a recent multi-billion-
-   parameter model.
+3. If suitable candidates exist but their boundaries remain poor, compare one
+   established trained interval control and one faithful zero-shot extraction
+   control before changing production behavior.
 4. Compare late fusion with audiovisual interaction only after the candidate
    and boundary stages are measured separately.
 5. Promote a new architecture only after a bounded local runtime check and a
