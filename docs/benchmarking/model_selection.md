@@ -124,9 +124,10 @@ target-trained temporal score is a ceiling, not a direct zero-shot comparison.
    inspection baseline, so do not spend a full agent batch on this adaptation
    alone.
 3. Compare the current eight-second non-overlapping action representation with
-   shorter overlapping action records and a content-aligned proposal control.
-   Freeze exact durations and strides before held-out scoring and label them as
-   VidXP experiment settings, not paper parameters.
+   the frozen four-second, two-second-stride control. Point-to-Span evaluated a
+   four-second fixed window; the 50% overlap is a declared VidXP experiment
+   setting. Use Diwan et al.'s content-aligned proposal method as the next
+   control if a fixed grid does not generalize.
 4. Apply the same candidate and interval policy to each representation. Report
    candidate recall, IoU and boundary errors, indexing time, stored bytes,
    query latency, peak memory, and record count.

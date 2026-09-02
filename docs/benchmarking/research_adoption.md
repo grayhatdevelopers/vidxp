@@ -74,9 +74,13 @@ it cannot be cited as a general or research-derived solution.
 | ID | Source | Implemented | VidXP-specific changes | Development evidence | Status |
 | --- | --- | --- | --- | --- | --- |
 | `p2s_asg_vidxp_v1` | Point-to-Span v1, Section 3.1 | Adaptive smoothing, peak prominence `0.05`, one-second peak distance, and adaptive expansion; the paper's final NMS setting is applied before fusion | Existing modality encoders; normalized squared-L2-to-cosine conversion; per-modality sample rates; integer smoothing width and edge padding; FineLAP activations only; native speech-span pass-through; early NMS at tIoU `0.8`; RRF span fusion. Query decomposition, reranking, and injection are excluded. | On the 0–6 s development case, control `0–8.0075`/IoU `0.7493`; adaptation `0.64–6.72`/IoU `0.7976`. Only sound generated a span; scene and action generated none. The direct-inspection agent baseline reached IoU `0.8824`. | **Concluded diagnostic**; retain the code, but do not batch-evaluate or adopt this adaptation by itself |
+| `videoprism_overlap_control_v1` | CTAP and Barrios et al. establish overlapping temporal windows; Point-to-Span evaluates fixed sizes including four seconds | Configurable stride between VideoPrism action clips plus an isolated benchmark command that combines the alternative action result with the saved non-action probe | VideoPrism still receives 16 frames. Window duration is `16 / sample_fps`; stride is `clip_stride_samples / sample_fps`. The first frozen profile is four-second windows with a two-second stride. The exact 50% overlap is a VidXP experiment setting. | Not run | **Ready for one development comparison**; no product default changed |
 
 Code: `src/vidxp/benchmarks/point_to_span.py` and
-`benchmarks/codex-mcp/scripts/compare_point_to_span.py`.
+`benchmarks/codex-mcp/scripts/compare_point_to_span.py` for the concluded span
+diagnostic; `src/vidxp/capabilities/action/indexing.py` and
+`benchmarks/codex-mcp/scripts/action_representation.py` for the representation
+control.
 
 ## Verified failure and next comparison
 
@@ -104,11 +108,11 @@ inspection baseline's `0.8824`, while action and scene generated no span.
 
 The next comparison therefore changes temporal representation before spending
 metered agent calls: current eight-second non-overlapping action records versus
-shorter overlapping action records and a content-aligned proposal control.
-CTAP and Barrios et al. support overlapping windows as an established control;
-Diwan et al. supplies the content-aligned proposal method. The exact VidXP
-window duration and stride remain experimental settings and must be frozen
-before held-out evaluation rather than selected from this annotation.
+the frozen four-second, two-second-stride control. CTAP and Barrios et al.
+support overlapping windows as an established control; Point-to-Span includes
+four seconds in its fixed-window analysis. The exact 50% overlap is VidXP
+engineering and is recorded as such. Diwan et al.'s content-aligned proposals
+remain the next control if the fixed grid does not generalize.
 
 ## Required record for future adoption
 

@@ -9,6 +9,7 @@ from vidxp.core.contracts import IndexConfig
 class VideoPrismConfig(CapabilityConfig):
     batch_size: int = Field(default=1, gt=0)
     sample_fps: float = Field(default=2.0, gt=0)
+    clip_stride_samples: int = Field(default=16, gt=0, le=16)
 
 
 def videoprism_config(config: IndexConfig) -> VideoPrismConfig:

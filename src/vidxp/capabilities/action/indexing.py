@@ -134,15 +134,13 @@ def process_videoprism_samples(
 ) -> None:
     state.video_info = info
     state.pending.extend(samples)
-    complete = len(state.pending) // CLIP_FRAMES
-    if not complete:
+    if len(state.pending) < CLIP_FRAMES:
         return
-    consumed = complete * CLIP_FRAMES
-    clips = [
-        state.pending[start : start + CLIP_FRAMES]
-        for start in range(0, consumed, CLIP_FRAMES)
-    ]
-    del state.pending[:consumed]
+    stride = videoprism_config(config).clip_stride_samples
+    clips = []
+    while len(state.pending) >= CLIP_FRAMES:
+        clips.append(state.pending[:CLIP_FRAMES])
+        del state.pending[:stride]
     _store_clips(
         clips,
         state=state,

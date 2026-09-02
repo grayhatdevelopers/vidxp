@@ -247,6 +247,23 @@ this diagnostic: it improved the coarse union but used only the sound curve and
 remained below direct media inspection. Do not run the held-out agent batch for
 this adaptation alone.
 
+Build and compare one isolated overlapping VideoPrism action representation:
+
+```bash
+./benchmarks/codex-mcp/run representation TASK_ID \
+  --sample-fps 4 \
+  --stride-samples 8
+```
+
+VideoPrism always receives 16 sampled frames. This example therefore produces
+nominal four-second windows every two seconds. The four-second size is a fixed-
+window control evaluated by Point-to-Span; the 50% overlap is a VidXP experiment
+setting, not a parameter copied from that paper. The command requires both
+values, builds a separate action-only index, reuses the saved scene, sound, and
+speech probe, and reports action retrieval, fused IoU, indexing time, index
+bytes, record count, and query time. It makes no Codex calls, but it does run
+VideoPrism indexing and one action text embedding. Confirm before running it.
+
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:
 

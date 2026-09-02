@@ -77,6 +77,52 @@ class VideoPrismTests(unittest.TestCase):
             (8.0, 9.0),
         )
 
+    def test_streaming_index_can_overlap_action_clips(self):
+        config = IndexConfig(
+            video_id="video-1",
+            enabled_modalities=("action",),
+            capability_options={"action": {"clip_stride_samples": 8}},
+        )
+        info = VideoInfo(30.0, 720, 24.0, 2, 2)
+        samples = [
+            FrameSample(index * 15, index / 2, object())
+            for index in range(48)
+        ]
+        state = VideoPrismIndexState(provider=Mock())
+        storage = Mock()
+        captured = []
+
+        def store(_name, records, **_kwargs):
+            captured.extend(records)
+            return len(records)
+
+        storage.upsert.side_effect = store
+        with patch(
+            "vidxp.capabilities.action.indexing.encode_video_clips",
+            side_effect=lambda clips, _provider: [[0.1] for _ in clips],
+        ):
+            process_videoprism_samples(
+                samples,
+                state=state,
+                info=info,
+                config=config,
+                storage=storage,
+                cancellation=CancellationToken(),
+            )
+            VISUAL_PROCESSOR.finalize(state, config=config, storage=storage)
+
+        self.assertEqual(
+            [(record.metadata["start"], record.metadata["end"]) for record in captured],
+            [
+                (0.0, 8.0),
+                (4.0, 12.0),
+                (8.0, 16.0),
+                (12.0, 20.0),
+                (16.0, 24.0),
+                (20.0, 24.0),
+            ],
+        )
+
     def test_model_contract_pins_the_pytorch_checkpoint(self):
         self.assertEqual(
             VIDEOPRISM_MODEL.model_id,
