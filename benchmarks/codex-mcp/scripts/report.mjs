@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { spawnSync } from 'node:child_process';
 
 function parseJson(value, fallback = {}) {
   if (typeof value !== 'string') {
@@ -87,6 +88,15 @@ function interval(start, end) {
   return Number.isFinite(start) && Number.isFinite(end)
     ? `${start.toFixed(3)}–${end.toFixed(3)}s`
     : 'n/a';
+}
+
+function intervalIou(start, end, expectedStart, expectedEnd) {
+  if (![start, end, expectedStart, expectedEnd].every(Number.isFinite)) {
+    return null;
+  }
+  const intersection = Math.max(0, Math.min(end, expectedEnd) - Math.max(start, expectedStart));
+  const union = Math.max(end, expectedEnd) - Math.min(start, expectedStart);
+  return union > 0 ? intersection / union : 0;
 }
 
 function signed(value, digits = 3) {
@@ -286,7 +296,66 @@ export function loadLatestEvaluation() {
   }
 }
 
-export function renderReport(evaluation, { showAll = false, showResponses = false } = {}) {
+export function summarizeRetrieval(result, trace) {
+  const moments = Array.isArray(trace?.moments) ? trace.moments : [];
+  const topMoment = moments.find((moment) => moment?.rank === 1) || moments[0];
+  const bestByModality = new Map();
+  for (const moment of moments) {
+    for (const hit of Array.isArray(moment?.hits) ? moment.hits : []) {
+      const iou = intervalIou(
+        hit.start,
+        hit.end,
+        result.expectedStart,
+        result.expectedEnd,
+      );
+      const current = bestByModality.get(hit.modality);
+      if (current === undefined || (iou ?? -1) > (current.iou ?? -1)) {
+        bestByModality.set(hit.modality, { ...hit, iou });
+      }
+    }
+  }
+  return {
+    task: result.task,
+    expectedStart: result.expectedStart,
+    expectedEnd: result.expectedEnd,
+    topMoment,
+    topMomentIou: topMoment
+      ? intervalIou(
+        topMoment.start,
+        topMoment.end,
+        result.expectedStart,
+        result.expectedEnd,
+      )
+      : null,
+    bestByModality,
+  };
+}
+
+function loadRetrievalTraces(results) {
+  const jobIds = [...new Set(
+    results
+      .map((result) => result.sourceJobId)
+      .filter((jobId) => typeof jobId === 'string' && jobId.length > 0),
+  )];
+  if (jobIds.length === 0) {
+    return {};
+  }
+  const python = process.env.PROMPTFOO_PYTHON || 'python3';
+  const script = fileURLToPath(new URL('./retrieval_trace.py', import.meta.url));
+  const completed = spawnSync(python, [script, ...jobIds], {
+    encoding: 'utf8',
+    env: process.env,
+  });
+  if (completed.status !== 0) {
+    throw new Error(completed.stderr.trim() || 'durable retrieval trace failed');
+  }
+  return parseJson(completed.stdout);
+}
+
+export function renderReport(
+  evaluation,
+  { showAll = false, showResponses = false, showRetrieval = false } = {},
+) {
   const summaries = summarizeResults(evaluation.results);
   const created = Number.isFinite(evaluation.created_at)
     ? new Date(evaluation.created_at).toISOString()
@@ -432,6 +501,49 @@ export function renderReport(evaluation, { showAll = false, showResponses = fals
       console.log(`    source job: ${result.sourceJobId || 'n/a'} | evidence items: ${result.evidenceCount}`);
     }
   }
+
+  if (showRetrieval) {
+    const traces = loadRetrievalTraces(evaluation.results);
+    const retrievals = evaluation.results
+      .filter((result) => traces[result.sourceJobId])
+      .map((result) => summarizeRetrieval(result, traces[result.sourceJobId]));
+    console.log('VidXP retrieval boundaries:');
+    console.table(retrievals.map((retrieval) => ({
+      task: retrieval.task,
+      expected: interval(retrieval.expectedStart, retrieval.expectedEnd),
+      'top fused': interval(retrieval.topMoment?.start, retrieval.topMoment?.end),
+      'fused IoU': fixed(retrieval.topMomentIou, 4),
+      modalities: Array.isArray(retrieval.topMoment?.modalities)
+        ? retrieval.topMoment.modalities.join(', ')
+        : 'n/a',
+      hits: Array.isArray(retrieval.topMoment?.hits) ? retrieval.topMoment.hits.length : 0,
+    })));
+    console.log('Hits in the top fused interval:');
+    console.table(retrievals.flatMap((retrieval) => (
+      (Array.isArray(retrieval.topMoment?.hits) ? retrieval.topMoment.hits : []).map((hit) => ({
+        task: retrieval.task,
+        modality: hit.modality,
+        rank: hit.rank,
+        interval: interval(hit.start, hit.end),
+        IoU: fixed(intervalIou(
+          hit.start,
+          hit.end,
+          retrieval.expectedStart,
+          retrieval.expectedEnd,
+        ), 4),
+      }))
+    )));
+    console.log('Best retrieved individual hit per modality:');
+    console.table(retrievals.flatMap((retrieval) => (
+      [...retrieval.bestByModality.entries()].map(([modality, hit]) => ({
+        task: retrieval.task,
+        modality,
+        rank: hit.rank,
+        interval: interval(hit.start, hit.end),
+        IoU: fixed(hit.iou, 4),
+      }))
+    )));
+  }
 }
 
 export function printLatestReport(options = {}) {
@@ -443,6 +555,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     printLatestReport({
       showAll: process.argv.includes('--all'),
       showResponses: process.argv.includes('--responses'),
+      showRetrieval: process.argv.includes('--retrieval'),
     });
   } catch (error) {
     console.error(`Could not report the latest evaluation: ${error.message}`);

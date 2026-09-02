@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { summarizeResults } from './report.mjs';
+import { summarizeResults, summarizeRetrieval } from './report.mjs';
 
 test('summarizes comparison metrics by benchmark condition', () => {
   const summaries = summarizeResults([
@@ -37,4 +37,29 @@ test('summarizes comparison metrics by benchmark condition', () => {
   assert.equal(summaries[0].mcpCalls, 6);
   assert.equal(summaries[1].meanLatencyMs, 112_000);
   assert.equal(summaries[1].mediaShellCalls, 10);
+});
+
+test('reports fused and per-modality retrieval boundary quality', () => {
+  const summary = summarizeRetrieval(
+    { task: 'opening', expectedStart: 0, expectedEnd: 6 },
+    {
+      moments: [
+        {
+          rank: 1,
+          start: 0,
+          end: 8,
+          hits: [
+            { modality: 'action', rank: 1, start: 0, end: 8 },
+            { modality: 'scene', rank: 1, start: 1, end: 2 },
+            { modality: 'scene', rank: 2, start: 1, end: 4 },
+          ],
+        },
+      ],
+    },
+  );
+
+  assert.equal(summary.topMomentIou, 0.75);
+  assert.equal(summary.bestByModality.get('action').iou, 0.75);
+  assert.equal(summary.bestByModality.get('scene').rank, 2);
+  assert.equal(summary.bestByModality.get('scene').iou, 0.5);
 });

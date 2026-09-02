@@ -45,11 +45,14 @@ case "$command" in
     results)
         exec npm run report -- "$@"
         ;;
+    trace)
+        exec npm run report -- --retrieval "$@"
+        ;;
     view)
         exec npm run promptfoo -- view --yes "$@"
         ;;
     *)
-        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot|results|view}" >&2
+        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot|results|trace|view}" >&2
         exit 2
         ;;
 esac

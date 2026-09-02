@@ -205,6 +205,17 @@ Add `--all` to include every per-run interval in a full pilot report. Add
 evidence count. The report also shows total agent items, all tool calls, VidXP
 MCP calls, shell calls, and the FFmpeg/ffprobe subset.
 
+To inspect the durable VidXP result behind the latest comparison, including
+the top fused interval and the best individual hit per modality, run:
+
+```bash
+./benchmarks/codex-mcp/run trace
+```
+
+This reads saved jobs only. It reports each boundary and its IoU against the
+task annotation without starting Codex, invoking a model, or rerunning the
+benchmark.
+
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:
 
