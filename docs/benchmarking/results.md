@@ -108,6 +108,29 @@ below the direct-inspection baseline's `0.8824` IoU. A full agent batch would
 not resolve the remaining representation failure. The next comparison must
 first test temporal units that can represent shorter boundaries.
 
+The frozen overlapping-window control then reindexed the development video at
+4 samples per second, retaining VideoPrism's 16-frame input and advancing by 8
+samples. This produces nominal four-second windows every two seconds:
+
+| Method | Action rank 1 | Fused interval | Fused IoU | Action records |
+| --- | --- | --- | ---: | ---: |
+| Current eight-second records | 0–8.0075 s | 0–8.0075 s | 0.7493 | 10 |
+| Four-second, two-second-stride records | 0–4.0204 s | 0–8.0244 s | 0.7477 | 38 |
+
+The alternative's first three action hits were `0–4.0204`, `2.002–6.0224`,
+and `4.004–8.0244` seconds. Connected-component fusion joined all three, so a
+representation capable of expressing the target boundary still returned a
+wider interval. The run took 165.094 seconds to index 38 VideoPrism batches,
+used 11,929,970 index bytes, and took 0.512 seconds plus one text-embedding call
+to query. Point-to-Span ASG produced no action candidate on this curve because
+its strongest score is the first sample and `scipy.signal.find_peaks` does not
+treat an endpoint as a peak.
+
+This rejects shorter overlapping records as a sufficient fix by themselves.
+It also confirms the next layer: proposal selection or boundary inference must
+avoid transitive union of adjacent same-modality windows. Do not run this
+profile across the held-out agent tasks.
+
 ## Runtime and model generations
 
 The legacy and current checks used the same physical laptop, as confirmed for

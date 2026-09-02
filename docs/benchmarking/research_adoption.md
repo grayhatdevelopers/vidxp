@@ -74,7 +74,7 @@ it cannot be cited as a general or research-derived solution.
 | ID | Source | Implemented | VidXP-specific changes | Development evidence | Status |
 | --- | --- | --- | --- | --- | --- |
 | `p2s_asg_vidxp_v1` | Point-to-Span v1, Section 3.1 | Adaptive smoothing, peak prominence `0.05`, one-second peak distance, and adaptive expansion; the paper's final NMS setting is applied before fusion | Existing modality encoders; normalized squared-L2-to-cosine conversion; per-modality sample rates; integer smoothing width and edge padding; FineLAP activations only; native speech-span pass-through; early NMS at tIoU `0.8`; RRF span fusion. Query decomposition, reranking, and injection are excluded. | On the 0–6 s development case, control `0–8.0075`/IoU `0.7493`; adaptation `0.64–6.72`/IoU `0.7976`. Only sound generated a span; scene and action generated none. The direct-inspection agent baseline reached IoU `0.8824`. | **Concluded diagnostic**; retain the code, but do not batch-evaluate or adopt this adaptation by itself |
-| `videoprism_overlap_control_v1` | CTAP and Barrios et al. establish overlapping temporal windows; Point-to-Span evaluates fixed sizes including four seconds | Configurable stride between VideoPrism action clips plus an isolated benchmark command that combines the alternative action result with the saved non-action probe | VideoPrism still receives 16 frames. Window duration is `16 / sample_fps`; stride is `clip_stride_samples / sample_fps`. The first frozen profile is four-second windows with a two-second stride. The exact 50% overlap is a VidXP experiment setting. | Not run | **Ready for one development comparison**; no product default changed |
+| `videoprism_overlap_control_v1` | CTAP and Barrios et al. establish overlapping temporal windows; Point-to-Span evaluates fixed sizes including four seconds | Configurable stride between VideoPrism action clips plus an isolated benchmark command that combines the alternative action result with the saved non-action probe | VideoPrism still receives 16 frames. Window duration is `16 / sample_fps`; stride is `clip_stride_samples / sample_fps`. The frozen profile uses four-second windows with a two-second stride. The exact 50% overlap is a VidXP experiment setting. | Action rank 1 became `0–4.0204`, but the top three overlapping action hits joined into `0–8.0244`; fused IoU fell from `0.7493` to `0.7477`. Records grew from 10 to 38; indexing took 165.094 s and 11,929,970 bytes. | **Concluded development control**; shorter overlapping records are not sufficient under connected-component union |
 
 Code: `src/vidxp/benchmarks/point_to_span.py` and
 `benchmarks/codex-mcp/scripts/compare_point_to_span.py` for the concluded span
@@ -106,13 +106,19 @@ first boundary diagnostic, not a paper-faithful P2S result or a selected fix.
 Its one generated sound span improved IoU to `0.7976`, below the direct-
 inspection baseline's `0.8824`, while action and scene generated no span.
 
-The next comparison therefore changes temporal representation before spending
-metered agent calls: current eight-second non-overlapping action records versus
-the frozen four-second, two-second-stride control. CTAP and Barrios et al.
-support overlapping windows as an established control; Point-to-Span includes
-four seconds in its fixed-window analysis. The exact 50% overlap is VidXP
-engineering and is recorded as such. Diwan et al.'s content-aligned proposals
-remain the next control if the fixed grid does not generalize.
+The overlapping-window result isolates the remaining failure. Its action index
+ranked `0–4.0204`, `2.002–6.0224`, and `4.004–8.0244` seconds first. All three
+entered one connected component, recreating an eight-second result despite the
+finer representation. The profile therefore should not receive a held-out
+agent run.
+
+Diwan et al.'s disjoint PySceneDetect proposals are the next grounded control.
+The paper's no-postprocessing path ranks content-aligned segments directly;
+its SimpleWatershed variant merges consecutive segments above a CLIP threshold.
+The published detector and watershed thresholds were selected on QVHighlights
+`val-filt` and cannot be transferred to VideoPrism or SigLIP2 scores as product
+constants. Reproduce the disjoint-proposal control first and record every
+encoder or detector-version deviation.
 
 ## Required record for future adoption
 

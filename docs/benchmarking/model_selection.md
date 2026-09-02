@@ -123,16 +123,17 @@ target-trained temporal score is a ceiling, not a direct zero-shot comparison.
    query it generated only a sound span and remained below the direct-
    inspection baseline, so do not spend a full agent batch on this adaptation
    alone.
-3. Compare the current eight-second non-overlapping action representation with
-   the frozen four-second, two-second-stride control. Point-to-Span evaluated a
-   four-second fixed window; the 50% overlap is a declared VidXP experiment
-   setting. Use Diwan et al.'s content-aligned proposal method as the next
-   control if a fixed grid does not generalize.
-4. Apply the same candidate and interval policy to each representation. Report
-   candidate recall, IoU and boundary errors, indexing time, stored bytes,
-   query latency, peak memory, and record count.
-5. Run metered agent comparisons only after the representation paths pass local
-   validation and the maintainer confirms the run.
+3. The frozen four-second, two-second-stride control is complete. Its first
+   three action windows chained into `0–8.0244` under connected-component union,
+   lowering fused IoU from `0.7493` to `0.7477` while multiplying action records
+   by 3.8. Do not run it across held-out agent tasks.
+4. Reproduce Diwan et al.'s disjoint PySceneDetect proposal control without
+   watershed postprocessing. Keep the paper's QVHighlights-tuned detector and
+   similarity thresholds out of product defaults, and record the exact
+   PySceneDetect and encoder deviation.
+5. Report proposal recall, final IoU and boundary errors, preprocessing time,
+   stored bytes, query latency, peak memory, and proposal count. Run metered
+   agent comparisons only after local validation and maintainer confirmation.
 
 The current Codex MCP smoke is diagnostic development data. It shows that the
 agent used the skill and MCP successfully and returned relevant evidence, but
