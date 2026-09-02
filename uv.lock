@@ -3718,6 +3718,23 @@ wheels = [
 ]
 
 [[package]]
+name = "scenedetect-headless"
+version = "0.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "opencv-python-headless" },
+    { name = "platformdirs" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c3/15/dd2b65e2413b9ee7e4aec0be9fab01b5207db6ee30f790e214fbbb90bf5f/scenedetect_headless-0.7.tar.gz", hash = "sha256:29dd02729d147e7b29cc2ea4315e0faaeec9bb1f471af0e44a922b04426a4694", size = 245352, upload-time = "2026-05-03T22:49:36.666Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6c/5f/281c81a1b49f679b39725f40af89cbcf2080ef87838700c89b5a2af4d8a3/scenedetect_headless-0.7-py3-none-any.whl", hash = "sha256:a9eb704e77a3f326b0595617e90558de2cf29de2af3670a0164a64144493381d", size = 134842, upload-time = "2026-05-03T22:49:33.605Z" },
+]
+
+[[package]]
 name = "scikit-learn"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4621,6 +4638,7 @@ all = [
     { name = "transformers" },
 ]
 benchmarks = [
+    { name = "scenedetect-headless" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "srt" },
@@ -4829,6 +4847,7 @@ requires-dist = [
     { name = "python-multipart", marker = "extra == 'server'", specifier = ">=0.0.32,<0.1" },
     { name = "python-multipart", marker = "extra == 'server-worker'", specifier = ">=0.0.32,<0.1" },
     { name = "rich", specifier = ">=15,<16" },
+    { name = "scenedetect-headless", marker = "extra == 'benchmarks'", specifier = "==0.7" },
     { name = "scipy", marker = "extra == 'benchmarks'", specifier = ">=1.17,<2" },
     { name = "sentence-transformers", marker = "extra == 'all'", specifier = ">=5.6.1,<6" },
     { name = "sentence-transformers", marker = "extra == 'local-worker'", specifier = ">=5.6.1,<6" },

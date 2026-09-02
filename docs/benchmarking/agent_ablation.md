@@ -264,6 +264,20 @@ speech probe, and reports action retrieval, fused IoU, indexing time, index
 bytes, record count, and query time. It makes no Codex calls, but it does run
 VideoPrism indexing and one action text embedding. Confirm before running it.
 
+Compare the next disjoint shot-proposal control:
+
+```bash
+./benchmarks/codex-mcp/run shots TASK_ID
+```
+
+This implements the no-postprocessing ShotDetect path from Diwan et al. with
+their published PySceneDetect content threshold `53`. It runs PySceneDetect
+`0.7` through OpenCV, reuses the saved 1 fps SigLIP2 curve, and ranks each shot
+by its best contained scene score. It reports retrieved and oracle proposal IoU,
+recall thresholds, proposal count, and detection time. It makes no model calls
+and writes no index. The paper used CLIP-ViT-B/32 and sampled within each shot;
+the report records both VidXP adaptations and excludes SimpleWatershed.
+
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:
 

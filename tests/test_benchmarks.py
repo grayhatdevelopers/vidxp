@@ -33,6 +33,10 @@ from vidxp.benchmarks.point_to_span import (
     adaptive_span_generator,
     squared_l2_to_cosine,
 )
+from vidxp.benchmarks.shot_proposals import (
+    TemporalShot,
+    rank_shots_from_scene_records,
+)
 from vidxp.capabilities.schemas import SearchHit
 
 
@@ -95,6 +99,35 @@ class BenchmarkCommonTests(unittest.TestCase):
         self.assertEqual(
             (result.candidates[0].start, result.candidates[0].end),
             (2.0, 5.0),
+        )
+
+    def test_shot_proposals_are_disjoint_and_ranked_by_best_scene_score(self):
+        records = [
+            {
+                "start_seconds": 0.0,
+                "ordering_score": 0.1,
+                "source_id": "scene-0",
+            },
+            {
+                "start_seconds": 1.0,
+                "ordering_score": 0.7,
+                "source_id": "scene-1",
+            },
+            {
+                "start_seconds": 2.0,
+                "ordering_score": 0.5,
+                "source_id": "scene-2",
+            },
+        ]
+
+        ranked = rank_shots_from_scene_records(
+            (TemporalShot(0.0, 2.0), TemporalShot(2.0, 3.0)),
+            records,
+        )
+
+        self.assertEqual(
+            [(shot.rank, shot.start, shot.end, shot.score) for shot in ranked],
+            [(1, 0.0, 2.0, 0.7), (2, 2.0, 3.0, 0.5)],
         )
 
     def test_generation_identity_is_stable_and_run_scoped(self):

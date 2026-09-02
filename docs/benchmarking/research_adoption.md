@@ -75,11 +75,14 @@ it cannot be cited as a general or research-derived solution.
 | --- | --- | --- | --- | --- | --- |
 | `p2s_asg_vidxp_v1` | Point-to-Span v1, Section 3.1 | Adaptive smoothing, peak prominence `0.05`, one-second peak distance, and adaptive expansion; the paper's final NMS setting is applied before fusion | Existing modality encoders; normalized squared-L2-to-cosine conversion; per-modality sample rates; integer smoothing width and edge padding; FineLAP activations only; native speech-span pass-through; early NMS at tIoU `0.8`; RRF span fusion. Query decomposition, reranking, and injection are excluded. | On the 0–6 s development case, control `0–8.0075`/IoU `0.7493`; adaptation `0.64–6.72`/IoU `0.7976`. Only sound generated a span; scene and action generated none. The direct-inspection agent baseline reached IoU `0.8824`. | **Concluded diagnostic**; retain the code, but do not batch-evaluate or adopt this adaptation by itself |
 | `videoprism_overlap_control_v1` | CTAP and Barrios et al. establish overlapping temporal windows; Point-to-Span evaluates fixed sizes including four seconds | Configurable stride between VideoPrism action clips plus an isolated benchmark command that combines the alternative action result with the saved non-action probe | VideoPrism still receives 16 frames. Window duration is `16 / sample_fps`; stride is `clip_stride_samples / sample_fps`. The frozen profile uses four-second windows with a two-second stride. The exact 50% overlap is a VidXP experiment setting. | Action rank 1 became `0–4.0204`, but the top three overlapping action hits joined into `0–8.0244`; fused IoU fell from `0.7493` to `0.7477`. Records grew from 10 to 38; indexing took 165.094 s and 11,929,970 bytes. | **Concluded development control**; shorter overlapping records are not sufficient under connected-component union |
+| `diwan_shotdetect_siglip2_v1` | Diwan et al., ShotDetect without postprocessing | PySceneDetect content proposals at the paper's no-postprocessing threshold `53`, ranked by the maximum contained scene score | PySceneDetect `0.7`; OpenCV backend with optional PyAV disabled on macOS; existing global 1 fps SigLIP2 records instead of per-shot CLIP-ViT-B/32 sampling. SimpleWatershed is excluded because its `0.7` threshold was tuned for CLIP on QVHighlights `val-filt`. | Not run | **Ready for one development comparison**; benchmark-only |
 
 Code: `src/vidxp/benchmarks/point_to_span.py` and
 `benchmarks/codex-mcp/scripts/compare_point_to_span.py` for the concluded span
 diagnostic; `src/vidxp/capabilities/action/indexing.py` and
 `benchmarks/codex-mcp/scripts/action_representation.py` for the representation
+control; `src/vidxp/benchmarks/shot_proposals.py` and
+`benchmarks/codex-mcp/scripts/shot_proposal_control.py` for the disjoint-shot
 control.
 
 ## Verified failure and next comparison
