@@ -47,6 +47,15 @@ union preserved the full action record. This trace does not show an
 encoder-ranking failure; it does not establish ranking quality beyond this
 development query.
 
+A subsequent all-record probe confirms both limits on the same query. The
+three encoders rank the opening region correctly, but `top_k = 3` excludes the
+later dense scene and sound records needed to see its end. In the complete
+timelines, scene relevance falls after about 7.007 seconds and FineLAP
+activation relevance drops sharply between seconds 6 and 7. Current fusion
+cannot use that transition and still returns the full 0–8.0075-second action
+record. The dense evidence therefore supports a boundary near seven seconds;
+it does not justify changing the result to the annotated six seconds by hand.
+
 ## Separate the architectural questions
 
 | Layer | Question | Relevant research | What the evidence supports |
@@ -110,12 +119,12 @@ target-trained temporal score is a ceiling, not a direct zero-shot comparison.
 1. Treat the current RRF result as coarse retrieval. The completed trace already
    establishes correct top-region ranking for the development case; do not rerun
    the obsolete pre-tokenization failure.
-2. Export every indexed score and interval for each task modality. Preserve
-   model-specific distances and representations rather than combining them as
-   calibrated values. The public result is insufficient: `top_k = 3` retained
-   only three scene and three sound intervals in the traced run. Dense visual
-   scores can then feed visual-localization controls, while FineLAP activation
-   scores test sound boundaries separately.
+2. The development-task probe has exported every indexed score and interval
+   while preserving model-specific distances and representations. Repeat that
+   probe unchanged across the prepared tasks before selecting a method. Do not
+   combine scores from different models as though they were calibrated. Dense
+   visual scores can feed visual-localization controls, while FineLAP
+   activation scores test sound boundaries separately.
 3. Compare current interval union with Diwan et al.'s
    proposal/matching/post-processing pipeline and TFVTG's dynamic/static
    proposal scoring. A reproduction using the papers' encoders is a research

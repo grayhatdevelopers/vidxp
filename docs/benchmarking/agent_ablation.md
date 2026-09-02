@@ -230,9 +230,9 @@ model identity, runtime, and call count separate; it does not pretend the
 scores are calibrated across models. It writes JSON under the ignored
 benchmark state directory. The report includes the reconstructed current
 fusion and IoU/boundary errors plus top-retrieved and best-individual-record
-IoU per modality. The best-individual value is a diagnostic oracle, not a
-production prediction. The command does not invoke Codex or change production
-search.
+IoU per modality, and prints those measurements directly after the run. The
+best-individual value is a diagnostic oracle, not a production prediction. The
+command does not invoke Codex or change production search.
 
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:

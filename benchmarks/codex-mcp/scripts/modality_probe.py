@@ -275,13 +275,38 @@ def export_probe(
     )
     return {
         "output": str(destination),
+        "expected_interval": {
+            "start_seconds": task["expected_start"],
+            "end_seconds": task["expected_end"],
+        },
+        "current_control": {
+            "top_interval": (
+                {
+                    "start_seconds": top_moment.start,
+                    "end_seconds": top_moment.end,
+                }
+                if top_moment is not None
+                else None
+            ),
+            "metrics": current_metrics,
+        },
         "modalities": {
             name: {
                 "records": result["record_count"],
                 "elapsed_seconds": result["elapsed_seconds"],
                 "model_calls": result["model_calls"],
+                "top_retrieved": result["top_retrieved"],
+                "best_individual_interval_oracle": result[
+                    "best_individual_interval_oracle"
+                ],
             }
             for name, result in probe_results.items()
+        },
+        "model_calls": {
+            "text_embedding": sum(
+                result["model_calls"]["text_embedding"]
+                for result in probe_results.values()
+            )
         },
         "elapsed_seconds": elapsed_seconds,
     }

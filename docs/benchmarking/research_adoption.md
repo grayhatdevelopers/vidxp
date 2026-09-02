@@ -73,12 +73,18 @@ first in action, scene, and sound. Its 0–8.0075-second output is wider than th
 eight-second action record. The earlier random sound result predates commit
 `343bd27` and must not be used to diagnose current ranking.
 
-This evidence narrows the next work to interval localization; it does not
-support replacing the encoders, indexes, or product architecture. Both named
-visual methods require a dense similarity sequence, which the saved `top_k = 3`
-search result does not contain. The product diagnostic must first export every
-indexed score and interval for each task modality without treating scores from
-different models as calibrated. Visual curves can feed the named controls;
+The all-record diagnostic confirms that action, scene, and sound rank that
+opening region. Scene relevance falls after about 7.007 seconds, while FineLAP
+activation relevance drops sharply between seconds 6 and 7. The public
+`top_k = 3` result discards those later dense records, and interval union then
+lets the coarse action record set the endpoint. This evidence narrows the next
+work to candidate retention and interval localization; it does not support
+replacing the encoders, indexes, or product architecture.
+
+FineLAP demonstrates dense frame-level audio representations and evaluates
+sound-event detection and text-to-audio grounding. Its paper's fixed `0.5`
+sound-event threshold applies to model output probabilities, not VidXP's raw
+vector distances. Applying that threshold here would be an unsupported change.
 FineLAP activations must be evaluated as sound evidence, not forced through a
 visual paper's method. The comparison then measures:
 

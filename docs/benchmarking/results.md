@@ -67,6 +67,32 @@ boundaries also cannot determine the annotated 6-second end. Paper-derived
 score-curve localization must be evaluated from the dense sequence, not
 reconstructed from these seven retained hits.
 
+The full-modality probe for this task queried all 572 indexed records with one
+local text-embedding call per modality. It did not invoke Codex or rerun the
+Promptfoo evaluation:
+
+| Modality | Records | Highest-ranked interval | Best individual-record oracle |
+| --- | ---: | --- | --- |
+| Action | 10 | 0–8.0075 s, IoU 0.7493 | 0–8.0075 s, rank 1, IoU 0.7493 |
+| Scene | 76 | 1.001–2.002 s, IoU 0.1668 | 2.002–3.003 s, rank 2, IoU 0.1668 |
+| Sound | 486 | 1.76–1.92 s, IoU 0.0267 | 0–10 s, rank 43, IoU 0.6000 |
+
+Individual dense records are intentionally short, so their oracle IoU is not a
+boundary prediction. Their full timelines provide the useful evidence. Scene
+records remain near the top through 7.007 seconds before their scores fall;
+the FineLAP activation scores have a much larger within-modality drop between
+seconds 6 and 7. The opening ten-second FineLAP global record ranks 43, while
+the other global windows rank 480–486. Thus action, scene, and sound all rank
+the correct opening region. The current `top_k = 3` truncates the dense tail,
+and interval union then lets the coarse action record set the 8.0075-second
+endpoint.
+
+This one task supports a transition near seven seconds, not an exact six-second
+boundary. The remaining roughly one-second difference may come from the
+one-second scene sampling grid, activation timing, or annotation convention;
+it must be measured across the prepared tasks rather than corrected against
+this annotation.
+
 ## Runtime and model generations
 
 The legacy and current checks used the same physical laptop, as confirmed for
