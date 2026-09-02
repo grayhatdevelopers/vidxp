@@ -216,6 +216,18 @@ This reads saved jobs only. It reports each boundary and its IoU against the
 task annotation without starting Codex, invoking a model, or rerunning the
 benchmark.
 
+Before comparing score-curve localizers, export one task's full time-ordered
+SigLIP2 scene curve:
+
+```bash
+./benchmarks/codex-mcp/run curve TASK_ID
+```
+
+Unlike `trace`, this command performs one local text-embedding inference and
+queries every indexed scene record for that video. It writes JSON under the
+ignored benchmark state directory and reports the sample count, runtime, and
+model-call count. It does not invoke Codex or change production search.
+
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:
 

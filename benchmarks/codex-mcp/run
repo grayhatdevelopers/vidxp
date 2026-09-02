@@ -48,11 +48,14 @@ case "$command" in
     trace)
         exec npm run report -- --retrieval "$@"
         ;;
+    curve)
+        exec "$benchmark_dir/../../.venv/bin/python" scripts/dense_scene_curve.py "$@"
+        ;;
     view)
         exec npm run promptfoo -- view --yes "$@"
         ;;
     *)
-        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot|results|trace|view}" >&2
+        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot|results|trace|curve|view}" >&2
         exit 2
         ;;
 esac
