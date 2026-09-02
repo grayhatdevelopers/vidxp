@@ -34,8 +34,10 @@ from vidxp.benchmarks.point_to_span import (
     squared_l2_to_cosine,
 )
 from vidxp.benchmarks.shot_proposals import (
+    RankedShot,
     TemporalShot,
     rank_shots_from_scene_records,
+    rank_shots_with_rrf_evidence,
 )
 from vidxp.capabilities.schemas import SearchHit
 
@@ -129,6 +131,31 @@ class BenchmarkCommonTests(unittest.TestCase):
             [(shot.rank, shot.start, shot.end, shot.score) for shot in ranked],
             [(1, 0.0, 2.0, 0.7), (2, 2.0, 3.0, 0.5)],
         )
+
+    def test_rrf_evidence_reranks_without_expanding_shot_boundaries(self):
+        shots = (
+            RankedShot(1, 0.0, 5.0, 0.8, ("scene-1",)),
+            RankedShot(2, 5.0, 10.0, 0.7, ("scene-2",)),
+        )
+        records = {
+            "sound": [
+                {
+                    "start_seconds": 6.0,
+                    "end_seconds": 7.0,
+                    "retrieval_rank": 1,
+                    "source_id": "sound-1",
+                }
+            ]
+        }
+
+        ranked = rank_shots_with_rrf_evidence(
+            shots,
+            records,
+            candidate_top_k=3,
+        )
+
+        self.assertEqual((ranked[0].start, ranked[0].end), (5.0, 10.0))
+        self.assertEqual(dict(ranked[0].best_ranks), {"scene": 2, "sound": 1})
 
     def test_generation_identity_is_stable_and_run_scoped(self):
         first = benchmark_generation_id("hirest", "validation", "run-1")

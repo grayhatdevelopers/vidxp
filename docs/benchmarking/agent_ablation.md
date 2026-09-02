@@ -273,10 +273,13 @@ Compare the next disjoint shot-proposal control:
 This implements the no-postprocessing ShotDetect path from Diwan et al. with
 their published PySceneDetect content threshold `53`. It runs PySceneDetect
 `0.7` through OpenCV, reuses the saved 1 fps SigLIP2 curve, and ranks each shot
-by its best contained scene score. It reports retrieved and oracle proposal IoU,
-recall thresholds, proposal count, and detection time. It makes no model calls
-and writes no index. The paper used CLIP-ViT-B/32 and sampled within each shot;
-the report records both VidXP adaptations and excludes SimpleWatershed.
+by its best contained scene score. A separate VidXP-only result applies the
+existing RRF score to each fixed shot using the best overlapping top-three rank
+from every other saved modality; those hits can change the proposal rank but
+cannot expand its boundary. The command reports both results, oracle proposal
+IoU, recall thresholds, proposal count, and detection time. It makes no model
+calls and writes no index. The paper used CLIP-ViT-B/32 and sampled within each
+shot; the report records both VidXP adaptations and excludes SimpleWatershed.
 
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:

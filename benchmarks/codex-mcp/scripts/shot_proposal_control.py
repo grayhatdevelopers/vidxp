@@ -22,7 +22,9 @@ from vidxp.benchmarks.shot_proposals import (
     DIWAN_PAPER_URL,
     TemporalShot,
     rank_shots_from_scene_records,
+    rank_shots_with_rrf_evidence,
 )
+from vidxp.search_fusion import RRF_RANK_CONSTANT
 
 
 BENCHMARK_ROOT = Path(__file__).resolve().parent.parent
@@ -85,7 +87,7 @@ def compare_shot_proposals(task_id: str) -> dict:
     )
     detection_seconds = time.perf_counter() - started
     shots = tuple(
-        TemporalShot(start=start.get_seconds(), end=end.get_seconds())
+        TemporalShot(start=start.seconds, end=end.seconds)
         for start, end in detected
     )
     ranked = rank_shots_from_scene_records(
@@ -96,10 +98,23 @@ def compare_shot_proposals(task_id: str) -> dict:
         raise RuntimeError(
             "PySceneDetect produced no proposal containing a scene sample"
         )
+    candidate_top_k = int(
+        probe["current_control"]["candidate_top_k_per_modality"]
+    )
+    fused = rank_shots_with_rrf_evidence(
+        ranked,
+        {
+            modality: result["records"]
+            for modality, result in probe["modalities"].items()
+        },
+        candidate_top_k=candidate_top_k,
+        rank_constant=RRF_RANK_CONSTANT,
+    )
 
     expected_start = float(task["expected_start"])
     expected_end = float(task["expected_end"])
     top = ranked[0]
+    top_fused = fused[0]
     oracle = max(
         ranked,
         key=lambda shot: interval_iou(
@@ -127,17 +142,24 @@ def compare_shot_proposals(task_id: str) -> dict:
     output = base_path.with_name(base_path.name.replace(".probe.json", ".shots.json"))
     oracle_metrics = metrics(oracle)
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "task_id": task_id,
         "method": {
             "paper": DIWAN_PAPER_URL,
             "component": "ShotDetect proposals without SimpleWatershed",
             "published_content_threshold": DIWAN_CONTENT_THRESHOLD,
             "pyscenedetect_version": "0.7",
+            "rrf_candidate_top_k": candidate_top_k,
+            "rrf_rank_constant": RRF_RANK_CONSTANT,
+            "rrf_boundary_rule": "keep the selected shot interval unchanged",
             "adaptations": [
                 "reuse VidXP one-fps SigLIP2 records instead of CLIP-ViT-B/32",
                 "reuse globally sampled frames instead of sampling within each shot",
                 "rank each shot by its maximum contained scene ordering score",
+                (
+                    "rank fixed shot candidates with VidXP RRF using the best "
+                    "overlapping top-k evidence rank per non-scene modality"
+                ),
             ],
             "excluded": [
                 "SimpleWatershed and its QVHighlights-tuned similarity threshold",
@@ -146,6 +168,12 @@ def compare_shot_proposals(task_id: str) -> dict:
         },
         "control": probe["current_control"],
         "top_retrieved": metrics(top),
+        "top_rrf_proposal": {
+            **metrics(top_fused),
+            "score": top_fused.score,
+            "scene_rank": top_fused.scene_rank,
+            "best_ranks": dict(top_fused.best_ranks),
+        },
         "best_proposal_oracle": {**oracle_metrics, "retrieval_rank": oracle.rank},
         "recall": {
             f"tiou_{threshold}": oracle_metrics["temporal_iou"] >= threshold
@@ -169,6 +197,18 @@ def compare_shot_proposals(task_id: str) -> dict:
             }
             for shot in ranked
         ],
+        "rrf_proposals": [
+            {
+                "rank": shot.rank,
+                "scene_rank": shot.scene_rank,
+                "start_seconds": shot.start,
+                "end_seconds": shot.end,
+                "score": shot.score,
+                "best_ranks": dict(shot.best_ranks),
+                "source_ids": shot.source_ids,
+            }
+            for shot in fused
+        ],
     }
     output.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -178,6 +218,7 @@ def compare_shot_proposals(task_id: str) -> dict:
         "output": str(output),
         "control": probe["current_control"]["top_moment_metrics"],
         "top_retrieved": payload["top_retrieved"],
+        "top_rrf_proposal": payload["top_rrf_proposal"],
         "best_proposal_oracle": payload["best_proposal_oracle"],
         "recall": payload["recall"],
         "resource_use": payload["resource_use"],

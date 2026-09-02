@@ -131,6 +131,25 @@ It also confirms the next layer: proposal selection or boundary inference must
 avoid transitive union of adjacent same-modality windows. Do not run this
 profile across the held-out agent tasks.
 
+The next development control used the no-postprocessing ShotDetect path from
+Diwan et al. PySceneDetect found three disjoint proposals. Existing SigLIP2
+scores ranked the first proposal highest, and the existing action and sound
+ranks agreed:
+
+| Method | Top interval | IoU | End error | Evidence ranks |
+| --- | --- | ---: | ---: | --- |
+| Current connected union | 0–8.0075 s | 0.7493 | +2.0075 s | Action 1, scene 1, sound 1 |
+| Direct-inspection agent | 0–6.8 s | 0.8824 | +0.8 s | Agent media inspection |
+| Shot proposal, scene score | 0–6.7401 s | 0.8902 | +0.7401 s | Scene 1 |
+| Fixed shot, VidXP RRF score | 0–6.7401 s | 0.8902 | +0.7401 s | Action 1, scene 1, sound 1 |
+
+Detection took `1.675` seconds, produced three proposals, reused 76 scene
+records, and made no model calls or index writes. This isolates the development
+failure: retrieval ranks the correct region, but connected interval union
+replaces its useful endpoint with the coarse action endpoint. The result does
+not yet justify a product change because a single detected shot cannot show how
+the rule behaves when a relevant moment crosses multiple shots.
+
 ## Runtime and model generations
 
 The legacy and current checks used the same physical laptop, as confirmed for

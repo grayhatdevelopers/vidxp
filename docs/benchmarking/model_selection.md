@@ -127,13 +127,15 @@ target-trained temporal score is a ceiling, not a direct zero-shot comparison.
    three action windows chained into `0–8.0244` under connected-component union,
    lowering fused IoU from `0.7493` to `0.7477` while multiplying action records
    by 3.8. Do not run it across held-out agent tasks.
-4. Reproduce Diwan et al.'s disjoint PySceneDetect proposal control without
-   watershed postprocessing. Keep the paper's QVHighlights-tuned detector and
-   similarity thresholds out of product defaults, and record the exact
-   PySceneDetect and encoder deviation.
-5. Report proposal recall, final IoU and boundary errors, preprocessing time,
-   stored bytes, query latency, peak memory, and proposal count. Run metered
-   agent comparisons only after local validation and maintainer confirmation.
+4. The Diwan et al. disjoint-proposal control is complete on the development
+   query. Scene-only and VidXP RRF ranking both selected `0–6.7401` seconds at
+   rank 1, improving IoU from `0.7493` to `0.8902`. This establishes that a
+   useful boundary exists and ranks first; it does not establish generality.
+5. With maintainer approval, compare the unchanged control, scene-ranked
+   proposals, and proposal-preserving RRF on held-out single-shot and
+   multi-shot moments. Report proposal recall, final IoU and boundary errors,
+   preprocessing time, stored bytes, query latency, peak memory, and proposal
+   count. Do not change product fusion before this comparison.
 
 The current Codex MCP smoke is diagnostic development data. It shows that the
 agent used the skill and MCP successfully and returned relevant evidence, but
