@@ -242,7 +242,10 @@ Compare a saved probe with the benchmark-only Point-to-Span ASG adaptation:
 
 This performs no model calls. It prints the control and adapted interval, IoU,
 boundary errors, runtime, and per-modality candidate counts, then saves the
-full method record beside the probe.
+full method record beside the probe. The saved development result concluded
+this diagnostic: it improved the coarse union but used only the sound curve and
+remained below direct media inspection. Do not run the held-out agent batch for
+this adaptation alone.
 
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:

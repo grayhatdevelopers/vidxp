@@ -60,7 +60,7 @@ it does not justify changing the result to the annotated six seconds by hand.
 
 | Layer | Question | Relevant research | What the evidence supports |
 | --- | --- | --- | --- |
-| Temporal representation | Should candidates be fixed clips, dense frames, shots, scenes, or learned proposals? | LGSS, ShotCoL, BaSSL, NeighborNet, Diwan et al., and STITCH | Shot-aware and embedding-change units are established alternatives to arbitrary fixed windows. Scene boundaries alone do not locate brief events inside a scene; STITCH is a very recent preprint, not established product evidence. |
+| Temporal representation | Should candidates be fixed clips, dense frames, shots, scenes, or learned proposals? | CTAP, Barrios et al., LGSS, ShotCoL, BaSSL, NeighborNet, Diwan et al., and STITCH | Overlapping windows and content-aligned proposals are established alternatives to arbitrary non-overlapping windows. Fixed windows still need boundary refinement and can multiply candidates; scene boundaries alone do not locate brief events inside a scene. |
 | Candidate selection | Which evidence should a query send to a downstream model? | BOLT, Point-to-Span, and adaptive-keyframe work | Query-conditioned sampling helps under a frame budget. VidXP now has a benchmark-only adaptation of Point-to-Span's span generator; it is not a full reproduction or product path. |
 | Interval prediction | How should start and end times be inferred? | Moment-DETR, UMT, QD-DETR, UniVTG, REZE, and Anchor-Aware Similarity Cohesion | Trained models directly predict intervals or boundary scores; REZE instead aggregates frozen-VLM confidence curves. These have different training, compute, and artifact assumptions and must be compared as separate controls. |
 | Multimodal combination | Should modalities remain separate, interact before prediction, or use one model? | UMT, QD-DETR, AVicuna, LongVALE, and modality-specific systems | Late fusion is a transparent control, not a settled product direction. Learned audiovisual interaction is established, but available implementations vary in training assumptions and local-runtime fit. |
@@ -119,14 +119,19 @@ target-trained temporal score is a ceiling, not a direct zero-shot comparison.
 1. Treat the current RRF result as coarse retrieval. The completed trace already
    establishes correct top-region ranking for the development case; do not rerun
    the obsolete pre-tokenization failure.
-2. The fixed `p2s_asg_vidxp_v1` comparison converts each normalized squared-L2
-   curve independently, applies Point-to-Span Section 3.1, and fuses only
-   generated spans. It does not use annotations during generation.
-3. Run the unchanged probe and comparison across the prepared tasks. Report
-   IoU, boundary errors, candidate recall, latency, and model calls by modality.
-4. Change production localization only if the fixed method improves more than
-   the development query without losing scene-, action-, or speech-led cases.
-   Diwan et al. and TFVTG remain named controls if P2S does not generalize.
+2. Retain `p2s_asg_vidxp_v1` as a concluded diagnostic. On the development
+   query it generated only a sound span and remained below the direct-
+   inspection baseline, so do not spend a full agent batch on this adaptation
+   alone.
+3. Compare the current eight-second non-overlapping action representation with
+   shorter overlapping action records and a content-aligned proposal control.
+   Freeze exact durations and strides before held-out scoring and label them as
+   VidXP experiment settings, not paper parameters.
+4. Apply the same candidate and interval policy to each representation. Report
+   candidate recall, IoU and boundary errors, indexing time, stored bytes,
+   query latency, peak memory, and record count.
+5. Run metered agent comparisons only after the representation paths pass local
+   validation and the maintainer confirms the run.
 
 The current Codex MCP smoke is diagnostic development data. It shows that the
 agent used the skill and MCP successfully and returned relevant evidence, but

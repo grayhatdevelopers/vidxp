@@ -54,6 +54,8 @@ it cannot be cited as a general or research-derived solution.
 
 | Exact work | What the full method does | Evidence and fit | Decision |
 | --- | --- | --- | --- |
+| [CTAP](https://openaccess.thecvf.com/content_ECCV_2018/html/Jiyang_Gao_CTAP_Complementary_Temporal_ECCV_2018_paper.html) (Gao et al., ECCV 2018) | Combines sliding-window coverage with actionness proposals, then adjusts proposal boundaries | Establishes overlapping fixed windows as a temporal-proposal control, while showing that their boundaries remain imprecise without proposal refinement | **Candidate principle** for the representation control; not a drop-in VidXP method |
+| [Localizing Moments in Long Video via Multimodal Guidance](https://openaccess.thecvf.com/content/ICCV2023/html/Barrios_Localizing_Moments_in_Long_Video_Via_Multimodal_Guidance_ICCV_2023_paper.html) (Barrios et al., ICCV 2023) | Grounds queries inside overlapping temporal windows, pools their predictions, and uses a guidance stage to limit long-video false positives | Direct evidence for overlapping long-video windows and for measuring their candidate-growth cost | **Candidate principle** for the representation control; its learned grounding and guidance models are not adopted |
 | [Zero-shot Video Moment Retrieval With Off-the-Shelf Models](https://proceedings.mlr.press/v203/diwan23a.html) (Diwan et al., PMLR 2023) | PySceneDetect proposals, one-fps CLIP scoring, then similarity-threshold watershed merging; reported settings were tuned on QVHighlights `val-filt` | Closest simple frozen-encoder baseline and executable method specification, but the split and thresholds are dataset-specific and no official implementation was found | **Candidate** for a faithfully reproduced zero-shot control, not a production recipe |
 | [Zero-Shot Video Moment Retrieval From Frozen Vision-Language Models](https://openaccess.thecvf.com/content/WACV2024/html/Luo_Zero-Shot_Video_Moment_Retrieval_From_Frozen_Vision-Language_Models_WACV_2024_paper.html) (Luo et al., WACV 2024) | Splits compound queries into single-action queries, refines frozen VLM features, clusters each into proposals, and combines overlapping proposal sets | Directly relevant to compound queries. Its `k = 6` clustering and refinement settings were selected on Charades-STA, and no official code was located | **Candidate**; reproduce before borrowing its query decomposition or proposal logic |
 | [Training-free Video Temporal Grounding](https://arxiv.org/abs/2408.16219) (Zheng et al., ECCV 2024) | Uses an LLM to decompose and order sub-events, VLM dynamic/static scoring, then filters and integrates proposals | Peer-reviewed with [official code](https://github.com/minghangz/TFVTG) and useful for ordered compound queries; the release uses BLIP2, stored or query-time LLM output, proposal enumeration, and hard-coded CUDA execution | **Candidate** for a compound-query baseline, not a direct macOS or default local path |
@@ -71,7 +73,7 @@ it cannot be cited as a general or research-derived solution.
 
 | ID | Source | Implemented | VidXP-specific changes | Development evidence | Status |
 | --- | --- | --- | --- | --- | --- |
-| `p2s_asg_vidxp_v1` | Point-to-Span v1, Section 3.1 | Adaptive smoothing, peak prominence `0.05`, one-second peak distance, and adaptive expansion; the paper's final NMS setting is applied before fusion | Existing modality encoders; normalized squared-L2-to-cosine conversion; per-modality sample rates; integer smoothing width and edge padding; FineLAP activations only; native speech-span pass-through; early NMS at tIoU `0.8`; RRF span fusion. Query decomposition, reranking, and injection are excluded. | On the 0–6 s development case, control `0–8.0075`/IoU `0.7493`; adaptation `0.64–6.72`/IoU `0.7976`. Only sound generated a span. | Benchmark-only; evaluate unchanged across prepared tasks before product adoption |
+| `p2s_asg_vidxp_v1` | Point-to-Span v1, Section 3.1 | Adaptive smoothing, peak prominence `0.05`, one-second peak distance, and adaptive expansion; the paper's final NMS setting is applied before fusion | Existing modality encoders; normalized squared-L2-to-cosine conversion; per-modality sample rates; integer smoothing width and edge padding; FineLAP activations only; native speech-span pass-through; early NMS at tIoU `0.8`; RRF span fusion. Query decomposition, reranking, and injection are excluded. | On the 0–6 s development case, control `0–8.0075`/IoU `0.7493`; adaptation `0.64–6.72`/IoU `0.7976`. Only sound generated a span; scene and action generated none. The direct-inspection agent baseline reached IoU `0.8824`. | **Concluded diagnostic**; retain the code, but do not batch-evaluate or adopt this adaptation by itself |
 
 Code: `src/vidxp/benchmarks/point_to_span.py` and
 `benchmarks/codex-mcp/scripts/compare_point_to_span.py`.
@@ -88,16 +90,25 @@ The all-record diagnostic confirms that action, scene, and sound rank that
 opening region. Scene relevance falls after about 7.007 seconds, while FineLAP
 activation relevance drops sharply between seconds 6 and 7. The public
 `top_k = 3` result discards those later dense records, and interval union then
-lets the coarse action record set the endpoint. This evidence narrows the next
-work to candidate retention and interval localization; it does not support
-replacing the encoders, indexes, or product architecture.
+lets the coarse action record set the endpoint. For this annotation, the
+0–8.0075-second action record has a maximum possible IoU of `6 / 8.0075 =
+0.7493`; later fusion cannot recover a shorter action boundary that the index
+does not represent.
 
 FineLAP's paper validates dense audio representations, but its fixed `0.5`
 sound-event threshold applies to output probabilities rather than VidXP's raw
-distances. RRF remains the control fusion method. Point-to-Span supplies the
-experimental boundary method; Diwan et al. and TFVTG remain related zero-shot
-controls to mention when reporting it. The experiment is a VidXP-encoder
-adaptation, not a paper-faithful P2S result.
+distances. RRF remains the control fusion method. Point-to-Span supplied the
+first boundary diagnostic, not a paper-faithful P2S result or a selected fix.
+Its one generated sound span improved IoU to `0.7976`, below the direct-
+inspection baseline's `0.8824`, while action and scene generated no span.
+
+The next comparison therefore changes temporal representation before spending
+metered agent calls: current eight-second non-overlapping action records versus
+shorter overlapping action records and a content-aligned proposal control.
+CTAP and Barrios et al. support overlapping windows as an established control;
+Diwan et al. supplies the content-aligned proposal method. The exact VidXP
+window duration and stride remain experimental settings and must be frozen
+before held-out evaluation rather than selected from this annotation.
 
 ## Required record for future adoption
 

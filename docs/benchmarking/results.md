@@ -101,11 +101,12 @@ curves without another model call:
 | Current union | 0–8.0075 s | 0.7493 | 0 s | +2.0075 s | Existing top-three hits |
 | P2S ASG adaptation | 0.64–6.72 s | 0.7976 | +0.64 s | +0.72 s | Sound: 1; scene/action: 0 |
 
-This is one development case, not an adopted product fix. It shows that the
+This is a concluded diagnostic, not an adopted product fix. It shows that the
 published adaptive expansion can use FineLAP's dense curve, but the published
-prominence threshold produced no scene or action span. Selection requires the
-same fixed implementation to improve the prepared tasks without modality
-regressions.
+prominence threshold produced no scene or action span and the result remained
+below the direct-inspection baseline's `0.8824` IoU. A full agent batch would
+not resolve the remaining representation failure. The next comparison must
+first test temporal units that can represent shorter boundaries.
 
 ## Runtime and model generations
 
