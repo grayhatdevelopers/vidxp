@@ -19,6 +19,7 @@ Detailed artifacts, hashes, commands, and evaluator behavior remain in the
 | Current smoke | DiDeMo | Official test annotation index `0`; one video | Rank@1 **0**, Rank@5 **1**, mean IoU **0** | Real SigLIP2 execution, serialization, and official-evaluator check only |
 | Current smoke | HiREST | Two declared validation pairs over two videos | R@0.5 **50**, R@0.7 **50** | Real Qwen3 execution, multi-video storage, filtered search, serialization, and official-evaluator check only |
 | Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; one paired run | VidXP-on IoU **0.7493**; VidXP-off IoU **0.8824** | Harness, skill/MCP isolation, deterministic scoring, and reporting check only; not a held-out pilot or LongVALE result |
+| Global-only sound diagnostic | Codex MCP ablation | Same development task after filtering sound search to global clips | VidXP-on IoU **0.6000**; VidXP-off IoU **0.8811** | Same answer content with 16.5% fewer VidXP tokens and 11.3% lower latency, but the ten-second sound clip worsened the endpoint |
 
 The current-provider rows are deliberately tiny regression runs. Their
 percentages are not quality estimates and must not be compared with the full
@@ -105,8 +106,8 @@ This is a concluded diagnostic, not an adopted product fix. It shows that the
 published adaptive expansion can use FineLAP's dense curve, but the published
 prominence threshold produced no scene or action span and the result remained
 below the direct-inspection baseline's `0.8824` IoU. A full agent batch would
-not resolve the remaining representation failure. The next comparison must
-first test temporal units that can represent shorter boundaries.
+not resolve the remaining representation failure. It motivated the
+overlapping-window control recorded next; that control is also concluded.
 
 The frozen overlapping-window control then reindexed the development video at
 4 samples per second, retaining VideoPrism's 16-frame input and advancing by 8
@@ -202,9 +203,9 @@ the phone-ring sound rank improved from 22 to 1, while the stir-and-cover scene
 rank fell from 1 to 41.
 
 FineLAP uses separate audio projectors for whole-clip retrieval and frame-level
-event localization. VidXP currently stores both outputs in one sound collection
-and ranks them together. Filtering the existing index into those published
-paths changed sound candidate recall:
+event localization. At the time of this diagnostic, VidXP stored both outputs
+in one sound collection and ranked them together. Filtering the existing index
+into those published paths changed sound candidate recall:
 
 | Sound task | Current mixed rank | 10-second window rank | Dense activation rank |
 | --- | ---: | ---: | ---: |
@@ -219,6 +220,20 @@ both streams. This supports keeping FineLAP's clip and frame rankings separate;
 it does not define how to turn both lists into one final interval. The control
 made 32 local text-embedding calls in about `14` seconds, with no Codex/API
 calls or index writes.
+
+The first 2026-09-03 correction made standard sound search return only global
+clips. Evaluation `eval-mw5-2026-09-02T19:40:44` then returned `0–10` seconds
+for VidXP and `0–6.81` seconds for direct inspection, against a `0–6` reference.
+VidXP identified the same event, finished 11.3% faster, used 16.5% fewer total
+tokens and two fewer tool calls, and had a provider estimate of `$0.401271`
+versus `$0.968155`. Its IoU nevertheless fell to `0.6000` because the agent
+returned the ten-second sound envelope.
+
+That result rejects global-only sound output as the complete product behavior.
+Standard search now uses global clips to select regions and ranks dense
+activations only inside those regions. The activation supplies the returned
+timestamp and carries its parent clip as context. This two-stage version has not
+received another paired Codex run.
 
 ## Runtime and model generations
 
@@ -349,25 +364,18 @@ The result is a useful legacy validation baseline, not a final held-out paper
 result. The current two-video Qwen3 smoke establishes compatibility only; it
 does not supersede this score.
 
-## Next combined benchmark
+## Next approved comparison
 
-The FineLAP environmental-sound layer is implemented but has no VidXP quality
-result yet. LongVALE is the primary next experiment because it contains visual,
-generic-audio, and spoken evidence in long videos. The work is ordered as follows:
+The existing paired Codex smoke is the next product check after the sound-search
+correction. It should run only with maintainer approval and should report the
+agent's answer and evidence, IoU and boundary errors, every token category,
+elapsed time, estimated cost, and tool calls. It must not be presented as a full
+LongVALE result.
 
-1. Complete a bounded real-media FineLAP integration smoke and record resource use.
-2. Convert LongVALE event descriptions into visual, sound, and speech searches.
-3. Combine those result lists using one fixed, provenance-preserving rule.
-4. Return the single start/end range required by the official evaluator.
-5. Process one of the nine evaluation archives to measure runtime, temporary
-   storage, and index growth.
-6. Run the complete evaluation only if that pilot finishes cleanly.
-
-VidXP now indexes general sound events, but implementation is not evidence of
-retrieval or boundary quality. The full LongVALE query set must remain in the
-official denominator, including sound-only misses. See
-[multimodal model direction](model_selection.md) for the selection evidence and
-benchmark roles.
+No new model or fusion experiment is queued by this result. A new component
+comparison begins only when the paired run identifies a remaining product
+failure that the comparison can resolve. See
+[evidence retrieval direction](model_selection.md).
 
 ## Sources and reproduction
 

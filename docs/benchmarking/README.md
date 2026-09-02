@@ -16,8 +16,8 @@ installation and product usage, start with the main
 | Guided input preparation | Complete | `vidxp benchmark prepare` estimates and confirms downloads, verifies pinned artifacts, validates DiDeMo media, resumes partial transfers, and prints the runnable benchmark command |
 | DiDeMo visual localization | Legacy full result + current smoke | The legacy CLIP stack completed 4,021 official test queries over 1,037 videos; the current SigLIP2 stack passed a one-annotation real execution smoke |
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
-| Environmental-sound retrieval | Held-out diagnostic complete; correction pending | Mixing FineLAP's clip and frame records hid target evidence; separate rankings recovered a top-three candidate on 3/4 sound tasks, but no final long-audio interval rule is selected |
-| LongVALE combined evaluation | Localization comparison before pilot | Compare the current interval union with named zero-shot localization controls on the prepared tasks before scheduling the held-out pilot |
+| Environmental-sound retrieval | Two-stage correction implemented; agent rerun pending | Global clips select regions and local activations provide the final sound hits without cross-ranking their distances; existing indexes remain valid |
+| LongVALE combined evaluation | Pilot not run | The prepared paired tasks can measure evidence quality, localization, tokens, time, cost, and tool use after maintainer approval |
 | Codex MCP ablation | Development smoke traced | One paired task verified the harness and exposed a fixed-window boundary error; the 54-run held-out pilot has not run |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
 
@@ -32,7 +32,7 @@ definitions, honest comparisons, and the next benchmark decision.
 | Reproduce DiDeMo or HiREST | [Adapter validation ledger](adapter_validation.md) |
 | Understand the benchmark-ready Python structure | [Core contract](core_contract.md) |
 | See which benchmarks exist and what each measures | [Benchmark catalog](benchmark_catalog.md) |
-| Understand the current model and benchmark choices | [Multimodal model direction](model_selection.md) |
+| Understand the current product and evaluation choices | [Evidence retrieval direction](model_selection.md) |
 | See exactly which paper-derived ideas are in the product | [Research adoption record](research_adoption.md) |
 | Run the Codex MCP-on/MCP-off experiment | [Codex agent ablation](agent_ablation.md) |
 | Find exact published competitor scores | [Published comparison results](published_results.md) |
@@ -58,13 +58,19 @@ comparisons. VidXP now contributes visual, speech, and FineLAP sound evidence,
 including global windows and dense timestamps for non-speech events.
 
 The first Codex MCP development pair found the requested opening event but
-returned an interval two seconds too long. The held-out local controls then
-separated two failures: fixed temporal units often cannot express the reference
-boundary, and FineLAP's clip and frame records lose useful sound candidates when
-ranked together. The next comparison is the direct trained long-audio interval
-control, not a custom fusion tweak. See the
-[current model direction](model_selection.md) for the execution order and the
-[research adoption record](research_adoption.md) for exact method provenance.
+returned an interval two seconds too long. It also finished faster and used
+fewer total tokens than direct inspection, although its estimated cost was
+slightly higher because more input was uncached. Later local controls exposed a
+separate FineLAP integration error: global clip and dense activation records
+were cross-ranked. Standard sound search now uses global clips to select regions
+and local activations to refine the returned evidence.
+
+The next approved paired run should test the product claim directly: whether
+VidXP gives the agent enough inspectable evidence to reach a similarly grounded
+answer with fewer tokens, less time, or fewer media-inspection calls. IoU and
+boundary errors remain important diagnostics, not the entire product decision.
+See [current model direction](model_selection.md) and the
+[research adoption record](research_adoption.md).
 
 ## Evidence rules
 

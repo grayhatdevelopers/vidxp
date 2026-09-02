@@ -12,6 +12,11 @@ integration consists of the shipped video-evidence skill and the local stdio
 MCP server. It is a product-level ablation, not a replacement for published
 model benchmarks such as MAEB, MVEB, or AEGBench.
 
+The product win is not limited to a higher IoU. Reaching a similarly grounded
+answer with fewer tokens, less time, or fewer direct media-inspection calls also
+counts, provided the evidence remains inspectable and the quality difference is
+reported rather than hidden.
+
 ## What the comparison holds constant
 
 Every task runs once in each condition with the same Codex model, reasoning
@@ -264,7 +269,7 @@ speech probe, and reports action retrieval, fused IoU, indexing time, index
 bytes, record count, and query time. It makes no Codex calls, but it does run
 VideoPrism indexing and one action text embedding. Confirm before running it.
 
-Compare the next disjoint shot-proposal control:
+Reproduce the concluded disjoint shot-proposal control:
 
 ```bash
 ./benchmarks/codex-mcp/run shots TASK_ID
@@ -339,9 +344,11 @@ diagnose the harness and current temporal behavior, not as held-out evidence.
 
 ## Scoring and interpretation
 
-Each response must identify one interval. The deterministic scorer records
-temporal IoU, R@1 at tIoU 0.3/0.5/0.7, interval validity, and whether the
-expected VidXP boundary was respected. Promptfoo traces supply skill use, MCP
+Each current task asks for one event and interval, so this harness measures
+evidence-backed localization rather than general video question answering. The
+deterministic scorer records temporal IoU, R@1 at tIoU 0.3/0.5/0.7, interval
+validity, and whether the expected VidXP boundary was respected. Promptfoo
+traces supply skill use, MCP
 tool names, ordering, and inputs; because its Codex trace adapter does not
 retain MCP result bodies, the scorer uses the returned source job ID to verify
 the authoritative result directly in VidXP's durable job store. It also matches
@@ -355,6 +362,11 @@ by that job. Report at least:
 - skill and VidXP MCP tool trajectories for VidXP-on;
 - indexing time, index size, model preparation, and machine details; and
 - every excluded or failed task.
+
+Interpret those fields together. A faster, lower-token VidXP run can be a
+product improvement even when its interval is slightly less precise, but the
+report must show both facts and must not call the localization loss a quality
+win.
 
 Do not call the nine-task held-out pilot a LongVALE result. A publishable result
 requires the complete official evaluation split, its one-interval output

@@ -1,7 +1,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 import wave
 
 from vidxp.capabilities.sound.config import SoundConfig
@@ -126,7 +126,7 @@ class SoundTests(unittest.TestCase):
         self.assertEqual(windows[0].end, 0.5)
         self.assertEqual(len(windows[0].pcm), 16_000)
 
-    def test_index_stores_global_and_dense_records_in_one_collection(self):
+    def test_index_labels_global_and_dense_records_for_filtered_search(self):
         config = self.config()
         windows = (
             AudioWindow(0, 0.0, 10.0, b"\0\0" * 16),
@@ -199,24 +199,40 @@ class SoundTests(unittest.TestCase):
         )
         get_model.assert_not_called()
 
-    def test_sound_search_uses_shared_search_contract_and_public_metadata(self):
+    def test_sound_search_uses_global_windows_to_scope_dense_ranking(self):
         config = self.config()
         storage = Mock()
-        storage.query.return_value = [
-            {
-                "source_id": "sound:1",
-                "raw_distance": 0.2,
-                "metadata": {
-                    **config.record_identity("sound", "sound:1"),
-                    "generation_id": GENERATION_ID,
-                    "representation": "activation",
-                    "window_index": 3,
-                    "activation_index": 9,
-                    "start": 31.4,
-                    "end": 31.6,
-                    "private": "hidden",
+        storage.query.side_effect = [
+            [
+                {
+                    "source_id": "sound:window:3",
+                    "raw_distance": 0.2,
+                    "metadata": {
+                        **config.record_identity("sound", "sound:window:3"),
+                        "generation_id": GENERATION_ID,
+                        "representation": "window",
+                        "window_index": 3,
+                        "start": 30.0,
+                        "end": 40.0,
+                    },
                 },
-            }
+            ],
+            [
+                {
+                    "source_id": "sound:activation:3:9",
+                    "raw_distance": 0.1,
+                    "metadata": {
+                        **config.record_identity("sound", "sound:activation:3:9"),
+                        "generation_id": GENERATION_ID,
+                        "representation": "activation",
+                        "window_index": 3,
+                        "activation_index": 9,
+                        "start": 31.44,
+                        "end": 31.6,
+                        "private": "hidden",
+                    },
+                },
+            ],
         ]
         provider = Mock()
         provider.encode_text.return_value = [0.1, 0.2]
@@ -233,21 +249,42 @@ class SoundTests(unittest.TestCase):
             )
 
         self.assertEqual(result.modality, "sound")
-        self.assertEqual(result.hits[0].start, 31.4)
+        self.assertEqual(result.hits[0].start, 31.44)
         self.assertEqual(
             result.hits[0].metadata,
             {
                 "representation": "activation",
                 "window_index": 3,
                 "activation_index": 9,
+                "context_source_id": "sound:window:3",
+                "context_start": 30.0,
+                "context_end": 40.0,
+                "context_rank": 1,
             },
         )
-        storage.query.assert_called_once_with(
-            "sound",
-            [0.1, 0.2],
-            top_k=10,
-            video_id=None,
-            filters=None,
+        self.assertEqual(provider.encode_text.call_count, 1)
+        self.assertEqual(
+            storage.query.call_args_list,
+            [
+                call(
+                    "sound",
+                    [0.1, 0.2],
+                    top_k=10,
+                    video_id=None,
+                    filters={"representation": "window"},
+                ),
+                call(
+                    "sound",
+                    [0.1, 0.2],
+                    top_k=10,
+                    video_id=None,
+                    filters={
+                        "representation": "activation",
+                        "video_id": MEDIA_ID,
+                        "window_index": 3,
+                    },
+                ),
+            ],
         )
 
 

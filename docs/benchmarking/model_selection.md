@@ -1,175 +1,109 @@
-# Multimodal retrieval and temporal-localization direction
+# Evidence retrieval direction
 
 Collection index: [Benchmarking research](README.md)
 
-Status: Current decision record; component providers are implemented, while the
-temporal architecture remains under evaluation
+Status: Current product and evaluation decision
 
-Last verified: 2026-09-02
+Last verified: 2026-09-03
 
-Research provenance: [Research adoption record](research_adoption.md). That
-record is authoritative for what is implemented; papers listed here are not
-adopted unless it says so there.
+The [research adoption record](research_adoption.md) is the source of truth for
+paper-derived product behavior. The [paper inventory](research_papers.md)
+records relevant work without implying that VidXP adopts it.
 
-## Required product behavior
+## Product target
 
-VidXP must find inspectable evidence for visual events, environmental sounds,
-and speech, then return useful time ranges. Results must preserve modality and
-source provenance. That requirement does not prescribe separate indexes, one
-shared model, late fusion, or query-time processing; those are alternatives to
-measure.
+VidXP gives an AI agent a compact, inspectable view of a video library: matching
+speech, sounds, frames, action clips, timestamps, and playable evidence. The
+agent remains responsible for interpreting that evidence and answering the
+user. VidXP does not need to replace the agent with one all-in-one video model.
 
-LongVALE is the closest combined benchmark because its event descriptions can
-depend on vision, generic audio, speech, or their temporal relationship. It does
-not determine the internal architecture.
+A product-level comparison succeeds when VidXP preserves or improves the
+agent's grounded answer while reducing the media and text the agent must
+inspect. Report answer correctness and evidence support together with input,
+cached-input, output, and reasoning tokens; elapsed time and estimated cost;
+tool calls; and retrieval or timestamp metrics. Temporal IoU diagnoses interval
+quality, but it is not the product's only outcome.
 
-## Current implementation and known limitation
+## Current product path
 
-The current control uses separately indexed evidence:
+VidXP builds reusable local indexes for separate evidence types:
 
-- VideoPrism action records contain 16 frames sampled at 2 frames per second,
-  producing non-overlapping intervals of about eight seconds;
-- scene records contain frames sampled at 1 frame per second;
-- FineLAP supplies global sound windows and dense timestamped activations; and
-- faster-whisper plus Qwen3 text embeddings supply timestamped speech evidence.
+- faster-whisper and Qwen3 Embedding produce timestamped speech evidence;
+- FineLAP retrieves environmental-sound clips;
+- SigLIP 2 retrieves sampled visual frames;
+- VideoPrism retrieves multi-frame action clips; and
+- reciprocal rank fusion groups overlapping results into coarse candidate
+  moments while preserving their source records.
 
-Fusion groups every overlapping hit into a connected component, scores the
-component with reciprocal rank fusion, and returns the union from the earliest
-start to the latest end. A relevant coarse action hit can therefore expand a
-more precise sound or speech interval. Ranking and boundary accuracy are
-separate properties: a correct top candidate can still have avoidably poor IoU.
+This modular path remains the product control. No current evidence requires
+replacing every provider or moving to a single trained temporal model.
 
-The completed post-FineLAP-fix trace demonstrates this failure directly. For a
-0–6 second event, action rank 1 covered 0–8.0075 seconds, scene ranks 1–3 covered
-1.001–4.004 seconds, and sound ranks 1–3 covered 1.76–2.24 seconds. Fusion ranked
-that opening component first but returned 0–8.0075 seconds because interval
-union preserved the full action record. This trace does not show an
-encoder-ranking failure; it does not establish ranking quality beyond this
-development query.
+An optional small language model may plan searches or summarize retrieved
+evidence. That is a VidXP product option, not a paper-derived requirement. It
+must be compared with the deterministic path on answer quality, tokens,
+latency, cost, and fallback behavior before becoming a default.
 
-A subsequent all-record probe confirms both limits on the same query. The
-three encoders rank the opening region correctly, but `top_k = 3` excludes the
-later dense scene and sound records needed to see its end. In the complete
-timelines, scene relevance falls after about 7.007 seconds and FineLAP
-activation relevance drops sharply between seconds 6 and 7. Current fusion
-cannot use that transition and still returns the full 0–8.0075-second action
-record. The dense evidence therefore supports a boundary near seven seconds;
-it does not justify changing the result to the annotated six seconds by hand.
+## Confirmed limits and decisions
 
-The held-out sound trace found a separate ranking defect. FineLAP deliberately
-uses one audio projector for whole-clip retrieval and another for frame-level
-event localization. VidXP currently stores both outputs together and asks one
-vector search to rank them. On four held-out sound tasks, the mixed search put
-target evidence in the top three zero times. Separate window and activation
-searches did so on three tasks. The remaining drumbeat task missed both lists.
-This supports separating the two FineLAP paths, but it does not supply a final
-long-audio interval rule.
+### Keep FineLAP's retrieval outputs separate
 
-## Separate the architectural questions
+Xiquan Li et al., [“FineLAP: Taming Heterogeneous Supervision for Fine-grained
+Language-Audio Pretraining”](https://aclanthology.org/2026.acl-long.473/), ACL
+2026, Sections 3.2–3.3, trains separate global and local audio projections for
+clip-level and frame-level supervision. VidXP previously stored both outputs in
+one collection and ranked the raw records together.
 
-| Layer | Question | Relevant research | What the evidence supports |
-| --- | --- | --- | --- |
-| Temporal representation | Should candidates be fixed clips, dense frames, shots, scenes, or learned proposals? | CTAP, Barrios et al., LGSS, ShotCoL, BaSSL, NeighborNet, Diwan et al., and STITCH | Overlapping windows and content-aligned proposals are established alternatives to arbitrary non-overlapping windows. Fixed windows still need boundary refinement and can multiply candidates; scene boundaries alone do not locate brief events inside a scene. |
-| Candidate selection | Which evidence should a query send to a downstream model? | BOLT, Point-to-Span, and adaptive-keyframe work | Query-conditioned sampling helps under a frame budget. VidXP now has a benchmark-only adaptation of Point-to-Span's span generator; it is not a full reproduction or product path. |
-| Interval prediction | How should start and end times be inferred? | Moment-DETR, UMT, QD-DETR, UniVTG, REZE, and Anchor-Aware Similarity Cohesion | Trained models directly predict intervals or boundary scores; REZE instead aggregates frozen-VLM confidence curves. These have different training, compute, and artifact assumptions and must be compared as separate controls. |
-| Multimodal combination | Should modalities remain separate, interact before prediction, or use one model? | UMT, QD-DETR, AVicuna, LongVALE, and modality-specific systems | Late fusion is a transparent control, not a settled product direction. Learned audiovisual interaction is established, but available implementations vary in training assumptions and local-runtime fit. |
-| Answer synthesis | Should a language model inspect selected evidence? | BOLT and long-video VLM work | A language model may explain or verify timestamp-bound evidence. It must not invent boundaries that the retrieval/localization path cannot support. |
+That integration was invalid: the two score lists did not form one calibrated
+ranking. On four held-out sound tasks, the mixed top three contained target
+evidence on 0/4 tasks; querying the representations separately did so on 3/4.
 
-These layers can be combined. Selecting a frame sampler does not select a
-boundary model, and selecting a scene detector does not select a fusion rule.
+Standard sound search now uses two separate stages. Global ten-second clips
+select candidate regions, then dense activations are ranked only against other
+dense activations inside those regions. The returned timestamps come from the
+activation, while its metadata identifies the parent clip for inspection. If a
+selected clip has no activation records, search returns the clip instead of
+hiding available evidence.
 
-## Maturity and applicability
+FineLAP supports separating the global and local outputs. The two-stage
+long-video orchestration, candidate depth, context metadata, and fallback are
+original VidXP engineering rather than claims from the paper. Existing sound
+indexes do not need rebuilding.
 
-| Work | Maturity and artifacts | Direct use for VidXP | Important limit |
-| --- | --- | --- | --- |
-| [LGSS](https://openaccess.thecvf.com/content_CVPR_2020/html/Rao_A_Local-to-Global_Approach_to_Multi-Modal_Movie_Scene_Segmentation_CVPR_2020_paper.html), [ShotCoL](https://openaccess.thecvf.com/content/CVPR2021/html/Chen_Shot_Contrastive_Self-Supervised_Learning_for_Scene_Boundary_Detection_CVPR_2021_paper.html), [BaSSL](https://github.com/kakaobrain/bassl), and [NeighborNet](https://openaccess.thecvf.com/content/CVPR2024/html/Tan_Neighbor_Relations_Matter_in_Video_Scene_Detection_CVPR_2024_paper.html) | Peer-reviewed 2020–2024 lineage; multiple code releases and public scene benchmarks | Compare fixed action clips with shot- or scene-aligned candidates | Movie-scene segmentation is not arbitrary natural-language moment grounding. |
-| [Moment-DETR](https://github.com/jayleicn/moment_detr), [UMT](https://github.com/TencentARC/UMT), [QD-DETR](https://github.com/wjun0830/QD-DETR), and [UniVTG](https://github.com/showlab/UniVTG) | Peer-reviewed 2021–2023 work with official code and checkpoints | Established interval-prediction controls; UMT/QD-DETR test audiovisual input | Most checkpoints are target-trained and use older CUDA-oriented environments. Published scores are not zero-shot VidXP expectations. |
-| [BOLT](https://github.com/sming256/BOLT) | CVPR 2025 with official MIT-licensed code; recent and lightly maintained | Compare query-aware frame selection with uniform sampling | Evaluated on video question answering, not temporal IoU; no start/end output. |
-| [Automatic Funny Scene Extraction](https://ojs.aaai.org/index.php/AAAI/article/view/41480) | IAAI 2026 applied system; scene-localization modules reported operational at Prime Video; no public end-to-end code or checkpoint found | Evidence for shot detection, multimodal scene construction, then task-specific ranking | Its 98% localization figure is curator judgment of proper scene endings on five movies, not query-conditioned IoU. Humor classification does not generalize automatically to open queries. |
-| [TimeLens2](https://github.com/MCG-NJU/TimeLens2) | arXiv 2026 with released 2B/4B/8B checkpoints; too recent for independent maturity | Recent visual temporal-grounding ceiling | Visual-only and materially heavier than established interval baselines; not selected as the default. |
-| [AVicuna](https://ojs.aaai.org/index.php/AAAI/article/view/32784) | AAAI 2025 audiovisual temporal model trained on 114,081 pseudo-untrimmed examples | Evidence that a unified model can align audiovisual events and intervals | A trained 7B-class stack is not a drop-in commodity-hardware replacement. |
+### Treat fused intervals as evidence envelopes
 
-The funny-scene result belongs to a broader multimodal-humor lineage. FunnyNet
-(ACCV 2022) and FunnyNet-W (IJCV 2024) found that audio provides important cues
-for funny-moment detection. Those findings support retaining acoustic evidence;
-they do not establish a general retrieval architecture.
+The current fusion groups overlapping records, scores each group with
+reciprocal rank fusion, and returns its earliest start and latest end. The RRF
+formula and `k = 60` come from Gordon Cormack, Charles Clarke, and Stefan
+Buettcher, [“Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank
+Learning Methods”](https://doi.org/10.1145/1571941.1572114), SIGIR 2009. The
+temporal grouping and interval union are VidXP controls; that paper does not
+define them.
 
-## Current component status
+On the development query, relevant evidence ranked first but an eight-second
+action record widened a six-second reference to `0–8.0075` seconds. A separate
+eight-task control also showed that adding modality ranks can overrule a strong
+single-modality result. Therefore the fused interval is a coarse evidence
+envelope, not a claim of an exact event boundary. The agent should inspect the
+contained records or delivered clip before making a precise statement.
 
-| Capability | Current control | Candidate evidence | Decision status |
-| --- | --- | --- | --- |
-| Speech | faster-whisper plus Qwen3 text embeddings | Released ASR and transcript-retrieval benchmarks | Retain as the control; speech and environmental sound remain distinct evidence types. |
-| Environmental sound | FineLAP global and dense features, currently mixed in one ranking | FineLAP's separate clip/frame paths; AM-DETR for trained long-audio intervals; AEGBench for event boundaries | Separate FineLAP rankings recovered target evidence in a top-three list on 3/4 held-out sound tasks versus 0/4 mixed. Fix the stream boundary before selecting a long-audio interval model. |
-| Visual retrieval | VideoPrism action clips and SigLIP2 scene frames | MVEB places Qwen3-VL-Embedding highly, but does not compare VideoPrism | Qwen is a candidate, not a selected replacement. Run the same retrieval protocol before changing providers. |
-| Temporal units | Fixed action clips plus one-second scene records | Shot/scene segmentation and denser query-aware proposals | ShotDetect alone is insufficient: five of eight held-out references cannot reach tIoU `0.5` with any single shot. Existing indexes do not have to be retained if another representation wins on quality and resource use. |
-| Boundary inference | Connected-component interval union | Point-to-Span adaptive expansion; UniVTG and UMT interval heads | Fixed-window widening is confirmed, while the shot oracle shows that content cuts do not supply reliable within-shot boundaries. |
-| Fusion | RRF scoring inside connected interval components | Query-conditioned audiovisual interaction | Retain RRF only as the transparent control. Proposal-preserving RRF reduced mean IoU from `0.2841` to `0.1175` on six scene-comparable tasks because extra modality ranks could overrule a stronger scene candidate. Provenance must survive any replacement. |
-| Planner and synthesis | Structured evidence passed to the configured agent/model | Smaller local planners or selected media verification | Evaluate separately from retrieval. Agent prose cannot substitute for temporal evidence. |
+No replacement boundary model has been selected. Point-to-Span, overlapping
+action windows, and shot-proposal fusion remain concluded benchmark controls,
+not product behavior. Their exact results and deviations are recorded in the
+[research adoption record](research_adoption.md).
 
-## Decision measurements
+## Next product check
 
-Evaluate alternatives on identical media, queries, ground truth, and output
-rules. Report:
+Do not add another model or temporal rule for the current correction. After the
+two-stage sound search is committed, rerun the existing paired Codex smoke only
+with maintainer approval. Compare the same answer and evidence fields, temporal
+metrics, token categories, elapsed time, estimated cost, and tool-call counts.
 
-- mean IoU and R@1 at tIoU 0.3, 0.5, and 0.7;
-- absolute start error, end error, and duration error;
-- candidate recall before boundary refinement and final top-k relevance;
-- indexing or preprocessing time, stored bytes, query latency, and peak memory;
-- results by modality and for genuinely joint queries; and
-- artifact license, pinned revision, operating-system support, and failure mode.
+Use that result to answer two concrete questions:
 
-Published tables guide candidate selection only when the task, inputs, output
-unit, training regime, and split match. A high whole-video retrieval score does
-not prove timestamp quality. A high VQA score does not prove retrieval. A
-target-trained temporal score is a ceiling, not a direct zero-shot comparison.
+1. Does the agent receive relevant, inspectable sound evidence without the
+   mixed FineLAP ranking?
+2. Does VidXP reach a similarly grounded conclusion with less agent work than
+   direct video inspection?
 
-## Bounded decision sequence
-
-1. Treat the current RRF result as coarse retrieval. The completed trace already
-   establishes correct top-region ranking for the development case; do not rerun
-   the obsolete pre-tokenization failure.
-2. Retain `p2s_asg_vidxp_v1` as a concluded diagnostic. On the development
-   query it generated only a sound span and remained below the direct-
-   inspection baseline, so do not spend a full agent batch on this adaptation
-   alone.
-3. The frozen four-second, two-second-stride control is complete. Its first
-   three action windows chained into `0–8.0244` under connected-component union,
-   lowering fused IoU from `0.7493` to `0.7477` while multiplying action records
-   by 3.8. Do not run it across held-out agent tasks.
-4. The Diwan et al. disjoint-proposal control is complete on the development
-   query. Scene-only and VidXP RRF ranking both selected `0–6.7401` seconds at
-   rank 1, improving IoU from `0.7493` to `0.8902`. This establishes that a
-   useful boundary exists and ranks first; it does not establish generality.
-5. The eight-task held-out comparison is complete. Proposal-preserving RRF
-   helped none of six scene-comparable tasks and harmed the strongest result.
-   The best-shot oracle reached mean IoU `0.5219`, but only three of eight shots
-   reached tIoU `0.5`. Reject this RRF adaptation and do not promote ShotDetect
-   to the product boundary rule.
-6. Keep FineLAP's whole-window and dense-activation rankings separate. The
-   held-out control improved sound target top-three coverage from 0/4 to 3/4.
-   Do not invent a quota or merge rule: first compare a complete long-audio
-   interval method against the current output.
-7. Use AM-DETR as the direct trained sound-interval comparator. It models a
-   sequence of short audio clips and predicts start/end times. UniVTG is a later
-   visual-only interval comparator; UMT is a later trained audio-visual
-   comparator. Neither is the next product implementation.
-
-The current Codex MCP smoke is diagnostic development data. It shows that the
-agent used the skill and MCP successfully and returned relevant evidence, but
-one paired task cannot select an architecture or support a LongVALE claim.
-
-## Benchmark roles and execution policy
-
-| Benchmark | Decision use | Does not establish |
-| --- | --- | --- |
-| MAEB and MVEB | Broad component-embedding context | Long-video interval quality or VidXP system behavior |
-| OVSD and MovieNet scene segmentation | Temporal-unit and scene-boundary regression | Natural-language moment retrieval or multimodal fusion |
-| QVHighlights, Charades-STA, and related grounding sets | Query-conditioned interval and highlight evaluation | Generic zero-shot transfer unless the exact training regime says so |
-| AEGBench | Environmental-sound interval quality | Visual or speech retrieval |
-| LongVALE | Combined vision, sound, and speech temporal grounding | Actor clustering or unmeasured production performance |
-| Codex MCP ablation | End-to-end agent workflow, tool use, latency, and usage | Component-model leaderboard or full LongVALE result |
-
-Reading papers and inspecting open artifacts does not consume model inference.
-Running local checkpoints consumes storage, memory, electricity, and time.
-Metered agent runs require explicit approval. Full benchmark runs follow only
-after the bounded diagnostic identifies a decision that the run can resolve.
+Only a measured remaining failure should open a new model or localization
+decision. Candidate papers stay in the inventory until that decision exists.

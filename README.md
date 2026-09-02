@@ -170,6 +170,10 @@ questions, and return inspectable evidence such as boards, frames, and clips.
 A local client can start VidXP as a program on the same computer. A hosted
 client connects to a deployed VidXP server.
 
+The goal is to give the agent useful eyes and ears without sending the whole
+video through its context. VidXP narrows the library to timestamped evidence;
+the agent inspects that evidence and decides what it means.
+
 ### Codex plugin and skills
 
 VidXP is distributed as a Codex plugin through a Git marketplace hosted in
