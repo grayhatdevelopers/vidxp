@@ -28,6 +28,11 @@ from vidxp.benchmarks.hirest import (
     select_ground_truth,
     validate_predictions as validate_hirest_predictions,
 )
+from vidxp.benchmarks.point_to_span import (
+    TemporalSimilarity,
+    adaptive_span_generator,
+    squared_l2_to_cosine,
+)
 from vidxp.capabilities.schemas import SearchHit
 
 
@@ -68,6 +73,30 @@ def timed_hit(start, end, score, rank=1):
 
 
 class BenchmarkCommonTests(unittest.TestCase):
+    def test_normalized_squared_l2_converts_to_cosine_similarity(self):
+        self.assertEqual(squared_l2_to_cosine(0.0), 1.0)
+        self.assertEqual(squared_l2_to_cosine(2.0), 0.0)
+        self.assertEqual(squared_l2_to_cosine(4.0), -1.0)
+
+    def test_point_to_span_expands_a_prominent_peak(self):
+        similarities = (0.1, 0.2, 0.6, 0.65, 0.6, 0.2, 0.1)
+        result = adaptive_span_generator(
+            tuple(
+                TemporalSimilarity(
+                    start=float(index),
+                    end=float(index + 1),
+                    similarity=similarity,
+                )
+                for index, similarity in enumerate(similarities)
+            )
+        )
+
+        self.assertEqual(len(result.candidates), 1)
+        self.assertEqual(
+            (result.candidates[0].start, result.candidates[0].end),
+            (2.0, 5.0),
+        )
+
     def test_generation_identity_is_stable_and_run_scoped(self):
         first = benchmark_generation_id("hirest", "validation", "run-1")
 

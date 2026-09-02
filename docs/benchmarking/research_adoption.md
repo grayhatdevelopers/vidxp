@@ -18,6 +18,7 @@ those documents implies adoption.
 - **Control**: retained so a replacement can be measured against it; not the
   intended final architecture.
 - **Candidate**: relevant and evaluated on paper, but not implemented in VidXP.
+- **Experiment**: implemented only in a benchmark path; not product behavior.
 - **Not adopted**: reviewed and deliberately not represented as product design.
 
 An approach is not “paper-derived” merely because it resembles a paper after the
@@ -62,8 +63,18 @@ it cannot be cited as a general or research-derived solution.
 | [UniversalVTG](https://arxiv.org/abs/2604.08522) (An et al., arXiv 2026) | Cross-dataset pretraining, offline query canonicalization, and a lightweight grounding head | Official checkpoint/API exists, but evaluation and feature extraction require CUDA and its upstream encoder has a separate Meta/Fair license | **Candidate**, too new and not currently Mac-runnable end to end |
 | [REZE](https://arxiv.org/abs/2608.04480) (Li et al., arXiv 2026) | Scores consecutive three-second clips with a frozen VLM, then applies deterministic smoothing and interval extraction outside the model | Directly isolates recognition from boundary extraction and reports full score/aggregation ablations. It requires many 7B/8B VLM clip calls and is a four-week-old preprint with no public code found | **Candidate** high-value research reproduction; not established enough for direct adoption |
 | [STITCH](https://arxiv.org/abs/2608.27929) (Casanova et al., arXiv 2026) | Builds reusable query-independent chunks by change-point detection over frozen InternVideo2 windows, then scores chunks per query | Closest published match to VidXP's reusable-index constraint. It is days old, submitted rather than accepted, uses an anonymized artifact, and was evaluated on a CUDA GPU | **Candidate** for a bounded temporal-unit experiment after artifact review |
-| [Point-to-Span](https://arxiv.org/abs/2512.10363) and [GranAlign](https://arxiv.org/abs/2601.00584) | P2S expands similarity peaks adaptively and refines with ordered subqueries; GranAlign rewrites queries and generates query-aware captions at two semantic granularities | Both address real zero-shot failure modes and publish ablations. Both add query-time model work; no official public code was found in the checked paper surfaces | **Candidates** for long-video and semantic-granularity comparisons, not implementation instructions |
+| [Point-to-Span](https://arxiv.org/abs/2512.10363) | Adaptively smooths a similarity curve, finds prominent peaks, expands each peak using signal statistics, then refines with ordered subqueries | No official code was found. VidXP implements only Section 3.1 for a bounded comparison; the full method remains unreproduced | **Experiment**, not adopted |
+| [GranAlign](https://arxiv.org/abs/2601.00584) | Rewrites queries and generates query-aware captions at two semantic granularities | Relevant to semantic mismatch but adds query-time caption generation; no official public code was found | **Candidate**, not part of the current experiment |
 | [NumPro](https://openaccess.thecvf.com/content/CVPR2025/html/Wu_Number_it_Temporal_Grounding_Videos_like_Flipping_Manga_CVPR_2025_paper.html) and [Moment-GPT](https://arxiv.org/abs/2501.07972) | NumPro overlays frame numbers for a video LLM; Moment-GPT rewrites queries, generates spans, and uses multiple frozen MLLMs to score them | Both target direct MLLM timestamping. They alter media or add heavy query-time inference and do not use VidXP's indexed multimodal evidence | **Not selected** for the first product experiment |
+
+## Active experiment record
+
+| ID | Source | Implemented | VidXP-specific changes | Development evidence | Status |
+| --- | --- | --- | --- | --- | --- |
+| `p2s_asg_vidxp_v1` | Point-to-Span v1, Section 3.1 | Adaptive smoothing, peak prominence `0.05`, one-second peak distance, and adaptive expansion; the paper's final NMS setting is applied before fusion | Existing modality encoders; normalized squared-L2-to-cosine conversion; per-modality sample rates; integer smoothing width and edge padding; FineLAP activations only; native speech-span pass-through; early NMS at tIoU `0.8`; RRF span fusion. Query decomposition, reranking, and injection are excluded. | On the 0–6 s development case, control `0–8.0075`/IoU `0.7493`; adaptation `0.64–6.72`/IoU `0.7976`. Only sound generated a span. | Benchmark-only; evaluate unchanged across prepared tasks before product adoption |
+
+Code: `src/vidxp/benchmarks/point_to_span.py` and
+`benchmarks/codex-mcp/scripts/compare_point_to_span.py`.
 
 ## Verified failure and next comparison
 
@@ -81,29 +92,12 @@ lets the coarse action record set the endpoint. This evidence narrows the next
 work to candidate retention and interval localization; it does not support
 replacing the encoders, indexes, or product architecture.
 
-FineLAP demonstrates dense frame-level audio representations and evaluates
-sound-event detection and text-to-audio grounding. Its paper's fixed `0.5`
-sound-event threshold applies to model output probabilities, not VidXP's raw
-vector distances. Applying that threshold here would be an unsupported change.
-FineLAP activations must be evaluated as sound evidence, not forced through a
-visual paper's method. The comparison then measures:
-
-- current RRF-ranked connected-component union;
-- Diwan et al.'s 2023 zero-shot proposal, matching, and post-processing method;
-  and
-- TFVTG's ECCV 2024 dynamic/static proposal scoring and ordered sub-event
-  integration.
-
-Paper-encoder reproductions and VidXP-encoder adaptations are different
-experiments. The latter can isolate interval logic without adding a production
-model, but it must not be reported as a paper-faithful TFVTG or Diwan result.
-
-RRF remains the coarse ranker in the VidXP control. Neither its paper nor the
-two localization papers justify an arbitrary candidate multiplier. Retrieval
-depth and final output count must be measured separately and recorded as an
-original VidXP execution choice unless a subsequently adopted method defines
-them. REZE and STITCH remain later research candidates, not the immediate
-implementation direction.
+FineLAP's paper validates dense audio representations, but its fixed `0.5`
+sound-event threshold applies to output probabilities rather than VidXP's raw
+distances. RRF remains the control fusion method. Point-to-Span supplies the
+experimental boundary method; Diwan et al. and TFVTG remain related zero-shot
+controls to mention when reporting it. The experiment is a VidXP-encoder
+adaptation, not a paper-faithful P2S result.
 
 ## Required record for future adoption
 

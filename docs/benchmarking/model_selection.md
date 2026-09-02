@@ -61,7 +61,7 @@ it does not justify changing the result to the annotated six seconds by hand.
 | Layer | Question | Relevant research | What the evidence supports |
 | --- | --- | --- | --- |
 | Temporal representation | Should candidates be fixed clips, dense frames, shots, scenes, or learned proposals? | LGSS, ShotCoL, BaSSL, NeighborNet, Diwan et al., and STITCH | Shot-aware and embedding-change units are established alternatives to arbitrary fixed windows. Scene boundaries alone do not locate brief events inside a scene; STITCH is a very recent preprint, not established product evidence. |
-| Candidate selection | Which evidence should a query send to a downstream model? | BOLT, Point-to-Span, and adaptive-keyframe work | Query-conditioned sampling helps under a frame budget, while Point-to-Span addresses long-video proposal growth. BOLT selects frames rather than intervals; Point-to-Span is training-free but lacks a checked public implementation. |
+| Candidate selection | Which evidence should a query send to a downstream model? | BOLT, Point-to-Span, and adaptive-keyframe work | Query-conditioned sampling helps under a frame budget. VidXP now has a benchmark-only adaptation of Point-to-Span's span generator; it is not a full reproduction or product path. |
 | Interval prediction | How should start and end times be inferred? | Moment-DETR, UMT, QD-DETR, UniVTG, REZE, and Anchor-Aware Similarity Cohesion | Trained models directly predict intervals or boundary scores; REZE instead aggregates frozen-VLM confidence curves. These have different training, compute, and artifact assumptions and must be compared as separate controls. |
 | Multimodal combination | Should modalities remain separate, interact before prediction, or use one model? | UMT, QD-DETR, AVicuna, LongVALE, and modality-specific systems | Late fusion is a transparent control, not a settled product direction. Learned audiovisual interaction is established, but available implementations vary in training assumptions and local-runtime fit. |
 | Answer synthesis | Should a language model inspect selected evidence? | BOLT and long-video VLM work | A language model may explain or verify timestamp-bound evidence. It must not invent boundaries that the retrieval/localization path cannot support. |
@@ -93,7 +93,7 @@ they do not establish a general retrieval architecture.
 | Environmental sound | FineLAP global and dense features | LAION-CLAP as a mature retrieval control; PE-A-Frame and AEGBench for boundaries | Implementation exists, but quality and boundary claims remain pending. |
 | Visual retrieval | VideoPrism action clips and SigLIP2 scene frames | MVEB places Qwen3-VL-Embedding highly, but does not compare VideoPrism | Qwen is a candidate, not a selected replacement. Run the same retrieval protocol before changing providers. |
 | Temporal units | Fixed action clips plus one-second scene records | Shot/scene segmentation and denser query-aware proposals | Open. Existing indexes do not have to be retained if another representation wins on quality and resource use. |
-| Boundary inference | Connected-component interval union | Diwan et al. proposal matching and post-processing; TFVTG dynamic/static localization | The fixed-window widening failure is confirmed. Compare named localization controls before changing production behavior. |
+| Boundary inference | Connected-component interval union | Point-to-Span adaptive expansion; Diwan et al. and TFVTG controls | The fixed-window widening failure is confirmed. The first P2S adaptation improved one sound-led case but generated no scene or action span. |
 | Fusion | RRF scoring inside connected interval components | Learned audio-visual interaction or query-conditioned boundary scoring | Retain as the transparent control only. RRF is paper-derived; connected grouping and interval union are VidXP-specific. Provenance must survive any replacement. |
 | Planner and synthesis | Structured evidence passed to the configured agent/model | Smaller local planners or selected media verification | Evaluate separately from retrieval. Agent prose cannot substitute for temporal evidence. |
 
@@ -119,22 +119,14 @@ target-trained temporal score is a ceiling, not a direct zero-shot comparison.
 1. Treat the current RRF result as coarse retrieval. The completed trace already
    establishes correct top-region ranking for the development case; do not rerun
    the obsolete pre-tokenization failure.
-2. The development-task probe has exported every indexed score and interval
-   while preserving model-specific distances and representations. Repeat that
-   probe unchanged across the prepared tasks before selecting a method. Do not
-   combine scores from different models as though they were calibrated. Dense
-   visual scores can feed visual-localization controls, while FineLAP
-   activation scores test sound boundaries separately.
-3. Compare current interval union with Diwan et al.'s
-   proposal/matching/post-processing pipeline and TFVTG's dynamic/static
-   proposal scoring. A reproduction using the papers' encoders is a research
-   control; applying their interval logic to VidXP's SigLIP2 scores is a
-   separate adaptation and must be labeled as such. TFVTG's official release
-   uses BLIP2 and hard-coded CUDA execution, so it is not a direct macOS path.
-4. Report IoU, boundary errors, candidate recall, latency, memory, and model
-   calls. Change production localization only if the same method improves more
-   than the single development query. Encoder, index, and multimodal-fusion
-   changes remain out of scope for this comparison.
+2. The fixed `p2s_asg_vidxp_v1` comparison converts each normalized squared-L2
+   curve independently, applies Point-to-Span Section 3.1, and fuses only
+   generated spans. It does not use annotations during generation.
+3. Run the unchanged probe and comparison across the prepared tasks. Report
+   IoU, boundary errors, candidate recall, latency, and model calls by modality.
+4. Change production localization only if the fixed method improves more than
+   the development query without losing scene-, action-, or speech-led cases.
+   Diwan et al. and TFVTG remain named controls if P2S does not generalize.
 
 The current Codex MCP smoke is diagnostic development data. It shows that the
 agent used the skill and MCP successfully and returned relevant evidence, but

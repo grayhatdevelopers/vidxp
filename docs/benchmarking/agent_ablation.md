@@ -234,6 +234,16 @@ IoU per modality, and prints those measurements directly after the run. The
 best-individual value is a diagnostic oracle, not a production prediction. The
 command does not invoke Codex or change production search.
 
+Compare a saved probe with the benchmark-only Point-to-Span ASG adaptation:
+
+```bash
+./benchmarks/codex-mcp/run compare TASK_ID
+```
+
+This performs no model calls. It prints the control and adapted interval, IoU,
+boundary errors, runtime, and per-modality candidate counts, then saves the
+full method record beside the probe.
+
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:
 

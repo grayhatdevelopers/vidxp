@@ -93,6 +93,20 @@ one-second scene sampling grid, activation timing, or annotation convention;
 it must be measured across the prepared tasks rather than corrected against
 this annotation.
 
+The benchmark-only Point-to-Span ASG adaptation was then applied to the saved
+curves without another model call:
+
+| Method | Top interval | IoU | Start error | End error | Generated spans |
+| --- | --- | ---: | ---: | ---: | --- |
+| Current union | 0–8.0075 s | 0.7493 | 0 s | +2.0075 s | Existing top-three hits |
+| P2S ASG adaptation | 0.64–6.72 s | 0.7976 | +0.64 s | +0.72 s | Sound: 1; scene/action: 0 |
+
+This is one development case, not an adopted product fix. It shows that the
+published adaptive expansion can use FineLAP's dense curve, but the published
+prominence threshold produced no scene or action span. Selection requires the
+same fixed implementation to improve the prepared tasks without modality
+regressions.
+
 ## Runtime and model generations
 
 The legacy and current checks used the same physical laptop, as confirmed for
