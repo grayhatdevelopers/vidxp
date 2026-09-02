@@ -61,7 +61,11 @@ The request also used `top_k = 3`, which the current application passes to each
 modality as both retrieval depth and final output depth. That is a separate
 candidate-depth limitation: a later boundary stage cannot use lower-ranked
 fine-grained evidence that was never retrieved. It does not by itself explain
-the eight-second endpoint in this example.
+the eight-second endpoint in this example. The retained scene hits end at
+4.004 seconds and the retained sound hits end at 2.24 seconds, so those sparse
+boundaries also cannot determine the annotated 6-second end. Paper-derived
+score-curve localization must be evaluated from the dense sequence, not
+reconstructed from these seven retained hits.
 
 ## Runtime and model generations
 

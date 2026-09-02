@@ -110,12 +110,16 @@ target-trained temporal score is a ceiling, not a direct zero-shot comparison.
 1. Treat the current RRF result as coarse retrieval. The completed trace already
    establishes correct top-region ranking for the development case; do not rerun
    the obsolete pre-tokenization failure.
-2. On the prepared LongVALE tasks, compare current interval union with two
-   paper-faithful zero-shot controls: Diwan et al.'s
+2. Export the dense per-frame similarity curve required by the localization
+   papers. The public search result is insufficient: `top_k = 3` retained only
+   three scene and three sound intervals in the traced run.
+3. Compare current interval union with Diwan et al.'s
    proposal/matching/post-processing pipeline and TFVTG's dynamic/static
-   proposal scoring with ordered sub-event integration. Keep their published
-   settings and report every deviation.
-3. Report IoU, boundary errors, candidate recall, latency, memory, and model
+   proposal scoring. A reproduction using the papers' encoders is a research
+   control; applying their interval logic to VidXP's SigLIP2 scores is a
+   separate adaptation and must be labeled as such. TFVTG's official release
+   uses BLIP2 and hard-coded CUDA execution, so it is not a direct macOS path.
+4. Report IoU, boundary errors, candidate recall, latency, memory, and model
    calls. Change production localization only if the same method improves more
    than the single development query. Encoder, index, and multimodal-fusion
    changes remain out of scope for this comparison.

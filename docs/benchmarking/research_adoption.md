@@ -55,7 +55,7 @@ it cannot be cited as a general or research-derived solution.
 | --- | --- | --- | --- |
 | [Zero-shot Video Moment Retrieval With Off-the-Shelf Models](https://proceedings.mlr.press/v203/diwan23a.html) (Diwan et al., PMLR 2023) | PySceneDetect proposals, one-fps CLIP scoring, then similarity-threshold watershed merging; reported settings were tuned on QVHighlights `val-filt` | Closest simple frozen-encoder baseline and executable method specification, but the split and thresholds are dataset-specific and no official implementation was found | **Candidate** for a faithfully reproduced zero-shot control, not a production recipe |
 | [Zero-Shot Video Moment Retrieval From Frozen Vision-Language Models](https://openaccess.thecvf.com/content/WACV2024/html/Luo_Zero-Shot_Video_Moment_Retrieval_From_Frozen_Vision-Language_Models_WACV_2024_paper.html) (Luo et al., WACV 2024) | Splits compound queries into single-action queries, refines frozen VLM features, clusters each into proposals, and combines overlapping proposal sets | Directly relevant to compound queries. Its `k = 6` clustering and refinement settings were selected on Charades-STA, and no official code was located | **Candidate**; reproduce before borrowing its query decomposition or proposal logic |
-| [Training-free Video Temporal Grounding](https://arxiv.org/abs/2408.16219) (Zheng et al., ECCV 2024) | Uses an LLM to decompose and order sub-events, VLM dynamic/static scoring, then filters and integrates proposals | Peer-reviewed with official code and useful for ordered compound queries; it adds query-time large-model work and proposal enumeration | **Candidate** for a compound-query baseline, not the default local path |
+| [Training-free Video Temporal Grounding](https://arxiv.org/abs/2408.16219) (Zheng et al., ECCV 2024) | Uses an LLM to decompose and order sub-events, VLM dynamic/static scoring, then filters and integrates proposals | Peer-reviewed with [official code](https://github.com/minghangz/TFVTG) and useful for ordered compound queries; the release uses BLIP2, stored or query-time LLM output, proposal enumeration, and hard-coded CUDA execution | **Candidate** for a compound-query baseline, not a direct macOS or default local path |
 | [Anchor-Aware Similarity Cohesion](https://openaccess.thecvf.com/content/CVPR2025/html/Tan_Anchor-Aware_Similarity_Cohesion_in_Target_Frames_Enables_Predicting_Temporal_Moment_CVPR_2025_paper.html) (Tan et al., CVPR 2025) | Trains query-conditioned feature alignment and a 2D boundary detector around the highest-relevance frame | Official code exists and boundary ablations are strong, but it is supervised, visual-only, and uses dataset-specific convolution widths | **Candidate** trained boundary ceiling; unrelated to the reverted custom “anchor” heuristic |
 | [Lighthouse](https://aclanthology.org/2024.emnlp-demo.6/) (Nishimura et al., EMNLP 2024) | Reproduces six trained moment/highlight models behind one inference API | Apache-2.0 code, checkpoints, and CPU inference exist; video input is capped at 150 seconds and CPU guidance uses CLIP-only features | **Candidate** executable control surface, especially for QD-DETR; not a new localization algorithm |
 | [UniVTG](https://github.com/showlab/UniVTG) (Lin et al., ICCV 2023) | A pretrained temporal head unifies interval, saliency-curve, and point labels | Official MIT code and checkpoints; practical inference claim, but benchmark adaptation remains GPU-oriented and visual-only | **Candidate** established trained interval control |
@@ -74,14 +74,20 @@ eight-second action record. The earlier random sound result predates commit
 `343bd27` and must not be used to diagnose current ranking.
 
 This evidence narrows the next work to interval localization; it does not
-support replacing the encoders, indexes, or product architecture. The first
-comparison uses the same prepared LongVALE media and queries:
+support replacing the encoders, indexes, or product architecture. Both named
+methods require a dense similarity sequence, which the saved `top_k = 3` search
+result does not contain. The first comparison must therefore export the full
+per-frame curve for the same prepared LongVALE media and queries, then measure:
 
 - current RRF-ranked connected-component union;
 - Diwan et al.'s 2023 zero-shot proposal, matching, and post-processing method;
   and
 - TFVTG's ECCV 2024 dynamic/static proposal scoring and ordered sub-event
   integration.
+
+Paper-encoder reproductions and VidXP-encoder adaptations are different
+experiments. The latter can isolate interval logic without adding a production
+model, but it must not be reported as a paper-faithful TFVTG or Diwan result.
 
 RRF remains the coarse ranker in the VidXP control. Neither its paper nor the
 two localization papers justify an arbitrary candidate multiplier. Retrieval
