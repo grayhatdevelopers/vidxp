@@ -281,6 +281,20 @@ IoU, recall thresholds, proposal count, and detection time. It makes no model
 calls and writes no index. The paper used CLIP-ViT-B/32 and sampled within each
 shot; the report records both VidXP adaptations and excludes SimpleWatershed.
 
+After exporting fresh probes for tasks 3–10, aggregate the held-out local
+comparison:
+
+```bash
+./benchmarks/codex-mcp/run shots --held-out
+```
+
+The command preserves the manifest's declared modalities. It compares scene
+ranking with proposal-preserving RRF only where scene is declared, reports the
+two action-and-sound tasks separately, counts evidence that overlaps multiple
+proposals, and states whether each reference crosses a detected boundary. Shot
+detection makes no model calls; the required probes for this pilot make 16
+local text-embedding calls in total. This is not a Promptfoo or Codex run.
+
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:
 

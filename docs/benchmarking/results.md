@@ -133,8 +133,8 @@ profile across the held-out agent tasks.
 
 The next development control used the no-postprocessing ShotDetect path from
 Diwan et al. PySceneDetect found three disjoint proposals. Existing SigLIP2
-scores ranked the first proposal highest, and the existing action and sound
-ranks agreed:
+scores ranked the first proposal highest. The top sound hit overlapped only
+that proposal; the top action hit overlapped it and the next proposal:
 
 | Method | Top interval | IoU | End error | Evidence ranks |
 | --- | --- | ---: | ---: | --- |
@@ -143,12 +143,46 @@ ranks agreed:
 | Shot proposal, scene score | 0–6.7401 s | 0.8902 | +0.7401 s | Scene 1 |
 | Fixed shot, VidXP RRF score | 0–6.7401 s | 0.8902 | +0.7401 s | Action 1, scene 1, sound 1 |
 
-Detection took `1.675` seconds, produced three proposals, reused 76 scene
+Detection took about `1.7` seconds, produced three proposals, reused 76 scene
 records, and made no model calls or index writes. This isolates the development
 failure: retrieval ranks the correct region, but connected interval union
 replaces its useful endpoint with the coarse action endpoint. The result does
 not yet justify a product change because a single detected shot cannot show how
 the rule behaves when a relevant moment crosses multiple shots.
+
+The confirmed held-out comparison then evaluated tasks 3–10 without Codex.
+Six tasks had scene scores for a direct scene-versus-RRF comparison; the two
+action-and-sound tasks were reported separately rather than given undeclared
+scene evidence.
+
+| Method and scope | Tasks | Mean IoU | Rate at tIoU 0.3 / 0.5 / 0.7 | Mean absolute start / end error |
+| --- | ---: | ---: | --- | --- |
+| Current connected union, all | 8 | 0.0418 | 0 / 0 / 0 | 59.06 / 59.05 s |
+| Fixed shot with RRF, all | 8 | 0.0882 | 0.125 / 0 / 0 | 93.45 / 59.59 s |
+| Best single-shot oracle, all | 8 | 0.5219 | 0.625 / 0.375 / 0.375 | 18.34 / 8.70 s |
+| Scene-ranked shot, scene tasks | 6 | 0.2841 | 0.333 / 0.167 / 0.167 | 54.29 / 39.78 s |
+| Fixed shot with RRF, same scene tasks | 6 | 0.1175 | 0.167 / 0 / 0 | 84.38 / 37.73 s |
+
+For selected outputs, the threshold rate is R@1. For the best-shot oracle, it
+is candidate recall: whether any single detected shot reaches the threshold.
+
+RRF helped none of the six comparable tasks. It retained three scene winners,
+changed two zero-IoU winners to different zero-IoU winners, and harmed one. On
+`phone-ring`, the scene-ranked proposal matched the reference at IoU `0.9995`.
+RRF instead selected a wrong proposal with scene rank 2 and sound rank 3,
+producing IoU `0.0`; its two rank contributions outweighed the correct
+proposal's scene rank 1. Both action-and-sound tasks remained at IoU `0.0`.
+
+The proposal oracle separates the remaining failures. Five tasks cannot reach
+tIoU `0.5` with any single detected shot; three can, but ranking misses the
+candidate. Four of eight RRF winners use evidence that overlaps more than one
+proposal. None of the references crosses a detected boundary after a
+`0.05`-second tolerance, so this slice does not test multi-shot merging.
+
+Preparing the saved curves took `46.744` seconds and 16 local text-embedding
+calls. Detecting shots across four unique videos took about `17` seconds, with no
+model calls or index writes. Peak memory was not measured. This is a local
+component comparison, not an agent or Promptfoo pilot run.
 
 ## Runtime and model generations
 

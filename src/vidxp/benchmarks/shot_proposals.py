@@ -26,12 +26,21 @@ class RankedShot:
 @dataclass(frozen=True)
 class FusedShot:
     rank: int
-    scene_rank: int
+    scene_rank: int | None
     start: float
     end: float
     score: float
     best_ranks: tuple[tuple[str, int], ...]
     source_ids: tuple[str, ...]
+    evidence: tuple[ProposalEvidence, ...]
+
+
+@dataclass(frozen=True)
+class ProposalEvidence:
+    modality: str
+    rank: int
+    source_id: str
+    proposal_overlap_count: int
 
 
 def rank_shots_from_scene_records(
@@ -82,9 +91,10 @@ def rank_shots_from_scene_records(
 
 
 def rank_shots_with_rrf_evidence(
-    shots: Sequence[RankedShot],
+    shots: Sequence[TemporalShot],
     records_by_modality: Mapping[str, Sequence[dict[str, Any]]],
     *,
+    scene_ranking: Sequence[RankedShot] = (),
     candidate_top_k: int,
     rank_constant: int = 60,
 ) -> tuple[FusedShot, ...]:
@@ -95,10 +105,21 @@ def rank_shots_with_rrf_evidence(
     if rank_constant < 0:
         raise ValueError("rank_constant must not be negative")
 
+    scene_by_interval = {
+        (shot.start, shot.end): shot for shot in scene_ranking
+    }
+    if len(scene_by_interval) != len(scene_ranking):
+        raise ValueError("scene ranking contains duplicate shot intervals")
+    shot_intervals = {(shot.start, shot.end) for shot in shots}
+    if any(interval not in shot_intervals for interval in scene_by_interval):
+        raise ValueError("scene ranking contains an unknown shot interval")
+
     candidates = []
     for shot in shots:
-        best_ranks = {"scene": shot.rank}
-        source_ids = list(shot.source_ids)
+        scene_shot = scene_by_interval.get((shot.start, shot.end))
+        best_ranks = {"scene": scene_shot.rank} if scene_shot else {}
+        source_ids = list(scene_shot.source_ids) if scene_shot else []
+        evidence = []
         for modality, records in records_by_modality.items():
             if modality == "scene":
                 continue
@@ -114,25 +135,61 @@ def rank_shots_with_rrf_evidence(
             best = min(overlapping, key=lambda record: int(record["retrieval_rank"]))
             best_ranks[modality] = int(best["retrieval_rank"])
             source_ids.append(str(best["source_id"]))
+            evidence.append(
+                ProposalEvidence(
+                    modality=modality,
+                    rank=int(best["retrieval_rank"]),
+                    source_id=str(best["source_id"]),
+                    proposal_overlap_count=sum(
+                        min(candidate.end, float(best["end_seconds"]))
+                        > max(candidate.start, float(best["start_seconds"]))
+                        for candidate in shots
+                    ),
+                )
+            )
+        if not best_ranks:
+            continue
         score = sum(
             1.0 / (rank_constant + rank) for rank in best_ranks.values()
         )
-        candidates.append((score, shot, tuple(sorted(best_ranks.items())), source_ids))
+        candidates.append(
+            (
+                score,
+                scene_shot,
+                shot,
+                tuple(sorted(best_ranks.items())),
+                source_ids,
+                tuple(sorted(evidence, key=lambda item: item.modality)),
+            )
+        )
 
     candidates.sort(
-        key=lambda item: (-item[0], item[1].rank, item[1].start, item[1].end)
+        key=lambda item: (
+            -item[0],
+            item[1].rank if item[1] is not None else candidate_top_k + 1,
+            item[2].start,
+            item[2].end,
+        )
     )
     return tuple(
         FusedShot(
             rank=rank,
-            scene_rank=shot.rank,
+            scene_rank=scene_shot.rank if scene_shot else None,
             start=shot.start,
             end=shot.end,
             score=score,
             best_ranks=best_ranks,
             source_ids=tuple(source_ids),
+            evidence=evidence,
         )
-        for rank, (score, shot, best_ranks, source_ids) in enumerate(
+        for rank, (
+            score,
+            scene_shot,
+            shot,
+            best_ranks,
+            source_ids,
+            evidence,
+        ) in enumerate(
             candidates,
             start=1,
         )

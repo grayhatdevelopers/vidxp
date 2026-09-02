@@ -149,13 +149,47 @@ class BenchmarkCommonTests(unittest.TestCase):
         }
 
         ranked = rank_shots_with_rrf_evidence(
-            shots,
+            (TemporalShot(0.0, 5.0), TemporalShot(5.0, 10.0)),
             records,
+            scene_ranking=shots,
             candidate_top_k=3,
         )
 
         self.assertEqual((ranked[0].start, ranked[0].end), (5.0, 10.0))
         self.assertEqual(dict(ranked[0].best_ranks), {"scene": 2, "sound": 1})
+        self.assertEqual(ranked[0].evidence[0].proposal_overlap_count, 1)
+
+    def test_rrf_evidence_can_rank_shots_without_scene_scores(self):
+        ranked = rank_shots_with_rrf_evidence(
+            (TemporalShot(0.0, 5.0), TemporalShot(5.0, 10.0)),
+            {
+                "action": [
+                    {
+                        "start_seconds": 4.0,
+                        "end_seconds": 6.0,
+                        "retrieval_rank": 1,
+                        "source_id": "action-1",
+                    }
+                ],
+                "sound": [
+                    {
+                        "start_seconds": 6.0,
+                        "end_seconds": 7.0,
+                        "retrieval_rank": 1,
+                        "source_id": "sound-1",
+                    }
+                ],
+            },
+            candidate_top_k=3,
+        )
+
+        self.assertEqual((ranked[0].start, ranked[0].end), (5.0, 10.0))
+        self.assertIsNone(ranked[0].scene_rank)
+        self.assertEqual(dict(ranked[0].best_ranks), {"action": 1, "sound": 1})
+        self.assertEqual(
+            {item.modality: item.proposal_overlap_count for item in ranked[0].evidence},
+            {"action": 2, "sound": 1},
+        )
 
     def test_generation_identity_is_stable_and_run_scoped(self):
         first = benchmark_generation_id("hirest", "validation", "run-1")

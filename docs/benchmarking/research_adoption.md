@@ -75,7 +75,7 @@ it cannot be cited as a general or research-derived solution.
 | --- | --- | --- | --- | --- | --- |
 | `p2s_asg_vidxp_v1` | Point-to-Span v1, Section 3.1 | Adaptive smoothing, peak prominence `0.05`, one-second peak distance, and adaptive expansion; the paper's final NMS setting is applied before fusion | Existing modality encoders; normalized squared-L2-to-cosine conversion; per-modality sample rates; integer smoothing width and edge padding; FineLAP activations only; native speech-span pass-through; early NMS at tIoU `0.8`; RRF span fusion. Query decomposition, reranking, and injection are excluded. | On the 0–6 s development case, control `0–8.0075`/IoU `0.7493`; adaptation `0.64–6.72`/IoU `0.7976`. Only sound generated a span; scene and action generated none. The direct-inspection agent baseline reached IoU `0.8824`. | **Concluded diagnostic**; retain the code, but do not batch-evaluate or adopt this adaptation by itself |
 | `videoprism_overlap_control_v1` | CTAP and Barrios et al. establish overlapping temporal windows; Point-to-Span evaluates fixed sizes including four seconds | Configurable stride between VideoPrism action clips plus an isolated benchmark command that combines the alternative action result with the saved non-action probe | VideoPrism still receives 16 frames. Window duration is `16 / sample_fps`; stride is `clip_stride_samples / sample_fps`. The frozen profile uses four-second windows with a two-second stride. The exact 50% overlap is a VidXP experiment setting. | Action rank 1 became `0–4.0204`, but the top three overlapping action hits joined into `0–8.0244`; fused IoU fell from `0.7493` to `0.7477`. Records grew from 10 to 38; indexing took 165.094 s and 11,929,970 bytes. | **Concluded development control**; shorter overlapping records are not sufficient under connected-component union |
-| `diwan_shotdetect_siglip2_v1` | Diwan et al., ShotDetect without postprocessing | PySceneDetect content proposals at the paper's no-postprocessing threshold `53`, ranked by the maximum contained scene score | PySceneDetect `0.7`; OpenCV backend; existing global 1 fps SigLIP2 records instead of per-shot CLIP-ViT-B/32 sampling. A VidXP-only variant assigns each fixed proposal the best overlapping top-three action and sound ranks, then applies the existing RRF score. SimpleWatershed is excluded because its `0.7` threshold was tuned for CLIP on QVHighlights `val-filt`. | Three proposals were detected in `1.675` s with no model calls or stored index. Both scene-only and RRF ranking selected `0–6.7401` s at rank 1, IoU `0.8902`; current connected union returned `0–8.0075` s, IoU `0.7493`. The RRF winner received rank 1 scene, action, and sound evidence. | **Passed one development case**; benchmark-only, not adopted |
+| `diwan_shotdetect_siglip2_v1` | Diwan et al., ShotDetect without postprocessing | PySceneDetect content proposals at the paper's no-postprocessing threshold `53`, ranked by the maximum contained scene score | PySceneDetect `0.7`; OpenCV backend; existing global 1 fps SigLIP2 records instead of per-shot CLIP-ViT-B/32 sampling. A VidXP-only variant keeps the complete scene-proposal ranking, assigns each proposal the best overlapping top-three rank from every non-scene modality, then applies RRF. SimpleWatershed is excluded because its `0.7` threshold was tuned for CLIP on QVHighlights `val-filt`. | Development IoU rose from `0.7493` to `0.8902`. Across eight held-out tasks, the best single-shot oracle reached mean IoU `0.5219` and candidate recall at tIoU `0.5` of `0.375`. On the six scene-comparable tasks, scene-only mean IoU was `0.2841`; RRF reduced it to `0.1175`, helping none and reducing one `0.9995`-IoU scene result to `0.0`. | **Rejected as a product rule**; retain as a benchmark control |
 
 Code: `src/vidxp/benchmarks/point_to_span.py` and
 `benchmarks/codex-mcp/scripts/compare_point_to_span.py` for the concluded span
@@ -115,19 +115,31 @@ entered one connected component, recreating an eight-second result despite the
 finer representation. The profile therefore should not receive a held-out
 agent run.
 
-The Diwan et al. control confirms that this clip contains a useful detected
-boundary and that SigLIP2 ranks its proposal first. The proposal endpoint is
-`6.7401` seconds, close to the `6`-second annotation and the direct-inspection
-agent's `6.8`-second endpoint. Assigning overlapping action and sound ranks to
-each proposal leaves the same proposal first and improves the development IoU
-from `0.7493` to `0.8902` because evidence no longer expands its boundary.
+The Diwan et al. control confirmed a useful `6.7401`-second boundary on the
+development clip. Scene ranking selected it first. RRF returned the same result
+only because that proposal also collected top action and sound ranks. The
+action hit overlapped two proposals, so it was ambiguous rather than independent
+boundary confirmation.
 
-Only proposal detection and max scene scoring come from Diwan et al. The RRF
-assignment is a VidXP experiment. The paper's SimpleWatershed variant merges
-consecutive proposals above a CLIP threshold tuned on QVHighlights `val-filt`;
-that threshold is not a product constant for SigLIP2, VideoPrism, or FineLAP.
-The next approved comparison must test held-out single-shot and multi-shot
-moments before any product fusion change.
+The held-out comparison rejects both apparent conclusions from that one clip.
+At tIoU `0.5`, five of eight tasks lacked a sufficiently precise single-shot
+candidate. The other three had an adequate candidate but the tested rankings
+did not select it. On the six tasks with a scene score, proposal-preserving RRF
+helped none: three winners were unchanged, two wrong winners changed to other
+wrong winners, and the `phone-ring` scene result fell from IoU `0.9995` to
+`0.0`. RRF favored a wrong proposal with two modality contributions over the
+correct proposal with scene rank 1 alone. Four of eight RRF winners also used
+at least one hit that overlapped multiple proposals.
+
+Only proposal detection and max scene scoring come from Diwan et al.; the RRF
+assignment is VidXP-specific and rejected. None of the eight held-out
+annotations crosses a detected boundary after a `0.05`-second tolerance, so
+this slice says nothing about multi-shot merging. The next controls must test
+within-shot interval prediction and query-conditioned audiovisual interaction
+separately. [UniVTG](https://github.com/showlab/UniVTG) is the established
+visual interval control; [UMT](https://openaccess.thecvf.com/content/CVPR2022/html/Liu_UMT_Unified_Multi-Modal_Transformers_for_Joint_Video_Moment_Retrieval_and_CVPR_2022_paper.html)
+is the established trained visual-audio ceiling. Neither is adopted or implied
+to fit the local runtime without its own artifact and resource validation.
 
 ## Required record for future adoption
 

@@ -92,9 +92,9 @@ they do not establish a general retrieval architecture.
 | Speech | faster-whisper plus Qwen3 text embeddings | Released ASR and transcript-retrieval benchmarks | Retain as the control; speech and environmental sound remain distinct evidence types. |
 | Environmental sound | FineLAP global and dense features | LAION-CLAP as a mature retrieval control; PE-A-Frame and AEGBench for boundaries | Implementation exists, but quality and boundary claims remain pending. |
 | Visual retrieval | VideoPrism action clips and SigLIP2 scene frames | MVEB places Qwen3-VL-Embedding highly, but does not compare VideoPrism | Qwen is a candidate, not a selected replacement. Run the same retrieval protocol before changing providers. |
-| Temporal units | Fixed action clips plus one-second scene records | Shot/scene segmentation and denser query-aware proposals | Open. Existing indexes do not have to be retained if another representation wins on quality and resource use. |
-| Boundary inference | Connected-component interval union | Point-to-Span adaptive expansion; Diwan et al. and TFVTG controls | The fixed-window widening failure is confirmed. The first P2S adaptation improved one sound-led case but generated no scene or action span. |
-| Fusion | RRF scoring inside connected interval components | Learned audio-visual interaction or query-conditioned boundary scoring | Retain as the transparent control only. RRF is paper-derived; connected grouping and interval union are VidXP-specific. Provenance must survive any replacement. |
+| Temporal units | Fixed action clips plus one-second scene records | Shot/scene segmentation and denser query-aware proposals | ShotDetect alone is insufficient: five of eight held-out references cannot reach tIoU `0.5` with any single shot. Existing indexes do not have to be retained if another representation wins on quality and resource use. |
+| Boundary inference | Connected-component interval union | Point-to-Span adaptive expansion; UniVTG and UMT interval heads | Fixed-window widening is confirmed, while the shot oracle shows that content cuts do not supply reliable within-shot boundaries. |
+| Fusion | RRF scoring inside connected interval components | Query-conditioned audiovisual interaction | Retain RRF only as the transparent control. Proposal-preserving RRF reduced mean IoU from `0.2841` to `0.1175` on six scene-comparable tasks because extra modality ranks could overrule a stronger scene candidate. Provenance must survive any replacement. |
 | Planner and synthesis | Structured evidence passed to the configured agent/model | Smaller local planners or selected media verification | Evaluate separately from retrieval. Agent prose cannot substitute for temporal evidence. |
 
 ## Decision measurements
@@ -131,11 +131,16 @@ target-trained temporal score is a ceiling, not a direct zero-shot comparison.
    query. Scene-only and VidXP RRF ranking both selected `0–6.7401` seconds at
    rank 1, improving IoU from `0.7493` to `0.8902`. This establishes that a
    useful boundary exists and ranks first; it does not establish generality.
-5. With maintainer approval, compare the unchanged control, scene-ranked
-   proposals, and proposal-preserving RRF on held-out single-shot and
-   multi-shot moments. Report proposal recall, final IoU and boundary errors,
-   preprocessing time, stored bytes, query latency, peak memory, and proposal
-   count. Do not change product fusion before this comparison.
+5. The eight-task held-out comparison is complete. Proposal-preserving RRF
+   helped none of six scene-comparable tasks and harmed the strongest result.
+   The best-shot oracle reached mean IoU `0.5219`, but only three of eight shots
+   reached tIoU `0.5`. Reject this RRF adaptation and do not promote ShotDetect
+   to the product boundary rule.
+6. Evaluate the two unresolved layers separately. Use UniVTG as an established
+   visual interval-prediction control for within-shot boundaries. Treat UMT as
+   a trained visual-audio ceiling for query-conditioned interaction, not as a
+   local-runtime selection. Check artifact revisions, licenses, macOS runtime,
+   memory, and identical held-out metrics before implementing either path.
 
 The current Codex MCP smoke is diagnostic development data. It shows that the
 agent used the skill and MCP successfully and returned relevant evidence, but
