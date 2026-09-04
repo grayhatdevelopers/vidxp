@@ -8,7 +8,6 @@ from filelock import FileLock, Timeout
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
-from filelock import FileLock, Timeout
 
 from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.core.contracts import (
@@ -240,7 +239,6 @@ def _index_groups(
     return tuple(tuple(group) for group in groups)
 
 
-# after
 def _run_enabled_modalities(
     source: VideoSource,
     config: IndexConfig,
