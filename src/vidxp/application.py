@@ -63,7 +63,10 @@ from vidxp.core.snapshots import IndexSnapshot
 from vidxp.execution import ExecutionContext, execution_context
 from vidxp.ports import IndexBackend, ModelRuntimePort, QueryModelPort
 from vidxp.query_service import GroundedQueryService
-from vidxp.search_fusion import fuse_search_results
+from vidxp.search_fusion import (
+    fuse_search_results,
+    resolve_candidate_limit,
+)
 from vidxp.model_contracts import (
     ModelArtifactDownloadError,
     ModelArtifactUnavailableError,
@@ -529,6 +532,7 @@ class VidXPApplication(ControlPlaneApplication):
             config,
             include_actor=False,
         )
+        candidate_limit = resolve_candidate_limit(command.top_k)
         with self._capability_dependencies(selected):
             with self.index_backend.open_store(config) as storage:
                 context = CapabilityContext(
@@ -542,12 +546,13 @@ class VidXPApplication(ControlPlaneApplication):
                             modality,
                             query=command.query,
                             media_id=command.media_id,
-                            top_k=command.top_k,
+                            top_k=candidate_limit,
                             context=context,
                         )
                         for modality in selected
                     )
         result = fuse_search_results(
+
             query=command.query,
             requested_modalities=selected,
             results=results,
@@ -667,6 +672,7 @@ class VidXPApplication(ControlPlaneApplication):
         results: list[SearchResult] = []
         actors: tuple[ActorClusterSummary, ...] = ()
         dependencies = search_modalities + (("actor",) if actor_overview else ())
+        candidate_limit = resolve_candidate_limit(command.top_k)
         with self._capability_dependencies(dependencies):
             with self.index_backend.open_store(config) as storage:
                 context = CapabilityContext(
@@ -683,11 +689,12 @@ class VidXPApplication(ControlPlaneApplication):
                                     step.modality,
                                     query=step.query,
                                     media_id=command.media_id,
-                                    top_k=command.top_k,
+                                    top_k=candidate_limit,
                                     context=context,
                                 )
                             )
                         else:
+
                             page = cast(
                                 ActorClustersOutput,
                                 self._invoke_operation(
