@@ -99,8 +99,14 @@ class SearchTests(unittest.TestCase):
             ],
         )
         self.assertEqual([hit.rank for hit in result.hits], [1, 2, 3])
+        self.assertEqual([hit.channel_rank for hit in result.hits], [1, 2, 3])
         self.assertEqual(result.hits[0].raw_distance, 0.1)
+        self.assertEqual(result.hits[0].distance_metric, "cosine")
+        self.assertEqual(result.hits[0].distance_direction, "lower_is_better")
         self.assertEqual(result.hits[0].score, -0.1)
+        self.assertEqual(result.hits[0].score_kind, "ordering_only")
+        self.assertEqual(result.hits[0].score_direction, "higher_is_better")
+        self.assertEqual(result.hits[0].score_conversion, "negated_distance")
         self.assertEqual(
             result.hits[0].metadata,
             {"text": "fresh bread", "phrase_id": 3},

@@ -170,6 +170,7 @@ def fuse_search_results(
     moments = tuple(
         FusedMoment(
             rank=rank,
+            combined_rank=rank,
             moment_id=_moment_id(
                 snapshot_id=snapshot_id,
                 media_id=candidate["media_id"],
@@ -177,6 +178,11 @@ def fuse_search_results(
                 end=candidate["end"],
                 hits=candidate["hits"],
             ),
+            score_kind="ordering_only",
+            score_direction="higher_is_better",
+            scoring_method="reciprocal_rank_fusion",
+            contributing_channels=candidate["modalities"],
+            channels_run=searched_modalities,
             **candidate,
         )
         for rank, candidate in enumerate(candidates[:top_k], start=1)
@@ -194,5 +200,8 @@ def fuse_search_results(
         fusion=FusionProvenance(
             requested_modalities=requested_modalities,
             searched_modalities=searched_modalities,
+            score_kind="ordering_only",
+            score_direction="higher_is_better",
+            scoring_method="reciprocal_rank_fusion",
         ),
     )

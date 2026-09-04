@@ -72,9 +72,7 @@ def _to_hits(
     hits = []
     for rank, row in enumerate(ordered, start=1):
         metadata = row["metadata"]
-        missing = sorted(
-            (required_metadata | {"generation_id"}) - metadata.keys()
-        )
+        missing = sorted((required_metadata | {"generation_id"}) - metadata.keys())
         if missing:
             raise IndexSchemaError(
                 "The saved index predates the benchmark-ready schema and must "
@@ -84,20 +82,25 @@ def _to_hits(
         end = float(metadata["end"])
         if start < 0 or end <= start:
             raise IndexSchemaError(
-                f"Invalid {modality} interval in {row['source_id']}: "
-                f"[{start}, {end}]."
+                f"Invalid {modality} interval in {row['source_id']}: [{start}, {end}]."
             )
         distance = float(row["raw_distance"])
         hits.append(
             SearchHit(
                 rank=rank,
+                channel_rank=rank,
                 media_id=str(metadata["video_id"]),
                 video_id=str(metadata["video_id"]),
                 generation_id=str(metadata["generation_id"]),
                 start=start,
                 end=end,
                 score=distance_to_score(distance),
+                score_kind="ordering_only",
+                score_direction="higher_is_better",
+                score_conversion="negated_distance",
                 raw_distance=distance,
+                distance_metric="cosine",
+                distance_direction="lower_is_better",
                 modality=modality,
                 source_id=str(row["source_id"]),
                 metadata={
@@ -129,9 +132,7 @@ def search_embeddings(
     if top_k <= 0:
         raise ValueError("top_k must be greater than zero.")
     if modality not in config.enabled_modalities:
-        raise ValueError(
-            f"The {modality} modality is not present in this index run."
-        )
+        raise ValueError(f"The {modality} modality is not present in this index run.")
     rows = storage.query(
         modality,
         embedding,

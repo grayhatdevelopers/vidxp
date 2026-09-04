@@ -841,8 +841,35 @@ class EvidenceBoardCandidate(ApplicationModel):
     frame_index: int | None = Field(default=None, ge=0)
     frame_match: "EvidenceFrameMatch"
     score: float | None = None
+    score_kind: Literal["ordering_only"] | None = Field(
+        default=None,
+        description=(
+            "Score calibration indicator. ordering_only indicates relative "
+            "sorting rank, not confidence or probability."
+        ),
+    )
+    score_direction: Literal["higher_is_better"] | None = Field(
+        default=None,
+        description="Ranking direction for the candidate score value.",
+    )
     display_text: str | None = Field(default=None, max_length=512)
     provenance: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _populate_candidate_score_metadata(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        if payload.get("score") is not None:
+            if payload.get("score_kind") is None:
+                payload["score_kind"] = "ordering_only"
+            if payload.get("score_direction") is None:
+                payload["score_direction"] = "higher_is_better"
+        else:
+            payload["score_kind"] = None
+            payload["score_direction"] = None
+        return payload
 
     @model_validator(mode="after")
     def _valid_interval(self) -> "EvidenceBoardCandidate":
@@ -895,14 +922,49 @@ class SearchCommand(ApplicationModel):
 
 
 class SearchHit(ApplicationModel):
-    rank: int = Field(gt=0)
+    rank: int = Field(
+        gt=0,
+        description="1-based rank within this search channel.",
+    )
+    channel_rank: int | None = Field(
+        default=None,
+        gt=0,
+        description="Explicit 1-based rank within this search channel.",
+    )
     media_id: MediaId
     video_id: VideoId
     generation_id: IndexGenerationId
     start: float = Field(ge=0)
     end: float = Field(gt=0)
-    score: float
-    raw_distance: float
+    score: float = Field(
+        description="Monotonic ordering score derived from raw distance; higher is better."
+    )
+    score_kind: Literal["ordering_only"] = Field(
+        default="ordering_only",
+        description=(
+            "Score calibration indicator. ordering_only indicates relative "
+            "sorting rank, not confidence or probability."
+        ),
+    )
+    score_direction: Literal["higher_is_better"] = Field(
+        default="higher_is_better",
+        description="Ranking direction for the score value.",
+    )
+    score_conversion: Literal["negated_distance"] = Field(
+        default="negated_distance",
+        description="Formula or method used to convert raw distance to score.",
+    )
+    raw_distance: float = Field(
+        description="Raw vector distance returned by the underlying index."
+    )
+    distance_metric: Literal["cosine", "l2", "unspecified"] = Field(
+        default="cosine",
+        description="Vector distance metric used during retrieval.",
+    )
+    distance_direction: Literal["lower_is_better"] = Field(
+        default="lower_is_better",
+        description="Ranking direction for the raw distance value.",
+    )
     modality: str = Field(min_length=1)
     source_id: str = Field(min_length=1)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
@@ -935,6 +997,17 @@ class SearchHit(ApplicationModel):
             raise ValueError("Search metadata contains internal location fields.")
         return value
 
+    @model_validator(mode="before")
+    @classmethod
+    def _populate_channel_rank(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        if "channel_rank" not in payload or payload["channel_rank"] is None:
+            if "rank" in payload:
+                payload["channel_rank"] = payload["rank"]
+        return payload
+
     @model_validator(mode="after")
     def _validate_interval(self) -> "SearchHit":
         if self.end <= self.start:
@@ -965,17 +1038,83 @@ class FusionProvenance(ApplicationModel):
     overlap_rule: Literal["connected_intervals"] = "connected_intervals"
     requested_modalities: tuple[Identifier, ...] = ()
     searched_modalities: tuple[Identifier, ...] = ()
+    score_kind: Literal["ordering_only"] = Field(
+        default="ordering_only",
+        description=(
+            "Score calibration indicator. ordering_only indicates relative "
+            "sorting rank, not confidence or probability."
+        ),
+    )
+    score_direction: Literal["higher_is_better"] = Field(
+        default="higher_is_better",
+        description="Ranking direction for the combined score value.",
+    )
+    scoring_method: Literal["reciprocal_rank_fusion"] = Field(
+        default="reciprocal_rank_fusion",
+        description="Scoring method used to combine channels into a single moment score.",
+    )
 
 
 class FusedMoment(ApplicationModel):
     moment_id: Sha256 | None = None
-    rank: int = Field(gt=0)
-    score: float = Field(gt=0)
+    rank: int = Field(
+        gt=0,
+        description="1-based combined rank of the fused moment across all search channels.",
+    )
+    combined_rank: int | None = Field(
+        default=None,
+        gt=0,
+        description="Explicit 1-based combined rank across all search channels.",
+    )
+    score: float = Field(
+        gt=0,
+        description="Reciprocal rank fusion (RRF) score; higher is better.",
+    )
+    score_kind: Literal["ordering_only"] = Field(
+        default="ordering_only",
+        description=(
+            "Score calibration indicator. ordering_only indicates relative "
+            "sorting rank, not confidence or probability."
+        ),
+    )
+    score_direction: Literal["higher_is_better"] = Field(
+        default="higher_is_better",
+        description="Ranking direction for the combined score value.",
+    )
+    scoring_method: Literal["reciprocal_rank_fusion"] = Field(
+        default="reciprocal_rank_fusion",
+        description="Scoring method used to combine channels into a single moment score.",
+    )
     media_id: MediaId
     start: float = Field(ge=0)
     end: float = Field(gt=0)
     modalities: tuple[Identifier, ...]
+    contributing_channels: tuple[Identifier, ...] = Field(
+        default=(),
+        description="Search channels that contributed hits to this returned moment.",
+    )
+    channels_run: tuple[Identifier, ...] = Field(
+        default=(),
+        description="All search channels executed during the search/fusion run.",
+    )
     hits: tuple[SearchHit, ...] = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _populate_fused_moment_defaults(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        if "combined_rank" not in payload or payload["combined_rank"] is None:
+            if "rank" in payload:
+                payload["combined_rank"] = payload["rank"]
+        if (
+            "contributing_channels" not in payload
+            or not payload["contributing_channels"]
+        ):
+            if "modalities" in payload:
+                payload["contributing_channels"] = payload["modalities"]
+        return payload
 
     @model_validator(mode="after")
     def _validate_fused_moment(self) -> "FusedMoment":
