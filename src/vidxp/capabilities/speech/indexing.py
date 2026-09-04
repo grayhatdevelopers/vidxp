@@ -1,14 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from vidxp.capabilities.speech.config import speech_config
+from vidxp.capabilities.speech.config import SegmentationMode, speech_config
 from vidxp.capabilities.speech.models import get_embedder, get_whisper_model
+from vidxp.capabilities.speech.segmentation import (
+    DialoguePhrase,
+    build_dialogue_phrases_from_words,
+)
 from vidxp.capabilities.speech.specs import (
     FASTER_WHISPER_MODEL,
     QWEN3_EMBEDDING_MODEL,
+)
+from vidxp.capabilities.speech.transcript import (
+    flatten_transcript_words,
+    save_transcript,
 )
 from vidxp.core.contracts import (
     CancellationToken,
@@ -21,95 +28,21 @@ from vidxp.core.indexing_common import ProgressCallback, report_progress
 from vidxp.ports import IndexStore, ModelRuntimePort
 
 
-@dataclass(frozen=True)
-class DialoguePhrase:
-    phrase_id: int
-    text: str
-    start: float
-    end: float
-
-
-def _valid_interval(start: Any, end: Any, label: str) -> tuple[float, float]:
-    start_value = float(start)
-    end_value = float(end)
-    if start_value < 0 or end_value <= start_value:
-        raise ValueError(
-            f"{label} must have a non-negative, non-zero interval; "
-            f"received [{start_value}, {end_value}]."
-        )
-    return start_value, end_value
-
-
 def build_dialogue_phrases(
     segments: Sequence[Mapping[str, Any]],
     *,
     words_per_phrase: int,
+    segmentation_mode: SegmentationMode = "fixed_words",
+    window_stride_words: int = 2,
 ) -> list[DialoguePhrase]:
-    if words_per_phrase <= 0:
-        raise ValueError("words_per_phrase must be greater than zero.")
-    phrases: list[DialoguePhrase] = []
-    for segment_index, segment in enumerate(segments):
-        words = segment.get("words") or []
-        if words:
-            timestamped = [
-                word
-                for word in words
-                if str(word.get("word", word.get("text", ""))).strip()
-                and word.get("start") is not None
-                and word.get("end") is not None
-            ]
-            for offset in range(0, len(timestamped), words_per_phrase):
-                group = timestamped[offset:offset + words_per_phrase]
-                if not group:
-                    continue
-                start, end = _valid_interval(
-                    group[0]["start"],
-                    group[-1]["end"],
-                    f"Transcript word group in segment {segment_index}",
-                )
-                text = " ".join(
-                    str(word.get("word", word.get("text", ""))).strip()
-                    for word in group
-                )
-                phrases.append(
-                    DialoguePhrase(
-                        phrase_id=len(phrases),
-                        text=text,
-                        start=start,
-                        end=end,
-                    )
-                )
-            continue
+    """Build searchable phrases from Whisper or supplied transcript segments."""
 
-        text = str(segment.get("text", "")).strip()
-        if not text:
-            continue
-        if segment.get("start") is None or segment.get("end") is None:
-            raise ValueError(
-                f"Transcript segment {segment_index} lacks start/end timestamps."
-            )
-        start, end = _valid_interval(
-            segment["start"],
-            segment["end"],
-            f"Transcript segment {segment_index}",
-        )
-        tokens = text.split()
-        duration = end - start
-        for offset in range(0, len(tokens), words_per_phrase):
-            group = tokens[offset:offset + words_per_phrase]
-            group_start = start + duration * offset / len(tokens)
-            group_end = start + duration * (
-                offset + len(group)
-            ) / len(tokens)
-            phrases.append(
-                DialoguePhrase(
-                    phrase_id=len(phrases),
-                    text=" ".join(group),
-                    start=group_start,
-                    end=group_end,
-                )
-            )
-    return phrases
+    return build_dialogue_phrases_from_words(
+        flatten_transcript_words(segments),
+        segmentation_mode=segmentation_mode,
+        words_per_phrase=words_per_phrase,
+        window_stride_words=window_stride_words,
+    )
 
 
 def transcribe_video(
@@ -176,7 +109,7 @@ def transcribe_video(
 
 
 def _speech_records(
-    phrases,
+    phrases: Sequence[DialoguePhrase],
     vectors,
     config: IndexConfig,
 ) -> list[StorageRecord]:
@@ -186,7 +119,7 @@ def _speech_records(
             config.run_id,
             str(config.video_id),
             "speech",
-            f"p{phrase.phrase_id:08d}",
+            phrase.local_id,
             generation_id=config.generation_id,
         )
         records.append(
@@ -200,6 +133,9 @@ def _speech_records(
                     "text": phrase.text,
                     "start": phrase.start,
                     "end": phrase.end,
+                    "word_start": phrase.word_start,
+                    "word_end": phrase.word_end,
+                    "segmentation_mode": phrase.segmentation_mode,
                 },
             )
         )
@@ -235,12 +171,27 @@ def index_speech(
             progress=progress,
         )
 
-    phrases = build_dialogue_phrases(
-        segments,
+    words = flatten_transcript_words(segments)
+    if words:
+        save_transcript(
+            config.run_directory,
+            words,
+            language=language,
+        )
+
+    phrases = build_dialogue_phrases_from_words(
+        words,
+        segmentation_mode=settings.segmentation_mode,
         words_per_phrase=settings.words_per_phrase,
+        window_stride_words=settings.window_stride_words,
     )
     if not phrases:
-        return {"dialogue_phrases": 0, "language": language}
+        return {
+            "dialogue_phrases": 0,
+            "transcript_words": len(words),
+            "segmentation_mode": settings.segmentation_mode,
+            "language": language,
+        }
 
     report_progress(
         progress,
@@ -280,4 +231,9 @@ def index_speech(
             stored,
             len(phrases),
         )
-    return {"dialogue_phrases": stored, "language": language}
+    return {
+        "dialogue_phrases": stored,
+        "transcript_words": len(words),
+        "segmentation_mode": settings.segmentation_mode,
+        "language": language,
+    }

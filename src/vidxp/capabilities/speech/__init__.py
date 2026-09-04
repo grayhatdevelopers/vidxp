@@ -1,1 +1,1 @@
-"""Timestamped speech transcription and semantic search."""
+"""Timed speech transcripts with semantic and keyword search."""

@@ -84,7 +84,10 @@ def model_manifest(
 DEFINITION = CapabilityDefinition(
     name="speech",
     label="Speech search",
-    description="Transcribe and search spoken words with timestamps.",
+    description=(
+        "Transcribe spoken words once, build searchable segments, and "
+        "retrieve them with semantic and exact keyword matching."
+    ),
     extra="speech",
     config_model=SpeechConfig,
     collection_name="speech",

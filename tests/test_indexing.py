@@ -1,5 +1,7 @@
 import unittest
 from contextlib import nullcontext
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import sys
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -20,6 +22,11 @@ from vidxp.capabilities.speech.indexing import (
     build_dialogue_phrases,
     index_speech,
     transcribe_video,
+)
+from vidxp.capabilities.speech.transcript import (
+    TRANSCRIPT_FILE,
+    flatten_transcript_words,
+    load_transcript,
 )
 from vidxp.capabilities.scene.indexing import (
     encode_scene_batch,
@@ -93,6 +100,179 @@ class IndexingTests(unittest.TestCase):
             [(item.text, item.start, item.end) for item in phrases],
             [("one two", 0.1, 1.0), ("three", 1.2, 1.8)],
         )
+        self.assertEqual(
+            [item.local_id for item in phrases],
+            [
+                "fixed_words:w00000000-00000001",
+                "fixed_words:w00000002-00000002",
+            ],
+        )
+
+    def test_overlapping_windows_keep_shared_words(self):
+        phrases = build_dialogue_phrases(
+            [
+                {
+                    "text": "one two three four five six",
+                    "start": 0.0,
+                    "end": 6.0,
+                    "words": [
+                        {"word": "one", "start": 0.0, "end": 0.5},
+                        {"word": "two", "start": 0.5, "end": 1.0},
+                        {"word": "three", "start": 1.0, "end": 1.5},
+                        {"word": "four", "start": 1.5, "end": 2.0},
+                        {"word": "five", "start": 2.0, "end": 2.5},
+                        {"word": "six", "start": 2.5, "end": 3.0},
+                    ],
+                }
+            ],
+            words_per_phrase=4,
+            segmentation_mode="overlapping_windows",
+            window_stride_words=2,
+        )
+
+        self.assertEqual(
+            [item.text for item in phrases],
+            [
+                "one two three four",
+                "three four five six",
+            ],
+        )
+        self.assertEqual(
+            phrases[0].local_id,
+            "overlapping_windows:w00000000-00000003",
+        )
+
+    def test_sentence_boundaries_prefer_punctuation(self):
+        phrases = build_dialogue_phrases(
+            [
+                {
+                    "text": "Hello there. Next line continues",
+                    "start": 0.0,
+                    "end": 4.0,
+                    "words": [
+                        {"word": "Hello", "start": 0.0, "end": 0.4},
+                        {"word": "there.", "start": 0.4, "end": 0.9},
+                        {"word": "Next", "start": 1.0, "end": 1.3},
+                        {"word": "line", "start": 1.3, "end": 1.6},
+                        {"word": "continues", "start": 1.6, "end": 2.2},
+                    ],
+                }
+            ],
+            words_per_phrase=8,
+            segmentation_mode="sentence",
+        )
+
+        self.assertEqual(
+            [(item.text, item.start, item.end) for item in phrases],
+            [
+                ("Hello there.", 0.0, 0.9),
+                ("Next line continues", 1.0, 2.2),
+            ],
+        )
+
+    def test_identical_transcript_and_settings_reuse_segment_ids(self):
+        segments = [
+            {
+                "text": "alpha beta gamma",
+                "start": 0.0,
+                "end": 3.0,
+                "words": [
+                    {"word": "alpha", "start": 0.0, "end": 1.0},
+                    {"word": "beta", "start": 1.0, "end": 2.0},
+                    {"word": "gamma", "start": 2.0, "end": 3.0},
+                ],
+            }
+        ]
+        first = build_dialogue_phrases(segments, words_per_phrase=2)
+        second = build_dialogue_phrases(segments, words_per_phrase=2)
+
+        self.assertEqual(
+            [item.local_id for item in first],
+            [item.local_id for item in second],
+        )
+
+    def test_segmentation_settings_change_index_fingerprint(self):
+        baseline = IndexConfig(
+            video_id="video-1",
+            enabled_modalities=("speech",),
+            capability_options={
+                "speech": {"segmentation_mode": "fixed_words"},
+            },
+        )
+        overlapping = IndexConfig(
+            video_id="video-1",
+            enabled_modalities=("speech",),
+            capability_options={
+                "speech": {"segmentation_mode": "overlapping_windows"},
+            },
+        )
+
+        self.assertNotEqual(baseline.fingerprint(), overlapping.fingerprint())
+
+    def test_transcript_indexing_persists_timed_words(self):
+        with TemporaryDirectory() as directory:
+            config = IndexConfig(
+                dataset="hirest",
+                split="test",
+                run_id="asr",
+                video_id="video-1",
+                enabled_modalities=("speech",),
+                storage_directory=directory,
+                generation_directory=directory,
+                capability_options={
+                    "speech": {"embedding_batch_size": 2},
+                },
+            )
+            source = VideoSource(
+                video_id="video-1",
+                transcript=(
+                    {
+                        "text": "first second",
+                        "start": 0.0,
+                        "end": 2.0,
+                        "words": [
+                            {"word": "first", "start": 0.0, "end": 1.0},
+                            {"word": "second", "start": 1.0, "end": 2.0},
+                        ],
+                    },
+                ),
+            )
+            storage = CapturingStorage()
+            encoder = FakeEncoder()
+            with (
+                patch(
+                    "vidxp.capabilities.speech.indexing.get_embedder",
+                    return_value=encoder,
+                ),
+                patch(
+                    "vidxp.capabilities.speech.indexing.transcribe_video",
+                    side_effect=AssertionError("transcription was used"),
+                ),
+            ):
+                stats = index_speech(
+                    source,
+                    config=config,
+                    storage=storage,
+                    cancellation=CancellationToken(),
+                    runtime=self.runtime(),
+                )
+
+            words = load_transcript(directory)
+            self.assertEqual(
+                [(word.text, word.start, word.end) for word in words],
+                [("first", 0.0, 1.0), ("second", 1.0, 2.0)],
+            )
+            self.assertTrue((Path(directory) / TRANSCRIPT_FILE).is_file())
+            self.assertEqual(stats["transcript_words"], 2)
+            self.assertEqual(stats["dialogue_phrases"], 1)
+            self.assertEqual(
+                storage.calls[0][1][0].metadata["segmentation_mode"],
+                "fixed_words",
+            )
+            self.assertEqual(
+                flatten_transcript_words(source.transcript),
+                words,
+            )
 
     def test_siglip2_uses_transformers_five_pooled_image_output(self):
         import torch
@@ -174,8 +354,9 @@ class IndexingTests(unittest.TestCase):
                 runtime=self.runtime(),
             )
 
-        self.assertEqual([len(batch) for batch in encoder.batches], [2, 1])
-        self.assertEqual(stats["dialogue_phrases"], 3)
+        self.assertEqual([len(batch) for batch in encoder.batches], [1])
+        self.assertEqual(stats["dialogue_phrases"], 1)
+        self.assertEqual(stats["transcript_words"], 3)
 
     def test_silent_video_skips_dialogue_before_loading_whisper(self):
         events = []
