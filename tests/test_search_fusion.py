@@ -96,9 +96,7 @@ class SearchFusionTests(unittest.TestCase):
             modality="scene",
             hits=(hit("scene", 1, 1, 2, "scene:1"),),
         )
-        rewritten = original.model_copy(
-            update={"query_id": "scene:rewritten"}
-        )
+        rewritten = original.model_copy(update={"query_id": "scene:rewritten"})
         arguments = {
             "query": "Where is the taxi?",
             "requested_modalities": ("scene",),
@@ -108,6 +106,68 @@ class SearchFusionTests(unittest.TestCase):
         second = fuse_search_results(results=(rewritten,), **arguments)
 
         self.assertNotEqual(first.query_id, second.query_id)
+
+    def test_bridging_hit_does_not_merge_separate_moments(self):
+        hit_a = hit("scene", 1, 10.0, 12.0, "scene:a")
+        hit_b = hit("speech", 1, 11.0, 25.0, "speech:b")
+        hit_c = hit("scene", 2, 24.0, 26.0, "scene:c")
+
+        scene = SearchResult(
+            query_id="scene:q",
+            query="car",
+            modality="scene",
+            hits=(hit_a, hit_c),
+        )
+        speech = SearchResult(
+            query_id="speech:q",
+            query="car",
+            modality="speech",
+            hits=(hit_b,),
+        )
+
+        result = fuse_search_results(
+            query="car",
+            requested_modalities=("scene", "speech"),
+            results=(scene, speech),
+        )
+
+        self.assertEqual(len(result.moments), 2)
+        moment_1, moment_2 = result.moments
+        self.assertEqual(moment_1.start, 10.0)
+        self.assertIn("scene:a", [h.source_id for h in moment_1.hits])
+        self.assertEqual(moment_2.start, 24.0)
+        self.assertEqual(moment_2.end, 26.0)
+        self.assertIn("scene:c", [h.source_id for h in moment_2.hits])
+        self.assertNotIn("scene:c", [h.source_id for h in moment_1.hits])
+
+    def test_nearby_duplicate_hits_combine_into_one_moment(self):
+        hit_1 = hit("scene", 1, 1.0, 3.0, "scene:1")
+        hit_2 = hit("scene", 2, 2.0, 3.5, "scene:2")
+        hit_3 = hit("speech", 1, 2.2, 2.8, "speech:1")
+
+        scene = SearchResult(
+            query_id="scene:q",
+            query="dog",
+            modality="scene",
+            hits=(hit_1, hit_2),
+        )
+        speech = SearchResult(
+            query_id="speech:q",
+            query="dog",
+            modality="speech",
+            hits=(hit_3,),
+        )
+
+        result = fuse_search_results(
+            query="dog",
+            requested_modalities=("scene", "speech"),
+            results=(scene, speech),
+        )
+
+        self.assertEqual(len(result.moments), 1)
+        self.assertEqual(len(result.moments[0].hits), 3)
+        self.assertEqual(result.moments[0].start, 1.0)
+        self.assertEqual(result.moments[0].end, 3.5)
 
 
 if __name__ == "__main__":

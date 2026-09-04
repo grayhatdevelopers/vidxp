@@ -50,17 +50,21 @@ def _connected_components(
     components: list[list[SearchHit]] = []
     current: list[SearchHit] = []
     current_media: str | None = None
-    current_end = 0.0
+    current_overlap_end = 0.0
     for hit in ordered:
-        if not current or hit.media_id != current_media or hit.start > current_end:
+        if (
+            not current
+            or hit.media_id != current_media
+            or hit.start > current_overlap_end
+        ):
             if current:
                 components.append(current)
             current = [hit]
             current_media = hit.media_id
-            current_end = hit.end
+            current_overlap_end = hit.end
         else:
             current.append(hit)
-            current_end = max(current_end, hit.end)
+            current_overlap_end = min(current_overlap_end, hit.end)
     if current:
         components.append(current)
     return components
