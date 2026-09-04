@@ -63,11 +63,14 @@ case "$command" in
     queries)
         exec "$benchmark_dir/../../.venv/bin/python" scripts/query_routing_control.py "$@"
         ;;
+    sound)
+        exec "$benchmark_dir/../../.venv/bin/python" scripts/sound_two_stage.py "$@"
+        ;;
     view)
         exec npm run promptfoo -- view --yes "$@"
         ;;
     *)
-        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot|results|trace|probe|compare|representation|shots|queries|view}" >&2
+        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot|results|trace|probe|compare|representation|shots|queries|sound|view}" >&2
         exit 2
         ;;
 esac

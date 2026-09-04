@@ -259,10 +259,11 @@ versus `$0.968155`. Its IoU nevertheless fell to `0.6000` because the agent
 returned the ten-second sound envelope.
 
 That result rejects global-only sound output as the complete product behavior.
-Standard search now uses global clips to select regions and ranks dense
-activations only inside those regions. The activation supplies the returned
-timestamp and carries its parent clip as context. This two-stage version has not
-received another paired Codex run.
+The replacement used three global clips as a gate, then pooled and ranked their
+dense activations. On the four held-out sound tasks, the gate covered two targets
+but the final top three covered none; the two surviving target activations ranked
+`132` and `63`. Final sound-only mean IoU and R@1 at tIoU 0.3/0.5/0.7 were all
+zero. This rejects the replacement selector before a paid paired Codex run.
 
 ## Runtime and model generations
 
@@ -395,16 +396,11 @@ does not supersede this score.
 
 ## Next approved comparison
 
-The existing paired Codex smoke is the next product check after the sound-search
-correction. It should run only with maintainer approval and should report the
-agent's answer and evidence, IoU and boundary errors, every token category,
-elapsed time, estimated cost, and tool calls. It must not be presented as a full
-LongVALE result.
-
-No new model or fusion experiment is queued by this result. A new component
-comparison begins only when the paired run identifies a remaining product
-failure that the comparison can resolve. See
-[evidence retrieval direction](model_selection.md).
+Do not spend a paired Codex run on the rejected sound selector. First change or
+remove that selector, then rerun the same four-task component gate. A passing
+component result can proceed to the paired agent smoke, which must report the
+answer and evidence, IoU and boundary errors, every token category, elapsed
+time, estimated cost, and tool calls. It is not a full LongVALE result.
 
 ## Sources and reproduction
 

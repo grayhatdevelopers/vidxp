@@ -329,6 +329,17 @@ and are not an automatic planner result. For sound, the report separately ranks
 FineLAP's whole-window and dense-activation records; it does not invent a final
 merge rule.
 
+Check the current FineLAP selector on the four held-out sound tasks:
+
+```bash
+./benchmarks/codex-mcp/run sound
+```
+
+This runs the exact full-query product path, then one local diagnostic pass per
+task to report global-gate coverage, final activation coverage and rank, IoU,
+boundary errors, time, and model/vector-call counts. It makes no Codex,
+Promptfoo, or API call.
+
 Open the saved local results in Promptfoo's browser interface without running
 another evaluation:
 

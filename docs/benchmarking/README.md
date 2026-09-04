@@ -16,7 +16,7 @@ installation and product usage, start with the main
 | Guided input preparation | Complete | `vidxp benchmark prepare` estimates and confirms downloads, verifies pinned artifacts, validates DiDeMo media, resumes partial transfers, and prints the runnable benchmark command |
 | DiDeMo visual localization | Legacy full result + current smoke | The legacy CLIP stack completed 4,021 official test queries over 1,037 videos; the current SigLIP2 stack passed a one-annotation real execution smoke |
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
-| Environmental-sound retrieval | Two-stage correction implemented; agent rerun pending | Global clips select regions and local activations provide the final sound hits without cross-ranking their distances; existing indexes remain valid |
+| Environmental-sound retrieval | FineLAP representations valid; current selector rejected | A four-task held-out check found target windows in 2/4 top-three gates but target activations in 0/4 final top threes. Do not run the paid agent comparison against this selector. |
 | LongVALE combined evaluation | Pilot not run | The prepared paired tasks can measure evidence quality, localization, tokens, time, cost, and tool use after maintainer approval |
 | Codex MCP ablation | Development smoke traced | One paired task verified the harness and exposed a fixed-window boundary error; the 54-run held-out pilot has not run |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
@@ -29,6 +29,7 @@ definitions, honest comparisons, and the next benchmark decision.
 | If you need to… | Read |
 |---|---|
 | Understand how VidXP performed | [Current results](results.md) |
+| Compare consolidated run metrics and machine profiles | [Metric database](metric_database.md) |
 | Reproduce DiDeMo or HiREST | [Adapter validation ledger](adapter_validation.md) |
 | Understand the benchmark-ready Python structure | [Core contract](core_contract.md) |
 | See which benchmarks exist and what each measures | [Benchmark catalog](benchmark_catalog.md) |
@@ -62,8 +63,10 @@ returned an interval two seconds too long. It also finished faster and used
 fewer total tokens than direct inspection, although its estimated cost was
 slightly higher because more input was uncached. Later local controls exposed a
 separate FineLAP integration error: global clip and dense activation records
-were cross-ranked. Standard sound search now uses global clips to select regions
-and local activations to refine the returned evidence.
+were cross-ranked. Separating those representations is correct, but the
+replacement selector also failed: its four held-out sound tasks produced no
+target-overlapping final top-three result. The agent comparison is blocked on a
+sound-search correction, not pending as if this selector were validated.
 
 The next approved paired run should test the product claim directly: whether
 VidXP gives the agent enough inspectable evidence to reach a similarly grounded

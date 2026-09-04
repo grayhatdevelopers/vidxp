@@ -63,17 +63,14 @@ That integration was invalid: the two score lists did not form one calibrated
 ranking. On four held-out sound tasks, the mixed top three contained target
 evidence on 0/4 tasks; querying the representations separately did so on 3/4.
 
-Standard sound search now uses two separate stages. Global ten-second clips
-select candidate regions, then dense activations are ranked only against other
-dense activations inside those regions. The returned timestamps come from the
-activation, while its metadata identifies the parent clip for inspection. If a
-selected clip has no activation records, search returns the clip instead of
-hiding available evidence.
-
-FineLAP supports separating the global and local outputs. The two-stage
-long-video orchestration, candidate depth, context metadata, and fallback are
-original VidXP engineering rather than claims from the paper. Existing sound
-indexes do not need rebuilding.
+FineLAP supports separating the global and local outputs. It does not establish
+VidXP's global top-three gate followed by one pooled activation ranking over
+those windows. Section 3.3 trains local scores against short event phrases and
+frame labels inside a clip; the paper's Limitations section explicitly leaves
+long-form audio and temporally enhanced audio-text retrieval unevaluated. The
+VidXP selector failed all four held-out tasks at final top-three target coverage
+and is rejected. Existing sound indexes remain usable because they already label
+both representations; the default search behavior still needs correction.
 
 ### Treat fused intervals as evidence envelopes
 
