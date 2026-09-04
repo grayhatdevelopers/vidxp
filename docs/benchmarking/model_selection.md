@@ -69,8 +69,26 @@ those windows. Section 3.3 trains local scores against short event phrases and
 frame labels inside a clip; the paper's Limitations section explicitly leaves
 long-form audio and temporally enhanced audio-text retrieval unevaluated. The
 VidXP selector failed all four held-out tasks at final top-three target coverage
-and is rejected. Existing sound indexes remain usable because they already label
-both representations; the default search behavior still needs correction.
+and is rejected. Existing indexes remain usable for a FineLAP control because
+they already label both representations; a replacement provider requires a new
+sound index.
+
+The matching replacement task is audio moment retrieval: a full natural-language
+query and a long audio sequence go in, and ranked start/end intervals come out.
+[DCASE 2026 Task 6](https://dcase.community/challenge2026/task-audio-moment-retrieval-from-long-audio-results)
+provides the current direct evidence. Its official MS-CLAP/QD-DETR baseline
+scored 13.56 R1@0.7 on the hidden evaluation, while a 211.87M-parameter
+M2D-CLAP/CG-DETR system scored 48.59. The winning system's code and checkpoint
+were not verified as public, so it is the architecture and quality target rather
+than an immediately adoptable provider.
+
+The released compatibility fallback is CASTELLA-trained UVCOM through
+[Lighthouse](https://github.com/line/lighthouse). It predicts intervals from a
+one-second audio-feature sequence, has an official checkpoint, documents CPU
+inference, and supports 300-second audio. Its published CASTELLA R1@0.7 is 20.3
+and the paper identifies sub-ten-second moments as a weakness. Test that provider
+in isolation before changing the default or rebuilding indexes. DASM, FlexSED,
+WSTAG, and PE-A-Frame remain separate short-event or event-phrase comparators.
 
 ### Treat fused intervals as evidence envelopes
 

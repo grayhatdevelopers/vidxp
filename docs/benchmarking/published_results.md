@@ -4,7 +4,7 @@ Collection index: [Benchmarking research](README.md)
 
 Status: Primary-source result extraction complete
 
-Last verified: 2026-08-27
+Last verified: 2026-09-04
 
 This is the answer to “what did the published competitors actually score?” It is
 the result-level companion to the capability matrix in the
@@ -50,8 +50,34 @@ proceedings pp. 10398–10399.
 | LAION-CLAP | 35.1 | 44.2 | Mature native-Transformers integration baseline |
 
 The same paper uses fixed ten-second FineLAP inputs and identifies variable-length
-audio as future work. Long-media integration therefore still needs timestamped
-windowing, overlap, and span merging owned by VidXP.
+and long-form modeling as future work. Its global and local representations can
+support clip retrieval and event-phrase scoring; the paper does not validate a
+long-audio selector built by ranking those windows independently.
+
+### DCASE 2026: natural-language retrieval in long audio
+
+Source: [official Task 6 final results](https://dcase.community/challenge2026/task-audio-moment-retrieval-from-long-audio-results),
+checked 2026-09-04. The hidden evaluation has 177 queries over 100 recordings;
+the primary metric is top-one recall at temporal IoU 0.7.
+
+| System | Main representation and interval model | Total parameters | Hidden R1@0.5 | Hidden R1@0.7 | Artifact status |
+| --- | --- | ---: | ---: | ---: | --- |
+| Official baseline | MS-CLAP + QD-DETR | 165.5M | 28.25 | 13.56 | MIT code; released training data and features |
+| Kibata et al. | M2D-CLAP + modified CG-DETR | 211.87M | 69.49 | 48.59 | Technical report only; no public code or checkpoint verified |
+| Kim et al. | Multiple encoders + QAM-DETR + 7B audio LLM | 11.19B | 63.84 | 48.59 | Too large for the 8 GB CPU target |
+| Sugawara et al. | MS-CLAP/M2D-CLAP + UVCOM ensemble | 603.8M | 59.89 | 48.59 | Ensemble entry; exact submitted weights not verified |
+
+This is the direct comparison for VidXP's current sound failure. All leading
+systems consume a temporal audio-feature sequence and predict interval endpoints
+and confidence jointly. The smallest tied winner adds 13.37M trainable parameters
+to a 198.5M frozen M2D-CLAP encoder. Its score establishes the architecture and
+encoder direction, but missing released weights prevent a product adoption claim.
+
+[CASTELLA](https://arxiv.org/abs/2511.15131) provides the current released
+fallback: its official Lighthouse UVCOM checkpoint reports R1@0.7 20.3 on the
+CASTELLA test split. That is a trained long-audio result, not directly comparable
+with FineLAP's clip-retrieval R@1. CASTELLA also reports a marked weakness on
+moments shorter than ten seconds, which includes VidXP's four sound pilot events.
 
 ### MVEB: current text-video embedding comparison
 

@@ -45,7 +45,9 @@ levels; matching a title or abstract is insufficient.
 Start with these papers before reviewing individual model variants:
 
 1. **MAEB** and **MVEB** for the current common audio/video embedding landscape.
-2. **FineLAP** and **AEGBench** for environmental-sound retrieval and boundaries.
+2. **DCASE 2026 Task 6, AM-DETR, and CASTELLA** for free-form queries over
+   long audio; **DASM, FlexSED, WSTAG, FineLAP, and AEGBench** for the distinct
+   event-phrase detection and grounding problem.
 3. **LongVALE** and **FLARE** for combined long-video vision, sound, and speech.
 4. **TVR / XML** for the closest peer-reviewed corpus-level visual/transcript
    temporal-retrieval task.
@@ -75,6 +77,11 @@ Start with these papers before reviewing individual model variants:
 | [MVEB: Massive Video Embedding Benchmark](https://arxiv.org/abs/2606.14958) | arXiv 2026 | 23-task MVEB from a 184-task pool; 33 models | Current common video-embedding comparison, with Qwen3-VL-Embedding leading its text-video table and paired video/audio variants |
 | [FineLAP: Taming Heterogeneous Supervision for Fine-grained Language-Audio Pretraining](https://aclanthology.org/2026.acl-long.473/) | ACL 2026 | AudioCaps, Clotho, classification, sound-event detection, and text-to-audio grounding | Implemented environmental-sound provider because one model exposes both global retrieval and dense localization features |
 | [Language-based Audio Moment Retrieval](https://h-munakata.github.io/Language-based-Audio-Moment-Retrieval/) | ICASSP 2025 | Clotho-Moment, real UnAV-100 subset, TUT Sound Events 2017; AM-DETR | Direct long-audio text-to-interval task; shows that temporal modeling improves over independently scored sliding windows |
+| [CASTELLA: Long Audio Dataset with Captions and Temporal Boundaries](https://arxiv.org/abs/2511.15131) | ICASSP 2026 | 1,862 human-annotated recordings lasting 1–5 minutes; 3,881 captions and 11,308 intervals | Replaces the small real-audio check in the first AMR paper with a public long-audio benchmark and released Lighthouse checkpoints |
+| [DCASE 2026 Task 6: Audio Moment Retrieval from Long Audio](https://dcase.community/challenge2026/task-audio-moment-retrieval-from-long-audio-results) | DCASE Challenge 2026 | Hidden evaluation over 100 long recordings; natural-language query to ranked intervals | Current direct leaderboard. The best lightweight entry uses M2D-CLAP plus a query-conditioned DETR span model, not independent window ranking |
+| [Detect Any Sound](https://arxiv.org/abs/2507.16343) | ACM MM 2025 | AudioSet Strong and cross-dataset DESED; DASM | Open-vocabulary event-phrase detector with frame-level localization; relevant to short sound events, but not a full free-form long-audio retriever |
+| [FlexSED](https://arxiv.org/abs/2509.18606) | WASPAA 2025 | AudioSet Strong with zero- and few-shot event queries | Released open-vocabulary event detector; requires a list of event phrases rather than accepting VidXP's full query as an interval-retrieval request |
+| [Towards Weakly Supervised Text-to-Audio Grounding](https://arxiv.org/abs/2401.02584) | arXiv 2024 | AudioCaps-derived caption and phrase grounding; WSTAG | Earlier released caption/phrase-to-event grounding line; useful context for weak supervision, not the current long-audio leader |
 | [Auto-AEG and AEGBench](https://arxiv.org/abs/2607.04383) | arXiv 2026 | Open-vocabulary audio-event grounding and AEGBench | Direct sound-interval benchmark for hard, repeated, and overlapping environmental events |
 | [TimeLens2](https://github.com/MCG-NJU/TimeLens2) | arXiv 2026 | Seven visual temporal-grounding datasets | Recent visual-only ceiling with released checkpoints; not an established default or a complete LongVALE solution |
 | [Robust and Efficient Video Scene Detection using Optimal Sequential Grouping](https://research.ibm.com/publications/robust-and-efficient-video-scene-detection-using-optimal-sequential-grouping) | ISM 2016 | Introduces OVSD | Open-licensed semantic scene-boundary source; useful for segmentation only, not query retrieval, actions, sound, or speech |
