@@ -112,6 +112,35 @@ class SearchTests(unittest.TestCase):
         self.assertGreater(distance_to_score(0.1), distance_to_score(0.2))
         self.assertEqual(distance_to_score(2.5), -2.5)
 
+    def test_result_describes_its_metric_and_ordering_only_scores(self):
+        config = IndexConfig(
+            dataset="sample",
+            split="test",
+            run_id="run-1",
+            enabled_modalities=("speech",),
+            vector_distance="cosine",
+        )
+        storage = FakeStorage([dialogue_row("run:video-1:dialogue:a", 0.1)])
+        with patch(
+            "vidxp.capabilities.speech.operations.speech_embedding",
+            return_value=[0.5, 0.25],
+        ):
+            result = search_speech(
+                "fresh bread",
+                config=config,
+                runtime=self.runtime,
+                top_k=1,
+                storage=storage,
+            )
+
+        scoring = result.scoring
+        self.assertEqual(scoring.distance_metric, "cosine")
+        self.assertEqual(scoring.raw_distance_direction, "lower_is_better")
+        self.assertEqual(scoring.score_transform, "negated_distance")
+        self.assertEqual(scoring.score_direction, "higher_is_better")
+        self.assertEqual(scoring.score_calibration, "ordering_only")
+        self.assertEqual(scoring.hit_rank_direction, "lower_is_better")
+
     def test_dialogue_query_uses_model_owned_query_prompt(self):
         encoder = Mock()
         encoder.encode_query.return_value = np.asarray([[0.5, 0.25]])

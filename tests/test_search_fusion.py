@@ -1,6 +1,11 @@
 import unittest
 
-from vidxp.application_models import SearchHit, SearchResult
+from vidxp.application_models import (
+    FusedSearchResult,
+    RetrievalScoring,
+    SearchHit,
+    SearchResult,
+)
 from vidxp.search_fusion import RRF_RANK_CONSTANT, fuse_search_results
 
 
@@ -108,6 +113,66 @@ class SearchFusionTests(unittest.TestCase):
         second = fuse_search_results(results=(rewritten,), **arguments)
 
         self.assertNotEqual(first.query_id, second.query_id)
+
+    def test_fused_result_marks_every_score_ordering_only(self):
+        scene = SearchResult(
+            query_id="scene:q",
+            query="taxi",
+            modality="scene",
+            hits=(hit("scene", 1, 1, 2, "scene:1"),),
+        )
+
+        result = fuse_search_results(
+            query="taxi",
+            requested_modalities=("scene",),
+            results=(scene,),
+        )
+
+        self.assertEqual(result.scoring.score_calibration, "ordering_only")
+        self.assertEqual(result.fusion.score_calibration, "ordering_only")
+        self.assertEqual(result.fusion.score_direction, "higher_is_better")
+
+    def test_fused_result_inherits_the_channel_distance_metric(self):
+        scene = SearchResult(
+            query_id="scene:q",
+            query="taxi",
+            modality="scene",
+            scoring=RetrievalScoring(distance_metric="cosine"),
+            hits=(hit("scene", 1, 1, 2, "scene:1"),),
+        )
+
+        result = fuse_search_results(
+            query="taxi",
+            requested_modalities=("scene",),
+            results=(scene,),
+        )
+
+        self.assertEqual(result.scoring.distance_metric, "cosine")
+
+    def test_legacy_stored_result_without_scoring_still_loads(self):
+        scene = SearchResult(
+            query_id="scene:q",
+            query="taxi",
+            modality="scene",
+            hits=(hit("scene", 1, 1, 2, "scene:1"),),
+        )
+        result = fuse_search_results(
+            query="taxi",
+            requested_modalities=("scene",),
+            results=(scene,),
+        )
+
+        # Simulate a job result stored before the scoring descriptor existed.
+        payload = result.model_dump(mode="json")
+        payload.pop("scoring")
+        payload["fusion"].pop("score_direction")
+        payload["fusion"].pop("score_calibration")
+
+        restored = FusedSearchResult.model_validate(payload)
+
+        self.assertEqual(restored.scoring.distance_metric, "l2")
+        self.assertEqual(restored.scoring.score_calibration, "ordering_only")
+        self.assertEqual(restored.fusion.score_calibration, "ordering_only")
 
 
 if __name__ == "__main__":

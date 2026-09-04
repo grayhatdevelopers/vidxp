@@ -818,12 +818,34 @@ Results are normalized into `SearchHit`:
 - source/index generation
 - modality
 - start/end time
-- score and score semantics
+- `rank`, `score`, and `raw_distance` (see ranking values below)
 - displayable text/metadata
 - optional preview reference
 
 The application owns limits, score normalization, multimodal fusion and deterministic
 ordering. UI/API/MCP may request stricter limits but cannot loosen policy.
+
+### Ranking values
+
+Every search response is self-describing about its numbers so callers never have to
+guess which value they received or which direction ranks better. A `RetrievalScoring`
+descriptor is attached to both `SearchResult` and `FusedSearchResult`, and the same
+descriptor is returned identically across the CLI, HTTP, MCP, stored job results, and
+evidence artifacts.
+
+- `raw_distance` is the raw vector-store distance under `scoring.distance_metric`
+  (`l2`, `cosine`, or `ip`); smaller is closer.
+- `score` on a hit is derived as `score = -raw_distance` (`score_transform`), so larger
+  ranks better.
+- A `SearchHit.rank` is 1-based within one modality channel; ranks from different
+  channels are not comparable.
+- A `FusedMoment.rank`/`score` is the combined position and reciprocal-rank-fusion score
+  across channels; `fusion.searched_modalities` lists the channels that ran and
+  `FusedMoment.modalities` lists the channels that contributed to that moment.
+- All of these are `ordering_only` (`scoring.score_calibration` and
+  `fusion.score_calibration`): valid for sorting within a single response, never a
+  probability or confidence. Calibrated scores are deferred to the end-to-end ranking
+  evaluation in issue #76.
 
 Actor cluster and detection queries use the same pagination conventions.
 
