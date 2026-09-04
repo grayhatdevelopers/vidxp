@@ -5,6 +5,9 @@ from time import perf_counter
 from typing import Any, Callable, Sequence
 
 from filelock import FileLock, Timeout
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
+
 
 from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.core.contracts import (
@@ -247,12 +250,27 @@ def _run_enabled_modalities(
     registry: CapabilityRegistry,
     runtime: ModelRuntimePort,
 ) -> dict[str, Any]:
+    groups = _index_groups(config.enabled_modalities, registry)
+
     summary: dict[str, Any] = {}
-    for names in _index_groups(config.enabled_modalities, registry):
+    summary_lock = Lock()
+    stage_lock = Lock()
+    active_stages: dict[str, str] = {}
+
+    def report_stage(group_key: str, value: str | None) -> None:
+        with stage_lock:
+            if value is None:
+                active_stages.pop(group_key, None)
+            else:
+                active_stages[group_key] = value
+            set_stage(", ".join(sorted(active_stages.values())))
+
+    def run_group(names: tuple[str, ...]) -> dict[str, Any]:
         cancellation.raise_if_cancelled()
-        set_stage(str(registry.get(names[0]).index_stage))
-        summary.update(
-            _run_capability_group(
+        group_key = names[0]
+        report_stage(group_key, str(registry.get(group_key).index_stage))
+        try:
+            return _run_capability_group(
                 names,
                 source,
                 config,
@@ -263,9 +281,28 @@ def _run_enabled_modalities(
                 registry,
                 runtime,
             )
-        )
-    return summary
+        except BaseException:
+            cancellation.cancel()
+            raise
+        finally:
+            report_stage(group_key, None)
 
+    first_error: BaseException | None = None
+    with ThreadPoolExecutor(max_workers=max(1, len(groups))) as pool:
+        futures = {pool.submit(run_group, names): names for names in groups}
+        for future in as_completed(futures):
+            try:
+                summary_part = future.result()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+            else:
+                with summary_lock:
+                    summary.update(summary_part)
+
+    if first_error is not None:
+        raise first_error
+    return summary
 
 def _process_video(
     video_id: str,

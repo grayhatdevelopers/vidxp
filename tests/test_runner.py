@@ -1,6 +1,7 @@
 import json
 import unittest
 from pathlib import Path
+from time import sleep
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
@@ -720,6 +721,98 @@ class RunnerTests(unittest.TestCase):
             ).read_text(encoding="utf-8").splitlines()
             self.assertEqual(manifest["configuration"]["frame_stride"], 1)
             self.assertTrue(all(json.loads(line) for line in timing_lines))
+
+    def test_concurrent_capability_groups_do_not_drop_stages(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "video.mp4"
+            path.write_bytes(b"video")
+            config = self._config(directory, ("scene", "speech"))
+            source = VideoSource(video_id="video-1", path=path)
+
+            def slow_visual(*_, **__):
+                sleep(0.05)
+                return visual_result({"scene_frames": 1})
+
+            def slow_speech(*_, **__):
+                sleep(0.05)
+                return {"dialogue_phrases": 1}
+
+            for attempt in range(20):
+                with (
+                    patch("vidxp.core.runner.require_dependencies"),
+                    patch(
+                        "vidxp.capabilities.visual.index_visuals",
+                        side_effect=slow_visual,
+                    ),
+                    patch(
+                        "vidxp.capabilities.speech.operations.index_speech",
+                        side_effect=slow_speech,
+                    ),
+                    patch(
+                        "vidxp.core.manifest.execution_state",
+                        return_value=EXECUTION_STATE,
+                    ),
+                ):
+                    manifest = run_index(
+                        [source],
+                        config,
+                        storage=FakeStorage(),
+                        reset=True,
+                    )
+
+                stages = manifest["videos"]["video-1"]["stages"]
+                self.assertEqual(
+                    set(stages.keys()),
+                    {"visual_indexing", "speech_indexing"},
+                    f"attempt {attempt}: stages were {stages!r}",
+                )
+
+    def test_capability_groups_actually_run_concurrently(self):
+        from threading import Event
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "video.mp4"
+            path.write_bytes(b"video")
+            config = self._config(directory, ("scene", "speech"))
+            source = VideoSource(video_id="video-1", path=path)
+
+            visual_started = Event()
+            speech_started = Event()
+
+            def blocking_visual(*_, **__):
+                visual_started.set()
+                self.assertTrue(
+                    speech_started.wait(timeout=2),
+                    "speech group never started while visual was running "
+                    "— groups are not overlapping",
+                )
+                return visual_result({"scene_frames": 1})
+
+            def blocking_speech(*_, **__):
+                speech_started.set()
+                self.assertTrue(
+                    visual_started.wait(timeout=2),
+                    "visual group never started while speech was running "
+                    "— groups are not overlapping",
+                )
+                return {"dialogue_phrases": 1}
+
+            with (
+                patch("vidxp.core.runner.require_dependencies"),
+                patch(
+                    "vidxp.capabilities.visual.index_visuals",
+                    side_effect=blocking_visual,
+                ),
+                patch(
+                    "vidxp.capabilities.speech.operations.index_speech",
+                    side_effect=blocking_speech,
+                ),
+                patch(
+                    "vidxp.core.manifest.execution_state",
+                    return_value=EXECUTION_STATE,
+                ),
+            ):
+                run_index([source], config, storage=FakeStorage())
 
 
 if __name__ == "__main__":
