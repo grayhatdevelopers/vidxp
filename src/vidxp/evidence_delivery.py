@@ -193,6 +193,8 @@ class EvidenceDeliveryService:
                         else EvidenceFrameMatch.representative
                     ),
                     score=moment.score,
+                    score_kind="ordering_only",
+                    score_direction="higher_is_better",
                     display_text=EvidenceDeliveryService._display_text(
                         selected.metadata
                     ),
@@ -302,15 +304,11 @@ class EvidenceDeliveryService:
         by_id = {candidate.evidence_id: candidate for candidate in candidates}
         if evidence_ids is None:
             selected = tuple(
-                candidate
-                for candidate in candidates
-                if candidate.rank >= start_rank
+                candidate for candidate in candidates if candidate.rank >= start_rank
             )
         else:
             missing = tuple(
-                evidence_id
-                for evidence_id in evidence_ids
-                if evidence_id not in by_id
+                evidence_id for evidence_id in evidence_ids if evidence_id not in by_id
             )
             if missing:
                 raise ApplicationError(

@@ -1092,6 +1092,10 @@ def create_mcp_server(
         if board is not None and board.next_start_rank is not None:
             lines.append(f"More candidates start at rank {board.next_start_rank}.")
         lines.append(
+            "Note: candidate ranks and scores are relative ordering values "
+            "(higher is better), not calibrated probabilities or confidence."
+        )
+        lines.append(
             "Use materialize_job_evidence with this job ID and up to ten evidence "
             "IDs for standalone frames or clips."
         )
@@ -1162,18 +1166,14 @@ def create_mcp_server(
                             else 0.0
                         ),
                         "end": (
-                            resolved.source_end_seconds
-                            if resolved is not None
-                            else 0.0
+                            resolved.source_end_seconds if resolved is not None else 0.0
                         ),
                         "display_text": None,
                         "state": item.state.value,
                     }
                 )
             requested_count = len(delivery.items)
-            rendered_count = sum(
-                item.state.value == "ready" for item in delivery.items
-            )
+            rendered_count = sum(item.state.value == "ready" for item in delivery.items)
             failed_count = requested_count - rendered_count
             next_start_rank = None
 
@@ -1636,10 +1636,13 @@ def create_mcp_server(
         description=(
             "Submit a durable ranked moment search. Set command.media_id to "
             "search one registered video; omit it to search across every media "
-            "item in the active index snapshot. MCP returns an annotated board "
-            "of ranked results by default. Set command.evidence_delivery.mode "
-            "to keyframes or keyframes_and_clips only when standalone artifacts "
-            "are also needed, then use wait_job and get_job_evidence."
+            "item in the active index snapshot. Returned moments contain "
+            "uncalibrated reciprocal rank fusion (RRF) scores (ordering_only, higher "
+            "is better) distinguishing channel rank from combined moment rank. "
+            "MCP returns an annotated board of ranked results by default. "
+            "Set command.evidence_delivery.mode to keyframes or keyframes_and_clips "
+            "only when standalone artifacts are also needed, then use wait_job "
+            "and get_job_evidence."
         ),
         annotations=_SUBMIT,
         structured_output=True,

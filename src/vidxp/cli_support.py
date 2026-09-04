@@ -147,21 +147,32 @@ def emit_search(
     if not result.moments:
         typer.echo("No matching moments found.")
         return
-    table = Table(title="Fused search results")
+    table = Table(
+        title="Fused search results",
+        caption=(
+            "Scores are reciprocal rank fusion (RRF) ordering scores; higher is better. "
+            "They are uncalibrated sorting values, not confidence or probabilities."
+        ),
+    )
     table.add_column("Rank", justify="right")
     table.add_column("Start", justify="right")
     table.add_column("End", justify="right")
-    table.add_column("Score", justify="right")
+    table.add_column("Score (RRF ↑)", justify="right")
     table.add_column("Video")
-    table.add_column("Modalities")
+    table.add_column("Contributing Channels")
     for moment in result.moments:
+        channels = moment.contributing_channels or moment.modalities
         table.add_row(
-            str(moment.rank),
+            str(
+                moment.combined_rank
+                if moment.combined_rank is not None
+                else moment.rank
+            ),
             f"{moment.start:.3f}s",
             f"{moment.end:.3f}s",
             f"{moment.score:.6f}",
             moment.media_id,
-            ", ".join(moment.modalities),
+            ", ".join(channels),
         )
     Console().print(table)
 
@@ -182,8 +193,7 @@ def emit_query(
             console.print(f"  Evidence: {', '.join(claim.evidence_ids)}")
     elif result.evidence:
         console.print(
-            f"No generated answer; returning {len(result.evidence)} "
-            "evidence item(s)."
+            f"No generated answer; returning {len(result.evidence)} evidence item(s)."
         )
     else:
         console.print("No supporting evidence found.")
@@ -276,11 +286,7 @@ def parse_modalities(
     value: str,
     available: Iterable[str],
 ) -> tuple[str, ...]:
-    selected = tuple(
-        item.strip().lower()
-        for item in value.split(",")
-        if item.strip()
-    )
+    selected = tuple(item.strip().lower() for item in value.split(",") if item.strip())
     return selected_modalities(selected, available)
 
 
