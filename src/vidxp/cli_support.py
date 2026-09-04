@@ -147,11 +147,18 @@ def emit_search(
     if not result.moments:
         typer.echo("No matching moments found.")
         return
-    table = Table(title="Fused search results")
+    table = Table(
+        title="Fused search results",
+        caption=(
+            "Rank 1 = best match. Score = reciprocal-rank fusion "
+            "(higher ranks better); ordering-only, not a probability. "
+            f"Distance metric: {result.scoring.distance_metric}."
+        ),
+    )
     table.add_column("Rank", justify="right")
     table.add_column("Start", justify="right")
     table.add_column("End", justify="right")
-    table.add_column("Score", justify="right")
+    table.add_column("Score (RRF)", justify="right")
     table.add_column("Video")
     table.add_column("Modalities")
     for moment in result.moments:

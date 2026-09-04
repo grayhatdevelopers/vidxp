@@ -809,6 +809,61 @@ class FusionProfile(StrEnum):
     reciprocal_rank = "rrf_v1"
 
 
+class RankDirection(StrEnum):
+    """Whether smaller or larger values of a ranking quantity rank better."""
+
+    lower_is_better = "lower_is_better"
+    higher_is_better = "higher_is_better"
+
+
+class ScoreCalibration(StrEnum):
+    """How much meaning a numeric score carries beyond ordering."""
+
+    ordering_only = "ordering_only"
+
+
+class RetrievalScoring(ApplicationModel):
+    """Self-describing meaning of the ranking values in a search response.
+
+    Callers see several numbers on a hit (a raw vector-store distance and a
+    derived score) and a rank. This descriptor states, in the payload itself,
+    which distance metric produced ``raw_distance``, which direction ranks
+    better, how ``score`` is derived from the distance, and that neither value
+    is calibrated. It is returned identically across the CLI, HTTP, MCP,
+    stored job results, and evidence artifacts so the meaning never drifts
+    between surfaces. Calibrated, probability-like scores are deferred to the
+    end-to-end ranking evaluation tracked in issue #76.
+    """
+
+    distance_metric: Literal["l2", "cosine", "ip"] = Field(
+        default="l2",
+        description="Vector-store distance space that produced each raw_distance.",
+    )
+    raw_distance_direction: Literal[RankDirection.lower_is_better] = Field(
+        default=RankDirection.lower_is_better,
+        description="raw_distance sorts ascending; a smaller distance is closer.",
+    )
+    score_transform: Literal["negated_distance"] = Field(
+        default="negated_distance",
+        description="Each hit score is derived as score = -raw_distance.",
+    )
+    score_direction: Literal[RankDirection.higher_is_better] = Field(
+        default=RankDirection.higher_is_better,
+        description="score sorts descending; a larger score ranks better.",
+    )
+    score_calibration: Literal[ScoreCalibration.ordering_only] = Field(
+        default=ScoreCalibration.ordering_only,
+        description=(
+            "raw_distance and score are ordering_only: valid for sorting hits "
+            "within one response, never a probability or confidence."
+        ),
+    )
+    hit_rank_direction: Literal[RankDirection.lower_is_better] = Field(
+        default=RankDirection.lower_is_better,
+        description="A hit's per-channel rank starts at 1; rank 1 is the closest.",
+    )
+
+
 class EvidenceDeliveryMode(StrEnum):
     none = "none"
     keyframes = "keyframes"
@@ -840,7 +895,13 @@ class EvidenceBoardCandidate(ApplicationModel):
     representative_timestamp: float = Field(ge=0)
     frame_index: int | None = Field(default=None, ge=0)
     frame_match: "EvidenceFrameMatch"
-    score: float | None = None
+    score: float | None = Field(
+        default=None,
+        description=(
+            "Combined ordering-only fusion score copied from the source moment; "
+            "larger ranks better, not a probability."
+        ),
+    )
     display_text: str | None = Field(default=None, max_length=512)
     provenance: dict[str, JsonValue] = Field(default_factory=dict)
 
@@ -895,14 +956,32 @@ class SearchCommand(ApplicationModel):
 
 
 class SearchHit(ApplicationModel):
-    rank: int = Field(gt=0)
+    rank: int = Field(
+        gt=0,
+        description=(
+            "1-based rank of this hit within its own modality channel "
+            "(rank 1 is closest). Ranks from different channels are not "
+            "comparable; the combined position is FusedMoment.rank."
+        ),
+    )
     media_id: MediaId
     video_id: VideoId
     generation_id: IndexGenerationId
     start: float = Field(ge=0)
     end: float = Field(gt=0)
-    score: float
-    raw_distance: float
+    score: float = Field(
+        description=(
+            "Ordering-only channel score, score = -raw_distance, so larger "
+            "ranks better. Not a probability or confidence; see the response "
+            "scoring descriptor."
+        ),
+    )
+    raw_distance: float = Field(
+        description=(
+            "Raw vector-store distance under the configured metric; smaller is "
+            "closer. See scoring.distance_metric for the metric."
+        ),
+    )
     modality: str = Field(min_length=1)
     source_id: str = Field(min_length=1)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
@@ -950,6 +1029,10 @@ class SearchResult(ApplicationModel):
     query_id: str = Field(min_length=1)
     query: str = Field(min_length=1)
     modality: str = Field(min_length=1)
+    scoring: RetrievalScoring = Field(
+        default_factory=RetrievalScoring,
+        description="Meaning of the rank, score, and raw_distance on each hit.",
+    )
     hits: tuple[SearchHit, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -963,18 +1046,49 @@ class FusionProvenance(ApplicationModel):
     profile: Literal[FusionProfile.reciprocal_rank] = FusionProfile.reciprocal_rank
     rank_constant: int = Field(default=60, gt=0)
     overlap_rule: Literal["connected_intervals"] = "connected_intervals"
-    requested_modalities: tuple[Identifier, ...] = ()
-    searched_modalities: tuple[Identifier, ...] = ()
+    requested_modalities: tuple[Identifier, ...] = Field(
+        default=(),
+        description="Channels the caller asked to search.",
+    )
+    searched_modalities: tuple[Identifier, ...] = Field(
+        default=(),
+        description=(
+            "Channels actually run for this response. A moment's contributing "
+            "channels are the subset in FusedMoment.modalities."
+        ),
+    )
+    score_direction: Literal[RankDirection.higher_is_better] = Field(
+        default=RankDirection.higher_is_better,
+        description="FusedMoment.score sorts descending; a larger score ranks better.",
+    )
+    score_calibration: Literal[ScoreCalibration.ordering_only] = Field(
+        default=ScoreCalibration.ordering_only,
+        description=(
+            "The combined FusedMoment.score is ordering_only: valid for sorting "
+            "moments within one response, never a probability or confidence."
+        ),
+    )
 
 
 class FusedMoment(ApplicationModel):
     moment_id: Sha256 | None = None
-    rank: int = Field(gt=0)
-    score: float = Field(gt=0)
+    rank: int = Field(
+        gt=0,
+        description="1-based combined rank across all searched channels; rank 1 is best.",
+    )
+    score: float = Field(
+        gt=0,
+        description=(
+            "Combined reciprocal-rank-fusion score; larger ranks better. "
+            "Ordering-only, not a probability; see fusion.score_calibration."
+        ),
+    )
     media_id: MediaId
     start: float = Field(ge=0)
     end: float = Field(gt=0)
-    modalities: tuple[Identifier, ...]
+    modalities: tuple[Identifier, ...] = Field(
+        description="Channels that contributed a hit to this moment.",
+    )
     hits: tuple[SearchHit, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -993,6 +1107,14 @@ class FusedSearchResult(ApplicationModel):
     query_id: str = Field(min_length=1)
     query: SearchQuery
     modalities: tuple[Identifier, ...]
+    scoring: RetrievalScoring = Field(
+        default_factory=RetrievalScoring,
+        description=(
+            "Meaning of the per-hit rank, score, and raw_distance carried by "
+            "each moment's hits. The combined moment score is described by "
+            "fusion.score_calibration and fusion.score_direction."
+        ),
+    )
     moments: tuple[FusedMoment, ...] = ()
     fusion: FusionProvenance
     evidence_delivery: "EvidenceDeliveryResult | None" = None
@@ -1177,7 +1299,13 @@ class EvidenceDeliveryItem(ApplicationModel):
     media_id: MediaId
     generation_id: IndexGenerationId
     modalities: tuple[Identifier, ...] = Field(min_length=1)
-    score: float | None = None
+    score: float | None = Field(
+        default=None,
+        description=(
+            "Combined ordering-only fusion score copied from the source moment; "
+            "larger ranks better, not a probability."
+        ),
+    )
     provenance: dict[str, JsonValue] = Field(default_factory=dict)
     state: EvidenceDeliveryState
     range: EvidenceRangeResolution | None = None

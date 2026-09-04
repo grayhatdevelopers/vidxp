@@ -7,6 +7,7 @@ from vidxp.application_models import (
     FusedMoment,
     FusedSearchResult,
     FusionProvenance,
+    RetrievalScoring,
     SearchHit,
     SearchResult,
 )
@@ -190,6 +191,9 @@ def fuse_search_results(
         ),
         query=query,
         modalities=searched_modalities,
+        scoring=(
+            ordered_results[0].scoring if ordered_results else RetrievalScoring()
+        ),
         moments=moments,
         fusion=FusionProvenance(
             requested_modalities=requested_modalities,
