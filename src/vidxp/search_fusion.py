@@ -13,6 +13,23 @@ from vidxp.application_models import (
 
 
 RRF_RANK_CONSTANT = 60
+DEFAULT_SEARCH_CANDIDATE_MULTIPLIER = 5
+DEFAULT_MIN_SEARCH_CANDIDATES = 50
+DEFAULT_MAX_SEARCH_CANDIDATES = 500
+
+
+def resolve_candidate_limit(
+    top_k: int,
+    *,
+    multiplier: int = DEFAULT_SEARCH_CANDIDATE_MULTIPLIER,
+    min_candidates: int = DEFAULT_MIN_SEARCH_CANDIDATES,
+    max_candidates: int = DEFAULT_MAX_SEARCH_CANDIDATES,
+) -> int:
+    """Determine the internal per-channel retrieval limit for candidate pool before fusion."""
+    if top_k <= 0:
+        return top_k
+    return min(max(top_k * multiplier, min_candidates), max_candidates)
+
 
 
 def _query_id(

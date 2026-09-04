@@ -537,8 +537,9 @@ class ApplicationTests(unittest.TestCase):
         self.assertIsInstance(result, FusedSearchResult)
         self.assertEqual(result.modalities, ("indexed",))
         self.assertEqual(calls[0][1].query, "yellow taxi")
-        self.assertEqual(calls[0][1].top_k, 7)
+        self.assertEqual(calls[0][1].top_k, 50)
         self.assertIs(
+
             calls[0][0].storage,
             manager.__enter__.return_value,
         )
@@ -685,7 +686,59 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(searched, ["scene", "speech"])
         self.assertEqual(result.modalities, ("scene", "speech"))
 
+    def test_search_uses_candidate_limit_for_channel_searches(self):
+        searched_top_ks = []
+
+        def search_plugin(name: str) -> CapabilityPlugin:
+            definition = CapabilityDefinition(
+                name=name,
+                description="Search capability.",
+                extra=name,
+                collection_name=name,
+                index_stage=name,
+                execution_group=name,
+                operations={
+                    "search": OperationDefinition(
+                        input_model=SearchInput,
+                        output_model=SearchResult,
+                    )
+                },
+            )
+
+            def handler(_context, request):
+                searched_top_ks.append((name, request.top_k))
+                return SearchResult(
+                    query_id=f"{name}:query",
+                    query=request.query,
+                    modality=name,
+                )
+
+            return CapabilityPlugin(
+                definition=definition,
+                executor_factory=lambda: CapabilityExecutor(
+                    indexer=Mock(),
+                    operations={"search": handler},
+                ),
+            )
+
+        registry = CapabilityRegistry((search_plugin("scene"),))
+        manager = MagicMock()
+        manager.__enter__.return_value = Mock(spec=IndexStore)
+        application, backend = self.application("repository", registry=registry)
+        backend.active_config.return_value = IndexConfig.local(
+            enabled_modalities=("scene",),
+            collection_names={"scene": "scene"},
+        )
+        backend.open_store.return_value = manager
+
+        # Request top_k=3 to caller
+        result = application.search(SearchCommand(query="taxi", top_k=3))
+
+        # Capability search operation should have received expanded candidate limit (50)
+        self.assertEqual(searched_top_ks, [("scene", 50)])
+
     def test_application_boundary_returns_stable_validation_error(self):
+
         application, _ = self.application("unused")
 
         with self.assertRaises(ApplicationError) as raised:
