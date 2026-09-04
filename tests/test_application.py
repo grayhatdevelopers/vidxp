@@ -423,9 +423,7 @@ class ApplicationTests(unittest.TestCase):
         )
         self.assertEqual(len({id(context) for context in contexts}), 1)
         application.artifacts.create_actor_overlay.assert_called_once()
-        artifact_call = (
-            application.artifacts.create_actor_overlay.call_args.kwargs
-        )
+        artifact_call = application.artifacts.create_actor_overlay.call_args.kwargs
         self.assertEqual(artifact_call["media_id"], MEDIA_ID)
         self.assertEqual(artifact_call["generation_id"], GENERATION_ID)
 
@@ -436,9 +434,7 @@ class ApplicationTests(unittest.TestCase):
                 original_filename="video.mp4",
                 sha256="1" * 64,
             )
-            application.media.content.return_value = Mock(
-                path=Path("managed.mp4")
-            )
+            application.media.content.return_value = Mock(path=Path("managed.mp4"))
             backend.create.return_value = {
                 "media_id": MEDIA_ID,
                 "generation_id": GENERATION_ID,
@@ -537,7 +533,7 @@ class ApplicationTests(unittest.TestCase):
         self.assertIsInstance(result, FusedSearchResult)
         self.assertEqual(result.modalities, ("indexed",))
         self.assertEqual(calls[0][1].query, "yellow taxi")
-        self.assertEqual(calls[0][1].top_k, 7)
+        self.assertEqual(calls[0][1].top_k, 50)
         self.assertIs(
             calls[0][0].storage,
             manager.__enter__.return_value,
@@ -685,6 +681,242 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(searched, ["scene", "speech"])
         self.assertEqual(result.modalities, ("scene", "speech"))
 
+    def test_search_uses_candidate_limit_for_channel_searches(self):
+        searched_top_ks = []
+
+        def search_plugin(name: str) -> CapabilityPlugin:
+            definition = CapabilityDefinition(
+                name=name,
+                description="Search capability.",
+                extra=name,
+                collection_name=name,
+                index_stage=name,
+                execution_group=name,
+                operations={
+                    "search": OperationDefinition(
+                        input_model=SearchInput,
+                        output_model=SearchResult,
+                    )
+                },
+            )
+
+            def handler(_context, request):
+                searched_top_ks.append((name, request.top_k))
+                return SearchResult(
+                    query_id=f"{name}:query",
+                    query=request.query,
+                    modality=name,
+                )
+
+            return CapabilityPlugin(
+                definition=definition,
+                executor_factory=lambda: CapabilityExecutor(
+                    indexer=Mock(),
+                    operations={"search": handler},
+                ),
+            )
+
+        registry = CapabilityRegistry((search_plugin("scene"),))
+        manager = MagicMock()
+        manager.__enter__.return_value = Mock(spec=IndexStore)
+        application, backend = self.application("repository", registry=registry)
+        backend.active_config.return_value = IndexConfig.local(
+            enabled_modalities=("scene",),
+            collection_names={"scene": "scene"},
+        )
+        backend.open_store.return_value = manager
+
+        # Request top_k=3 to caller
+        application.search(SearchCommand(query="taxi", top_k=3))
+
+        # Capability search operation should have received expanded candidate limit (50)
+        self.assertEqual(searched_top_ks, [("scene", 50)])
+
+    def test_query_video_uses_candidate_limit_for_channel_searches(self):
+        requests = []
+
+        def handler(_context, request):
+            requests.append(request)
+            return SearchResult(
+                query_id="indexed:1",
+                query=request.query,
+                modality="indexed",
+            )
+
+        manager = MagicMock()
+        manager.__enter__.return_value = Mock(spec=IndexStore)
+        application = self.indexed_application(handler, manager)
+        pinned = IndexConfig.local(
+            enabled_modalities=("indexed",),
+            collection_names={"indexed": "indexed"},
+            snapshot_id=SNAPSHOT_ID,
+            snapshot_sha256=SNAPSHOT_SHA256,
+        )
+        application.index_backend.config_for_snapshot.return_value = pinned
+
+        # Request top_k=3 for video query
+        result = application.query_video(
+            QueryVideoCommand(
+                question="What happens?",
+                media_id=MEDIA_ID,
+                modalities=("indexed",),
+                top_k=3,
+            ),
+            snapshot=IndexSnapshotReference(
+                snapshot_id=SNAPSHOT_ID,
+                snapshot_sha256=SNAPSHOT_SHA256,
+            ),
+        )
+
+        # Underlying search operation should receive expanded candidate limit (50)
+        self.assertEqual(requests[0].top_k, 50)
+        # Fused moments / evidence should respect requested top_k=3
+        self.assertLessEqual(len(result.moments), 3)
+
+    def test_application_search_recovers_moment_ranked_past_public_top_k(self):
+        def search_plugin(name: str, hits_fn) -> CapabilityPlugin:
+            definition = CapabilityDefinition(
+                name=name,
+                description="Search capability.",
+                extra=name,
+                collection_name=name,
+                index_stage=name,
+                execution_group=name,
+                operations={
+                    "search": OperationDefinition(
+                        input_model=SearchInput,
+                        output_model=SearchResult,
+                    )
+                },
+            )
+
+            def handler(_context, request):
+                hits = hits_fn(request.top_k)
+                return SearchResult(
+                    query_id=f"{name}:query",
+                    query=request.query,
+                    modality=name,
+                    hits=tuple(hits),
+                )
+
+            return CapabilityPlugin(
+                definition=definition,
+                executor_factory=lambda: CapabilityExecutor(
+                    indexer=Mock(),
+                    operations={"search": handler},
+                ),
+            )
+
+        def scene_hits(limit: int):
+            all_hits = [
+                SearchHit(
+                    rank=1,
+                    media_id=MEDIA_ID,
+                    video_id=MEDIA_ID,
+                    generation_id=GENERATION_ID,
+                    start=10,
+                    end=20,
+                    score=-1.0,
+                    raw_distance=1.0,
+                    modality="scene",
+                    source_id="s1",
+                ),
+                SearchHit(
+                    rank=2,
+                    media_id=MEDIA_ID,
+                    video_id=MEDIA_ID,
+                    generation_id=GENERATION_ID,
+                    start=30,
+                    end=40,
+                    score=-2.0,
+                    raw_distance=2.0,
+                    modality="scene",
+                    source_id="s2",
+                ),
+                SearchHit(
+                    rank=3,
+                    media_id=MEDIA_ID,
+                    video_id=MEDIA_ID,
+                    generation_id=GENERATION_ID,
+                    start=50,
+                    end=60,
+                    score=-3.0,
+                    raw_distance=3.0,
+                    modality="scene",
+                    source_id="s3_shared",
+                ),
+            ]
+            return all_hits[:limit]
+
+        def speech_hits(limit: int):
+            all_hits = [
+                SearchHit(
+                    rank=1,
+                    media_id=MEDIA_ID,
+                    video_id=MEDIA_ID,
+                    generation_id=GENERATION_ID,
+                    start=70,
+                    end=80,
+                    score=-1.0,
+                    raw_distance=1.0,
+                    modality="speech",
+                    source_id="p1",
+                ),
+                SearchHit(
+                    rank=2,
+                    media_id=MEDIA_ID,
+                    video_id=MEDIA_ID,
+                    generation_id=GENERATION_ID,
+                    start=90,
+                    end=100,
+                    score=-2.0,
+                    raw_distance=2.0,
+                    modality="speech",
+                    source_id="p2",
+                ),
+                SearchHit(
+                    rank=3,
+                    media_id=MEDIA_ID,
+                    video_id=MEDIA_ID,
+                    generation_id=GENERATION_ID,
+                    start=50,
+                    end=60,
+                    score=-3.0,
+                    raw_distance=3.0,
+                    modality="speech",
+                    source_id="s3_shared_speech",
+                ),
+            ]
+            return all_hits[:limit]
+
+        registry = CapabilityRegistry(
+            (
+                search_plugin("scene", scene_hits),
+                search_plugin("speech", speech_hits),
+            )
+        )
+        manager = MagicMock()
+        manager.__enter__.return_value = Mock(spec=IndexStore)
+        application, backend = self.application("repository", registry=registry)
+        backend.active_config.return_value = IndexConfig.local(
+            enabled_modalities=("scene", "speech"),
+            collection_names={"scene": "scene", "speech": "speech"},
+        )
+        backend.open_store.return_value = manager
+
+        # Public top_k is 2. Moment at [50, 60] is rank 3 in scene and rank 3 in speech.
+        fused = application.search(
+            SearchCommand(query="test", modalities=("scene", "speech"), top_k=2)
+        )
+
+        # Fused output is trimmed to public top_k=2
+        self.assertEqual(len(fused.moments), 2)
+        # Shared rank-3 moment retrieved into candidate pool becomes #1 fused result
+        top_moment = fused.moments[0]
+        self.assertEqual(top_moment.start, 50)
+        self.assertEqual(top_moment.end, 60)
+        self.assertEqual(top_moment.modalities, ("scene", "speech"))
+
     def test_application_boundary_returns_stable_validation_error(self):
         application, _ = self.application("unused")
 
@@ -749,9 +981,7 @@ class ApplicationTests(unittest.TestCase):
     def test_missing_media_error_does_not_expose_path(self):
         application, _ = self.application("unused")
         secret_path = Path("private/customer/video.mp4")
-        application.media.require_record.side_effect = (
-            MediaUnavailableError("secret")
-        )
+        application.media.require_record.side_effect = MediaUnavailableError("secret")
 
         with self.assertRaises(ApplicationError) as raised:
             application.create_index(
@@ -836,9 +1066,7 @@ class ApplicationTests(unittest.TestCase):
                         "modality": "noop",
                     }
                 },
-                prepare=Mock(
-                    side_effect=ModuleNotFoundError("provider.internal")
-                ),
+                prepare=Mock(side_effect=ModuleNotFoundError("provider.internal")),
             ),
         )
         registry = CapabilityRegistry((plugin,))
@@ -861,9 +1089,7 @@ class ApplicationTests(unittest.TestCase):
             original_filename="video.mp4",
             sha256="1" * 64,
         )
-        application.media.content.return_value = Mock(
-            path=Path("video.mp4")
-        )
+        application.media.content.return_value = Mock(path=Path("video.mp4"))
         backend.create.side_effect = ModelArtifactUnavailableError("scene")
 
         with self.assertRaises(ModelUnavailableError) as raised:
@@ -1170,9 +1396,7 @@ class ApplicationTests(unittest.TestCase):
         backend.remove.return_value = True
 
         self.assertTrue(
-            application.remove_from_index(
-                RemoveIndexCommand(media_id=MEDIA_ID)
-            )
+            application.remove_from_index(RemoveIndexCommand(media_id=MEDIA_ID))
         )
 
         config, media_id = backend.remove.call_args.args
@@ -1284,9 +1508,7 @@ class ApplicationTests(unittest.TestCase):
                 index_video.call_args.kwargs["manifest_store"].runtime,
                 backend.runtime,
             )
-            self.assertIsNotNone(
-                index_video.call_args.kwargs["config"].generation_id
-            )
+            self.assertIsNotNone(index_video.call_args.kwargs["config"].generation_id)
             cleanup_storage.__exit__.assert_called_once()
             storage.__exit__.assert_called_once()
 

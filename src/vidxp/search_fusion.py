@@ -13,6 +13,26 @@ from vidxp.application_models import (
 
 
 RRF_RANK_CONSTANT = 60
+DEFAULT_CANDIDATE_DEPTH = 50
+MAX_CANDIDATE_DEPTH = 500
+
+
+def resolve_candidate_limit(
+    top_k: int,
+    candidate_depth: int = DEFAULT_CANDIDATE_DEPTH,
+    *,
+    max_candidates: int = MAX_CANDIDATE_DEPTH,
+) -> int:
+    """Determine the per-channel retrieval limit for candidate pools before fusion.
+
+    Uses an independent candidate depth budget, ensuring candidate depth is at
+    least `top_k` and bounded by `max_candidates`.
+    """
+    if top_k <= 0:
+        raise ValueError("top_k must be greater than zero.")
+    if candidate_depth <= 0:
+        raise ValueError("candidate_depth must be greater than zero.")
+    return min(max(top_k, candidate_depth), max_candidates)
 
 
 def _query_id(
