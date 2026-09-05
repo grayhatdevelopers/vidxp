@@ -271,6 +271,7 @@ class ActorVisualProcessor:
         config: IndexConfig,
         runtime: ModelRuntimePort,
         progress: ProgressCallback | None,
+        source=None,
     ) -> ActorIndexState:
         return ActorIndexState(models=get_actor_models(runtime))
 

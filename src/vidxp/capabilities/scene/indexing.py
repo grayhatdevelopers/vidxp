@@ -123,6 +123,7 @@ class SceneVisualProcessor:
         config: IndexConfig,
         runtime: ModelRuntimePort,
         progress: ProgressCallback | None,
+        source=None,
     ) -> SceneIndexState:
         report_progress(
             progress,

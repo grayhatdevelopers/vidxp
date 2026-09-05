@@ -21,6 +21,7 @@ from vidxp.core.indexing_common import ProgressCallback, report_progress
 from vidxp.core.video import FrameSample, FrameSampling
 from vidxp.ports import IndexStore, ModelRuntimePort
 from vidxp.core.clip import ClipStreamAccumulator, VideoClip
+from vidxp.core.scene_boundaries import detect_shot_boundaries
 
 
 CLIP_FRAMES = 16
@@ -166,13 +167,28 @@ class VideoPrismVisualProcessor:
         config: IndexConfig,
         runtime: ModelRuntimePort,
         progress: ProgressCallback | None,
+        source=None,
     ) -> VideoPrismIndexState:
         report_progress(
             progress,
             "preparing_videoprism_model",
             f"Preparing VideoPrism {VIDEOPRISM_MODEL.model_id}.",
         )
-        return VideoPrismIndexState(get_videoprism_model(runtime))
+        boundaries = None
+        if videoprism_config(config).clip_mode == "scene" and source is not None:
+            report_progress(
+                progress,
+                "detecting_shot_boundaries",
+                "Detecting shot boundaries with PySceneDetect.",
+            )
+            boundaries = detect_shot_boundaries(source.path)
+        return VideoPrismIndexState(
+            provider=get_videoprism_model(runtime),
+            accumulator=ClipStreamAccumulator(
+                clip_frames=CLIP_FRAMES,
+                boundaries=boundaries,
+            ),
+        )
 
     def process(
         self,
