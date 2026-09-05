@@ -1044,18 +1044,48 @@ class QueryVideoCommand(ApplicationModel):
         return values
 
 
+class OccurrenceMode(StrEnum):
+    first = "first"
+    best = "best"
+    all = "all"
+
+
 class SearchMomentsPlanStep(ApplicationModel):
     kind: Literal["search_moments"] = "search_moments"
     modality: Identifier
     query: SearchQuery
+    occurrence_mode: OccurrenceMode = OccurrenceMode.best
 
 
 class ActorOverviewPlanStep(ApplicationModel):
     kind: Literal["actor_overview"] = "actor_overview"
 
 
+class TemporalRelation(StrEnum):
+    before = "before"
+    after = "after"
+    during = "during"
+
+
+class TemporalRelationPlanStep(ApplicationModel):
+    kind: Literal["temporal_relation"] = "temporal_relation"
+    relation: TemporalRelation
+    reference_query: SearchQuery
+    target_modality: Identifier
+    target_query: SearchQuery
+
+
+class EvidenceRequestPlanStep(ApplicationModel):
+    kind: Literal["evidence_request"] = "evidence_request"
+    delivery_mode: EvidenceDeliveryMode
+    include_board: bool = False
+
+
 QueryPlanStep = Annotated[
-    SearchMomentsPlanStep | ActorOverviewPlanStep,
+    SearchMomentsPlanStep
+    | ActorOverviewPlanStep
+    | TemporalRelationPlanStep
+    | EvidenceRequestPlanStep,
     Field(discriminator="kind"),
 ]
 
@@ -1068,6 +1098,8 @@ class QueryPlanningRequest(ApplicationModel):
     question: SearchQuery
     allowed_modalities: tuple[Identifier, ...]
     actor_overview_allowed: bool = False
+    temporal_relations_allowed: bool = False
+    evidence_requests_allowed: bool = False
 
 
 class QueryModelIdentity(ApplicationModel):
