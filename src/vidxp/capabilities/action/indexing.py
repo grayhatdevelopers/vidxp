@@ -20,6 +20,7 @@ from vidxp.core.contracts import (
 from vidxp.core.indexing_common import ProgressCallback, report_progress
 from vidxp.core.video import FrameSample, FrameSampling
 from vidxp.ports import IndexStore, ModelRuntimePort
+from vidxp.core.clip import ClipStreamAccumulator, VideoClip
 
 
 CLIP_FRAMES = 16
@@ -28,7 +29,9 @@ CLIP_FRAMES = 16
 @dataclass
 class VideoPrismIndexState:
     provider: VideoPrismModel
-    pending: list[FrameSample] = field(default_factory=list)
+    accumulator: ClipStreamAccumulator = field(
+        default_factory=lambda: ClipStreamAccumulator(clip_frames=CLIP_FRAMES)
+    )
     stored_clips: int = 0
     video_info: Any | None = None
 
@@ -41,13 +44,13 @@ def videoprism_sampling(config: IndexConfig, info) -> FrameSampling:
 
 
 def encode_video_clips(
-    clips: Sequence[Sequence[FrameSample]],
+    clips: Sequence[VideoClip],
     provider: VideoPrismModel,
 ) -> list[list[float]]:
     import torch
 
     inputs = provider.processor(
-        videos=[[sample.frame for sample in clip] for clip in clips],
+        videos=[[sample.frame for sample in clip.samples] for clip in clips],
         do_sample_frames=False,
         return_tensors="pt",
     )
@@ -59,7 +62,7 @@ def encode_video_clips(
 
 
 def videoprism_records(
-    clips: Sequence[Sequence[FrameSample]],
+    clips: Sequence[VideoClip],
     vectors: Sequence[Sequence[float]],
     info,
     config: IndexConfig,
@@ -67,7 +70,7 @@ def videoprism_records(
     records = []
     cadence = 1 / min(info.fps, videoprism_config(config).sample_fps)
     for clip, vector in zip(clips, vectors):
-        first, last = clip[0], clip[-1]
+        first, last = clip.samples[0], clip.samples[-1]
         end = min(info.duration, last.timestamp + cadence)
         if end <= first.timestamp:
             end = first.timestamp + 1 / info.fps
@@ -91,7 +94,7 @@ def videoprism_records(
                     "end": end,
                     "fps": info.fps,
                     "duration": info.duration,
-                    "sample_count": len(clip),
+                    "sample_count": clip.sample_count,
                 },
             )
         )
@@ -99,7 +102,7 @@ def videoprism_records(
 
 
 def _store_clips(
-    clips: Sequence[Sequence[FrameSample]],
+    clips: Sequence[VideoClip],
     *,
     state: VideoPrismIndexState,
     info,
@@ -110,8 +113,13 @@ def _store_clips(
     settings = videoprism_config(config)
     for group in batched(clips, settings.batch_size):
         cancellation.raise_if_cancelled()
+  
         model_clips = [
-            list(clip) + [clip[-1]] * (CLIP_FRAMES - len(clip))
+            VideoClip(
+                samples=clip.samples + (clip.samples[-1],) * (CLIP_FRAMES - clip.sample_count),
+                start=clip.start,
+                end=clip.end,
+            )
             for clip in group
         ]
         vectors = encode_video_clips(model_clips, state.provider)
@@ -133,16 +141,9 @@ def process_videoprism_samples(
     cancellation: CancellationToken,
 ) -> None:
     state.video_info = info
-    state.pending.extend(samples)
-    complete = len(state.pending) // CLIP_FRAMES
-    if not complete:
+    clips = list(state.accumulator.add(samples))
+    if not clips:
         return
-    consumed = complete * CLIP_FRAMES
-    clips = [
-        state.pending[start : start + CLIP_FRAMES]
-        for start in range(0, consumed, CLIP_FRAMES)
-    ]
-    del state.pending[:consumed]
     _store_clips(
         clips,
         state=state,
@@ -199,18 +200,18 @@ class VideoPrismVisualProcessor:
         config: IndexConfig,
         storage: IndexStore,
     ) -> tuple[dict[str, Any], int]:
-        if state.pending:
+        tail = state.accumulator.finalize()
+        if tail is not None:
             if state.video_info is None:
                 raise RuntimeError("VideoPrism indexing is missing video metadata.")
             _store_clips(
-                [state.pending],
+                [tail],
                 state=state,
                 info=state.video_info,
                 config=config,
                 storage=storage,
                 cancellation=CancellationToken(),
             )
-            state.pending.clear()
         return {"videoprism_clips": state.stored_clips}, state.stored_clips
 
 

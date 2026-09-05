@@ -67,7 +67,7 @@ class VideoPrismTests(unittest.TestCase):
         self.assertEqual(summary, {"videoprism_clips": 2})
         self.assertEqual(operations, 2)
         self.assertEqual(
-            [len(call.args[0][0]) for call in encode.call_args_list],
+            [call.args[0][0].sample_count for call in encode.call_args_list],
             [CLIP_FRAMES, CLIP_FRAMES],
         )
         tail = storage.upsert.call_args_list[1].args[1][0]
