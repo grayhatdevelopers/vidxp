@@ -32,6 +32,7 @@ def main(arguments: Sequence[str] | None = None) -> None:
         mode=ApplicationMode.server,
         runtime_backend="cpu",
     )
+    settings.layout.ensure_local_directories()
     upgrade_database(workflow_database_url(settings))
 
 
