@@ -2209,8 +2209,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(links), 2)
             self.assertEqual(presented.structured_content["view"], "evidence")
             self.assertIsNone(presented.structured_content["answer"])
-            self.assertTrue(
-                any(isinstance(block, ImageContent) for block in presented.content)
+            self.assertEqual(
+                sum(isinstance(block, ImageContent) for block in presented.content),
+                1,
             )
             self.assertEqual(len(clip_resource.contents), 1)
             duration = float(

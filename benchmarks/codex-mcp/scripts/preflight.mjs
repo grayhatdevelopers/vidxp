@@ -37,15 +37,23 @@ function requireFile(name) {
 }
 
 const codexHome = requireDirectory('VIDXP_EVAL_CODEX_HOME');
+const vidxpOnCodexHome = requireDirectory('VIDXP_EVAL_VIDXP_ON_CODEX_HOME');
+const vidxpOffCodexHome = requireDirectory('VIDXP_EVAL_VIDXP_OFF_CODEX_HOME');
+const cleanUserCodexHome = requireDirectory('VIDXP_EVAL_CLEAN_USER_CODEX_HOME');
 const workspace = requireDirectory('VIDXP_EVAL_WORKSPACE');
 const vidxpOnWorkspace = requireDirectory('VIDXP_EVAL_VIDXP_ON_WORKSPACE');
 const vidxpOffWorkspace = requireDirectory('VIDXP_EVAL_VIDXP_OFF_WORKSPACE');
-const modelOnlyWorkspace = requireDirectory('VIDXP_EVAL_MODEL_ONLY_WORKSPACE');
+const cleanUserWorkspace = requireDirectory('VIDXP_EVAL_CLEAN_USER_WORKSPACE');
 requireDirectory('VIDXP_EVAL_DATA_DIR');
 requireDirectory('VIDXP_EVAL_INDEX_DIR');
 requireDirectory('VIDXP_MODEL_CACHE');
+const uvCacheDirectory = requireDirectory('VIDXP_EVAL_UV_CACHE_DIR');
 requireFile('VIDXP_MCP_COMMAND');
 const promptfooPython = requireFile('PROMPTFOO_PYTHON');
+
+if (!existsSync(join(codexHome, 'auth.json'))) {
+  throw new Error('The isolated authentication home has no auth.json; run setup first.');
+}
 
 const scorerRuntime = spawnSync(
   promptfooPython,
@@ -67,20 +75,25 @@ if (scorerRuntime.status !== 0) {
   );
 }
 
-if (!existsSync(join(codexHome, 'auth.json'))) {
-  throw new Error('The isolated Codex home has no auth.json; sign in there before evaluating.');
-}
-
-const codexConfig = join(codexHome, 'config.toml');
-if (existsSync(codexConfig)) {
-  const content = readFileSync(codexConfig, 'utf8');
-  if (/^\s*\[mcp_servers(?:\.|\])/m.test(content)) {
-    throw new Error('The isolated Codex home config contains ambient MCP servers.');
+for (const conditionHome of [
+  vidxpOnCodexHome,
+  vidxpOffCodexHome,
+  cleanUserCodexHome,
+]) {
+  if (!existsSync(join(conditionHome, 'auth.json'))) {
+    throw new Error(`Condition Codex home has no auth.json: ${conditionHome}`);
+  }
+  const codexConfig = join(conditionHome, 'config.toml');
+  if (existsSync(codexConfig)) {
+    const content = readFileSync(codexConfig, 'utf8');
+    if (/^\s*\[mcp_servers(?:\.|\])/m.test(content)) {
+      throw new Error(`Condition Codex home contains ambient MCP servers: ${conditionHome}`);
+    }
   }
 }
 
 const tasks = JSON.parse(readFileSync(manifestPath, 'utf8'));
-const conditionWorkspaces = [vidxpOnWorkspace, vidxpOffWorkspace, modelOnlyWorkspace];
+const conditionWorkspaces = [vidxpOnWorkspace, vidxpOffWorkspace, cleanUserWorkspace];
 const missingMedia = [...new Set([workspace, ...conditionWorkspaces]
   .flatMap((conditionWorkspace) => tasks
     .map((task) => join(conditionWorkspace, task.media_relpath)))
@@ -92,14 +105,14 @@ for (const task of tasks) {
   const shared = statSync(join(workspace, task.media_relpath));
   const on = statSync(join(vidxpOnWorkspace, task.media_relpath));
   const off = statSync(join(vidxpOffWorkspace, task.media_relpath));
-  const modelOnly = statSync(join(modelOnlyWorkspace, task.media_relpath));
+  const cleanUser = statSync(join(cleanUserWorkspace, task.media_relpath));
   if (
     on.dev !== shared.dev
     || on.ino !== shared.ino
     || off.dev !== shared.dev
     || off.ino !== shared.ino
-    || modelOnly.dev !== shared.dev
-    || modelOnly.ino !== shared.ino
+    || cleanUser.dev !== shared.dev
+    || cleanUser.ino !== shared.ino
   ) {
     throw new Error(
       `Condition media is not hard-linked to the shared bytes: ${task.media_relpath}`,
@@ -126,8 +139,8 @@ const offSkillDirectory = join(
   'skills',
   'vidxp-find-video-evidence',
 );
-const modelOnlySkillDirectory = join(
-  modelOnlyWorkspace,
+const cleanUserSkillDirectory = join(
+  cleanUserWorkspace,
   '.agents',
   'skills',
   'vidxp-find-video-evidence',
@@ -152,11 +165,44 @@ for (const relativePath of ['SKILL.md', join('agents', 'openai.yaml')]) {
 if (existsSync(offSkillDirectory)) {
   throw new Error('The VidXP-off workspace must not contain the VidXP evidence skill.');
 }
-if (existsSync(modelOnlySkillDirectory)) {
-  throw new Error('The model-only workspace must not contain the VidXP evidence skill.');
+if (existsSync(cleanUserSkillDirectory)) {
+  throw new Error('The clean-user workspace must not contain the VidXP evidence skill.');
 }
 if (existsSync(sharedSkillDirectory)) {
   throw new Error('The shared parent workspace must not contain the VidXP evidence skill.');
+}
+
+if (process.platform !== 'win32') {
+  const cleanPath = process.env.VIDXP_EVAL_CLEAN_USER_PATH;
+  if (!cleanPath) {
+    throw new Error('VIDXP_EVAL_CLEAN_USER_PATH is required.');
+  }
+  const cleanShell = spawnSync(
+    '/bin/zsh',
+    [
+      '-lc',
+      'for name in ffmpeg ffprobe vidxp vidxp-mcp; do '
+        + 'if command -v "$name" >/dev/null 2>&1; then exit 42; fi; done; '
+        + 'command -v curl >/dev/null',
+    ],
+    {
+      cwd: cleanUserWorkspace,
+      env: {
+        HOME: cleanUserWorkspace,
+        PATH: cleanPath,
+        TMPDIR: join(cleanUserWorkspace, 'tmp'),
+      },
+      encoding: 'utf8',
+      stdio: 'pipe',
+    },
+  );
+  if (cleanShell.status !== 0) {
+    throw new Error(
+      cleanShell.status === 42
+        ? 'The clean-user shell exposes a preinstalled media or VidXP executable.'
+        : `The clean-user shell probe failed: ${cleanShell.stderr || cleanShell.error?.message}`,
+    );
+  }
 }
 
 const check = spawnSync(
@@ -169,6 +215,7 @@ const check = spawnSync(
     cwd: repositoryRoot,
     env: {
       ...process.env,
+      UV_CACHE_DIR: uvCacheDirectory,
       VIDXP_ALLOW_MODEL_DOWNLOADS: 'false',
     },
     encoding: 'utf8',
@@ -183,5 +230,5 @@ if (check.status !== 0) {
 
 process.stdout.write(check.stdout);
 process.stdout.write(
-  `Ready: ${tasks.length} tasks across VidXP, local-tool, and model-only conditions; no Codex or model inference calls made.\n`,
+  `Ready: ${tasks.length} tasks across VidXP, direct-local, and clean-user conditions; no Codex or model inference calls made.\n`,
 );

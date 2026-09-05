@@ -6,8 +6,9 @@ This page answers three questions:
 2. What do the measurements mean?
 3. What can we honestly conclude from them?
 
-Detailed artifacts, hashes, commands, and evaluator behavior remain in the
-[adapter validation ledger](adapter_validation.md).
+Agent run artifacts and machine profiles are linked from the
+[metric database](metric_database.md). Dataset hashes, commands, and evaluator
+behavior remain in the [adapter validation ledger](adapter_validation.md).
 
 ## Evidence at a glance
 
@@ -21,7 +22,7 @@ Detailed artifacts, hashes, commands, and evaluator behavior remain in the
 | Current component gate | Kinetics-mini | 50 ten-second videos over five action classes | VideoPrism top-1 **50/50** | Broad-action recognition works; long-video ranking and boundaries are not measured |
 | Current component gate | AEGBench frozen subset | 50 recordings; 149 annotated sound queries | PE-A/FineLAP top-point **76.5%/73.2%**; mean IoU **.523/.292** | Select PE-A-Frame Small for sound localization |
 | Current product smoke | PE-A bounded sections | One 75.81-second development video; two known sound queries | 1,896 unique frames; both target ten-second windows ranked first; **22.156 s** indexing after model load | Product decoder/runtime/storage/search integration works; long-audio quality is still unmeasured |
-| Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; latest two-condition run uses the bounded ten-second clip contract | Both conditions returned `0–10` seconds, bounded-chunk hit **1**, coverage **1**, and IoU **.600**; VidXP used **27.9%** fewer tokens | Harness, capability isolation, durable evidence attestation, and reporting check only; not a product gate, held-out pilot, or LongVALE result |
+| Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; neutral prompt and three isolated conditions | Every condition achieved bounded-chunk hit **1** and coverage **1**. Against direct local inspection, VidXP used **40.9%** fewer tokens and finished **22.1%** faster. | Corrected harness smoke only; one development task is not a product gate or held-out result. |
 | Global-only sound diagnostic | Codex MCP ablation | Same development task after filtering sound search to global clips | VidXP-on IoU **0.6000**; VidXP-off IoU **0.8811** | Same answer content with 16.5% fewer VidXP tokens and 11.3% lower latency, but the ten-second sound clip worsened the endpoint |
 
 The current-provider rows are deliberately tiny regression runs. Their
@@ -31,43 +32,78 @@ full-corpus or whole-product score has not been run.
 
 ## Codex MCP development smoke
 
-The latest saved run uses the practical-clip contract. It treats bounded-chunk
-hit as the primary quality measure and keeps IoU as a secondary boundary
-diagnostic. It predates the third model-only condition, so it remains a
-development smoke rather than a product-gate result.
+Evaluation
+[`eval-0eL-2026-09-05T22:40:10`](runs/eval-0eL-2026-09-05T22-40-10.json)
+is the first corrected smoke. It uses
+one neutral prompt, separate condition homes, and the practical-clip contract.
 
-Evaluation `eval-2uz-2026-09-05T17:39:13` asked both conditions for an 8–12
+| Condition | Result | Time | Total / uncached / output tokens | Turns / items / tools | Promptfoo cost |
+| --- | --- | ---: | --- | --- | ---: |
+| VidXP | `0–12` s; hit `1`; coverage `1`; IoU `.500` | 72.888 s | 221,139 / 33,975 / 1,820 | 9 / 7 / 6; 5 MCP | $0.317147 |
+| Direct local | `0–10` s; hit `1`; coverage `1`; IoU `.600` | 93.591 s | 373,984 / 28,323 / 2,877 | 16 / 9 / 7; 7 shell | $0.755479 |
+| Clean user | `0–10` s; hit `1`; coverage `1`; IoU `.600` | 245.755 s | 860,165 / 47,247 / 6,518 | 30 / 31 / 26; 26 shell | $1.572180 |
+
+VidXP matched direct local inspection on the primary metric with 152,845 fewer
+tokens and 20.703 seconds lower latency. Its saved top fused result was `0–10`
+seconds with action, scene, and sound support. The agent expanded the returned
+clip to `0–12`, so answer IoU fell from the retrieval result's `.600` to `.500`.
+The clean-user agent began without third-party media tools and installed its own
+workspace-local FFmpeg package. This confirms the condition works; its setup
+strategy is agent behavior, not a prescribed harness path.
+
+All three assertions passed. The report correctly leaves the product gate
+unscored because a one-task development smoke cannot establish comparative
+quality. A per-run workspace reset was added afterward so repeated pilot cases
+cannot inherit files or installed tools; that isolation hook is unit- and
+configuration-validated but was not exercised by this saved smoke.
+
+### Historical development runs
+
+The runs below predate the neutral prompt and separate condition homes. Their
+retrieval traces remain useful, but their condition deltas are invalid.
+
+Evaluation
+[`eval-2uz-2026-09-05T17:39:13`](runs/eval-2uz-2026-09-05T17-39-13.json)
+asked both conditions for an 8–12
 second practical clip around the `0–6` second rain, wind, and engine event.
 
-| Condition | Result | Time | Token usage | Tools | Provider estimate |
+| Condition | Result | Time | Token usage | Tools | Promptfoo cost |
 | --- | --- | ---: | --- | --- | ---: |
 | VidXP-on | `0–10` s; bounded hit `1`; coverage `1`; IoU `.6000` | 78.660 s | 200,142 total; 198,506 input; 146,048 cached; 52,458 uncached; 1,636 output; 490 reasoning | one skill read; five MCP calls; no media-shell calls | $0.384394 |
 | VidXP-off | `0–10` s; bounded hit `1`; coverage `1`; IoU `.6000` | 90.582 s | 277,660 total; 275,133 input; 247,296 cached; 27,837 uncached; 2,527 output; 1,100 reasoning | seven shell calls, including six FFmpeg/ffprobe calls | $0.639381 |
 
-VidXP used 77,518 fewer total tokens, finished 11.922 seconds faster, and had a
-$0.254987 lower provider estimate. It used 24,621 more uncached input tokens,
-which is why cached and uncached counts must remain visible. The durable job
+The raw run recorded 77,518 fewer VidXP tokens and 11.922 seconds lower latency,
+but the tool-aware prompt means those deltas are not an ablation result. The
+durable job
 ranked `0–10` seconds first with action, scene, and sound support. This confirms
-the current integration path on one development query; it does not estimate
-held-out accuracy. The report must not print a product-gate verdict for it.
+the retrieval path on one development query; it does not establish comparative
+efficiency or held-out accuracy.
 
 The two older runs below used the superseded exact-interval prompt. Their raw
 measurements are retained rather than silently rescored.
 
-Evaluation `eval-J6s-2026-09-01T19:30:07` asked the same Codex model to locate
+[`eval-jJD-2026-09-01T17:51:57`](runs/eval-jJD-2026-09-01T17-51-57.json)
+returned `64.031–75.809` seconds with VidXP and `0–6.8` through direct
+inspection. It exposed the historical sound tokenization/integration defect;
+the post-fix run below, not this failed run, describes later retrieval behavior.
+
+Evaluation
+[`eval-J6s-2026-09-01T19:30:07`](runs/eval-J6s-2026-09-01T19-30-07.json)
+asked the same Codex model to locate
 one 0–6 second rain, wind, and engine event with and without VidXP. Both runs
 passed the harness contract.
 
-| Condition | Predicted interval | IoU | End error | Time | Total / uncached input / output tokens | Tool activity | Estimated cost |
+| Condition | Predicted interval | IoU | End error | Time | Total / uncached input / output tokens | Tool activity | Promptfoo cost |
 | --- | --- | ---: | ---: | ---: | --- | --- | ---: |
 | VidXP-on | 0–8.0075 s | 0.7493 | +2.0075 s | 74.552 s | 301,712 / 48,423 / 1,769 | one skill load; six VidXP MCP calls; one non-media shell call | $0.815355 |
 | VidXP-off | 0–6.8 s | 0.8824 | +0.8 s | 112.209 s | 329,961 / 35,906 / 3,623 | ten shell media-inspection calls | $0.812527 |
 
-The VidXP run used fewer total tokens and finished faster, but its provider-
-estimated cost was slightly higher because it used more uncached input. Cached
-and uncached input can have different rates; total tokens alone do not determine
-cost. Reasoning tokens are included in output tokens. Subscription-authenticated
-Codex usage is an account allowance or credit measurement, not an API invoice.
+The VidXP run used fewer total tokens and finished faster, but Promptfoo's cost
+was slightly higher because it used more uncached input. Cached input, uncached
+input, and output use different rates, so total tokens alone do not determine
+that estimate. Reasoning tokens are included in output tokens. Treat the dollar
+value only as a within-run comparison metric, not an API invoice or measured
+Codex-plan charge.
 
 The saved post-FineLAP-fix job confirms that retrieval found the correct
 opening region:

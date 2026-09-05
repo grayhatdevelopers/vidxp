@@ -44,16 +44,31 @@ export function evaluationEnvironment({
   const executable = platform === 'win32' ? 'vidxp-mcp.exe' : 'vidxp-mcp';
   const pythonExecutable = platform === 'win32' ? 'python.exe' : 'python';
   const scriptsDirectory = platform === 'win32' ? 'Scripts' : 'bin';
+  const cleanUserPath = platform === 'win32'
+    ? [
+      paths.join(environment.SystemRoot || 'C:\\Windows', 'System32'),
+      environment.SystemRoot || 'C:\\Windows',
+    ].join(';')
+    : '/usr/bin:/bin:/usr/sbin:/sbin';
   return {
     VIDXP_EVAL_CODEX_HOME: paths.join(evaluationRoot, 'codex-home'),
+    VIDXP_EVAL_VIDXP_ON_CODEX_HOME: paths.join(evaluationRoot, 'codex-home', 'vidxp-on'),
+    VIDXP_EVAL_VIDXP_OFF_CODEX_HOME: paths.join(evaluationRoot, 'codex-home', 'vidxp-off'),
+    VIDXP_EVAL_CLEAN_USER_CODEX_HOME: paths.join(
+      evaluationRoot,
+      'codex-home',
+      'clean-user',
+    ),
     VIDXP_EVAL_WORKSPACE: paths.join(evaluationRoot, 'workspace'),
     VIDXP_EVAL_VIDXP_ON_WORKSPACE: paths.join(evaluationRoot, 'workspace', 'vidxp-on'),
     VIDXP_EVAL_VIDXP_OFF_WORKSPACE: paths.join(evaluationRoot, 'workspace', 'vidxp-off'),
-    VIDXP_EVAL_MODEL_ONLY_WORKSPACE: paths.join(
+    VIDXP_EVAL_CLEAN_USER_WORKSPACE: paths.join(
       evaluationRoot,
       'workspace',
-      'model-only',
+      'clean-user',
     ),
+    VIDXP_EVAL_CLEAN_USER_PATH: cleanUserPath,
+    VIDXP_EVAL_UV_CACHE_DIR: paths.join(evaluationRoot, 'uv-cache'),
     VIDXP_EVAL_DATA_DIR: paths.join(evaluationRoot, 'vidxp-data'),
     VIDXP_EVAL_INDEX_DIR: paths.join(
       evaluationRoot,

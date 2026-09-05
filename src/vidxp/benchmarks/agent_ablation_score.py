@@ -35,6 +35,10 @@ _MEDIA_INSPECTION_COMMAND = re.compile(
     r"(?:^|[\s'\"/\\])ff(?:mpeg|probe)(?:\.exe)?(?:\s|$)",
     re.IGNORECASE,
 )
+_HOST_DEVELOPER_PATH = re.compile(
+    r"(?:/opt/homebrew/|/usr/local/|[\\/]\.venv[\\/])",
+    re.IGNORECASE,
+)
 _SKILL_NAME = "vidxp-find-video-evidence"
 _SKILL_PATH = ".agents/skills/vidxp-find-video-evidence/SKILL.md"
 
@@ -187,7 +191,7 @@ def score_ablation_boundary(
     variables = context.get("vars", {})
     expected_vidxp = variables.get("expected_vidxp") is True
     allow_media_shell = variables.get("allow_media_shell") is True
-    allow_agent_tools = variables.get("allow_agent_tools", True) is True
+    forbid_host_tools = variables.get("forbid_host_tools") is True
     try:
         result = json.loads(output)
     except (TypeError, json.JSONDecodeError) as exc:
@@ -204,7 +208,7 @@ def score_ablation_boundary(
     invoked_vidxp_command = False
     inspected_media_from_shell = False
     skill_used = False
-    used_agent_tool = False
+    used_host_developer_path = False
     media_filename = Path(str(variables.get("media_relpath", ""))).name
     for index, span in enumerate(spans):
         if not isinstance(span, Mapping):
@@ -212,10 +216,6 @@ def score_ablation_boundary(
         attributes = span.get("attributes")
         if not isinstance(attributes, Mapping):
             attributes = {}
-        item_type = attributes.get("codex.item.type")
-        used_agent_tool = used_agent_tool or item_type == "command_execution" or (
-            isinstance(item_type, str) and item_type.endswith("_tool_call")
-        )
         skill_used = skill_used or (
             attributes.get("promptfoo.skill.name") == _SKILL_NAME
             and _is_expected_skill_path(attributes.get("promptfoo.skill.path"))
@@ -228,8 +228,10 @@ def score_ablation_boundary(
         for key, value in attributes.items():
             if "command" not in str(key).casefold():
                 continue
-            used_agent_tool = True
             text = value if isinstance(value, str) else json.dumps(value)
+            used_host_developer_path = used_host_developer_path or bool(
+                _HOST_DEVELOPER_PATH.search(text)
+            )
             invoked_vidxp_command = invoked_vidxp_command or bool(
                 _VIDXP_COMMAND.search(text)
             )
@@ -242,20 +244,15 @@ def score_ablation_boundary(
         return _failed(
             "The agent invoked VidXP through the shell and bypassed the condition."
         )
-    if not allow_agent_tools and used_agent_tool:
-        return _failed("The model-only condition used an agent tool.")
+    if forbid_host_tools and used_host_developer_path:
+        return _failed(
+            "The clean-user condition reached into a host developer-tool path."
+        )
     if not expected_vidxp:
         if tool_calls:
             return _failed("VidXP-off used a VidXP MCP tool.")
         if skill_used:
             return _failed("VidXP-off loaded the VidXP evidence skill.")
-        if result.get("source_job_id") is not None:
-            return _failed("VidXP-off claimed a VidXP source job.")
-        if any(
-            isinstance(item, Mapping) and item.get("evidence_id") is not None
-            for item in _evidence_items(result)
-        ):
-            return _failed("VidXP-off claimed VidXP evidence IDs.")
         return _passed(
             "The condition remained isolated from VidXP and respected its tool policy."
         )
@@ -289,9 +286,6 @@ def score_ablation_boundary(
         "search": "search_moments",
         "query": "query_video",
     }.get(job.get("kind"))
-    retrieval_nonce = variables.get("retrieval_nonce")
-    if not isinstance(retrieval_nonce, str) or not retrieval_nonce:
-        return _failed("The evaluation did not provide a retrieval nonce.")
     matching_calls: list[tuple[str, str]] = []
     for _, tool, arguments in retrieval_calls:
         command = arguments.get("command")
@@ -302,15 +296,13 @@ def score_ablation_boundary(
         if (
             tool == expected_tool
             and command.get(query_key) == variables.get("query")
-            and arguments.get("idempotency_key") == retrieval_nonce
             and isinstance(media_id, str)
             and media_id
         ):
             matching_calls.append((tool, media_id))
     if not matching_calls:
         return _failed(
-            "No retrieval call matches the source job kind, task query, media, "
-            "and evaluation nonce."
+            "No retrieval call matches the source job kind, task query, and media."
         )
     search_tool, media_id = matching_calls[-1]
     trace_started_at = _trace_started_at(context, spans)

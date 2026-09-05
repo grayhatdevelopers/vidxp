@@ -1,4 +1,14 @@
 import assert from 'node:assert/strict';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
@@ -9,6 +19,7 @@ import {
   serializeEnvironment,
   versionAtLeast,
 } from './setup-lib.mjs';
+import { resetEvaluationWorkspace } from './reset-workspace.mjs';
 
 test('checks the required Node version numerically', () => {
   assert.equal(versionAtLeast('22.21.9'), false);
@@ -74,8 +85,16 @@ test('builds and serializes the environment consumed by Promptfoo', () => {
   assert.match(serialized, /VIDXP_EVAL_VIDXP_OFF_WORKSPACE="C:\/eval\/workspace\/vidxp-off"/);
   assert.match(
     serialized,
-    /VIDXP_EVAL_MODEL_ONLY_WORKSPACE="C:\/eval\/workspace\/model-only"/,
+    /VIDXP_EVAL_CLEAN_USER_WORKSPACE="C:\/eval\/workspace\/clean-user"/,
   );
+  assert.match(serialized, /VIDXP_EVAL_VIDXP_ON_CODEX_HOME="C:\/eval\/codex-home\/vidxp-on"/);
+  assert.match(serialized, /VIDXP_EVAL_VIDXP_OFF_CODEX_HOME="C:\/eval\/codex-home\/vidxp-off"/);
+  assert.match(serialized, /VIDXP_EVAL_CLEAN_USER_CODEX_HOME="C:\/eval\/codex-home\/clean-user"/);
+  assert.match(
+    serialized,
+    /VIDXP_EVAL_CLEAN_USER_PATH="C:\/Windows\/System32;C:\/Windows"/,
+  );
+  assert.match(serialized, /VIDXP_EVAL_UV_CACHE_DIR="C:\/eval\/uv-cache"/);
   assert.match(serialized, /VIDXP_MCP_COMMAND="C:\/repo\/\.venv\/Scripts\/vidxp-mcp\.exe"/);
   assert.match(serialized, /PROMPTFOO_PYTHON="C:\/repo\/\.venv\/Scripts\/python\.exe"/);
   assert.match(serialized, /VIDXP_EVAL_MODEL="gpt-5\.6-sol"/);
@@ -95,4 +114,29 @@ test('always records the model cache used by the isolated runtime', () => {
   });
 
   assert.equal(environment.VIDXP_MODEL_CACHE, '/eval/vidxp-data/models');
+});
+
+test('resets clean-user state before every condition run', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vidxp-eval-reset-'));
+  const workspaceRoot = join(root, 'workspace');
+  const cleanWorkspace = join(workspaceRoot, 'clean-user');
+  mkdirSync(join(cleanWorkspace, 'media'), { recursive: true });
+  mkdirSync(join(cleanWorkspace, '.cache'), { recursive: true });
+  writeFileSync(join(cleanWorkspace, '.cache', 'installed-tool'), 'stale');
+
+  resetEvaluationWorkspace('clean-user', {
+    VIDXP_EVAL_WORKSPACE: workspaceRoot,
+    VIDXP_EVAL_CLEAN_USER_WORKSPACE: cleanWorkspace,
+    VIDXP_EVAL_CLEAN_USER_PATH: '/usr/bin:/bin',
+  });
+
+  assert.equal(existsSync(join(cleanWorkspace, '.cache')), false);
+  assert.equal(existsSync(join(cleanWorkspace, 'media')), true);
+  assert.equal(existsSync(join(cleanWorkspace, 'tmp')), true);
+  assert.equal(existsSync(join(cleanWorkspace, 'bin')), true);
+  assert.equal(
+    readFileSync(join(cleanWorkspace, '.zshenv'), 'utf8'),
+    'export PATH="/usr/bin:/bin"\n',
+  );
+  rmSync(root, { recursive: true, force: true });
 });

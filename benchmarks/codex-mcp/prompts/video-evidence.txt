@@ -1,6 +1,5 @@
 Locate one event in the supplied video and return one practical evidence clip.
 
-Dataset: {{ dataset }}
 Video ID: {{ video_id }}
 Media path: {{ media_relpath }}
 Video duration: {{ duration_seconds }} seconds
@@ -11,13 +10,7 @@ the event, but it does not need to trim the event's exact boundaries. For an
 event longer than the target, choose its most representative target-size part.
 Near the start or end of the video, shift the clip instead of shortening it.
 
-Evidence access: {{ evidence_access }}
-Do not use the network, read benchmark annotations, or invoke the VidXP CLI
-from the shell. When the condition provides an evidence path, base the result on
-inspected evidence rather than the filename or query alone. If you submit a
-VidXP retrieval job, use this exact idempotency key: {{ retrieval_nonce }}
-
-Preserve any VidXP source job and evidence IDs in the requested fields. In a
-condition without VidXP, set source_job_id and every evidence_id to null. If
-the evidence cannot be inspected, return null start and end values and explain
-the limitation. Return only the requested JSON object.
+Base the result on evidence you inspect rather than the filename or query alone.
+Preserve source and evidence IDs when an evidence source returns them; otherwise
+set those fields to null. If the evidence cannot be inspected, return null start
+and end values and explain the limitation. Return only the requested JSON object.

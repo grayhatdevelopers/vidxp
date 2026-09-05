@@ -2,7 +2,7 @@
   "name": "vidxp-codex-mcp-eval",
   "private": true,
   "version": "0.0.0",
-  "description": "VidXP, local-tool, and model-only Codex evaluation",
+  "description": "VidXP, direct-local, and clean-user Codex evaluation",
   "engines": {
     "node": ">=22.22.0"
   },
@@ -14,6 +14,7 @@
     "preflight": "node --env-file=.env scripts/preflight.mjs",
     "eval:smoke": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs smoke",
     "eval:pilot": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs pilot",
+    "export": "node --env-file=.env --no-warnings scripts/export-eval.mjs",
     "report": "node --env-file-if-exists=.env --no-warnings scripts/report.mjs",
     "view": "npm run promptfoo -- view"
   },

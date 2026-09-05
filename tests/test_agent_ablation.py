@@ -139,7 +139,6 @@ def _ablation_fixture() -> tuple[str, dict, dict]:
             "media_relpath": "media/video-1.mp4",
             "query": "the event",
             "modalities": '["sound"]',
-            "retrieval_nonce": "fresh-search-0001",
             "allow_media_shell": False,
         },
         "trace": {
@@ -290,8 +289,8 @@ def test_ablation_boundary_rejects_job_from_an_earlier_trace() -> None:
 def test_ablation_boundary_accepts_isolated_baseline() -> None:
     output = json.dumps(
         {
-            "source_job_id": None,
-            "evidence": [{"evidence_id": None}],
+            "source_job_id": "baseline-source",
+            "evidence": [{"evidence_id": "baseline-evidence"}],
         }
     )
     trace = {"spans": [{"name": "agent response", "attributes": {}}]}
@@ -302,32 +301,6 @@ def test_ablation_boundary_accepts_isolated_baseline() -> None:
     )
 
     assert result["pass"] is True
-
-
-def test_ablation_boundary_rejects_tools_in_model_only_condition() -> None:
-    output = json.dumps({"source_job_id": None, "evidence": []})
-    trace = {
-        "spans": [
-            {
-                "name": "command",
-                "attributes": {
-                    "codex.item.type": "command_execution",
-                    "codex.command": "ffprobe media/video-1.mp4",
-                },
-            }
-        ]
-    }
-
-    result = score_ablation_boundary(
-        output,
-        {
-            "vars": {"expected_vidxp": False, "allow_agent_tools": False},
-            "trace": trace,
-        },
-    )
-
-    assert result["pass"] is False
-    assert "model-only" in result["reason"]
 
 
 def test_ablation_boundary_rejects_direct_vidxp_cli_bypass() -> None:
@@ -346,6 +319,31 @@ def test_ablation_boundary_rejects_direct_vidxp_cli_bypass() -> None:
 
     assert result["pass"] is False
     assert "bypassed" in result["reason"]
+
+
+def test_clean_user_rejects_host_developer_tool_paths() -> None:
+    output = json.dumps({"source_job_id": None, "evidence": []})
+    trace = {
+        "spans": [
+            {
+                "name": "command",
+                "attributes": {
+                    "codex.command": "/opt/homebrew/bin/ffmpeg -i media/video.mp4"
+                },
+            }
+        ]
+    }
+
+    result = score_ablation_boundary(
+        output,
+        {
+            "vars": {"expected_vidxp": False, "forbid_host_tools": True},
+            "trace": trace,
+        },
+    )
+
+    assert result["pass"] is False
+    assert "host developer-tool path" in result["reason"]
 
 
 def test_generator_pairs_each_manifest_task_across_conditions(
@@ -378,26 +376,26 @@ def test_generator_pairs_each_manifest_task_across_conditions(
             "providers": {
                 "vidxp_on": "on",
                 "vidxp_off": "off",
-                "model_only": "model",
+                "clean_user": "clean",
             },
         }
     )
 
-    assert [test["providers"] for test in tests] == [["on"], ["off"], ["model"]]
+    assert [test["providers"] for test in tests] == [["on"], ["off"], ["clean"]]
     assert [test["vars"]["expected_vidxp"] for test in tests] == [
         True,
         False,
         False,
     ]
-    assert [test["vars"]["allow_agent_tools"] for test in tests] == [
-        True,
-        True,
-        False,
-    ]
     assert [test["vars"]["allow_media_shell"] for test in tests] == [
         False,
         True,
+        True,
+    ]
+    assert [test["vars"]["forbid_host_tools"] for test in tests] == [
         False,
+        False,
+        True,
     ]
     assert [test["vars"]["target_chunk_seconds"] for test in tests] == [10] * 3
     assert [test["vars"]["min_chunk_seconds"] for test in tests] == [8] * 3
@@ -427,7 +425,7 @@ def test_committed_manifest_expands_to_ten_matched_condition_sets(
             "providers": {
                 "vidxp_on": "on",
                 "vidxp_off": "off",
-                "model_only": "model",
+                "clean_user": "clean",
             },
         }
     )
@@ -436,9 +434,16 @@ def test_committed_manifest_expands_to_ten_matched_condition_sets(
     assert {test["metadata"]["condition"] for test in tests} == {
         "vidxp-on",
         "vidxp-off",
-        "model-only",
+        "clean-user",
     }
     assert len({test["metadata"]["task_id"] for test in tests}) == 10
+
+    prompt = (benchmark / "prompts" / "video-evidence.txt").read_text(
+        encoding="utf-8"
+    ).casefold()
+    assert "vidxp" not in prompt
+    assert "ffmpeg" not in prompt
+    assert "condition" not in prompt
 
 
 def test_pilot_uses_three_fresh_counterbalanced_repetitions(
@@ -447,7 +452,6 @@ def test_pilot_uses_three_fresh_counterbalanced_repetitions(
     benchmark = Path(__file__).parents[1] / "benchmarks" / "codex-mcp"
     monkeypatch.chdir(benchmark)
     monkeypatch.setenv("VIDXP_EVAL_MODE", "pilot")
-    monkeypatch.setenv("VIDXP_EVAL_RUN_ID", "run-1")
 
     tests = generate_tests(
         {
@@ -455,13 +459,14 @@ def test_pilot_uses_three_fresh_counterbalanced_repetitions(
             "providers": {
                 "vidxp_on": "on",
                 "vidxp_off": "off",
-                "model_only": "model",
+                "clean_user": "clean",
             },
         }
     )
 
     assert len(tests) == 81
-    assert len({test["vars"]["retrieval_nonce"] for test in tests}) == 81
+    assert all("retrieval_nonce" not in test["vars"] for test in tests)
+    assert all("evidence_access" not in test["vars"] for test in tests)
     first_task_id = tests[0]["metadata"]["task_id"]
     first_task = [
         test for test in tests if test["metadata"]["task_id"] == first_task_id
@@ -469,11 +474,25 @@ def test_pilot_uses_three_fresh_counterbalanced_repetitions(
     assert [test["metadata"]["condition"] for test in first_task] == [
         "vidxp-on",
         "vidxp-off",
-        "model-only",
+        "clean-user",
         "vidxp-off",
-        "model-only",
+        "clean-user",
         "vidxp-on",
-        "model-only",
+        "clean-user",
         "vidxp-on",
         "vidxp-off",
     ]
+
+
+def test_pilot_accepts_one_explicit_repetition_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = Path(__file__).parents[1] / "benchmarks" / "codex-mcp"
+    monkeypatch.chdir(benchmark)
+    monkeypatch.setenv("VIDXP_EVAL_MODE", "pilot")
+    monkeypatch.setenv("VIDXP_EVAL_REPETITIONS", "5")
+
+    tests = generate_tests({"manifest": "tasks/longvale-part9-pilot.json"})
+
+    assert len(tests) == 135
+    assert {test["metadata"]["repetition"] for test in tests} == {1, 2, 3, 4, 5}

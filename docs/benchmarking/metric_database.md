@@ -58,19 +58,39 @@ not product-gate results.
 
 These paired runs use one [LongVALE](https://openaccess.thecvf.com/content/CVPR2025/papers/Geng_LongVALE_Vision-Audio-Language-Event_Benchmark_Towards_Time-Aware_Omni-Modal_Perception_of_Long_Videos_CVPR_2025_paper.pdf)-derived
 development task with reference interval `0–6` seconds. They compare the same
-Codex model with VidXP MCP evidence and with direct media inspection. They prove
-the harness and expose product behavior; one task is not a LongVALE score or a
-held-out quality estimate.
+Codex model with VidXP MCP evidence, direct local inspection, and a clean-user
+bootstrap condition. They prove the harness and expose product behavior; one
+task is not a LongVALE score or a held-out quality estimate.
+
+| Evaluation | Machine | VidXP | Direct local | Clean user | Valid conclusion |
+| --- | --- | --- | --- | --- | --- |
+| [`eval-0eL-2026-09-05T22:40:10`](runs/eval-0eL-2026-09-05T22-40-10.json) | `mac-m2-01` | `0–12` s; hit `1`; coverage `1`; IoU `.500`; 72.888 s; 221,139 tokens; 9 turns; 6 Promptfoo-recorded tools; $0.317147 | `0–10` s; hit `1`; coverage `1`; IoU `.600`; 93.591 s; 373,984 tokens; 16 turns; 7 recorded tools; $0.755479 | `0–10` s; hit `1`; coverage `1`; IoU `.600`; 245.755 s; 860,165 tokens; 30 turns; 26 recorded tools; $1.572180 | Corrected three-condition development smoke. VidXP matched the primary result with 40.9% fewer tokens and 22.1% lower latency than direct local inspection. Product gate not scored. |
+
+The VidXP job ranked `0–10` seconds first with action, scene, and sound support.
+The agent expanded its answer to `0–12`, which accounts for the lower answer
+IoU. Promptfoo supplies time, tokens, cost, recorded items, and tool types. The
+report reads Codex rollout token events only for the internal model-turn count.
+
+### Historical agent runs
+
+All rows below predate the 2026-09-06 neutral-prompt and state-isolation fix.
+The prompt named VidXP or its absence, and conditions reused one Codex home, so
+their quality and efficiency deltas are retained only as debugging history.
+They cannot support an ablation claim.
 
 | Evaluation | Machine | VidXP-on | VidXP-off | Efficiency comparison | Valid conclusion |
 | --- | --- | --- | --- | --- | --- |
-| `eval-2uz-2026-09-05T17:39:13` | `mac-m2-01` | `0–10` s; bounded hit `1`; coverage `1`; IoU `.6000`; 78.660 s; 200,142 total tokens; 52,458 uncached input; 1,636 output; 5 MCP calls; $0.384394 estimate | `0–10` s; bounded hit `1`; coverage `1`; IoU `.6000`; 90.582 s; 277,660 total tokens; 27,837 uncached input; 2,527 output; 7 shell calls, 6 through FFmpeg/ffprobe; $0.639381 estimate | VidXP used 77,518 fewer tokens, 11.922 fewer seconds, and a $0.254987 lower provider estimate; uncached input was 24,621 higher | Both found the same useful fixed window. Current bounded-clip harness smoke with durable VidXP evidence; no product gate or held-out claim. It predates the third model-only condition. |
-| `eval-J6s-2026-09-01T19:30:07` | `mac-m2-01` | `0–8.0075` s; IoU `0.7493`; 74.552 s; 301,712 total tokens; 48,423 uncached input; 1,769 output; 6 MCP calls; $0.815355 provider estimate | `0–6.8` s; IoU `0.8824`; 112.209 s; 329,961 total tokens; 35,906 uncached input; 3,623 output; 10 media shell calls; $0.812527 estimate | VidXP used 28,249 fewer tokens and 37.657 fewer seconds, but more uncached input made its estimate $0.002828 higher. | Both found the event. VidXP's connected union adopted the eight-second action endpoint. This is the valid development harness smoke. |
-| `eval-mw5-2026-09-02T19:40:44` | `mac-m2-01` | `0–10` s; IoU `0.6000`; 79.647 s; 261,995 total tokens; 48,523 uncached input; 1,760 output; 7 tools, including 6 MCP calls; $0.401271 estimate | `0–6.81` s; IoU `0.8811`; 89.757 s; 313,617 total tokens; 56,950 uncached input; 3,227 output; 9 media shell calls; $0.968155 estimate | VidXP used 51,622 fewer tokens, 10.110 fewer seconds, two fewer tools, and a $0.566884 lower estimate. | Superseded global-only FineLAP diagnostic. The ten-second result rejects a global sound window as the final boundary; it does not measure current two-stage sound search. |
+| [`eval-2uz-2026-09-05T17:39:13`](runs/eval-2uz-2026-09-05T17-39-13.json) | `mac-m2-01` | `0–10` s; bounded hit `1`; coverage `1`; IoU `.6000`; 78.660 s; 200,142 total tokens; 52,458 uncached input; 1,636 output; 5 MCP calls; $0.384394 estimate | `0–10` s; bounded hit `1`; coverage `1`; IoU `.6000`; 90.582 s; 277,660 total tokens; 27,837 uncached input; 2,527 output; 7 shell calls, 6 through FFmpeg/ffprobe; $0.639381 estimate | VidXP used 77,518 fewer tokens, 11.922 fewer seconds, and a $0.254987 lower provider estimate; uncached input was 24,621 higher | Both found the same useful fixed window. Historical bounded-clip diagnostic only; the baseline prompt was contaminated. |
+| [`eval-J6s-2026-09-01T19:30:07`](runs/eval-J6s-2026-09-01T19-30-07.json) | `mac-m2-01` | `0–8.0075` s; IoU `0.7493`; 74.552 s; 301,712 total tokens; 48,423 uncached input; 1,769 output; 6 MCP calls; $0.815355 provider estimate | `0–6.8` s; IoU `0.8824`; 112.209 s; 329,961 total tokens; 35,906 uncached input; 3,623 output; 10 media shell calls; $0.812527 estimate | VidXP used 28,249 fewer tokens and 37.657 fewer seconds, but more uncached input made its estimate $0.002828 higher. | Both found the event. Historical boundary diagnostic only; the baseline prompt was contaminated. |
+| [`eval-mw5-2026-09-02T19:40:44`](runs/eval-mw5-2026-09-02T19-40-44.json) | `mac-m2-01` | `0–10` s; IoU `0.6000`; 79.647 s; 261,995 total tokens; 48,523 uncached input; 1,760 output; 7 tools, including 6 MCP calls; $0.401271 estimate | `0–6.81` s; IoU `0.8811`; 89.757 s; 313,617 total tokens; 56,950 uncached input; 3,227 output; 9 media shell calls; $0.968155 estimate | VidXP used 51,622 fewer tokens, 10.110 fewer seconds, two fewer tools, and a $0.566884 lower estimate. | Superseded global-only FineLAP diagnostic. The ten-second result rejects a global sound window as the final boundary; it does not measure current two-stage sound search. |
+| [`eval-jJD-2026-09-01T17:51:57`](runs/eval-jJD-2026-09-01T17-51-57.json) | `mac-m2-01` | `64.031–75.809` s; IoU `0`; 89.030 s; 229,415 total tokens; $0.353389 estimate | `0–6.8` s; IoU `.8824`; 72.650 s; 207,110 total tokens; $0.307287 estimate | VidXP used 22,305 more tokens and 16.380 more seconds | Failed historical ranking diagnostic. It exposed the sound tokenization/integration defect later fixed in `343bd27`; it is not current product evidence. |
+| [`eval-YDK-2026-09-05T20:29:45`](runs/eval-YDK-2026-09-05T20-29-45.json) | `mac-m2-01` | `0–10` s; hit `1`; IoU `.600`; 78.249 s; 273,865 total tokens; $0.751985 estimate | `0–10` s; hit `1`; IoU `.600`; 120.378 s; 244,632 total tokens; $0.398351 estimate | VidXP used 29,233 more tokens and 42.129 fewer seconds | Harness-design diagnostic only. Its tool-free third lane could not inspect media, so that lane was rejected and replaced by the clean-user bootstrap condition. |
 
-Cost is the provider-reported estimate. Cached and uncached input can have
-different rates, so total tokens alone do not determine it. Reasoning tokens are
-already included in output tokens.
+Historical dollar values are Promptfoo's supplied provider estimates. The
+report preserves them unchanged. Use them only to compare conditions using the
+same pinned Promptfoo version and model configuration; they are not measured
+subscription charges or invoices. Reasoning tokens are already included in
+output tokens.
 
 ## Component and ranking measurements
 
@@ -128,12 +148,15 @@ inputs and code needed to understand or reproduce them:
   and [reporter](../../benchmarks/codex-mcp/scripts/report.mjs);
 - the action, proposal, query, sound, candidate-depth, and Point-to-Span controls under
   `benchmarks/codex-mcp/scripts/`;
+- the selected, sanitized, importable [Promptfoo run exports](runs/), including
+  the corrected smoke and historical diagnostics that changed direction;
 - [current result interpretation](results.md), [paper validation](paper_validation.md),
   and [published comparison results](published_results.md).
 
-Generated databases, predictions, media, indexes, and model weights are not
-committed. A raw artifact export can be specified separately; machine-specific
-paths are not part of this public evidence record.
+Generated databases, media, indexes, model weights, raw Codex response bodies,
+session IDs, secrets, and personal paths are not committed. The retained
+Promptfoo exports preserve the remaining configuration, responses, scores,
+usage, traces, and tool items needed to audit selected agent runs.
 
 ## Measurements still required
 

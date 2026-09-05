@@ -1,0 +1,1802 @@
+{
+  "evalId": "eval-2uz-2026-09-05T17:39:13",
+  "results": {
+    "version": 3,
+    "timestamp": "2026-09-05T17:39:13.436Z",
+    "prompts": [
+      {
+        "raw": "Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: {{ dataset }}\nVideo ID: {{ video_id }}\nMedia path: {{ media_relpath }}\nVideo duration: {{ duration_seconds }} seconds\nEvent to locate: {{ query }}\nEvidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between\n{{ min_chunk_seconds }} and {{ max_chunk_seconds }} seconds. The clip must contain\nthe event, but it does not need to trim the event's exact boundaries. For an\nevent longer than the target, choose its most representative target-size part.\nNear the start or end of the video, shift the clip instead of shortening it.\n\nUse VidXP when it is available in this condition; otherwise use the local media\nand available read-only tools. Do not use the network, read benchmark\nannotations, or invoke the VidXP CLI from the shell. Base the result on\ninspected evidence rather than the filename or query alone. Do not inspect the\nmedia with shell tools after using VidXP.\n\nPreserve any VidXP source job and evidence IDs in the requested fields. In a\ncondition without VidXP, set source_job_id and every evidence_id to null. If\nthe evidence cannot be inspected, return null start and end values and explain\nthe limitation. Return only the requested JSON object.",
+        "label": "Fixed video evidence task: prompts/video-evidence.txt: Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: {{ dataset }}\nVideo ID: {{ video_id }}\nMedia path: {{ media_relpath }}\nVideo duration: {{ duration_seconds }} seconds\nEvent to locate: {{ query }}\nEvidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between\n{{ min_chunk_seconds }} and {{ max_chunk_seconds }} seconds. The clip must contain\nthe event, but it does not need to trim the event's exact boundaries. For an\nevent longer than the target, choose its most representative target-size part.\nNear the start or end of the video, shift the clip instead of shortening it.\n\nUse VidXP when it is available in this condition; otherwise use the local media\nand available read-only tools. Do not use the network, read benchmark\nannotations, or invoke the VidXP CLI from the shell. Base the result on\ninspected evidence rather than the filename or query alone. Do not inspect the\nmedia with shell tools after using VidXP.\n\nPreserve any VidXP source job and evidence IDs in the requested fields. In a\ncondition without VidXP, set source_job_id and every evidence_id to null. If\nthe evidence cannot be inspected, return null start and end values and explain\nthe limitation. Return only the requested JSON object.",
+        "id": "0cde417e8514ba3c2e189ed30d474dc7238ef9b4e4654ed296979ab9ec11a1f5",
+        "provider": "codex-vidxp",
+        "metrics": {
+          "score": 1,
+          "testPassCount": 1,
+          "testFailCount": 0,
+          "testErrorCount": 0,
+          "assertPassCount": 3,
+          "assertFailCount": 0,
+          "totalLatencyMs": 78660,
+          "tokenUsage": {
+            "prompt": 198506,
+            "completion": 1636,
+            "cached": 146048,
+            "total": 200142,
+            "numRequests": 1,
+            "completionDetails": {
+              "reasoning": 490,
+              "acceptedPrediction": 0,
+              "rejectedPrediction": 0,
+              "cacheReadInputTokens": 0,
+              "cacheCreationInputTokens": 0
+            },
+            "assertions": {
+              "total": 0,
+              "prompt": 0,
+              "completion": 0,
+              "cached": 0,
+              "numRequests": 0,
+              "completionDetails": {
+                "reasoning": 0,
+                "acceptedPrediction": 0,
+                "rejectedPrediction": 0,
+                "cacheReadInputTokens": 0,
+                "cacheCreationInputTokens": 0
+              }
+            }
+          },
+          "namedScores": {
+            "temporal_grounding": 1,
+            "valid_interval": 1,
+            "bounded_chunk_hit": 1,
+            "event_coverage": 1,
+            "chunk_duration_in_range": 1,
+            "temporal_iou": 0.6,
+            "r1_tiou_0_3": 1,
+            "r1_tiou_0_5": 1,
+            "r1_tiou_0_7": 0,
+            "ablation_boundary": 1
+          },
+          "namedScoresCount": {
+            "temporal_grounding": 1,
+            "valid_interval": 1,
+            "bounded_chunk_hit": 1,
+            "event_coverage": 1,
+            "chunk_duration_in_range": 1,
+            "temporal_iou": 1,
+            "r1_tiou_0_3": 1,
+            "r1_tiou_0_5": 1,
+            "r1_tiou_0_7": 1,
+            "ablation_boundary": 1
+          },
+          "namedScoreWeights": {
+            "temporal_grounding": 1,
+            "valid_interval": 1,
+            "bounded_chunk_hit": 1,
+            "event_coverage": 1,
+            "chunk_duration_in_range": 1,
+            "temporal_iou": 1,
+            "r1_tiou_0_3": 1,
+            "r1_tiou_0_5": 1,
+            "r1_tiou_0_7": 1,
+            "ablation_boundary": 1
+          },
+          "cost": 0.384394
+        }
+      },
+      {
+        "raw": "Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: {{ dataset }}\nVideo ID: {{ video_id }}\nMedia path: {{ media_relpath }}\nVideo duration: {{ duration_seconds }} seconds\nEvent to locate: {{ query }}\nEvidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between\n{{ min_chunk_seconds }} and {{ max_chunk_seconds }} seconds. The clip must contain\nthe event, but it does not need to trim the event's exact boundaries. For an\nevent longer than the target, choose its most representative target-size part.\nNear the start or end of the video, shift the clip instead of shortening it.\n\nUse VidXP when it is available in this condition; otherwise use the local media\nand available read-only tools. Do not use the network, read benchmark\nannotations, or invoke the VidXP CLI from the shell. Base the result on\ninspected evidence rather than the filename or query alone. Do not inspect the\nmedia with shell tools after using VidXP.\n\nPreserve any VidXP source job and evidence IDs in the requested fields. In a\ncondition without VidXP, set source_job_id and every evidence_id to null. If\nthe evidence cannot be inspected, return null start and end values and explain\nthe limitation. Return only the requested JSON object.",
+        "label": "Fixed video evidence task: prompts/video-evidence.txt: Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: {{ dataset }}\nVideo ID: {{ video_id }}\nMedia path: {{ media_relpath }}\nVideo duration: {{ duration_seconds }} seconds\nEvent to locate: {{ query }}\nEvidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between\n{{ min_chunk_seconds }} and {{ max_chunk_seconds }} seconds. The clip must contain\nthe event, but it does not need to trim the event's exact boundaries. For an\nevent longer than the target, choose its most representative target-size part.\nNear the start or end of the video, shift the clip instead of shortening it.\n\nUse VidXP when it is available in this condition; otherwise use the local media\nand available read-only tools. Do not use the network, read benchmark\nannotations, or invoke the VidXP CLI from the shell. Base the result on\ninspected evidence rather than the filename or query alone. Do not inspect the\nmedia with shell tools after using VidXP.\n\nPreserve any VidXP source job and evidence IDs in the requested fields. In a\ncondition without VidXP, set source_job_id and every evidence_id to null. If\nthe evidence cannot be inspected, return null start and end values and explain\nthe limitation. Return only the requested JSON object.",
+        "id": "0cde417e8514ba3c2e189ed30d474dc7238ef9b4e4654ed296979ab9ec11a1f5",
+        "provider": "codex-baseline",
+        "metrics": {
+          "score": 1,
+          "testPassCount": 1,
+          "testFailCount": 0,
+          "testErrorCount": 0,
+          "assertPassCount": 3,
+          "assertFailCount": 0,
+          "totalLatencyMs": 90582,
+          "tokenUsage": {
+            "prompt": 275133,
+            "completion": 2527,
+            "cached": 247296,
+            "total": 277660,
+            "numRequests": 1,
+            "completionDetails": {
+              "reasoning": 1100,
+              "acceptedPrediction": 0,
+              "rejectedPrediction": 0,
+              "cacheReadInputTokens": 0,
+              "cacheCreationInputTokens": 0
+            },
+            "assertions": {
+              "total": 0,
+              "prompt": 0,
+              "completion": 0,
+              "cached": 0,
+              "numRequests": 0,
+              "completionDetails": {
+                "reasoning": 0,
+                "acceptedPrediction": 0,
+                "rejectedPrediction": 0,
+                "cacheReadInputTokens": 0,
+                "cacheCreationInputTokens": 0
+              }
+            }
+          },
+          "namedScores": {
+            "temporal_grounding": 1,
+            "valid_interval": 1,
+            "bounded_chunk_hit": 1,
+            "event_coverage": 1,
+            "chunk_duration_in_range": 1,
+            "temporal_iou": 0.6,
+            "r1_tiou_0_3": 1,
+            "r1_tiou_0_5": 1,
+            "r1_tiou_0_7": 0,
+            "ablation_boundary": 1
+          },
+          "namedScoresCount": {
+            "temporal_grounding": 1,
+            "valid_interval": 1,
+            "bounded_chunk_hit": 1,
+            "event_coverage": 1,
+            "chunk_duration_in_range": 1,
+            "temporal_iou": 1,
+            "r1_tiou_0_3": 1,
+            "r1_tiou_0_5": 1,
+            "r1_tiou_0_7": 1,
+            "ablation_boundary": 1
+          },
+          "namedScoreWeights": {
+            "temporal_grounding": 1,
+            "valid_interval": 1,
+            "bounded_chunk_hit": 1,
+            "event_coverage": 1,
+            "chunk_duration_in_range": 1,
+            "temporal_iou": 1,
+            "r1_tiou_0_3": 1,
+            "r1_tiou_0_5": 1,
+            "r1_tiou_0_7": 1,
+            "ablation_boundary": 1
+          },
+          "cost": 0.639381
+        }
+      }
+    ],
+    "results": [
+      {
+        "cost": 0.384394,
+        "gradingResult": {
+          "pass": true,
+          "score": 1,
+          "reason": "All assertions passed",
+          "namedScores": {
+            "temporal_grounding": 1,
+            "valid_interval": 1,
+            "bounded_chunk_hit": 1,
+            "event_coverage": 1,
+            "chunk_duration_in_range": 1,
+            "temporal_iou": 0.6,
+            "r1_tiou_0_3": 1,
+            "r1_tiou_0_5": 1,
+            "r1_tiou_0_7": 0,
+            "ablation_boundary": 1
+          },
+          "namedScoreWeights": {
+            "temporal_grounding": 1,
+            "valid_interval": 1,
+            "bounded_chunk_hit": 1,
+            "event_coverage": 1,
+            "chunk_duration_in_range": 1,
+            "temporal_iou": 1,
+            "r1_tiou_0_3": 1,
+            "r1_tiou_0_5": 1,
+            "r1_tiou_0_7": 1,
+            "ablation_boundary": 1
+          },
+          "tokensUsed": {
+            "total": 0,
+            "prompt": 0,
+            "completion": 0,
+            "cached": 0,
+            "numRequests": 0
+          },
+          "componentResults": [
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "Assertion passed",
+              "assertion": {
+                "type": "is-json"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "Bounded chunk hit: 10.000s duration, 1.0000 event coverage; temporal IoU 0.6000.",
+              "namedScores": {
+                "valid_interval": 1,
+                "bounded_chunk_hit": 1,
+                "event_coverage": 1,
+                "chunk_duration_in_range": 1,
+                "temporal_iou": 0.6,
+                "r1_tiou_0_3": 1,
+                "r1_tiou_0_5": 1,
+                "r1_tiou_0_7": 0
+              },
+              "assertion": {
+                "type": "python",
+                "value": "file://../../src/vidxp/benchmarks/agent_ablation_score.py:score_temporal_grounding",
+                "metric": "temporal_grounding"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "VidXP-on returned evidence from a fresh, successful, matching MCP job.",
+              "namedScores": {
+                "ablation_boundary": 1
+              },
+              "assertion": {
+                "type": "python",
+                "value": "file://../../src/vidxp/benchmarks/agent_ablation_score.py:score_ablation_boundary",
+                "metric": "ablation_boundary"
+              }
+            }
+          ]
+        },
+        "id": "38811533-6eb0-4fc3-9b5a-cd5b94a4324b",
+        "latencyMs": 78660,
+        "namedScores": {
+          "temporal_grounding": 1,
+          "valid_interval": 1,
+          "bounded_chunk_hit": 1,
+          "event_coverage": 1,
+          "chunk_duration_in_range": 1,
+          "temporal_iou": 0.6,
+          "r1_tiou_0_3": 1,
+          "r1_tiou_0_5": 1,
+          "r1_tiou_0_7": 0,
+          "ablation_boundary": 1
+        },
+        "prompt": {
+          "raw": "Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: LongVALE evaluation\nVideo ID: ZYTmgi1pAIE\nMedia path: media/ZYTmgi1pAIE.mp4\nVideo duration: 75.809067 seconds\nEvent to locate: heavy rain and howling wind over a desolate landscape, followed by an engine starting and revving\nEvidence clip: aim for 10 seconds and keep it between\n8 and 12 seconds. The clip must contain\nthe event, but it does not need to trim the event's exact boundaries. For an\nevent longer than the target, choose its most representative target-size part.\nNear the start or end of the video, shift the clip instead of shortening it.\n\nUse VidXP when it is available in this condition; otherwise use the local media\nand available read-only tools. Do not use the network, read benchmark\nannotations, or invoke the VidXP CLI from the shell. Base the result on\ninspected evidence rather than the filename or query alone. Do not inspect the\nmedia with shell tools after using VidXP.\n\nPreserve any VidXP source job and evidence IDs in the requested fields. In a\ncondition without VidXP, set source_job_id and every evidence_id to null. If\nthe evidence cannot be inspected, return null start and end values and explain\nthe limitation. Return only the requested JSON object.",
+          "label": "Fixed video evidence task: prompts/video-evidence.txt: Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: {{ dataset }}\nVideo ID: {{ video_id }}\nMedia path: {{ media_relpath }}\nVideo duration: {{ duration_seconds }} seconds\nEvent to locate: {{ query }}\nEvidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between\n{{ min_chunk_seconds }} and {{ max_chunk_seconds }} seconds. The clip must contain\nthe event, but it does not need to trim the event's exact boundaries. For an\nevent longer than the target, choose its most representative target-size part.\nNear the start or end of the video, shift the clip instead of shortening it.\n\nUse VidXP when it is available in this condition; otherwise use the local media\nand available read-only tools. Do not use the network, read benchmark\nannotations, or invoke the VidXP CLI from the shell. Base the result on\ninspected evidence rather than the filename or query alone. Do not inspect the\nmedia with shell tools after using VidXP.\n\nPreserve any VidXP source job and evidence IDs in the requested fields. In a\ncondition without VidXP, set source_job_id and every evidence_id to null. If\nthe evidence cannot be inspected, return null start and end values and explain\nthe limitation. Return only the requested JSON object.",
+          "config": {}
+        },
+        "promptId": "0cde417e8514ba3c2e189ed30d474dc7238ef9b4e4654ed296979ab9ec11a1f5",
+        "promptIdx": 0,
+        "traceId": "2ba59a24e277f787d7a3aa3c45baece0",
+        "evaluationId": "eval-2uz-2026-09-05T17:39:13",
+        "provider": {
+          "id": "openai:codex-sdk",
+          "label": "codex-vidxp"
+        },
+        "response": {
+          "output": "{\"video_id\":\"ZYTmgi1pAIE\",\"answer\":\"Use 0.000–10.000 seconds: the clip captures the storm-lashed desolate landscape and the transition into the engine starting and revving.\",\"start_seconds\":0,\"end_seconds\":10,\"modalities\":[\"scene\",\"action\",\"sound\"],\"source_job_id\":\"b1313834e71b43dbadbc2cf8af38a7e7\",\"evidence\":[{\"evidence_id\":\"b5100a0dc6d70d6e047b3ce96bcf719eeb6f27ae00b25d05ba186b11feff1807\",\"start_seconds\":0,\"end_seconds\":10,\"modality\":\"sound\",\"description\":\"Top-ranked multimodal VidXP evidence: heavy rain and howling wind over a barren landscape, followed by an engine starting and revving.\"}]}",
+          "tokenUsage": {
+            "prompt": 198506,
+            "completion": 1636,
+            "cached": 146048,
+            "total": 200142,
+            "numRequests": 1,
+            "completionDetails": {
+              "reasoning": 490,
+              "acceptedPrediction": 0,
+              "rejectedPrediction": 0,
+              "cacheReadInputTokens": 0,
+              "cacheCreationInputTokens": 0
+            },
+            "assertions": {
+              "total": 0,
+              "prompt": 0,
+              "completion": 0,
+              "cached": 0,
+              "numRequests": 0,
+              "completionDetails": {
+                "reasoning": 0,
+                "acceptedPrediction": 0,
+                "rejectedPrediction": 0,
+                "cacheReadInputTokens": 0,
+                "cacheCreationInputTokens": 0
+              }
+            }
+          },
+          "cost": 0.384394,
+          "metadata": {
+            "skillCalls": [
+              {
+                "name": "vidxp-find-video-evidence",
+                "path": "<HOME>/.local/share/vidxp/benchmarks/codex-mcp/workspace/vidxp-on/.agents/skills/vidxp-find-video-evidence/SKILL.md",
+                "source": "heuristic"
+              }
+            ]
+          }
+        },
+        "score": 1,
+        "success": true,
+        "testCase": {
+          "description": "longvale-part9-ZYT-rain-wind-engine [vidxp-on]",
+          "providers": [
+            "codex-vidxp"
+          ],
+          "vars": {
+            "id": "longvale-part9-ZYT-rain-wind-engine",
+            "dataset": "LongVALE evaluation",
+            "video_id": "ZYTmgi1pAIE",
+            "media_relpath": "media/ZYTmgi1pAIE.mp4",
+            "duration_seconds": 75.809067,
+            "event_index": 0,
+            "query": "heavy rain and howling wind over a desolate landscape, followed by an engine starting and revving",
+            "expected_start": 0,
+            "expected_end": 6,
+            "modalities": "[\"scene\",\"sound\",\"action\"]",
+            "condition": "vidxp-on",
+            "expected_vidxp": true,
+            "target_chunk_seconds": 10,
+            "min_chunk_seconds": 8,
+            "max_chunk_seconds": 12,
+            "min_event_coverage": 0.5
+          },
+          "metadata": {
+            "dataset": "LongVALE evaluation",
+            "task_id": "longvale-part9-ZYT-rain-wind-engine",
+            "condition": "vidxp-on",
+            "modalities": [
+              "scene",
+              "sound",
+              "action"
+            ],
+            "tracingEnabled": true,
+            "evaluationId": "eval-2uz-2026-09-05T17:39:13"
+          },
+          "assert": [
+            {
+              "type": "is-json"
+            },
+            {
+              "type": "python",
+              "value": "file://../../src/vidxp/benchmarks/agent_ablation_score.py:score_temporal_grounding",
+              "metric": "temporal_grounding"
+            },
+            {
+              "type": "python",
+              "value": "file://../../src/vidxp/benchmarks/agent_ablation_score.py:score_ablation_boundary",
+              "metric": "ablation_boundary"
+            }
+          ],
+          "options": {}
+        },
+        "testIdx": 0,
+        "tokenUsage": {
+          "prompt": 198506,
+          "completion": 1636,
+          "cached": 146048,
+          "total": 200142,
+          "numRequests": 1,
+          "completionDetails": {
+            "reasoning": 490,
+            "acceptedPrediction": 0,
+            "rejectedPrediction": 0,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0
+          },
+          "assertions": {
+            "total": 0,
+            "prompt": 0,
+            "completion": 0,
+            "cached": 0,
+            "numRequests": 0,
+            "completionDetails": {
+              "reasoning": 0,
+              "acceptedPrediction": 0,
+              "rejectedPrediction": 0,
+              "cacheReadInputTokens": 0,
+              "cacheCreationInputTokens": 0
+            }
+          }
+        },
+        "vars": {
+          "id": "longvale-part9-ZYT-rain-wind-engine",
+          "dataset": "LongVALE evaluation",
+          "video_id": "ZYTmgi1pAIE",
+          "media_relpath": "media/ZYTmgi1pAIE.mp4",
+          "duration_seconds": 75.809067,
+          "event_index": 0,
+          "query": "heavy rain and howling wind over a desolate landscape, followed by an engine starting and revving",
+          "expected_start": 0,
+          "expected_end": 6,
+          "modalities": "[\"scene\",\"sound\",\"action\"]",
+          "condition": "vidxp-on",
+          "expected_vidxp": true,
+          "target_chunk_seconds": 10,
+          "min_chunk_seconds": 8,
+          "max_chunk_seconds": 12,
+          "min_event_coverage": 0.5
+        },
+        "metadata": {
+          "dataset": "LongVALE evaluation",
+          "task_id": "longvale-part9-ZYT-rain-wind-engine",
+          "condition": "vidxp-on",
+          "modalities": [
+            "scene",
+            "sound",
+            "action"
+          ],
+          "tracingEnabled": true,
+          "evaluationId": "eval-2uz-2026-09-05T17:39:13",
+          "skillCalls": [
+            {
+              "name": "vidxp-find-video-evidence",
+              "path": "<HOME>/.local/share/vidxp/benchmarks/codex-mcp/workspace/vidxp-on/.agents/skills/vidxp-find-video-evidence/SKILL.md",
+              "source": "heuristic"
+            }
+          ],
+          "_promptfooFileMetadata": {}
+        },
+        "failureReason": 0
+      },
+      {
+        "cost": 0.639381,
+        "gradingResult": {
+          "pass": true,
+          "score": 1,
+          "reason": "All assertions passed",
+          "namedScores": {
+            "temporal_grounding": 1,
+            "valid_interval": 1,
+            "bounded_chunk_hit": 1,
+            "event_coverage": 1,
+            "chunk_duration_in_range": 1,
+            "temporal_iou": 0.6,
+            "r1_tiou_0_3": 1,
+            "r1_tiou_0_5": 1,
+            "r1_tiou_0_7": 0,
+            "ablation_boundary": 1
+          },
+          "namedScoreWeights": {
+            "temporal_grounding": 1,
+            "valid_interval": 1,
+            "bounded_chunk_hit": 1,
+            "event_coverage": 1,
+            "chunk_duration_in_range": 1,
+            "temporal_iou": 1,
+            "r1_tiou_0_3": 1,
+            "r1_tiou_0_5": 1,
+            "r1_tiou_0_7": 1,
+            "ablation_boundary": 1
+          },
+          "tokensUsed": {
+            "total": 0,
+            "prompt": 0,
+            "completion": 0,
+            "cached": 0,
+            "numRequests": 0
+          },
+          "componentResults": [
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "Assertion passed",
+              "assertion": {
+                "type": "is-json"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "Bounded chunk hit: 10.000s duration, 1.0000 event coverage; temporal IoU 0.6000.",
+              "namedScores": {
+                "valid_interval": 1,
+                "bounded_chunk_hit": 1,
+                "event_coverage": 1,
+                "chunk_duration_in_range": 1,
+                "temporal_iou": 0.6,
+                "r1_tiou_0_3": 1,
+                "r1_tiou_0_5": 1,
+                "r1_tiou_0_7": 0
+              },
+              "assertion": {
+                "type": "python",
+                "value": "file://../../src/vidxp/benchmarks/agent_ablation_score.py:score_temporal_grounding",
+                "metric": "temporal_grounding"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "VidXP-off remained isolated from the skill, MCP, and CLI.",
+              "namedScores": {
+                "ablation_boundary": 1
+              },
+              "assertion": {
+                "type": "python",
+                "value": "file://../../src/vidxp/benchmarks/agent_ablation_score.py:score_ablation_boundary",
+                "metric": "ablation_boundary"
+              }
+            }
+          ]
+        },
+        "id": "656f811e-8e60-4feb-ac0c-13c6f9a89d53",
+        "latencyMs": 90582,
+        "namedScores": {
+          "temporal_grounding": 1,
+          "valid_interval": 1,
+          "bounded_chunk_hit": 1,
+          "event_coverage": 1,
+          "chunk_duration_in_range": 1,
+          "temporal_iou": 0.6,
+          "r1_tiou_0_3": 1,
+          "r1_tiou_0_5": 1,
+          "r1_tiou_0_7": 0,
+          "ablation_boundary": 1
+        },
+        "prompt": {
+          "raw": "Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: LongVALE evaluation\nVideo ID: ZYTmgi1pAIE\nMedia path: media/ZYTmgi1pAIE.mp4\nVideo duration: 75.809067 seconds\nEvent to locate: heavy rain and howling wind over a desolate landscape, followed by an engine starting and revving\nEvidence clip: aim for 10 seconds and keep it between\n8 and 12 seconds. The clip must contain\nthe event, but it does not need to trim the event's exact boundaries. For an\nevent longer than the target, choose its most representative target-size part.\nNear the start or end of the video, shift the clip instead of shortening it.\n\nUse VidXP when it is available in this condition; otherwise use the local media\nand available read-only tools. Do not use the network, read benchmark\nannotations, or invoke the VidXP CLI from the shell. Base the result on\ninspected evidence rather than the filename or query alone. Do not inspect the\nmedia with shell tools after using VidXP.\n\nPreserve any VidXP source job and evidence IDs in the requested fields. In a\ncondition without VidXP, set source_job_id and every evidence_id to null. If\nthe evidence cannot be inspected, return null start and end values and explain\nthe limitation. Return only the requested JSON object.",
+          "label": "Fixed video evidence task: prompts/video-evidence.txt: Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: {{ dataset }}\nVideo ID: {{ video_id }}\nMedia path: {{ media_relpath }}\nVideo duration: {{ duration_seconds }} seconds\nEvent to locate: {{ query }}\nEvidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between\n{{ min_chunk_seconds }} and {{ max_chunk_seconds }} seconds. The clip must contain\nthe event, but it does not need to trim the event's exact boundaries. For an\nevent longer than the target, choose its most representative target-size part.\nNear the start or end of the video, shift the clip instead of shortening it.\n\nUse VidXP when it is available in this condition; otherwise use the local media\nand available read-only tools. Do not use the network, read benchmark\nannotations, or invoke the VidXP CLI from the shell. Base the result on\ninspected evidence rather than the filename or query alone. Do not inspect the\nmedia with shell tools after using VidXP.\n\nPreserve any VidXP source job and evidence IDs in the requested fields. In a\ncondition without VidXP, set source_job_id and every evidence_id to null. If\nthe evidence cannot be inspected, return null start and end values and explain\nthe limitation. Return only the requested JSON object.",
+          "config": {}
+        },
+        "promptId": "0cde417e8514ba3c2e189ed30d474dc7238ef9b4e4654ed296979ab9ec11a1f5",
+        "promptIdx": 1,
+        "traceId": "4add39bc5676016c88930b28699d9b6e",
+        "evaluationId": "eval-2uz-2026-09-05T17:39:13",
+        "provider": {
+          "id": "openai:codex-sdk",
+          "label": "codex-baseline"
+        },
+        "response": {
+          "output": "{\"video_id\":\"ZYTmgi1pAIE\",\"answer\":\"Heavy rain and howling wind play over a barren, desolate landscape at the opening, followed by an engine starting and revving during the same intro sequence.\",\"start_seconds\":0,\"end_seconds\":10,\"modalities\":[\"scene\",\"sound\"],\"source_job_id\":null,\"evidence\":[{\"evidence_id\":null,\"start_seconds\":0,\"end_seconds\":10,\"modality\":\"sound\",\"description\":\"The opening 10-second clip contains the storm ambience over the desolate landscape and the subsequent engine start and rev.\"}]}",
+          "tokenUsage": {
+            "prompt": 275133,
+            "completion": 2527,
+            "cached": 247296,
+            "total": 277660,
+            "numRequests": 1,
+            "completionDetails": {
+              "reasoning": 1100,
+              "acceptedPrediction": 0,
+              "rejectedPrediction": 0,
+              "cacheReadInputTokens": 0,
+              "cacheCreationInputTokens": 0
+            },
+            "assertions": {
+              "total": 0,
+              "prompt": 0,
+              "completion": 0,
+              "cached": 0,
+              "numRequests": 0,
+              "completionDetails": {
+                "reasoning": 0,
+                "acceptedPrediction": 0,
+                "rejectedPrediction": 0,
+                "cacheReadInputTokens": 0,
+                "cacheCreationInputTokens": 0
+              }
+            }
+          },
+          "cost": 0.639381
+        },
+        "score": 1,
+        "success": true,
+        "testCase": {
+          "description": "longvale-part9-ZYT-rain-wind-engine [vidxp-off]",
+          "providers": [
+            "codex-baseline"
+          ],
+          "vars": {
+            "id": "longvale-part9-ZYT-rain-wind-engine",
+            "dataset": "LongVALE evaluation",
+            "video_id": "ZYTmgi1pAIE",
+            "media_relpath": "media/ZYTmgi1pAIE.mp4",
+            "duration_seconds": 75.809067,
+            "event_index": 0,
+            "query": "heavy rain and howling wind over a desolate landscape, followed by an engine starting and revving",
+            "expected_start": 0,
+            "expected_end": 6,
+            "modalities": "[\"scene\",\"sound\",\"action\"]",
+            "condition": "vidxp-off",
+            "expected_vidxp": false,
+            "target_chunk_seconds": 10,
+            "min_chunk_seconds": 8,
+            "max_chunk_seconds": 12,
+            "min_event_coverage": 0.5
+          },
+          "metadata": {
+            "dataset": "LongVALE evaluation",
+            "task_id": "longvale-part9-ZYT-rain-wind-engine",
+            "condition": "vidxp-off",
+            "modalities": [
+              "scene",
+              "sound",
+              "action"
+            ],
+            "tracingEnabled": true,
+            "evaluationId": "eval-2uz-2026-09-05T17:39:13"
+          },
+          "assert": [
+            {
+              "type": "is-json"
+            },
+            {
+              "type": "python",
+              "value": "file://../../src/vidxp/benchmarks/agent_ablation_score.py:score_temporal_grounding",
+              "metric": "temporal_grounding"
+            },
+            {
+              "type": "python",
+              "value": "file://../../src/vidxp/benchmarks/agent_ablation_score.py:score_ablation_boundary",
+              "metric": "ablation_boundary"
+            }
+          ],
+          "options": {}
+        },
+        "testIdx": 1,
+        "tokenUsage": {
+          "prompt": 275133,
+          "completion": 2527,
+          "cached": 247296,
+          "total": 277660,
+          "numRequests": 1,
+          "completionDetails": {
+            "reasoning": 1100,
+            "acceptedPrediction": 0,
+            "rejectedPrediction": 0,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0
+          },
+          "assertions": {
+            "total": 0,
+            "prompt": 0,
+            "completion": 0,
+            "cached": 0,
+            "numRequests": 0,
+            "completionDetails": {
+              "reasoning": 0,
+              "acceptedPrediction": 0,
+              "rejectedPrediction": 0,
+              "cacheReadInputTokens": 0,
+              "cacheCreationInputTokens": 0
+            }
+          }
+        },
+        "vars": {
+          "id": "longvale-part9-ZYT-rain-wind-engine",
+          "dataset": "LongVALE evaluation",
+          "video_id": "ZYTmgi1pAIE",
+          "media_relpath": "media/ZYTmgi1pAIE.mp4",
+          "duration_seconds": 75.809067,
+          "event_index": 0,
+          "query": "heavy rain and howling wind over a desolate landscape, followed by an engine starting and revving",
+          "expected_start": 0,
+          "expected_end": 6,
+          "modalities": "[\"scene\",\"sound\",\"action\"]",
+          "condition": "vidxp-off",
+          "expected_vidxp": false,
+          "target_chunk_seconds": 10,
+          "min_chunk_seconds": 8,
+          "max_chunk_seconds": 12,
+          "min_event_coverage": 0.5
+        },
+        "metadata": {
+          "dataset": "LongVALE evaluation",
+          "task_id": "longvale-part9-ZYT-rain-wind-engine",
+          "condition": "vidxp-off",
+          "modalities": [
+            "scene",
+            "sound",
+            "action"
+          ],
+          "tracingEnabled": true,
+          "evaluationId": "eval-2uz-2026-09-05T17:39:13",
+          "_promptfooFileMetadata": {}
+        },
+        "failureReason": 0
+      }
+    ],
+    "stats": {
+      "successes": 2,
+      "failures": 0,
+      "errors": 0,
+      "tokenUsage": {
+        "prompt": 473639,
+        "completion": 4163,
+        "cached": 393344,
+        "total": 477802,
+        "numRequests": 2,
+        "completionDetails": {
+          "reasoning": 1590,
+          "acceptedPrediction": 0,
+          "rejectedPrediction": 0,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0
+        },
+        "assertions": {
+          "total": 0,
+          "prompt": 0,
+          "completion": 0,
+          "cached": 0,
+          "numRequests": 0,
+          "completionDetails": {
+            "reasoning": 0,
+            "acceptedPrediction": 0,
+            "rejectedPrediction": 0,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0
+          }
+        }
+      },
+      "durationMs": 170603,
+      "evaluationDurationMs": 170603
+    }
+  },
+  "config": {
+    "tags": {},
+    "description": "VidXP integration-on versus integration-off temporal evidence evaluation",
+    "prompts": [
+      {
+        "id": "video-evidence-task",
+        "label": "Fixed video evidence task",
+        "raw": "file://prompts/video-evidence.txt"
+      }
+    ],
+    "providers": [
+      {
+        "id": "openai:codex-sdk",
+        "label": "codex-vidxp",
+        "config": {
+          "model": "gpt-5.6-sol",
+          "model_reasoning_effort": "medium",
+          "maxRetries": 0,
+          "working_dir": "<HOME>/.local/share/vidxp/benchmarks/codex-mcp/workspace/vidxp-on",
+          "skip_git_repo_check": true,
+          "sandbox_mode": "read-only",
+          "approval_policy": "never",
+          "network_access_enabled": false,
+          "web_search_mode": "disabled",
+          "persist_threads": false,
+          "enable_streaming": true,
+          "output_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "video_id",
+              "answer",
+              "start_seconds",
+              "end_seconds",
+              "modalities",
+              "source_job_id",
+              "evidence"
+            ],
+            "properties": {
+              "video_id": {
+                "type": "string"
+              },
+              "answer": {
+                "type": "string"
+              },
+              "start_seconds": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "end_seconds": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "modalities": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "scene",
+                    "action",
+                    "sound",
+                    "speech"
+                  ]
+                }
+              },
+              "source_job_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "evidence_id",
+                    "start_seconds",
+                    "end_seconds",
+                    "modality",
+                    "description"
+                  ],
+                  "properties": {
+                    "evidence_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "start_seconds": {
+                      "type": "number"
+                    },
+                    "end_seconds": {
+                      "type": "number"
+                    },
+                    "modality": {
+                      "type": "string",
+                      "enum": [
+                        "scene",
+                        "action",
+                        "sound",
+                        "speech"
+                      ]
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "cli_env": {
+            "CODEX_HOME": "<HOME>/.local/share/vidxp/benchmarks/codex-mcp/codex-home"
+          },
+          "cli_config": {
+            "features": {
+              "multi_agent": false
+            },
+            "mcp_servers": {
+              "vidxp": {
+                "command": "<REPO>/.venv/bin/vidxp-mcp",
+                "env": {
+                  "VIDXP_MODEL_CACHE": "<HOME>/Library/Application Support/VidXP/models",
+                  "VIDXP_ALLOW_MODEL_DOWNLOADS": "false"
+                },
+                "args": [
+                  "--repository",
+                  "default",
+                  "--index-directory",
+                  "<HOME>/.local/share/vidxp/benchmarks/codex-mcp/vidxp-index-schema-8",
+                  "--data-dir",
+                  "<HOME>/.local/share/vidxp/benchmarks/codex-mcp/vidxp-data",
+                  "--device",
+                  "cpu"
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "openai:codex-sdk",
+        "label": "codex-baseline",
+        "config": {
+          "model": "gpt-5.6-sol",
+          "model_reasoning_effort": "medium",
+          "maxRetries": 0,
+          "working_dir": "<HOME>/.local/share/vidxp/benchmarks/codex-mcp/workspace/vidxp-off",
+          "skip_git_repo_check": true,
+          "sandbox_mode": "read-only",
+          "approval_policy": "never",
+          "network_access_enabled": false,
+          "web_search_mode": "disabled",
+          "persist_threads": false,
+          "enable_streaming": true,
+          "output_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "video_id",
+              "answer",
+              "start_seconds",
+              "end_seconds",
+              "modalities",
+              "source_job_id",
+              "evidence"
+            ],
+            "properties": {
+              "video_id": {
+                "type": "string"
+              },
+              "answer": {
+                "type": "string"
+              },
+              "start_seconds": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "end_seconds": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "modalities": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "scene",
+                    "action",
+                    "sound",
+                    "speech"
+                  ]
+                }
+              },
+              "source_job_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "evidence_id",
+                    "start_seconds",
+                    "end_seconds",
+                    "modality",
+                    "description"
+                  ],
+                  "properties": {
+                    "evidence_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "start_seconds": {
+                      "type": "number"
+                    },
+                    "end_seconds": {
+                      "type": "number"
+                    },
+                    "modality": {
+                      "type": "string",
+                      "enum": [
+                        "scene",
+                        "action",
+                        "sound",
+                        "speech"
+                      ]
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "cli_env": {
+            "CODEX_HOME": "<HOME>/.local/share/vidxp/benchmarks/codex-mcp/codex-home"
+          },
+          "cli_config": {
+            "features": {
+              "multi_agent": false
+            }
+          }
+        }
+      }
+    ],
+    "tests": [
+      {
+        "path": "file://../../src/vidxp/benchmarks/agent_ablation_tests.py:generate_tests",
+        "config": {
+          "manifest": "tasks/longvale-part9-pilot.json",
+          "providers": {
+            "vidxp_on": "codex-vidxp",
+            "vidxp_off": "codex-baseline"
+          }
+        }
+      }
+    ],
+    "env": {},
+    "outputPath": [],
+    "extensions": [],
+    "metadata": {},
+    "tracing": {
+      "enabled": true
+    },
+    "evaluateOptions": {
+      "cache": false,
+      "maxConcurrency": 1,
+      "repeat": 1
+    }
+  },
+  "shareableUrl": null,
+  "metadata": {
+    "promptfooVersion": "0.122.2",
+    "nodeVersion": "v22.23.2",
+    "platform": "darwin",
+    "arch": "arm64",
+    "exportedAt": "2026-09-05T23:33:25.454Z",
+    "evaluationCreatedAt": "2026-09-05T17:39:13.436Z",
+    "vidxpExport": {
+      "version": 1,
+      "sanitized": true,
+      "omitted": [
+        "Codex raw response bodies",
+        "session IDs",
+        "secret values"
+      ],
+      "pathPlaceholders": [
+        "<REPO>",
+        "<HOME>",
+        "<USER>"
+      ]
+    }
+  },
+  "vars": [
+    "id",
+    "dataset",
+    "video_id",
+    "media_relpath",
+    "duration_seconds",
+    "event_index",
+    "query",
+    "expected_start",
+    "expected_end",
+    "modalities",
+    "condition",
+    "expected_vidxp",
+    "target_chunk_seconds",
+    "min_chunk_seconds",
+    "max_chunk_seconds",
+    "min_event_coverage"
+  ],
+  "runtimeOptions": {
+    "maxConcurrency": 1,
+    "showProgressBar": true,
+    "eventSource": "cli",
+    "cache": false,
+    "repeat": 1
+  },
+  "traces": [
+    {
+      "traceId": "2ba59a24e277f787d7a3aa3c45baece0",
+      "evaluationId": "eval-2uz-2026-09-05T17:39:13",
+      "testCaseId": "0-0",
+      "metadata": {
+        "testIdx": 0,
+        "promptIdx": 0,
+        "providerId": "openai:codex-sdk",
+        "repeatIndex": 0,
+        "vars": {
+          "id": "longvale-part9-ZYT-rain-wind-engine",
+          "dataset": "LongVALE evaluation",
+          "video_id": "ZYTmgi1pAIE",
+          "media_relpath": "media/ZYTmgi1pAIE.mp4",
+          "duration_seconds": 75.809067,
+          "event_index": 0,
+          "query": "heavy rain and howling wind over a desolate landscape, followed by an engine starting and revving",
+          "expected_start": 0,
+          "expected_end": 6,
+          "modalities": "[\"scene\",\"sound\",\"action\"]",
+          "condition": "vidxp-on",
+          "expected_vidxp": true,
+          "target_chunk_seconds": 10,
+          "min_chunk_seconds": 8,
+          "max_chunk_seconds": 12,
+          "min_event_coverage": 0.5
+        }
+      },
+      "spans": [
+        {
+          "spanId": "6072a5d8302d453e",
+          "parentSpanId": "328d0b934efc19af",
+          "name": "agent response",
+          "startTime": 1788629956250,
+          "endTime": 1788629964364,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_0",
+            "codex.item.type": "agent_message",
+            "codex.timing.estimated": true,
+            "gen_ai.turn.index": 1,
+            "promptfoo.span.role": "target",
+            "codex.message": "{\"video_id\":\"ZYTmgi1pAIE\",\"answer\":\"I’m using the VidXP evidence-search skill to inspect the supplied video and select one representative 8–12 second clip.\",\"start_seconds\":null,\"end_seconds\":null,\"modalities\":[\"scene\",\"action\",\"sound\"],\"source_job_id\":null,\"evidence\":[]}",
+            "codex.duration_ms": 8110,
+            "codex.had_start_event": false
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "beee2dddd698f8b0",
+          "parentSpanId": "328d0b934efc19af",
+          "name": "exec /bin/zsh",
+          "startTime": 1788629967189,
+          "endTime": 1788629967190.206,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_1",
+            "codex.item.type": "command_execution",
+            "gen_ai.turn.index": 1,
+            "codex.command": "/bin/zsh -lc \"sed -n '1,240p' <HOME>/.local/share/vidxp/benchmarks/codex-mcp/workspace/vidxp-on/.agents/skills/vidxp-find-video-evidence/SKILL.md\"",
+            "promptfoo.span.role": "target",
+            "codex.exit_code": 0,
+            "codex.status": "completed",
+            "codex.output": "---\nname: vidxp-find-video-evidence\ndescription: Use VidXP to search indexed videos and surface inspectable evidence boards, keyframes, and clips before analysis. Trigger for requests such as \"find where X appears,\" \"when does Y happen,\" \"what is said,\" \"what happens,\" or \"show me the matching clip,\" even when the user does not name VidXP. Favor one-pass evidence delivery and only add brief accura…",
+            "promptfoo.skill.count": 1,
+            "promptfoo.skill.names": "vidxp-find-video-evidence",
+            "promptfoo.skill.paths": "<HOME>/.local/share/vidxp/benchmarks/codex-mcp/workspace/vidxp-on/.agents/skills/vidxp-find-video-evidence/SKILL.md",
+            "promptfoo.skill.name": "vidxp-find-video-evidence",
+            "promptfoo.skill.path": "<HOME>/.local/share/vidxp/benchmarks/codex-mcp/workspace/vidxp-on/.agents/skills/vidxp-find-video-evidence/SKILL.md",
+            "codex.duration_ms": 1,
+            "codex.had_start_event": true
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "305554b03ed70db0",
+          "parentSpanId": "328d0b934efc19af",
+          "name": "mcp vidxp/get_workspace",
+          "startTime": 1788629983283,
+          "endTime": 1788629986827.182,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_2",
+            "codex.item.type": "mcp_tool_call",
+            "gen_ai.turn.index": 1,
+            "codex.mcp.server": "vidxp",
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "get_workspace",
+            "codex.mcp.tool": "get_workspace",
+            "codex.mcp.input": "{\"filename\":\"ZYTmgi1pAIE.mp4\",\"page_size\":10,\"state\":\"ready\"}",
+            "promptfoo.span.role": "target",
+            "codex.status": "completed",
+            "codex.duration_ms": 3544,
+            "codex.had_start_event": true
+          },
+          "statusCode": 2,
+          "statusMessage": "Item failed"
+        },
+        {
+          "spanId": "ab4d4b4b4f6225b5",
+          "parentSpanId": "328d0b934efc19af",
+          "name": "mcp vidxp/search_moments",
+          "startTime": 1788629992771,
+          "endTime": 1788629994096.2239,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_3",
+            "codex.item.type": "mcp_tool_call",
+            "gen_ai.turn.index": 1,
+            "codex.mcp.server": "vidxp",
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "search_moments",
+            "codex.mcp.tool": "search_moments",
+            "codex.mcp.input": "{\"command\":{\"media_id\":\"22a38e3a7e9842cab0f1f8d91fd2c4ca\",\"query\":\"heavy rain and howling wind over a desolate landscape, followed by an engine starting and revving\",\"modalities\":[\"scene\",\"action\",\"sound\"],\"top_k\":5,\"candidate_top_k\":20,\"evidence_delivery\":{\"mode\":\"keyframes_and_clips\",\"include_board\":true,\"max_items\":3,\"clip_profile\":\"compatible_mp4\",\"padding_before_seconds\":3,\"padding_after_seco…",
+            "promptfoo.span.role": "target",
+            "codex.status": "completed",
+            "codex.duration_ms": 1325,
+            "codex.had_start_event": true
+          },
+          "statusCode": 2,
+          "statusMessage": "Item failed"
+        },
+        {
+          "spanId": "d3019a6e99839a0b",
+          "parentSpanId": "328d0b934efc19af",
+          "name": "mcp vidxp/wait_job",
+          "startTime": 1788629996954,
+          "endTime": 1788630003388.9783,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_4",
+            "codex.item.type": "mcp_tool_call",
+            "gen_ai.turn.index": 1,
+            "codex.mcp.server": "vidxp",
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "wait_job",
+            "codex.mcp.tool": "wait_job",
+            "codex.mcp.input": "{\"job_id\":\"b1313834e71b43dbadbc2cf8af38a7e7\",\"timeout_seconds\":30}",
+            "promptfoo.span.role": "target",
+            "codex.status": "completed",
+            "codex.duration_ms": 6433,
+            "codex.had_start_event": true
+          },
+          "statusCode": 2,
+          "statusMessage": "Item failed"
+        },
+        {
+          "spanId": "96263bb99be98528",
+          "parentSpanId": "328d0b934efc19af",
+          "name": "mcp vidxp/wait_job",
+          "startTime": 1788630007790,
+          "endTime": 1788630013463.7542,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_5",
+            "codex.item.type": "mcp_tool_call",
+            "gen_ai.turn.index": 1,
+            "codex.mcp.server": "vidxp",
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "wait_job",
+            "codex.mcp.tool": "wait_job",
+            "codex.mcp.input": "{\"job_id\":\"b1313834e71b43dbadbc2cf8af38a7e7\",\"after_observation_token\":\"[REDACTED]\",\"timeout_seconds\":30}",
+            "promptfoo.span.role": "target",
+            "codex.status": "completed",
+            "codex.duration_ms": 5674,
+            "codex.had_start_event": true
+          },
+          "statusCode": 2,
+          "statusMessage": "Item failed"
+        },
+        {
+          "spanId": "828da11ede2c0f8e",
+          "parentSpanId": "328d0b934efc19af",
+          "name": "mcp vidxp/get_job_evidence",
+          "startTime": 1788630018815,
+          "endTime": 1788630018850.6348,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_6",
+            "codex.item.type": "mcp_tool_call",
+            "gen_ai.turn.index": 1,
+            "codex.mcp.server": "vidxp",
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "get_job_evidence",
+            "codex.mcp.tool": "get_job_evidence",
+            "codex.mcp.input": "{\"job_id\":\"b1313834e71b43dbadbc2cf8af38a7e7\"}",
+            "promptfoo.span.role": "target",
+            "codex.status": "completed",
+            "codex.duration_ms": 35,
+            "codex.had_start_event": true
+          },
+          "statusCode": 2,
+          "statusMessage": "Item failed"
+        },
+        {
+          "spanId": "062302b56c1bab68",
+          "parentSpanId": "328d0b934efc19af",
+          "name": "agent response",
+          "startTime": 1788630018850,
+          "endTime": 1788630030871,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_7",
+            "codex.item.type": "agent_message",
+            "codex.timing.estimated": true,
+            "gen_ai.turn.index": 1,
+            "promptfoo.span.role": "target",
+            "codex.message": "{\"video_id\":\"ZYTmgi1pAIE\",\"answer\":\"Use 0.000–10.000 seconds: the clip captures the storm-lashed desolate landscape and the transition into the engine starting and revving.\",\"start_seconds\":0,\"end_seconds\":10,\"modalities\":[\"scene\",\"action\",\"sound\"],\"source_job_id\":\"b1313834e71b43dbadbc2cf8af38a7e7\",\"evidence\":[{\"evidence_id\":\"[REDACTED]\",\"start_seconds\":0,\"end_seconds\":10,\"modality\":\"sound\",\"descr…",
+            "codex.duration_ms": 12019,
+            "codex.had_start_event": false
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "4362287ecf5e6b85",
+          "parentSpanId": "328d0b934efc19af",
+          "name": "gen_ai.turn 1",
+          "startTime": 1788629956250,
+          "endTime": 1788630030908,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "gen_ai.turn.index": 1,
+            "gen_ai.provider.name": "openai",
+            "promptfoo.span.role": "target",
+            "gen_ai.usage.input_tokens": 198506,
+            "gen_ai.usage.output_tokens": 1636,
+            "gen_ai.usage.cache_read.input_tokens": 146048,
+            "gen_ai.usage.reasoning.output_tokens": 490
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "328d0b934efc19af",
+          "parentSpanId": "6140cb8f293a5356",
+          "name": "invoke_agent Codex",
+          "startTime": 1788629953461,
+          "endTime": 1788630032112.3423,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "gen_ai.provider.name": "openai",
+            "gen_ai.operation.name": "invoke_agent",
+            "promptfoo.provider.id": "openai:codex-sdk",
+            "gen_ai.agent.name": "Codex",
+            "gen_ai.request.model": "gpt-5.6-sol",
+            "promptfoo.span.role": "target",
+            "promptfoo.eval.id": "eval-2uz-2026-09-05T17:39:13",
+            "promptfoo.prompt.label": "Fixed video evidence task: prompts/video-evidence.txt: Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: {{ dataset }}\nVideo ID: {{ video_id }}\nMedia path: {{ media_relpath }}\nVideo duration: {{ duration_seconds }} seconds\nEvent to locate: {{ query }}\nEvidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between\n{{ min_chunk_seconds }} and {{ …",
+            "promptfoo.request.body": "Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: LongVALE evaluation\nVideo ID: ZYTmgi1pAIE\nMedia path: media/ZYTmgi1pAIE.mp4\nVideo duration: 75.809067 seconds\nEvent to locate: heavy rain and howling wind over a desolate landscape, followed by an engine starting and revving\nEvidence clip: aim for 10 seconds and keep it between\n8 and 12 seconds. The clip must …",
+            "gen_ai.usage.input_tokens": 198506,
+            "gen_ai.usage.output_tokens": 1636,
+            "promptfoo.usage.total_tokens": 200142,
+            "gen_ai.usage.cache_read.input_tokens": 146048,
+            "gen_ai.usage.reasoning.output_tokens": 490,
+            "gen_ai.response.model": "gpt-5.6-sol",
+            "gen_ai.response.id": "01a072a7-3613-7282-a8cc-c1bfc2d7930c",
+            "promptfoo.response.body": "{\"video_id\":\"ZYTmgi1pAIE\",\"answer\":\"Use 0.000–10.000 seconds: the clip captures the storm-lashed desolate landscape and the transition into the engine starting and revving.\",\"start_seconds\":0,\"end_seconds\":10,\"modalities\":[\"scene\",\"action\",\"sound\"],\"source_job_id\":\"b1313834e71b43dbadbc2cf8af38a7e7\",\"evidence\":[{\"evidence_id\":\"<REDACTED_HASH>\",\"start_seconds\":0,\"end_seconds\":10,\"modality\":\"sound\",\"…",
+            "codex.conversation.message_count": 3,
+            "codex.items.total": 8,
+            "codex.items.breakdown": "{\"agent_message\":2,\"command_execution\":1,\"mcp_tool_call\":5}"
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "6140cb8f293a5356",
+          "parentSpanId": "33c27abe0a1019d5",
+          "name": "codex-vidxp",
+          "startTime": 1788629953455,
+          "endTime": 1788630032112.045,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "promptfoo.provider.id": "openai:codex-sdk",
+            "promptfoo.span.role": "target",
+            "promptfoo.target.type": "provider",
+            "promptfoo.target.label": "codex-vidxp",
+            "promptfoo.prompt.label": "Fixed video evidence task: prompts/video-evidence.txt: Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: {{ dataset }}\nVideo ID: {{ video_id }}\nMedia path: {{ media_relpath }}\nVideo duration: {{ duration_seconds }} seconds\nEvent to locate: {{ query }}\nEvidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between\n{{ min_chunk_seconds }} and {{ …",
+            "promptfoo.eval.id": "eval-2uz-2026-09-05T17:39:13",
+            "promptfoo.test.index": 0
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "f6e59739d98c4686",
+          "parentSpanId": "33c27abe0a1019d5",
+          "name": "grader is-json",
+          "startTime": 1788630032385,
+          "endTime": 1788630032388.6409,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "promptfoo.grader.id": "is-json",
+            "gen_ai.evaluation.name": "is-json",
+            "promptfoo.span.role": "grader",
+            "promptfoo.eval.id": "eval-2uz-2026-09-05T17:39:13",
+            "promptfoo.test.index": 0,
+            "gen_ai.evaluation.score.label": "pass",
+            "gen_ai.evaluation.score.value": 1,
+            "gen_ai.evaluation.explanation": "Assertion passed"
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "d9327dec1dfb383a",
+          "parentSpanId": "33c27abe0a1019d5",
+          "name": "grader python",
+          "startTime": 1788630032387,
+          "endTime": 1788630032483.6448,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "promptfoo.grader.id": "python",
+            "gen_ai.evaluation.name": "python",
+            "promptfoo.span.role": "grader",
+            "promptfoo.eval.id": "eval-2uz-2026-09-05T17:39:13",
+            "promptfoo.test.index": 0,
+            "gen_ai.evaluation.score.label": "pass",
+            "gen_ai.evaluation.score.value": 1,
+            "gen_ai.evaluation.explanation": "Bounded chunk hit: 10.000s duration, 1.0000 event coverage; temporal IoU 0.6000."
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "53f5952e273c88d2",
+          "parentSpanId": "33c27abe0a1019d5",
+          "name": "grader python",
+          "startTime": 1788630032388,
+          "endTime": 1788630033004.3357,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "promptfoo.grader.id": "python",
+            "gen_ai.evaluation.name": "python",
+            "promptfoo.span.role": "grader",
+            "promptfoo.eval.id": "eval-2uz-2026-09-05T17:39:13",
+            "promptfoo.test.index": 0,
+            "gen_ai.evaluation.score.label": "pass",
+            "gen_ai.evaluation.score.value": 1,
+            "gen_ai.evaluation.explanation": "VidXP-on returned evidence from a fresh, successful, matching MCP job."
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "33c27abe0a1019d5",
+          "name": "promptfoo.test_case",
+          "startTime": 1788629953453,
+          "endTime": 1788630033004.393,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "promptfoo.span.role": "test_case",
+            "promptfoo.eval.id": "eval-2uz-2026-09-05T17:39:13",
+            "promptfoo.test.index": 0,
+            "promptfoo.test_case.id": "0-0",
+            "promptfoo.prompt.index": 0,
+            "promptfoo.provider.id": "openai:codex-sdk",
+            "promptfoo.prompt.label": "Fixed video evidence task: prompts/video-evidence.txt: Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: {{ dataset }}\nVideo ID: {{ video_id }}\nMedia path: {{ media_relpath }}\nVideo duration: {{ duration_seconds }} seconds\nEvent to locate: {{ query }}\nEvidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between\n{{ min_chunk_seconds }} and {{ …",
+            "promptfoo.repeat.index": 0,
+            "promptfoo.test.success": true,
+            "promptfoo.test.score": 1
+          },
+          "statusCode": 1
+        }
+      ]
+    },
+    {
+      "traceId": "4add39bc5676016c88930b28699d9b6e",
+      "evaluationId": "eval-2uz-2026-09-05T17:39:13",
+      "testCaseId": "1-1",
+      "metadata": {
+        "testIdx": 1,
+        "promptIdx": 1,
+        "providerId": "openai:codex-sdk",
+        "repeatIndex": 0,
+        "vars": {
+          "id": "longvale-part9-ZYT-rain-wind-engine",
+          "dataset": "LongVALE evaluation",
+          "video_id": "ZYTmgi1pAIE",
+          "media_relpath": "media/ZYTmgi1pAIE.mp4",
+          "duration_seconds": 75.809067,
+          "event_index": 0,
+          "query": "heavy rain and howling wind over a desolate landscape, followed by an engine starting and revving",
+          "expected_start": 0,
+          "expected_end": 6,
+          "modalities": "[\"scene\",\"sound\",\"action\"]",
+          "condition": "vidxp-off",
+          "expected_vidxp": false,
+          "target_chunk_seconds": 10,
+          "min_chunk_seconds": 8,
+          "max_chunk_seconds": 12,
+          "min_event_coverage": 0.5
+        }
+      },
+      "spans": [
+        {
+          "spanId": "22c09c5b1dd9bcfb",
+          "parentSpanId": "e726e35c02310484",
+          "name": "exec /bin/zsh",
+          "startTime": 1788630061472,
+          "endTime": 1788630061472.9146,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_0",
+            "codex.item.type": "command_execution",
+            "gen_ai.turn.index": 1,
+            "codex.command": "/bin/zsh -lc 'command -v ffmpeg; command -v ffprobe; ls -l media/ZYTmgi1pAIE.mp4'",
+            "promptfoo.span.role": "target",
+            "codex.exit_code": 0,
+            "codex.status": "completed",
+            "codex.output": "/opt/homebrew/bin/ffmpeg\n/opt/homebrew/bin/ffprobe\n-rw-r--r--@ 3 <USER>  staff  11040359 Sep  5 22:16 media/ZYTmgi1pAIE.mp4\n",
+            "codex.duration_ms": 1,
+            "codex.had_start_event": true
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "07584c708f0d412b",
+          "parentSpanId": "e726e35c02310484",
+          "name": "exec /bin/zsh",
+          "startTime": 1788630076559,
+          "endTime": 1788630077137.0818,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_1",
+            "codex.item.type": "command_execution",
+            "gen_ai.turn.index": 1,
+            "codex.command": "/bin/zsh -lc 'ffmpeg -hide_banner -loglevel error -i media/ZYTmgi1pAIE.mp4 -vf \"fps=1/5,scale=240:-1,tile=4x4\" -frames:v 1 -f image2pipe -vcodec mjpeg - | base64'",
+            "promptfoo.span.role": "target",
+            "codex.exit_code": 0,
+            "codex.status": "completed",
+            "codex.output": "/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMQD/2wBDAAgODhAOEBMTExMTExYVFhcXFxYWFhYXFxcZGRkdHR0ZGRkXFxkZHBwdHSAhIB4eHR4hISMjIyoqKCgxMTI8PEj/xACpAAABBQEBAQAAAAAAAAAAAAACBAUDBgABBwgBAAMBAQEBAAAAAAAAAAAAAAEAAgMEBQYQAAEEAAUBBQMJBAoBAwQDAQECABEDIRIEMUFRE2EicQWBkTLRoRSxQiPSUsEV8KJyM+GTYrJTkvGCQ3MkowY004PCRGNUFhEAAgIBAwMDBAEEAwEBAQAAAAERAiESMUEDUWETInGBkaGxwUIy8OHxBNEUcmL/wAARCAIcA8ADASIAAhEAAxEA/9oA…",
+            "codex.duration_ms": 576,
+            "codex.had_start_event": true
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "b12d7a72fd311d86",
+          "parentSpanId": "e726e35c02310484",
+          "name": "exec /bin/zsh",
+          "startTime": 1788630084487,
+          "endTime": 1788630084506.7583,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_2",
+            "codex.item.type": "command_execution",
+            "gen_ai.turn.index": 1,
+            "codex.command": "/bin/zsh -lc 'ffmpeg -hide_banner -loglevel error -i media/ZYTmgi1pAIE.mp4 -vf \"fps=2,scale=240:-1,tile=5x4\" -frames:v 1 -f image2pipe -vcodec mjpeg - | base64'",
+            "promptfoo.span.role": "target",
+            "codex.exit_code": 0,
+            "codex.status": "completed",
+            "codex.output": "/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMQD/2wBDAAgODhAOEBMTExMTExYVFhcXFxYWFhYXFxcZGRkdHR0ZGRkXFxkZHBwdHSAhIB4eHR4hISMjIyoqKCgxMTI8PEj/xACtAAABBQEBAQAAAAAAAAAAAAADBAIFAQAGBwgBAAMBAQEBAAAAAAAAAAAAAAECAAMEBQYQAAEEAAQEAwUFBQUHAwMDBQECABEDEiEEMUFRE2EicYEFkTIUodFSsUKSwSNTcmKi4fDSFYLTFjND8aOyJMJzBlSzYyWDk0RkNBEAAgIBAwQBAwQCAQUBAQAAAAERAhIhUUExEwNhcaEigZHhsTIUQtFi8FIE8cGS/8AAEQgCHASwAwEiAAIRAAMR…",
+            "codex.duration_ms": 17,
+            "codex.had_start_event": true
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "a0b819d91c74e483",
+          "parentSpanId": "e726e35c02310484",
+          "name": "exec /bin/zsh",
+          "startTime": 1788630089368,
+          "endTime": 1788630089368.9912,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_3",
+            "codex.item.type": "command_execution",
+            "gen_ai.turn.index": 1,
+            "codex.command": "/bin/zsh -lc 'ffmpeg -hide_banner -loglevel error -t 10 -i media/ZYTmgi1pAIE.mp4 -vf \"fps=2,scale=160:-1,tile=5x4\" -q:v 7 -frames:v 1 -f image2pipe -vcodec mjpeg - | base64'",
+            "promptfoo.span.role": "target",
+            "codex.exit_code": 0,
+            "codex.status": "completed",
+            "codex.output": "9TKqpYMst3JrWBqV6/pJIxbk30jdRBm0nKZfoQ6j18u4zPcZEe+b7oIRv7Mid/KZ7pAn6TCJkt64xSpzCWLqXWglgVHkBmY2QW84aAkUALhFddFFJKFU6qaiikKIAItUX7BfM93GIQJOPhHdNnFxJDgnj5ZtAa7j6cSOqaVrrp6gJN3bCnfm7x0oD4hdqQMRhkNoqaIU11qlQAsPZBxzyc7luUXKmnpE3FLKbNODjnI2tv8AR0+Px5+PjGXMPmNBJ9I0jTqmpUWhVVRciiRaPMYeEFpamqrLUoBSkhryrZOQx5Tq9BfRVVpoBppISV8FHZzJej/SiqBXTXiKiOn3cDhw4QN8X1JNVV0tttvgsac4pJiMF8IoIU85CpXOgNjO6RH2o8mTokiMlIWE…",
+            "codex.duration_ms": 1,
+            "codex.had_start_event": true
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "0093e7788a4fd92d",
+          "parentSpanId": "e726e35c02310484",
+          "name": "exec /bin/zsh",
+          "startTime": 1788630095046,
+          "endTime": 1788630095050.085,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_4",
+            "codex.item.type": "command_execution",
+            "gen_ai.turn.index": 1,
+            "codex.command": "/bin/zsh -lc 'ffmpeg -hide_banner -loglevel error -t 10 -i media/ZYTmgi1pAIE.mp4 -vn -ac 1 -ar 16000 -b:a 48k -f mp3 - | base64'",
+            "promptfoo.span.role": "target",
+            "codex.exit_code": 0,
+            "codex.status": "completed",
+            "codex.output": "SUQzBAAAAAABAFRYWFgAAAASAAADbWFqb3JfYnJhbmQAbXA0MgBUWFhYAAAAEQAAA21pbm9yX3ZlcnNpb24AMABUWFhYAAAAHAAAA2NvbXBhdGlibGVfYnJhbmRzAGlzb21tcDQyAFRTU0UAAAAPAAADTGF2ZjYyLjEyLjEwMQAAAAAAAAAAAAAA//NoxAAAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV…",
+            "codex.duration_ms": 2,
+            "codex.had_start_event": true
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "cff9568ae7f56d44",
+          "parentSpanId": "e726e35c02310484",
+          "name": "exec /bin/zsh",
+          "startTime": 1788630104436,
+          "endTime": 1788630104463.6636,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_5",
+            "codex.item.type": "command_execution",
+            "gen_ai.turn.index": 1,
+            "codex.command": "/bin/zsh -lc 'ffmpeg -hide_banner -loglevel error -t 10 -i media/ZYTmgi1pAIE.mp4 -lavfi \"showspectrumpic=s=1000x400:legend=1:color=viridis:scale=log\" -frames:v 1 -f image2pipe -vcodec png - | base64'",
+            "promptfoo.span.role": "target",
+            "codex.exit_code": 0,
+            "codex.status": "completed",
+            "codex.output": "iVBORw0KGgoAAAANSUhEUgAABQIAAAIQCAIAAABVAoSIAAAACXBIWXMAAAABAAAAAQBPJcTWAAAQAElEQVR4nOzdeXCk530n9vc++j6Axg0MZgbDOTk8huSQ4i1KlkQdXp9Z27tbqa14U07sSipbW9nsH6nKP6n8salsvEd2be9WXHaq1rG8a0vWFdkSJZIaieJNDjkX5sAAGJzdjb7e83nye7pHUBM3MJhuAP391BQJNLrffu/3+b7P8coSAAAAAAAAQMfQ2j0DAAAAAAAAAK2DGAwAAAAAAAAdBDEYAAAAAAAAOghiMAAAAAAAAHQQxGAAAAAAAADoIIjBAAAAAAAA0EEQgwEAAAAAAKCDIAYDAAAAAABAB0EMBgAAAAAAgA6CGAwAAAAAAAAd…",
+            "codex.duration_ms": 10,
+            "codex.had_start_event": true
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "ec27138859b162a4",
+          "parentSpanId": "e726e35c02310484",
+          "name": "exec /bin/zsh",
+          "startTime": 1788630109482,
+          "endTime": 1788630109483.8635,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_6",
+            "codex.item.type": "command_execution",
+            "gen_ai.turn.index": 1,
+            "codex.command": "/bin/zsh -lc 'ffmpeg -hide_banner -loglevel error -t 10 -i media/ZYTmgi1pAIE.mp4 -lavfi \"showspectrumpic=s=800x300:legend=0:color=viridis:scale=log,format=yuvj420p\" -frames:v 1 -q:v 5 -f image2pipe -vcodec mjpeg - | base64'",
+            "promptfoo.span.role": "target",
+            "codex.exit_code": 0,
+            "codex.status": "completed",
+            "codex.output": "/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMQD/2wBDAAgKCgsKCw0NDQ0NDRAPEBAQEBAQEBAQEBASEhIVFRUSEhIQEBISFBQVFRcXFxUVFRUXFxkZGR4eHBwjIyQrKzP/xAClAAACAwEBAQEAAAAAAAAAAAAAAwIBBAUGBwgBAQADAQEBAAAAAAAAAAAAAAACAQMEBQYQAAEDAgQDBgUEAgEEAgIDAQECEQAhAzESQVEEYXEigZET8KEyscEF0eHxQiMUUmJyFQaCM6KSJDTiwkMRAAICAQIDBQcDBAIDAQEAAAEAEQIhMRIDQVFxYYGRoQTwIhOxwTIU0fFSBeFiIzMVQnJTsv/AABEIASwDIAMBIgACEQADEQD/2gAMAwEA…",
+            "codex.duration_ms": 1,
+            "codex.had_start_event": true
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "bbba9e1c973ad6ea",
+          "parentSpanId": "e726e35c02310484",
+          "name": "agent response",
+          "startTime": 1788630109483,
+          "endTime": 1788630122313,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "codex.item.id": "item_7",
+            "codex.item.type": "agent_message",
+            "codex.timing.estimated": true,
+            "gen_ai.turn.index": 1,
+            "promptfoo.span.role": "target",
+            "codex.message": "{\"video_id\":\"ZYTmgi1pAIE\",\"answer\":\"Heavy rain and howling wind play over a barren, desolate landscape at the opening, followed by an engine starting and revving during the same intro sequence.\",\"start_seconds\":0,\"end_seconds\":10,\"modalities\":[\"scene\",\"sound\"],\"source_job_id\":null,\"evidence\":[{\"evidence_id\":null,\"start_seconds\":0,\"end_seconds\":10,\"modality\":\"sound\",\"description\":\"The opening 10-se…",
+            "codex.duration_ms": 12829,
+            "codex.had_start_event": false
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "4db9055142aee41a",
+          "parentSpanId": "e726e35c02310484",
+          "name": "gen_ai.turn 1",
+          "startTime": 1788630033115,
+          "endTime": 1788630122345,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "gen_ai.turn.index": 1,
+            "gen_ai.provider.name": "openai",
+            "promptfoo.span.role": "target",
+            "gen_ai.usage.input_tokens": 275133,
+            "gen_ai.usage.output_tokens": 2527,
+            "gen_ai.usage.cache_read.input_tokens": 247296,
+            "gen_ai.usage.reasoning.output_tokens": 1100
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "e726e35c02310484",
+          "parentSpanId": "ee4d245ca709f5c1",
+          "name": "invoke_agent Codex",
+          "startTime": 1788630033041,
+          "endTime": 1788630123616.349,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "gen_ai.provider.name": "openai",
+            "gen_ai.operation.name": "invoke_agent",
+            "promptfoo.provider.id": "openai:codex-sdk",
+            "gen_ai.agent.name": "Codex",
+            "gen_ai.request.model": "gpt-5.6-sol",
+            "promptfoo.span.role": "target",
+            "promptfoo.eval.id": "eval-2uz-2026-09-05T17:39:13",
+            "promptfoo.prompt.label": "Fixed video evidence task: prompts/video-evidence.txt: Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: {{ dataset }}\nVideo ID: {{ video_id }}\nMedia path: {{ media_relpath }}\nVideo duration: {{ duration_seconds }} seconds\nEvent to locate: {{ query }}\nEvidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between\n{{ min_chunk_seconds }} and {{ …",
+            "promptfoo.request.body": "Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: LongVALE evaluation\nVideo ID: ZYTmgi1pAIE\nMedia path: media/ZYTmgi1pAIE.mp4\nVideo duration: 75.809067 seconds\nEvent to locate: heavy rain and howling wind over a desolate landscape, followed by an engine starting and revving\nEvidence clip: aim for 10 seconds and keep it between\n8 and 12 seconds. The clip must …",
+            "gen_ai.usage.input_tokens": 275133,
+            "gen_ai.usage.output_tokens": 2527,
+            "promptfoo.usage.total_tokens": 277660,
+            "gen_ai.usage.cache_read.input_tokens": 247296,
+            "gen_ai.usage.reasoning.output_tokens": 1100,
+            "gen_ai.response.model": "gpt-5.6-sol",
+            "gen_ai.response.id": "01a072a8-62ab-75b3-a159-f0fb7f5c50ce",
+            "promptfoo.response.body": "{\"video_id\":\"ZYTmgi1pAIE\",\"answer\":\"Heavy rain and howling wind play over a barren, desolate landscape at the opening, followed by an engine starting and revving during the same intro sequence.\",\"start_seconds\":0,\"end_seconds\":10,\"modalities\":[\"scene\",\"sound\"],\"source_job_id\":null,\"evidence\":[{\"evidence_id\":null,\"start_seconds\":0,\"end_seconds\":10,\"modality\":\"sound\",\"description\":\"The opening 10-se…",
+            "codex.conversation.message_count": 2,
+            "codex.items.total": 8,
+            "codex.items.breakdown": "{\"command_execution\":7,\"agent_message\":1}"
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "ee4d245ca709f5c1",
+          "parentSpanId": "3e3de295aaf6ef67",
+          "name": "codex-baseline",
+          "startTime": 1788630033035,
+          "endTime": 1788630123616.0996,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "promptfoo.provider.id": "openai:codex-sdk",
+            "promptfoo.span.role": "target",
+            "promptfoo.target.type": "provider",
+            "promptfoo.target.label": "codex-baseline",
+            "promptfoo.prompt.label": "Fixed video evidence task: prompts/video-evidence.txt: Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: {{ dataset }}\nVideo ID: {{ video_id }}\nMedia path: {{ media_relpath }}\nVideo duration: {{ duration_seconds }} seconds\nEvent to locate: {{ query }}\nEvidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between\n{{ min_chunk_seconds }} and {{ …",
+            "promptfoo.eval.id": "eval-2uz-2026-09-05T17:39:13",
+            "promptfoo.test.index": 1
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "3abdce2ccbce7ecc",
+          "parentSpanId": "3e3de295aaf6ef67",
+          "name": "grader is-json",
+          "startTime": 1788630123890,
+          "endTime": 1788630123890.737,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "promptfoo.grader.id": "is-json",
+            "gen_ai.evaluation.name": "is-json",
+            "promptfoo.span.role": "grader",
+            "promptfoo.eval.id": "eval-2uz-2026-09-05T17:39:13",
+            "promptfoo.test.index": 1,
+            "gen_ai.evaluation.score.label": "pass",
+            "gen_ai.evaluation.score.value": 1,
+            "gen_ai.evaluation.explanation": "Assertion passed"
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "6b89bd35565a11ec",
+          "parentSpanId": "3e3de295aaf6ef67",
+          "name": "grader python",
+          "startTime": 1788630123890,
+          "endTime": 1788630124009.001,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "promptfoo.grader.id": "python",
+            "gen_ai.evaluation.name": "python",
+            "promptfoo.span.role": "grader",
+            "promptfoo.eval.id": "eval-2uz-2026-09-05T17:39:13",
+            "promptfoo.test.index": 1,
+            "gen_ai.evaluation.score.label": "pass",
+            "gen_ai.evaluation.score.value": 1,
+            "gen_ai.evaluation.explanation": "Bounded chunk hit: 10.000s duration, 1.0000 event coverage; temporal IoU 0.6000."
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "38e10e0a6b615a0b",
+          "parentSpanId": "3e3de295aaf6ef67",
+          "name": "grader python",
+          "startTime": 1788630123890,
+          "endTime": 1788630124009.2207,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "promptfoo.grader.id": "python",
+            "gen_ai.evaluation.name": "python",
+            "promptfoo.span.role": "grader",
+            "promptfoo.eval.id": "eval-2uz-2026-09-05T17:39:13",
+            "promptfoo.test.index": 1,
+            "gen_ai.evaluation.score.label": "pass",
+            "gen_ai.evaluation.score.value": 1,
+            "gen_ai.evaluation.explanation": "VidXP-off remained isolated from the skill, MCP, and CLI."
+          },
+          "statusCode": 1
+        },
+        {
+          "spanId": "3e3de295aaf6ef67",
+          "name": "promptfoo.test_case",
+          "startTime": 1788630033034,
+          "endTime": 1788630124009.8044,
+          "attributes": {
+            "service.name": "promptfoo",
+            "service.version": "0.122.2",
+            "promptfoo.span.role": "test_case",
+            "promptfoo.eval.id": "eval-2uz-2026-09-05T17:39:13",
+            "promptfoo.test.index": 1,
+            "promptfoo.test_case.id": "1-1",
+            "promptfoo.prompt.index": 1,
+            "promptfoo.provider.id": "openai:codex-sdk",
+            "promptfoo.prompt.label": "Fixed video evidence task: prompts/video-evidence.txt: Locate one event in the supplied video and return one practical evidence clip.\n\nDataset: {{ dataset }}\nVideo ID: {{ video_id }}\nMedia path: {{ media_relpath }}\nVideo duration: {{ duration_seconds }} seconds\nEvent to locate: {{ query }}\nEvidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between\n{{ min_chunk_seconds }} and {{ …",
+            "promptfoo.repeat.index": 0,
+            "promptfoo.test.success": true,
+            "promptfoo.test.score": 1
+          },
+          "statusCode": 1
+        }
+      ]
+    }
+  ]
+}

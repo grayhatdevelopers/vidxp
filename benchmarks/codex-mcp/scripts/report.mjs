@@ -1,10 +1,11 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { spawnSync } from 'node:child_process';
 
-const CONDITION_ORDER = ['vidxp-on', 'vidxp-off', 'model-only'];
+const CONDITION_ORDER = ['vidxp-on', 'vidxp-off', 'clean-user'];
 
 function parseJson(value, fallback = {}) {
   if (typeof value !== 'string') {
@@ -61,6 +62,90 @@ function tokenDifference(total, cached) {
   return Number.isFinite(total) && Number.isFinite(cached)
     ? Math.max(0, total - cached)
     : null;
+}
+
+function conditionCodexHome(condition) {
+  const byCondition = {
+    'vidxp-on': process.env.VIDXP_EVAL_VIDXP_ON_CODEX_HOME,
+    'vidxp-off': process.env.VIDXP_EVAL_VIDXP_OFF_CODEX_HOME,
+    'clean-user': process.env.VIDXP_EVAL_CLEAN_USER_CODEX_HOME,
+  };
+  return byCondition[condition] || process.env.VIDXP_EVAL_CODEX_HOME;
+}
+
+function findRollout(codexHome, sessionId) {
+  const sessions = codexHome && join(codexHome, 'sessions');
+  if (!sessions || !existsSync(sessions) || !sessionId) {
+    return null;
+  }
+  const pending = [sessions];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(path);
+      } else if (entry.isFile() && entry.name.endsWith(`${sessionId}.jsonl`)) {
+        return path;
+      }
+    }
+  }
+  return null;
+}
+
+function rolloutModelTurns(condition, sessionId) {
+  const conditionHome = conditionCodexHome(condition);
+  const path = findRollout(conditionHome, sessionId)
+    || (conditionHome === process.env.VIDXP_EVAL_CODEX_HOME
+      ? null
+      : findRollout(process.env.VIDXP_EVAL_CODEX_HOME, sessionId));
+  if (!path) {
+    return null;
+  }
+  let modelTurns = 0;
+  let lastTotal = -1;
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    if (!line) continue;
+    const event = parseJson(line, null);
+    const payload = event?.payload;
+    if (event?.type === 'event_msg' && payload?.type === 'token_count') {
+      const info = payload.info;
+      const cumulative = Number(info?.total_token_usage?.total_tokens);
+      if (info?.last_token_usage && cumulative > lastTotal) {
+        modelTurns += 1;
+        lastTotal = cumulative;
+      }
+    }
+  }
+  return modelTurns;
+}
+
+export function summarizeRecordedItems(raw) {
+  const turn = typeof raw === 'string' ? parseJson(raw, null) : raw;
+  const items = Array.isArray(turn?.items) ? turn.items : null;
+  if (!items) {
+    return null;
+  }
+  let toolCalls = 0;
+  let mcpCalls = 0;
+  let shellCalls = 0;
+  for (const item of items) {
+    if (item?.type === 'command_execution') {
+      shellCalls += 1;
+      toolCalls += 1;
+    } else if (typeof item?.type === 'string' && item.type.endsWith('_tool_call')) {
+      toolCalls += 1;
+    }
+    if (item?.type === 'mcp_tool_call' && item.server === 'vidxp') {
+      mcpCalls += 1;
+    }
+  }
+  return {
+    agentItems: items.length,
+    toolCalls,
+    mcpCalls,
+    shellCalls,
+  };
 }
 
 function boundaryError(predicted, expected) {
@@ -150,21 +235,30 @@ export function summarizeResults(results) {
       meanDurationError: mean(selected.map((result) => absolute(durationError(result)))),
       meanLatencyMs: mean(selected.map((result) => result.latencyMs)),
       totalLatencyMs: sum(selected.map((result) => result.latencyMs)),
+      meanTotalTokens: mean(selected.map((result) => result.totalTokens)),
       totalTokens: sumOrNull(selected.map((result) => result.totalTokens)),
+      meanPromptTokens: mean(selected.map((result) => result.promptTokens)),
       promptTokens: sumOrNull(selected.map((result) => result.promptTokens)),
+      meanUncachedPromptTokens: mean(selected.map((result) => (
+        tokenDifference(result.promptTokens, result.cachedTokens)
+      ))),
       uncachedPromptTokens: sumOrNull(selected.map((result) => (
         tokenDifference(result.promptTokens, result.cachedTokens)
       ))),
+      meanCachedTokens: mean(selected.map((result) => result.cachedTokens)),
       cachedTokens: sumOrNull(selected.map((result) => result.cachedTokens)),
+      meanCompletionTokens: mean(selected.map((result) => result.completionTokens)),
       completionTokens: sumOrNull(selected.map((result) => result.completionTokens)),
+      meanReasoningTokens: mean(selected.map((result) => result.reasoningTokens)),
       reasoningTokens: sumOrNull(selected.map((result) => result.reasoningTokens)),
       requests: sumOrNull(selected.map((result) => result.requests)),
+      meanCost: mean(selected.map((result) => result.cost)),
       cost: sumOrNull(selected.map((result) => result.cost)),
+      modelTurns: sum(selected.map((result) => result.modelTurns)),
       agentItems: sum(selected.map((result) => result.agentItems)),
       toolCalls: sum(selected.map((result) => result.toolCalls)),
       mcpCalls: sum(selected.map((result) => result.mcpCalls)),
       shellCalls: sum(selected.map((result) => result.shellCalls)),
-      mediaShellCalls: sum(selected.map((result) => result.mediaShellCalls)),
       skillLoads: sum(selected.map((result) => result.skillLoads)),
     };
   }).filter((summary) => summary.runs > 0);
@@ -210,7 +304,6 @@ export function loadLatestEvaluation() {
       let toolCalls = 0;
       let mcpCalls = 0;
       let shellCalls = 0;
-      let mediaShellCalls = 0;
       for (const span of spans) {
         const attributes = parseJson(span.attributes);
         const itemId = attributes['codex.item.id'];
@@ -228,13 +321,6 @@ export function loadLatestEvaluation() {
             mcpCalls += 1;
           }
         }
-        const command = attributes['codex.command'];
-        if (
-          typeof command === 'string'
-          && /(?:^|[\s'"/\\])ff(?:mpeg|probe)(?:\s|$)/i.test(command)
-        ) {
-          mediaShellCalls += 1;
-        }
         if (Number.isFinite(span.start_time)) {
           firstSpan = firstSpan === null ? span.start_time : Math.min(firstSpan, span.start_time);
         }
@@ -247,7 +333,6 @@ export function loadLatestEvaluation() {
         toolCalls,
         mcpCalls,
         shellCalls,
-        mediaShellCalls,
       });
     }
 
@@ -258,9 +343,15 @@ export function loadLatestEvaluation() {
       const namedScores = parseJson(row.named_scores);
       const responseMetadata = response.metadata || {};
       const stats = traceStats.get(row.test_idx) || {};
+      const recordedItems = summarizeRecordedItems(response.raw) || stats;
+      const modelTurns = rolloutModelTurns(
+        testCase.vars?.condition || 'unknown',
+        response.sessionId,
+      );
       return {
         task: testCase.metadata?.task_id || testCase.vars?.id || String(row.test_idx),
         condition: testCase.vars?.condition || 'unknown',
+        expectedVidxp: testCase.vars?.expected_vidxp === true,
         evaluationMode: testCase.vars?.evaluation_mode
           || testCase.metadata?.evaluation_mode
           || 'unknown',
@@ -302,11 +393,11 @@ export function loadLatestEvaluation() {
         reasoningTokens: response.tokenUsage?.completionDetails?.reasoning,
         requests: response.tokenUsage?.numRequests,
         cost: row.cost,
-        agentItems: stats.agentItems || 0,
-        toolCalls: stats.toolCalls || 0,
-        mcpCalls: stats.mcpCalls || 0,
-        shellCalls: stats.shellCalls || 0,
-        mediaShellCalls: stats.mediaShellCalls || 0,
+        modelTurns: modelTurns || 0,
+        agentItems: recordedItems.agentItems || 0,
+        toolCalls: recordedItems.toolCalls || 0,
+        mcpCalls: recordedItems.mcpCalls || 0,
+        shellCalls: recordedItems.shellCalls || 0,
         skillLoads: Array.isArray(responseMetadata.skillCalls)
           ? responseMetadata.skillCalls.length
           : 0,
@@ -386,6 +477,7 @@ function retrievalRecallAt(retrievals, depth, threshold) {
 function loadRetrievalTraces(results) {
   const jobIds = [...new Set(
     results
+      .filter((result) => result.expectedVidxp)
       .map((result) => result.sourceJobId)
       .filter((jobId) => typeof jobId === 'string' && jobId.length > 0),
   )];
@@ -454,50 +546,58 @@ export function renderReport(
     'end MAE': secondsValue(summary.meanEndError),
     'duration MAE': secondsValue(summary.meanDurationError),
   })));
-  console.log('Token usage and estimated cost:');
+  console.log('Token usage and Promptfoo cost:');
   console.table(summaries.map((summary) => ({
     condition: summary.condition,
-    total: integer(summary.totalTokens),
-    input: integer(summary.promptTokens),
-    'input cached': integer(summary.cachedTokens),
-    'input uncached': integer(summary.uncachedPromptTokens),
-    output: integer(summary.completionTokens),
-    reasoning: integer(summary.reasoningTokens),
-    'Codex runs': integer(summary.requests),
-    'est. cost': money(summary.cost),
+    runs: summary.runs,
+    'avg total': integer(summary.meanTotalTokens),
+    'avg input': integer(summary.meanPromptTokens),
+    'avg cached': integer(summary.meanCachedTokens),
+    'avg uncached': integer(summary.meanUncachedPromptTokens),
+    'avg output': integer(summary.meanCompletionTokens),
+    'avg reasoning': integer(summary.meanReasoningTokens),
+    'all tokens': integer(summary.totalTokens),
+    'avg cost': money(summary.meanCost),
+    'all cost': money(summary.cost),
   })));
   console.log(
-    '  Reasoning tokens are included in output tokens. Estimated cost is provider-reported; '
-    + 'cached and uncached input can have different rates, so total tokens alone do not determine cost.',
+    '  Reasoning tokens are included in output tokens. Cost is Promptfoo\'s supplied provider '
+    + 'estimate, kept unchanged as a consistent comparison metric; it is not an end-user bill or '
+    + 'a verified Codex-plan charge.',
   );
   console.log('Agent activity:');
   console.table(summaries.map((summary) => ({
     condition: summary.condition,
+    runs: summary.requests,
+    turns: summary.modelTurns,
     items: summary.agentItems,
     'tool calls': summary.toolCalls,
     MCP: summary.mcpCalls,
     shell: summary.shellCalls,
-    'ffmpeg/ffprobe': summary.mediaShellCalls,
     skill: summary.skillLoads,
   })));
+  console.log(
+    '  Items and tool-type counts come from Promptfoo\'s saved Codex items. Model turns come '
+    + 'from Codex rollout token events.',
+  );
 
   const on = summaries.find((summary) => summary.condition === 'vidxp-on');
   const off = summaries.find((summary) => summary.condition === 'vidxp-off');
-  const modelOnly = summaries.find((summary) => summary.condition === 'model-only');
+  const cleanUser = summaries.find((summary) => summary.condition === 'clean-user');
   if (on && off) {
     const latencyDelta = on.meanLatencyMs - off.meanLatencyMs;
     const latencyPercent = off.meanLatencyMs
       ? Math.abs(latencyDelta) / off.meanLatencyMs * 100
       : null;
-    const tokenDelta = Number.isFinite(on.totalTokens) && Number.isFinite(off.totalTokens)
-      ? on.totalTokens - off.totalTokens
+    const tokenDelta = Number.isFinite(on.meanTotalTokens) && Number.isFinite(off.meanTotalTokens)
+      ? on.meanTotalTokens - off.meanTotalTokens
       : null;
-    const tokenPercent = Number.isFinite(tokenDelta) && off.totalTokens
-      ? Math.abs(tokenDelta) / off.totalTokens * 100
+    const tokenPercent = Number.isFinite(tokenDelta) && off.meanTotalTokens
+      ? Math.abs(tokenDelta) / off.meanTotalTokens * 100
       : null;
-    const uncachedDelta = Number.isFinite(on.uncachedPromptTokens)
-      && Number.isFinite(off.uncachedPromptTokens)
-      ? on.uncachedPromptTokens - off.uncachedPromptTokens
+    const uncachedDelta = Number.isFinite(on.meanUncachedPromptTokens)
+      && Number.isFinite(off.meanUncachedPromptTokens)
+      ? on.meanUncachedPromptTokens - off.meanUncachedPromptTokens
       : null;
     console.log('VidXP-on minus VidXP-off:');
     const chunkHitDelta = Number.isFinite(on.chunkHitRate) && Number.isFinite(off.chunkHitRate)
@@ -512,19 +612,19 @@ export function renderReport(
         : ''),
     );
     console.log(
-      `  total tokens: ${Number.isFinite(tokenDelta) && tokenDelta >= 0 ? '+' : ''}${integer(tokenDelta)}`
+      `  average tokens: ${Number.isFinite(tokenDelta) && tokenDelta >= 0 ? '+' : ''}${integer(tokenDelta)}`
       + (Number.isFinite(tokenPercent)
         ? ` (${tokenPercent.toFixed(1)}% ${tokenDelta <= 0 ? 'fewer' : 'more'})`
         : ''),
     );
     console.log(
-      `  uncached input tokens: ${Number.isFinite(uncachedDelta) && uncachedDelta >= 0 ? '+' : ''}`
+      `  average uncached input tokens: ${Number.isFinite(uncachedDelta) && uncachedDelta >= 0 ? '+' : ''}`
       + integer(uncachedDelta),
     );
-    const costDelta = Number.isFinite(on.cost) && Number.isFinite(off.cost)
-      ? on.cost - off.cost
+    const costDelta = Number.isFinite(on.meanCost) && Number.isFinite(off.meanCost)
+      ? on.meanCost - off.meanCost
       : null;
-    console.log(`  estimated cost: ${signedMoney(costDelta)}`);
+    console.log(`  average Promptfoo cost: ${signedMoney(costDelta)}`);
     if (evaluation.mode === 'pilot') {
       const productGateAvailable = Number.isFinite(chunkHitDelta) && Number.isFinite(tokenDelta);
       const productGatePassed = productGateAvailable && chunkHitDelta >= 0 && tokenDelta < 0;
@@ -537,15 +637,15 @@ export function renderReport(
     }
   }
 
-  if (modelOnly) {
-    console.log('Model-only supporting comparisons:');
+  if (cleanUser) {
+    console.log('Clean-user supporting comparisons:');
     console.table([off, on].filter(Boolean).map((reference) => ({
-      comparison: `model-only minus ${reference.condition}`,
-      'hit-rate Δ': signed(modelOnly.chunkHitRate - reference.chunkHitRate, 3),
-      'mean IoU Δ': signed(modelOnly.meanIou - reference.meanIou, 4),
-      'avg time Δ': signedSeconds((modelOnly.meanLatencyMs - reference.meanLatencyMs) / 1000),
-      'tokens Δ': integer(modelOnly.totalTokens - reference.totalTokens),
-      'cost Δ': signedMoney(modelOnly.cost - reference.cost),
+      comparison: `clean-user minus ${reference.condition}`,
+      'hit-rate Δ': signed(cleanUser.chunkHitRate - reference.chunkHitRate, 3),
+      'mean IoU Δ': signed(cleanUser.meanIou - reference.meanIou, 4),
+      'avg time Δ': signedSeconds((cleanUser.meanLatencyMs - reference.meanLatencyMs) / 1000),
+      'avg tokens Δ': integer(cleanUser.meanTotalTokens - reference.meanTotalTokens),
+      'avg cost Δ': signedMoney(cleanUser.meanCost - reference.meanCost),
     })));
   }
 
@@ -591,12 +691,13 @@ export function renderReport(
       uncached: integer(tokenDifference(result.promptTokens, result.cachedTokens)),
       output: integer(result.completionTokens),
       reasoning: integer(result.reasoningTokens),
+      turns: result.modelTurns,
+      items: result.agentItems,
       tools: result.toolCalls,
       MCP: result.mcpCalls,
       shell: result.shellCalls,
-      media: result.mediaShellCalls,
       skill: result.skillLoads,
-      'est. cost': money(result.cost),
+      'Promptfoo cost': money(result.cost),
     })));
   } else {
     console.log(`Per-run table omitted for ${evaluation.results.length} runs; use results --all to print it.`);

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,10 +16,11 @@ from vidxp.benchmarks.agent_ablation_score import (
 _SCORER = "file://../../src/vidxp/benchmarks/agent_ablation_score.py"
 _MODALITIES = frozenset({"scene", "action", "sound", "speech"})
 _RUN_MODES = frozenset({"all", "smoke", "pilot"})
+_DEFAULT_PILOT_REPETITIONS = 3
 
 
 def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Expand one task manifest into matched VidXP-on and VidXP-off cases."""
+    """Expand one task manifest into matched three-condition cases."""
 
     options = config or {}
     manifest = Path(options.get("manifest", ""))
@@ -38,25 +38,21 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
             providers.get("vidxp_on", "codex-vidxp"),
             True,
             False,
-            True,
-            "Use VidXP evidence; do not inspect the media with FFmpeg or ffprobe.",
+            False,
         ),
         (
             "vidxp-off",
             providers.get("vidxp_off", "codex-baseline"),
             False,
             True,
-            True,
-            "VidXP is unavailable; use the local media and any available local tools.",
+            False,
         ),
         (
-            "model-only",
-            providers.get("model_only", "codex-model-only"),
+            "clean-user",
+            providers.get("clean_user", "codex-clean-user"),
             False,
-            False,
-            False,
-            "VidXP and local tools are unavailable; use only the model's native "
-            "capabilities.",
+            True,
+            True,
         ),
     )
 
@@ -66,8 +62,7 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
     selected_tasks = (
         tasks[:1] if mode == "smoke" else tasks[1:] if mode == "pilot" else tasks
     )
-    repetitions = 3 if mode == "pilot" else 1
-    run_id = os.environ.get("VIDXP_EVAL_RUN_ID", "validation")
+    repetitions = _repetitions(mode)
 
     generated: list[dict[str, Any]] = []
     task_ids: set[str] = set()
@@ -85,13 +80,8 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
                 provider,
                 expected_vidxp,
                 allow_media_shell,
-                allow_agent_tools,
-                evidence_access,
+                forbid_host_tools,
             ) in ordered_conditions:
-                nonce_source = f"{run_id}\0{task['id']}\0{repetition}\0{condition}"
-                retrieval_nonce = hashlib.sha256(
-                    nonce_source.encode("utf-8")
-                ).hexdigest()[:32]
                 variables = dict(task)
                 # Promptfoo expands array-valued vars into separate test cases.
                 # Keep modalities reportable without multiplying each task.
@@ -101,11 +91,9 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
                 variables["condition"] = condition
                 variables["expected_vidxp"] = expected_vidxp
                 variables["allow_media_shell"] = allow_media_shell
-                variables["allow_agent_tools"] = allow_agent_tools
-                variables["evidence_access"] = evidence_access
+                variables["forbid_host_tools"] = forbid_host_tools
                 variables["evaluation_mode"] = mode
                 variables["repetition"] = repetition + 1
-                variables["retrieval_nonce"] = retrieval_nonce
                 variables["target_chunk_seconds"] = DEFAULT_TARGET_CHUNK_SECONDS
                 variables["min_chunk_seconds"] = DEFAULT_MIN_CHUNK_SECONDS
                 variables["max_chunk_seconds"] = DEFAULT_MAX_CHUNK_SECONDS
@@ -146,6 +134,21 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
                     }
                 )
     return generated
+
+
+def _repetitions(mode: str) -> int:
+    if mode != "pilot":
+        return 1
+    raw = os.environ.get("VIDXP_EVAL_REPETITIONS")
+    if raw is None:
+        return _DEFAULT_PILOT_REPETITIONS
+    try:
+        repetitions = int(raw)
+    except ValueError as error:
+        raise ValueError("VIDXP_EVAL_REPETITIONS must be a positive integer.") from error
+    if repetitions < 1:
+        raise ValueError("VIDXP_EVAL_REPETITIONS must be a positive integer.")
+    return repetitions
 
 
 def _validate_task(task: Any) -> None:

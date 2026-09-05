@@ -1,5 +1,8 @@
 # yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
-description: VidXP, local-tool, and model-only temporal evidence evaluation
+description: VidXP, direct-local, and clean-user temporal evidence evaluation
+
+extensions:
+  - file://scripts/reset-workspace.mjs:beforeEach
 
 prompts:
   - id: video-evidence-task
@@ -88,7 +91,8 @@ providers:
                 description:
                   type: string
       cli_env:
-        CODEX_HOME: "{{ env.VIDXP_EVAL_CODEX_HOME }}"
+        CODEX_HOME: "{{ env.VIDXP_EVAL_VIDXP_ON_CODEX_HOME }}"
+        TMPDIR: "{{ env.VIDXP_EVAL_VIDXP_ON_WORKSPACE }}/tmp"
       cli_config:
         features:
           multi_agent: false
@@ -113,30 +117,28 @@ providers:
     config:
       <<: *vidxp_provider
       working_dir: "{{ env.VIDXP_EVAL_VIDXP_OFF_WORKSPACE }}"
+      cli_env:
+        CODEX_HOME: "{{ env.VIDXP_EVAL_VIDXP_OFF_CODEX_HOME }}"
+        TMPDIR: "{{ env.VIDXP_EVAL_VIDXP_OFF_WORKSPACE }}/tmp"
       cli_config:
         features:
           multi_agent: false
 
   - id: openai:codex-sdk
-    label: codex-model-only
+    label: codex-clean-user
     config:
       <<: *vidxp_provider
-      working_dir: "{{ env.VIDXP_EVAL_MODEL_ONLY_WORKSPACE }}"
+      working_dir: "{{ env.VIDXP_EVAL_CLEAN_USER_WORKSPACE }}"
+      sandbox_mode: workspace-write
+      network_access_enabled: true
+      cli_env:
+        CODEX_HOME: "{{ env.VIDXP_EVAL_CLEAN_USER_CODEX_HOME }}"
+        HOME: "{{ env.VIDXP_EVAL_CLEAN_USER_WORKSPACE }}"
+        PATH: "{{ env.VIDXP_EVAL_CLEAN_USER_PATH }}"
+        TMPDIR: "{{ env.VIDXP_EVAL_CLEAN_USER_WORKSPACE }}/tmp"
       cli_config:
         features:
           multi_agent: false
-          shell_tool: false
-          view_image: false
-          browser_use: false
-          in_app_browser: false
-          computer_use: false
-          apps: false
-          image_generation: false
-          plugins: false
-          skill_search: false
-          skill_mcp_dependency_install: false
-          tool_suggest: false
-          workspace_dependencies: false
 
 tests:
   - path: file://../../src/vidxp/benchmarks/agent_ablation_tests.py:generate_tests
@@ -145,7 +147,7 @@ tests:
       providers:
         vidxp_on: codex-vidxp
         vidxp_off: codex-baseline
-        model_only: codex-model-only
+        clean_user: codex-clean-user
 
 evaluateOptions:
   cache: false

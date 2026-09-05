@@ -40,10 +40,30 @@ case "$command" in
         exec npm run eval:smoke
         ;;
     pilot)
+        case "${1:-}" in
+            "")
+                ;;
+            *[!0-9]*|0)
+                echo "Pilot repetitions must be a positive integer." >&2
+                exit 2
+                ;;
+            *)
+                VIDXP_EVAL_REPETITIONS=$1
+                export VIDXP_EVAL_REPETITIONS
+                shift
+                ;;
+        esac
+        if [ "$#" -gt 0 ]; then
+            echo "Usage: ./benchmarks/codex-mcp/run pilot [repetitions]" >&2
+            exit 2
+        fi
         exec npm run eval:pilot
         ;;
     results)
         exec npm run report -- "$@"
+        ;;
+    export)
+        exec npm run export -- "$@"
         ;;
     trace)
         exec npm run report -- --retrieval "$@"
@@ -73,7 +93,7 @@ case "$command" in
         exec npm run promptfoo -- view --yes "$@"
         ;;
     *)
-        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot|results|trace|probe|depth|compare|representation|shots|queries|sound|view}" >&2
+        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot [repetitions]|results|export|trace|probe|depth|compare|representation|shots|queries|sound|view}" >&2
         exit 2
         ;;
 esac

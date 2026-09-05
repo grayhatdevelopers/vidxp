@@ -120,6 +120,9 @@ async function main() {
   run('uv', ['--version'], { capture: true });
 
   const evaluationRoot = defaultEvaluationRoot(process.env);
+  const uvCacheDirectory = join(evaluationRoot, 'uv-cache');
+  mkdirSync(uvCacheDirectory, { recursive: true });
+  const uvEnvironment = { ...process.env, UV_CACHE_DIR: uvCacheDirectory };
   const desktopModelCache = installedDesktopModelCache();
   const setupSourceEnvironment = {
     ...process.env,
@@ -130,9 +133,10 @@ async function main() {
   run(
     'uv',
     [
-      'sync', '--frozen', '--extra', 'local-worker', '--extra', 'mcp',
+      'sync', '--frozen', '--extra', 'local-worker', '--extra', 'mcp', '--extra', 'server',
       '--extra', 'benchmarks', '--extra', 'test',
     ],
+    { env: uvEnvironment },
   );
   const indexSchemaVersion = Number(run(
     'uv',
@@ -140,7 +144,7 @@ async function main() {
       'run', '--no-sync', 'python', '-c',
       'from vidxp.core.contracts import INDEX_SCHEMA_VERSION; print(INDEX_SCHEMA_VERSION)',
     ],
-    { capture: true },
+    { capture: true, env: uvEnvironment },
   ).trim());
   const setupEnvironment = evaluationEnvironment({
     benchmarkRoot,
@@ -200,14 +204,20 @@ async function main() {
 
   for (const directory of [
     setupEnvironment.VIDXP_EVAL_CODEX_HOME,
+    setupEnvironment.VIDXP_EVAL_VIDXP_ON_CODEX_HOME,
+    setupEnvironment.VIDXP_EVAL_VIDXP_OFF_CODEX_HOME,
+    setupEnvironment.VIDXP_EVAL_CLEAN_USER_CODEX_HOME,
+    setupEnvironment.VIDXP_EVAL_UV_CACHE_DIR,
     setupEnvironment.VIDXP_EVAL_WORKSPACE,
     join(setupEnvironment.VIDXP_EVAL_WORKSPACE, 'media'),
     setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE,
     join(setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE, 'media'),
     setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE,
     join(setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE, 'media'),
-    setupEnvironment.VIDXP_EVAL_MODEL_ONLY_WORKSPACE,
-    join(setupEnvironment.VIDXP_EVAL_MODEL_ONLY_WORKSPACE, 'media'),
+    setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE,
+    join(setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE, 'media'),
+    join(setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE, 'bin'),
+    join(setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE, 'tmp'),
     setupEnvironment.VIDXP_EVAL_DATA_DIR,
     setupEnvironment.VIDXP_EVAL_INDEX_DIR,
     setupEnvironment.VIDXP_EVAL_ARTIFACT_DIR,
@@ -230,6 +240,18 @@ async function main() {
     ),
     { recursive: true, force: true },
   );
+  if (process.platform !== 'win32') {
+    const cleanPathProfile = `export PATH=${JSON.stringify(
+      setupEnvironment.VIDXP_EVAL_CLEAN_USER_PATH,
+    )}\n`;
+    for (const profile of ['.zshenv', '.zprofile', '.profile']) {
+      writeFileSync(
+        join(setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE, profile),
+        cleanPathProfile,
+        'utf8',
+      );
+    }
+  }
   writeFileSync(
     setupEnvironment.VIDXP_EVAL_ENV_FILE,
     serializeEnvironment(setupEnvironment),
@@ -245,6 +267,13 @@ async function main() {
   }
   if (!existsSync(authPath)) {
     throw new Error('Codex login completed without creating auth.json in the isolated profile.');
+  }
+  for (const conditionHome of [
+    setupEnvironment.VIDXP_EVAL_VIDXP_ON_CODEX_HOME,
+    setupEnvironment.VIDXP_EVAL_VIDXP_OFF_CODEX_HOME,
+    setupEnvironment.VIDXP_EVAL_CLEAN_USER_CODEX_HOME,
+  ]) {
+    copyFileSync(authPath, join(conditionHome, 'auth.json'));
   }
 
   process.stdout.write(
@@ -287,7 +316,7 @@ async function main() {
     for (const conditionWorkspace of [
       setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE,
       setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE,
-      setupEnvironment.VIDXP_EVAL_MODEL_ONLY_WORKSPACE,
+      setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE,
     ]) {
       const conditionMedia = join(conditionWorkspace, 'media', `${videoId}.mp4`);
       if (!existsSync(conditionMedia)) {

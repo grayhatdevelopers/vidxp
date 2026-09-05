@@ -8,14 +8,20 @@ description: Use VidXP to search indexed videos and surface inspectable evidence
 ## Retrieve evidence
 
 - Resolve the indexed video and scope retrieval with its `media_id` when the
-  user means one video.
+  user means one video. `get_workspace` returns that ID with the matching media;
+  do not repeat the lookup with `list_media`.
+- If tool schemas are deferred, resolve only `get_workspace`, the chosen search
+  tool, `wait_job`, and `get_job_evidence`; do not enumerate the full catalog.
 - Use `search_moments` to locate events and `query_video` for a synthesized
   answer. Use a fresh idempotency key for each new retrieval; reuse a key only
   when retrying that same submission.
-- Request `keyframes_and_clips` evidence with at most three initial items when
-  standalone evidence is useful. Wait for the job to finish, then use
-  `get_job_evidence` to inspect the concise evidence result. Carry the returned
-  observation token between waits.
+- When standalone evidence is useful, request only as many
+  `keyframes_and_clips` items as the user needs, capped at three. Wait for the
+  job to finish, then use `get_job_evidence` once. It returns the ranked
+  intervals, contributing modality spans, board, and artifact links needed for
+  normal evidence delivery; fetch the full job record only when the user needs
+  machine-readable job details. Carry the returned observation token between
+  waits.
 - Prefer the initial ranked evidence. Do not start a verification loop or
   materialize additional variants unless the user asks.
 

@@ -19,7 +19,7 @@ installation and product usage, start with the main
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
 | Environmental-sound retrieval | PE-A-Frame Small integrated; long-audio gate pending | An identical 149-query AEGBench comparison selected PE-A-Frame over FineLAP. The product now indexes its 40 ms frames through bounded overlapping sections and returns distinct ten-second evidence windows. |
 | LongVALE combined evaluation | Pilot not run | The prepared three-condition tasks can measure evidence quality, localization, tokens, time, cost, and tool use after maintainer approval |
-| Codex MCP ablation | Development smoke traced | The latest two-condition smoke returned the correct practical window with 27.9% fewer VidXP tokens. A third model-only condition is now defined; the 81-run held-out pilot has not run. |
+| Codex MCP ablation | Corrected smoke complete; pilot pending | The neutral, isolated three-condition smoke found the target in every condition. VidXP used 40.9% fewer tokens and finished 22.1% faster than direct local inspection; the 81-run pilot has not run. |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
 
 Read [current results](results.md) for the scores, plain-language metric
@@ -30,7 +30,7 @@ definitions, honest comparisons, and the next benchmark decision.
 | If you need to… | Read |
 |---|---|
 | Understand how VidXP performed | [Current results](results.md) |
-| Compare consolidated run metrics and machine profiles | [Metric database](metric_database.md) |
+| Compare consolidated metrics, machine profiles, and retained run artifacts | [Metric database](metric_database.md) |
 | See the required per-modality gates and exact commands | [Individual modality gates](modality_gates.md) |
 | Reproduce DiDeMo or HiREST | [Adapter validation ledger](adapter_validation.md) |
 | Understand the benchmark-ready Python structure | [Core contract](core_contract.md) |
@@ -63,10 +63,14 @@ queries and selected the latter for the product. That frozen subset is a
 provider decision, not a full dataset or long-audio product score.
 The earlier LongVALE-derived target-only result remains provenance only.
 
-The latest Codex MCP development pair returned the same useful `0–10` second
-window in both conditions. VidXP finished 11.922 seconds faster, used 77,518
-fewer total tokens, and had a $0.254987 lower provider estimate. This is a
-bounded-clip harness smoke, not a product gate. Earlier local controls exposed a
+The corrected Codex MCP development smoke returned a useful opening clip in all
+three conditions. Against direct local inspection, VidXP matched the primary
+bounded-chunk result with 40.9% fewer tokens and 22.1% lower latency. Its saved
+top result was `0–10` seconds; the agent expanded the answer to `0–12`, reducing
+answer IoU from `.600` to `.500`. This is one development task, not a product
+gate or held-out quality claim. Older smokes remain debugging history because
+their prompts named the tool path and reused condition state.
+Earlier local controls exposed a
 separate historical FineLAP integration error: global clip and dense activation
 records were cross-ranked. Separating those representations was correct, but
 the later selector produced no target-overlapping final top-three result on the
@@ -76,11 +80,11 @@ query has several valid occurrences but only one accepted interval. That result
 is an auxiliary diagnosis; it neither validates nor rejects the selector and it
 does not decide whether the collective agent comparison can run.
 
-After explicit maintainer approval, the next paid run should compare VidXP,
-the same local agent without VidXP, and the model without local tools. It must retain the atomic
-modality hits so the report shows whether scene, action, speech, sound, or their
-agreement produced the answer. IoU and boundary errors remain important
-diagnostics, not the entire product decision.
+After explicit maintainer approval, the next paid run is the 81-run pilot over
+the remaining nine tasks. It compares VidXP, direct local inspection, and the
+clean-user bootstrap condition while retaining the atomic modality hits. IoU
+and boundary errors remain important diagnostics, not the entire product
+decision.
 See [current model direction](model_selection.md) and the
 [research adoption record](research_adoption.md).
 

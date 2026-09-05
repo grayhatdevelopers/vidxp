@@ -1,5 +1,4 @@
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,7 +12,6 @@ if (!['smoke', 'pilot'].includes(mode)) {
 const evaluationEnvironment = {
   ...process.env,
   VIDXP_EVAL_MODE: mode,
-  VIDXP_EVAL_RUN_ID: randomUUID(),
 };
 
 const preflight = spawnSync(
