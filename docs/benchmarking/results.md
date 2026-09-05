@@ -59,19 +59,20 @@ opening region:
 
 The ranking failure seen in an earlier run came from the FineLAP tokenization
 bug fixed by commit `343bd27`; it is not evidence about the current system. In
-the current run, the fixed eight-second action record overlaps the finer scene
-and sound hits. Connected-component union therefore adopts the action record's
-full end time. This explains the +2.0075-second error.
+the saved post-fix run, the fixed eight-second action record overlaps the finer
+scene and sound hits. The then-current connected-component union therefore
+adopted the action record's full end time. This explains the +2.0075-second
+error in that run; production fusion now uses rank-anchored direct overlap.
 
-The request also used `top_k = 3`, which the current application passes to each
-modality as both retrieval depth and final output depth. That is a separate
-candidate-depth limitation: a later boundary stage cannot use lower-ranked
-fine-grained evidence that was never retrieved. It does not by itself explain
-the eight-second endpoint in this example. The retained scene hits end at
-4.004 seconds and the retained sound hits end at 2.24 seconds, so those sparse
-boundaries also cannot determine the annotated 6-second end. Paper-derived
-score-curve localization must be evaluated from the dense sequence, not
-reconstructed from these seven retained hits.
+The saved request used `top_k = 3`; at that revision, the application passed the
+same value to each modality as retrieval depth and final output depth. That was
+a separate candidate-depth limitation: a later boundary stage could not use
+lower-ranked fine-grained evidence that was never retrieved. It does not by
+itself explain the eight-second endpoint in this example. The retained scene
+hits end at 4.004 seconds and the retained sound hits end at 2.24 seconds, so
+those sparse boundaries also cannot determine the annotated 6-second end.
+Paper-derived score-curve localization must be evaluated from the dense
+sequence, not reconstructed from these seven retained hits.
 
 The full-modality probe for this task queried all 572 indexed records with one
 local text-embedding call per modality. It did not invoke Codex or rerun the
@@ -89,9 +90,8 @@ records remain near the top through 7.007 seconds before their scores fall;
 the FineLAP activation scores have a much larger within-modality drop between
 seconds 6 and 7. The opening ten-second FineLAP global record ranks 43, while
 the other global windows rank 480–486. Thus action, scene, and sound all rank
-the correct opening region. The current `top_k = 3` truncates the dense tail,
-and interval union then lets the coarse action record set the 8.0075-second
-endpoint.
+the correct opening region. That run's `top_k = 3` truncated the dense tail, and
+interval union then let the coarse action record set the 8.0075-second endpoint.
 
 This one task supports a transition near seven seconds, not an exact six-second
 boundary. The remaining roughly one-second difference may come from the

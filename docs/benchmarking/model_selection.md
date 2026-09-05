@@ -135,7 +135,7 @@ R1@0.7, is weak on sub-ten-second moments, truncates audio-feature sequences
 beyond 300 seconds, and conflicts with the managed runtime. A separate runtime
 would reproduce that baseline; it has no demonstrated product advantage.
 
-The first executable candidate tested was Meta's
+The first executable dense-sound candidate tested was Meta's
 [PE-A-Frame Small](https://huggingface.co/facebook/pe-a-frame-small), from Vyas
 et al., [“Pushing the Frontier of Audiovisual Perception with Large-Scale
 Multimodal Correspondence Learning”](https://arxiv.org/abs/2512.19687). It
@@ -147,14 +147,19 @@ IoU and does not establish VidXP accuracy. The installed Transformers runtime
 has the official PE-Audio classes, avoiding the source repository's optional
 `xformers` path.
 
-The pinned Small checkpoint failed the Mac runtime gate. A complete 73.14-second
-soundtrack took 244.35 seconds on CPU and peaked at 4.30 GiB RSS. The full query
+The pinned Small checkpoint failed the initial Mac product diagnostic. A
+complete 73.14-second soundtrack took 244.35 seconds on CPU and peaked at 4.30
+GiB RSS. The full query
 missed the phone-ring target and produced 125 fragments at the official 0.3
 threshold. On target-aware clips, which test recognition but not retrieval, the
 mean best-span IoU was 0.1654 for full queries and 0.1151 for sound-only phrases;
 the target outscored surrounding audio on only one of four full-query cases and
 none of the sound-only cases. Threshold tuning cannot fix a target whose score
-is below the surrounding audio. PE-A-Frame is rejected as-is.
+is below the surrounding audio. PE-A-Frame Small was therefore not adopted from
+that run. The diagnostic was not a native provider benchmark: two of its four
+labels were unsuitable for sound-only scoring. It does not reject PE-AV,
+PE-Video, or the PE family. Run the frozen gates in
+[individual modality gates](modality_gates.md) before comparing those models.
 
 For hour-long media, bounded overlapping sections, global timestamp mapping,
 and boundary duplicate removal remain VidXP engineering requirements, not

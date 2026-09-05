@@ -21,6 +21,13 @@ from vidxp.benchmarks.hirest import (
     HIREST_DEFAULT_WINDOW_FRACTION,
     run_hirest,
 )
+from vidxp.benchmarks.modality_gates import (
+    run_charades_action,
+    run_finelap_audio_moment,
+    run_finelap_grounding,
+    run_finelap_retrieval,
+    run_msrvtt_action,
+)
 from vidxp.benchmarks.prepare import (
     PreparationPlan,
     execute_preparation,
@@ -574,3 +581,203 @@ def hirest_command(
         emit_json(metrics)
     else:
         rich_print(metrics)
+
+
+def _emit_metrics(ctx: typer.Context, metrics: dict, json_output: bool) -> None:
+    state = state_from_context(ctx)
+    if effective_output_format(state, json_output) == OutputFormat.json:
+        emit_json(metrics)
+    else:
+        rich_print(metrics)
+
+
+@app.command("msrvtt-action")
+def msrvtt_action_command(
+    ctx: typer.Context,
+    annotations: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    gallery: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    media_directory: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False),
+    ],
+    run_id: Annotated[str, typer.Option()],
+    query_indices: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional comma-separated query indices for a smoke subset."
+        ),
+    ] = None,
+    output_root: Annotated[Path, typer.Option()] = Path("benchmark_runs"),
+    reset: Annotated[bool, typer.Option()] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Run current VideoPrism on MSR-VTT 1K-A text-video retrieval."""
+
+    _require_benchmark_dependencies("action")
+    state = state_from_context(ctx)
+    metrics = run_msrvtt_action(
+        annotations_path=annotations,
+        gallery_path=gallery,
+        media_directory=media_directory,
+        run_id=run_id,
+        query_indices=_annotation_indices(query_indices),
+        output_root=output_root,
+        device=state.settings.runtime_backend,
+        reset=reset,
+    )
+    _emit_metrics(ctx, metrics, json_output)
+
+
+@app.command("charades-action")
+def charades_action_command(
+    ctx: typer.Context,
+    annotations: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    media_directory: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False),
+    ],
+    run_id: Annotated[str, typer.Option()],
+    query_indices: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional comma-separated query indices for a smoke subset."
+        ),
+    ] = None,
+    output_root: Annotated[Path, typer.Option()] = Path("benchmark_runs"),
+    reset: Annotated[bool, typer.Option()] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Run current VideoPrism windows on Charades-STA localization."""
+
+    _require_benchmark_dependencies("action")
+    state = state_from_context(ctx)
+    metrics = run_charades_action(
+        annotations_path=annotations,
+        media_directory=media_directory,
+        run_id=run_id,
+        query_indices=_annotation_indices(query_indices),
+        output_root=output_root,
+        device=state.settings.runtime_backend,
+        reset=reset,
+    )
+    _emit_metrics(ctx, metrics, json_output)
+
+
+@app.command("finelap-retrieval")
+def finelap_retrieval_command(
+    ctx: typer.Context,
+    metadata: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    run_id: Annotated[str, typer.Option()],
+    entry_indices: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional comma-separated audio-entry indices for a subset."
+        ),
+    ] = None,
+    output_root: Annotated[Path, typer.Option()] = Path("benchmark_runs"),
+    reset: Annotated[bool, typer.Option()] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Run FineLAP global embeddings on official-format clip retrieval."""
+
+    _require_benchmark_dependencies("sound")
+    state = state_from_context(ctx)
+    metrics = run_finelap_retrieval(
+        metadata_path=metadata,
+        run_id=run_id,
+        entry_indices=_annotation_indices(entry_indices),
+        output_root=output_root,
+        device=state.settings.runtime_backend,
+        reset=reset,
+    )
+    _emit_metrics(ctx, metrics, json_output)
+
+
+@app.command("finelap-grounding")
+def finelap_grounding_command(
+    ctx: typer.Context,
+    metadata: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    audio_directory: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False),
+    ],
+    run_id: Annotated[str, typer.Option()],
+    query_indices: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional comma-separated phrase indices for a subset."
+        ),
+    ] = None,
+    output_root: Annotated[Path, typer.Option()] = Path("benchmark_runs"),
+    reset: Annotated[bool, typer.Option()] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Run FineLAP dense rankings on TAG-format phrase grounding."""
+
+    _require_benchmark_dependencies("sound")
+    state = state_from_context(ctx)
+    metrics = run_finelap_grounding(
+        metadata_path=metadata,
+        audio_directory=audio_directory,
+        run_id=run_id,
+        query_indices=_annotation_indices(query_indices),
+        output_root=output_root,
+        device=state.settings.runtime_backend,
+        reset=reset,
+    )
+    _emit_metrics(ctx, metrics, json_output)
+
+
+@app.command("finelap-audio-moment")
+def finelap_audio_moment_command(
+    ctx: typer.Context,
+    metadata: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    audio_directory: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False),
+    ],
+    run_id: Annotated[str, typer.Option()],
+    dataset: Annotated[
+        Literal["clotho-moment", "castella"],
+        typer.Option(help="Lighthouse-format audio-moment dataset."),
+    ] = "clotho-moment",
+    query_indices: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional comma-separated query indices for a subset."
+        ),
+    ] = None,
+    output_root: Annotated[Path, typer.Option()] = Path("benchmark_runs"),
+    reset: Annotated[bool, typer.Option()] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Measure current FineLAP search on a true audio-moment task."""
+
+    _require_benchmark_dependencies("sound")
+    state = state_from_context(ctx)
+    metrics = run_finelap_audio_moment(
+        metadata_path=metadata,
+        audio_directory=audio_directory,
+        run_id=run_id,
+        dataset=dataset,
+        query_indices=_annotation_indices(query_indices),
+        output_root=output_root,
+        device=state.settings.runtime_backend,
+        reset=reset,
+    )
+    _emit_metrics(ctx, metrics, json_output)
