@@ -135,11 +135,16 @@ describe('desktop target lifecycle', () => {
     mocks.configureExternalInstallation.mockResolvedValue(localState);
   });
 
-  it('shows the target-first choice without a remote placeholder', async () => {
+  it('shows the remote target choice and opens remote setup', async () => {
+    const user = userEvent.setup();
     renderApp();
-    expect(await screen.findByRole('radio', { name: /Use an existing installation/i })).toBeVisible();
+    expect(await screen.findByRole('radio', { name: /Connect to a remote server/i })).toBeVisible();
+    expect(screen.getByRole('radio', { name: /Use an existing installation/i })).toBeVisible();
     expect(screen.getByRole('radio', { name: /Set up VidXP for me/i })).toBeVisible();
-    expect(screen.queryByText(/remote server/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: /Connect to a remote server/i }));
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByRole('heading', { name: 'Connect to a VidXP server' })).toBeVisible();
   });
 
   it('shows the restored control panel immediately while one startup recheck is pending', async () => {
