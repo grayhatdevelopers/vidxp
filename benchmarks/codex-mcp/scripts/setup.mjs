@@ -127,20 +127,29 @@ async function main() {
       ? {}
       : { VIDXP_MODEL_CACHE: desktopModelCache }),
   };
+  run(
+    'uv',
+    ['sync', '--frozen', '--extra', 'local-worker', '--extra', 'mcp', '--extra', 'benchmarks'],
+  );
+  const indexSchemaVersion = Number(run(
+    'uv',
+    [
+      'run', '--no-sync', 'python', '-c',
+      'from vidxp.core.contracts import INDEX_SCHEMA_VERSION; print(INDEX_SCHEMA_VERSION)',
+    ],
+    { capture: true },
+  ).trim());
   const setupEnvironment = evaluationEnvironment({
     benchmarkRoot,
     repositoryRoot,
     evaluationRoot,
+    indexSchemaVersion,
     environment: setupSourceEnvironment,
   });
   const commandEnvironment = { ...process.env, ...setupEnvironment };
   const tasks = JSON.parse(readFileSync(manifestPath, 'utf8'));
   const videoIds = [...new Set(tasks.map((task) => task.video_id))];
 
-  run(
-    'uv',
-    ['sync', '--frozen', '--extra', 'local-worker', '--extra', 'mcp', '--extra', 'benchmarks'],
-  );
   run(
     'uv',
     ['run', '--no-sync', 'vidxp', 'init', '--yes'],

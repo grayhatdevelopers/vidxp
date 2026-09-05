@@ -62,12 +62,14 @@ test('builds and serializes the environment consumed by Promptfoo', () => {
     benchmarkRoot: 'C:/repo/benchmarks/codex-mcp',
     repositoryRoot: 'C:/repo',
     evaluationRoot: 'C:/eval',
+    indexSchemaVersion: 8,
     environment: { VIDXP_MODEL_CACHE: 'C:/shared-models' },
     platform: 'win32',
   });
   const serialized = serializeEnvironment(environment);
 
   assert.match(serialized, /VIDXP_EVAL_WORKSPACE="C:\/eval\/workspace"/);
+  assert.match(serialized, /VIDXP_EVAL_INDEX_DIR="C:\/eval\/vidxp-index-schema-8"/);
   assert.match(serialized, /VIDXP_EVAL_VIDXP_ON_WORKSPACE="C:\/eval\/workspace\/vidxp-on"/);
   assert.match(serialized, /VIDXP_EVAL_VIDXP_OFF_WORKSPACE="C:\/eval\/workspace\/vidxp-off"/);
   assert.match(serialized, /VIDXP_MCP_COMMAND="C:\/repo\/\.venv\/Scripts\/vidxp-mcp\.exe"/);
@@ -83,6 +85,7 @@ test('always records the model cache used by the isolated runtime', () => {
     benchmarkRoot: '/repo/benchmarks/codex-mcp',
     repositoryRoot: '/repo',
     evaluationRoot: '/eval',
+    indexSchemaVersion: 8,
     environment: {},
     platform: 'linux',
   });

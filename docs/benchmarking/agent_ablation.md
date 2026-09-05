@@ -151,9 +151,12 @@ npm --prefix benchmarks/codex-mcp run setup
 The setup is safe to rerun. Cached downloads and prepared models are reused,
 including VidXP Desktop's existing model cache when it is present. Set
 `VIDXP_MODEL_CACHE` before setup to select another prepared cache. Indexing is
-skipped when all five videos and four modalities are already present. Setup
-stops only its isolated local worker before applying the configuration; durable
-jobs remain recoverable. The saved model-cache path is passed explicitly into
+stored in a directory named for the `INDEX_SCHEMA_VERSION` read from VidXP, so
+a schema change rebuilds derived benchmark data without deleting the preceding
+index. Indexing is skipped when all five videos and four modalities are already
+present. Setup stops only its isolated local worker before applying the
+configuration; durable jobs remain recoverable. The saved model-cache path is
+passed explicitly into
 the benchmark's MCP process with model downloads disabled, so the process uses
 the same prepared artifacts that setup verified. The benchmark pins the Codex
 SDK directly and omits Promptfoo's unrelated optional provider packages from

@@ -33,9 +33,13 @@ export function evaluationEnvironment({
   benchmarkRoot,
   repositoryRoot,
   evaluationRoot,
+  indexSchemaVersion,
   environment = process.env,
   platform = process.platform,
 }) {
+  if (!Number.isInteger(indexSchemaVersion) || indexSchemaVersion < 1) {
+    throw new Error('A positive VidXP index schema version is required.');
+  }
   const paths = platform === 'win32' ? win32 : posix;
   const executable = platform === 'win32' ? 'vidxp-mcp.exe' : 'vidxp-mcp';
   const pythonExecutable = platform === 'win32' ? 'python.exe' : 'python';
@@ -46,7 +50,10 @@ export function evaluationEnvironment({
     VIDXP_EVAL_VIDXP_ON_WORKSPACE: paths.join(evaluationRoot, 'workspace', 'vidxp-on'),
     VIDXP_EVAL_VIDXP_OFF_WORKSPACE: paths.join(evaluationRoot, 'workspace', 'vidxp-off'),
     VIDXP_EVAL_DATA_DIR: paths.join(evaluationRoot, 'vidxp-data'),
-    VIDXP_EVAL_INDEX_DIR: paths.join(evaluationRoot, 'vidxp-index'),
+    VIDXP_EVAL_INDEX_DIR: paths.join(
+      evaluationRoot,
+      `vidxp-index-schema-${indexSchemaVersion}`,
+    ),
     VIDXP_MCP_COMMAND: paths.join(repositoryRoot, '.venv', scriptsDirectory, executable),
     PROMPTFOO_PYTHON: paths.join(
       repositoryRoot,
