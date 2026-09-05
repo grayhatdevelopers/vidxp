@@ -30,7 +30,7 @@ def hit(
 
 
 class SearchFusionTests(unittest.TestCase):
-    def test_rrf_counts_only_the_best_rank_per_modality_in_a_moment(self):
+    def test_rrf_keeps_one_best_direct_match_per_modality(self):
         scene = SearchResult(
             query_id="scene:q",
             query="taxi",
@@ -53,12 +53,71 @@ class SearchFusionTests(unittest.TestCase):
             results=(scene, dialogue),
         )
 
-        self.assertEqual(len(result.moments), 1)
+        self.assertEqual(len(result.moments), 2)
         moment = result.moments[0]
         self.assertAlmostEqual(moment.score, 2 / (RRF_RANK_CONSTANT + 1))
-        self.assertEqual(len(moment.hits), 3)
+        self.assertEqual(len(moment.hits), 2)
         self.assertEqual(moment.start, 1)
-        self.assertEqual(moment.end, 4)
+        self.assertEqual(moment.end, 3.5)
+
+    def test_distant_matches_remain_separate_final_candidates(self):
+        scene = SearchResult(
+            query_id="scene:q",
+            query="opening image and closing sound",
+            modality="scene",
+            hits=(hit("scene", 1, 0, 10, "scene:opening"),),
+        )
+        sound = SearchResult(
+            query_id="sound:q",
+            query="opening image and closing sound",
+            modality="sound",
+            hits=(hit("sound", 1, 290, 300, "sound:closing"),),
+        )
+
+        result = fuse_search_results(
+            query="opening image and closing sound",
+            requested_modalities=("scene", "sound"),
+            results=(scene, sound),
+        )
+
+        self.assertEqual(
+            [(moment.start, moment.end) for moment in result.moments],
+            [(0, 10), (290, 300)],
+        )
+
+    def test_overlap_support_does_not_chain_through_another_hit(self):
+        scene = SearchResult(
+            query_id="scene:q",
+            query="event",
+            modality="scene",
+            hits=(hit("scene", 1, 0, 10, "scene:1"),),
+        )
+        action = SearchResult(
+            query_id="action:q",
+            query="event",
+            modality="action",
+            hits=(hit("action", 1, 9, 20, "action:1"),),
+        )
+        sound = SearchResult(
+            query_id="sound:q",
+            query="event",
+            modality="sound",
+            hits=(hit("sound", 1, 19, 30, "sound:1"),),
+        )
+
+        result = fuse_search_results(
+            query="event",
+            requested_modalities=("scene", "action", "sound"),
+            results=(scene, action, sound),
+        )
+
+        self.assertEqual(
+            [(moment.start, moment.end) for moment in result.moments],
+            [(0, 20), (19, 30)],
+        )
+        self.assertNotIn((0, 30), {
+            (moment.start, moment.end) for moment in result.moments
+        })
 
     def test_result_order_does_not_change_fusion_identity_or_output(self):
         scene = SearchResult(

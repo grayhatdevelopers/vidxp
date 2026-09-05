@@ -16,7 +16,7 @@ installation and product usage, start with the main
 | Guided input preparation | Complete | `vidxp benchmark prepare` estimates and confirms downloads, verifies pinned artifacts, validates DiDeMo media, resumes partial transfers, and prints the runnable benchmark command |
 | DiDeMo visual localization | Legacy full result + current smoke | The legacy CLIP stack completed 4,021 official test queries over 1,037 videos; the current SigLIP2 stack passed a one-annotation real execution smoke |
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
-| Environmental-sound retrieval | FineLAP selector rejected; long-audio replacement identified | The current selector scored zero on four held-out tasks. DCASE 2026 establishes query-conditioned sequence-to-interval models as the direct task; released and winning candidates are now separated by artifact/runtime readiness. Do not run the paid agent comparison against the current selector. |
+| Environmental-sound retrieval | FineLAP control available; standalone quality unresolved | FineLAP supplies ranked sound windows and dense timestamps. Its custom sound-only diagnostic exposed real misses and invalid labels, but that diagnostic is not LongVALE's collective multimodal task and does not block the agent comparison. No replacement has passed the quality, license, and Mac-runtime checks together. |
 | LongVALE combined evaluation | Pilot not run | The prepared paired tasks can measure evidence quality, localization, tokens, time, cost, and tool use after maintainer approval |
 | Codex MCP ablation | Development smoke traced | One paired task verified the harness and exposed a fixed-window boundary error; the 54-run held-out pilot has not run |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
@@ -55,8 +55,10 @@ together.
 The retained full DiDeMo and HiREST results establish separate legacy-provider
 visual and transcript baselines. Current SigLIP2 and Qwen3 checks establish
 adapter/runtime compatibility only; they do not yet provide full-corpus quality
-comparisons. VidXP now contributes visual, speech, and FineLAP sound evidence,
-including global windows and dense timestamps for non-speech events.
+comparisons. VidXP can emit visual, speech, and FineLAP sound evidence, including
+global windows and dense timestamps for non-speech events, but the tested
+FineLAP selector remains unvalidated. Its recorded target-only result is kept
+for provenance, not treated as a provider-quality score.
 
 The first Codex MCP development pair found the requested opening event but
 returned an interval two seconds too long. It also finished faster and used
@@ -64,15 +66,19 @@ fewer total tokens than direct inspection, although its estimated cost was
 slightly higher because more input was uncached. Later local controls exposed a
 separate FineLAP integration error: global clip and dense activation records
 were cross-ranked. Separating those representations is correct, but the
-replacement selector also failed: its four held-out sound tasks produced no
-target-overlapping final top-three result. The agent comparison is blocked on a
-sound-search correction, not pending as if this selector were validated.
+replacement selector produced no target-overlapping final top-three result on
+the four-task component control. A later input audit found that control cannot
+decide provider quality: one reference has no audible event, and another sound
+query has several valid occurrences but only one accepted interval. That result
+is an auxiliary diagnosis; it neither validates nor rejects the selector and it
+does not decide whether the collective agent comparison can run.
 
-The next paid paired run should test the product claim directly only after the
-sound provider is corrected: whether
-VidXP gives the agent enough inspectable evidence to reach a similarly grounded
-answer with fewer tokens, less time, or fewer media-inspection calls. IoU and
-boundary errors remain important diagnostics, not the entire product decision.
+After explicit maintainer approval, the next paid paired run should test whether
+VidXP gives the agent enough combined evidence to reach a similarly grounded
+answer with fewer tokens, less time, or fewer media-inspection calls. It must
+retain the atomic modality hits so the report shows whether scene, action,
+speech, sound, or their agreement produced the answer. IoU and boundary errors
+remain important diagnostics, not the entire product decision.
 See [current model direction](model_selection.md) and the
 [research adoption record](research_adoption.md).
 

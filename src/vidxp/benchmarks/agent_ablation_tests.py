@@ -4,6 +4,13 @@ import json
 from pathlib import Path
 from typing import Any
 
+from vidxp.benchmarks.agent_ablation_score import (
+    DEFAULT_MAX_CHUNK_SECONDS,
+    DEFAULT_MIN_CHUNK_SECONDS,
+    DEFAULT_MIN_EVENT_COVERAGE,
+    DEFAULT_TARGET_CHUNK_SECONDS,
+)
+
 
 _SCORER = "file://../../src/vidxp/benchmarks/agent_ablation_score.py"
 _MODALITIES = frozenset({"scene", "action", "sound", "speech"})
@@ -43,6 +50,10 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
             )
             variables["condition"] = condition
             variables["expected_vidxp"] = expected_vidxp
+            variables["target_chunk_seconds"] = DEFAULT_TARGET_CHUNK_SECONDS
+            variables["min_chunk_seconds"] = DEFAULT_MIN_CHUNK_SECONDS
+            variables["max_chunk_seconds"] = DEFAULT_MAX_CHUNK_SECONDS
+            variables["min_event_coverage"] = DEFAULT_MIN_EVENT_COVERAGE
             generated.append(
                 {
                     "description": f"{task['id']} [{condition}]",

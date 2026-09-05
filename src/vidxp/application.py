@@ -542,7 +542,7 @@ class VidXPApplication(ControlPlaneApplication):
                             modality,
                             query=command.query,
                             media_id=command.media_id,
-                            top_k=command.top_k,
+                            top_k=command.candidate_top_k,
                             context=context,
                         )
                         for modality in selected
@@ -683,7 +683,7 @@ class VidXPApplication(ControlPlaneApplication):
                                     step.modality,
                                     query=step.query,
                                     media_id=command.media_id,
-                                    top_k=command.top_k,
+                                    top_k=command.candidate_top_k,
                                     context=context,
                                 )
                             )

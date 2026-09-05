@@ -18,7 +18,7 @@ Detailed artifacts, hashes, commands, and evaluator behavior remain in the
 | Legacy full | HiREST | Released test: 776 known-video searches | Predictions generated, not scored | Public test boundaries are placeholders, so local scoring would be meaningless |
 | Current smoke | DiDeMo | Official test annotation index `0`; one video | Rank@1 **0**, Rank@5 **1**, mean IoU **0** | Real SigLIP2 execution, serialization, and official-evaluator check only |
 | Current smoke | HiREST | Two declared validation pairs over two videos | R@0.5 **50**, R@0.7 **50** | Real Qwen3 execution, multi-video storage, filtered search, serialization, and official-evaluator check only |
-| Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; one paired run | VidXP-on IoU **0.7493**; VidXP-off IoU **0.8824** | Harness, skill/MCP isolation, deterministic scoring, and reporting check only; not a held-out pilot or LongVALE result |
+| Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; one paired run under the superseded exact-interval prompt | VidXP-on IoU **0.7493**; VidXP-off IoU **0.8824** | Harness, skill/MCP isolation, deterministic scoring, and reporting check only; not a bounded-chunk product-gate, held-out pilot, or LongVALE result |
 | Global-only sound diagnostic | Codex MCP ablation | Same development task after filtering sound search to global clips | VidXP-on IoU **0.6000**; VidXP-off IoU **0.8811** | Same answer content with 16.5% fewer VidXP tokens and 11.3% lower latency, but the ten-second sound clip worsened the endpoint |
 
 The current-provider rows are deliberately tiny regression runs. Their
@@ -26,6 +26,11 @@ percentages are not quality estimates and must not be compared with the full
 legacy rows. A current full-corpus score has not been run.
 
 ## Codex MCP development smoke
+
+These saved runs predate the current practical-clip contract. That contract
+uses bounded-chunk hit as the primary quality measure and keeps IoU as a
+secondary boundary diagnostic. The old outputs are not silently re-scored; a
+new paired run is required to measure the current product gate.
 
 Evaluation `eval-J6s-2026-09-01T19:30:07` asked the same Codex model to locate
 one 0–6 second rain, wind, and engine event with and without VidXP. Both runs
@@ -94,12 +99,50 @@ one-second scene sampling grid, activation timing, or annotation convention;
 it must be measured across the prepared tasks rather than corrected against
 this annotation.
 
+The original saved-ranking depth control replayed all ten collective tasks
+through the then-production connected-component fusion without model or API
+calls:
+
+| Candidates per modality | Mean top-1 IoU | R@1 at .3/.5/.7 | Board R@3 at .3/.5/.7 | Output R@10 at .3/.5/.7 |
+| ---: | ---: | --- | --- | --- |
+| 3 | 0.1613 | .20/.20/.10 | .30/.30/.20 | .30/.30/.20 |
+| 10 | 0.1718 | .20/.20/.20 | .40/.30/.30 | .40/.40/.30 |
+| 20 | 0.1699 | .20/.20/.20 | .40/.40/.40 | .50/.40/.40 |
+| 100 | 0.0434 | 0/0/0 | .10/.10/0 | .20/.10/0 |
+| All | 0.0530 | 0/0/0 | 0/0/0 | 0/0/0 |
+
+More candidates initially expose useful evidence but do not improve top-one
+selection. At greater depth, adjacent records form transitive overlap chains;
+the full-list top result for every task spans nearly the whole video. This
+rejects both the shared input/output depth and a larger fixed replacement.
+RRF can remain a ranking control only after the raw records have been converted
+to bounded event proposals.
+
+The production correction replaces transitive components with rank-anchored
+direct overlap. One hit seeds each candidate, at most one hit from each other
+modality can support it, and every supporting hit must overlap the seed itself.
+The same saved rankings then produced:
+
+| Candidates per modality | R@1 at .3/.5/.7 | R@3 at .3/.5/.7 | R@5 at .3/.5/.7 | R@10 at .3/.5/.7 |
+| ---: | --- | --- | --- | --- |
+| 3 | .10/.10/.10 | .30/.10/.10 | .30/.10/.10 | .30/.10/.10 |
+| 20 | .10/.10/.10 | .20/.10/.10 | .20/.20/.10 | .40/.20/.10 |
+| 100 | .10/.10/.10 | .30/.10/.10 | .30/.20/.10 | .30/.20/.10 |
+| All | .10/.10/.10 | .30/.10/.10 | .30/.20/.10 | .30/.20/.10 |
+
+Additional candidates no longer create video-length results. R@5 at tIoU 0.5
+is still only `.20`: the correction preserves separate candidates but does not
+repair coarse source windows or provider rankings. Product `top_k` now limits
+only this final ranked list. A separate `candidate_top_k` defaults to 100
+because 100 matched exhaustive input here; that is a bounded serving decision,
+not a paper-derived or universally optimal depth.
+
 The benchmark-only Point-to-Span ASG adaptation was then applied to the saved
 curves without another model call:
 
 | Method | Top interval | IoU | Start error | End error | Generated spans |
 | --- | --- | ---: | ---: | ---: | --- |
-| Current union | 0–8.0075 s | 0.7493 | 0 s | +2.0075 s | Existing top-three hits |
+| Previous union | 0–8.0075 s | 0.7493 | 0 s | +2.0075 s | Existing top-three hits |
 | P2S ASG adaptation | 0.64–6.72 s | 0.7976 | +0.64 s | +0.72 s | Sound: 1; scene/action: 0 |
 
 This is a concluded diagnostic, not an adopted product fix. It shows that the
@@ -168,7 +211,7 @@ that proposal; the top action hit overlapped it and the next proposal:
 
 | Method | Top interval | IoU | End error | Evidence ranks |
 | --- | --- | ---: | ---: | --- |
-| Current connected union | 0–8.0075 s | 0.7493 | +2.0075 s | Action 1, scene 1, sound 1 |
+| Previous connected union | 0–8.0075 s | 0.7493 | +2.0075 s | Action 1, scene 1, sound 1 |
 | Direct-inspection agent | 0–6.8 s | 0.8824 | +0.8 s | Agent media inspection |
 | Shot proposal, scene score | 0–6.7401 s | 0.8902 | +0.7401 s | Scene 1 |
 | Fixed shot, VidXP RRF score | 0–6.7401 s | 0.8902 | +0.7401 s | Action 1, scene 1, sound 1 |
@@ -187,7 +230,7 @@ scene evidence.
 
 | Method and scope | Tasks | Mean IoU | Rate at tIoU 0.3 / 0.5 / 0.7 | Mean absolute start / end error |
 | --- | ---: | ---: | --- | --- |
-| Current connected union, all | 8 | 0.0418 | 0 / 0 / 0 | 59.06 / 59.05 s |
+| Previous connected union, all | 8 | 0.0418 | 0 / 0 / 0 | 59.06 / 59.05 s |
 | Fixed shot with RRF, all | 8 | 0.0882 | 0.125 / 0 / 0 | 93.45 / 59.59 s |
 | Best single-shot oracle, all | 8 | 0.5219 | 0.625 / 0.375 / 0.375 | 18.34 / 8.70 s |
 | Scene-ranked shot, scene tasks | 6 | 0.2841 | 0.333 / 0.167 / 0.167 | 54.29 / 39.78 s |
@@ -263,7 +306,17 @@ The replacement used three global clips as a gate, then pooled and ranked their
 dense activations. On the four held-out sound tasks, the gate covered two targets
 but the final top three covered none; the two surviving target activations ranked
 `132` and `63`. Final sound-only mean IoU and R@1 at tIoU 0.3/0.5/0.7 were all
-zero. This rejects the replacement selector before a paid paired Codex run.
+zero against the one accepted interval per task.
+
+A later source-audio audit invalidated using those four numbers as a provider
+quality estimate. The phone interval is effectively silent, while the engine
+phrase has several correct acoustic occurrences; for example, a later model's
+top frame at 242.22 seconds lies inside LongVALE's separate
+241.760–243.554-second engine-rev annotation. The 25.560–27.560-second reference
+is distinguished by a visual clause about the driver gesturing. The exact
+target-only result above remains reproducible, but it neither accepts nor
+rejects the sound provider. It is an auxiliary component diagnostic and does
+not block the collective paired run.
 
 ## Runtime and model generations
 
@@ -298,7 +351,7 @@ eligible modalities, reports must show three fixed rows:
 |---|---|
 | Scene only | The existing visual retrieval output |
 | Speech only | The existing transcript retrieval output |
-| Fixed RRF fusion | Overlap-connected intervals ranked with `rrf_v1`, `k=60` |
+| Fixed RRF fusion | Rank-anchored, directly overlapping candidates ranked with `rrf_v2`, `k=60` |
 
 No fused benchmark score is reported until the same frozen dataset inputs and
 evaluator used by the atomic rows have been run. Generated `QueryAnswer` claims
@@ -396,11 +449,12 @@ does not supersede this score.
 
 ## Next approved comparison
 
-Do not spend a paired Codex run on the rejected sound selector. First change or
-remove that selector, then rerun the same four-task component gate. A passing
-component result can proceed to the paired agent smoke, which must report the
-answer and evidence, IoU and boundary errors, every token category, elapsed
-time, estimated cost, and tool calls. It is not a full LongVALE result.
+After explicit maintainer approval, run the paired Codex comparison against the
+current collective system. Report the answer and evidence, the atomic modality
+hits that formed each fused result, IoU and boundary errors, every token
+category, elapsed time, estimated cost, and tool calls. The sound-only control
+remains a separate diagnosis; neither its failure nor a passing replacement
+would itself be a LongVALE system result.
 
 ## Sources and reproduction
 

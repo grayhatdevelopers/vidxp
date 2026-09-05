@@ -4,7 +4,7 @@ Collection index: [Benchmarking research](README.md)
 
 Status: Current product and evaluation decision
 
-Last verified: 2026-09-03
+Last verified: 2026-09-05
 
 The [research adoption record](research_adoption.md) is the source of truth for
 paper-derived product behavior. The [paper inventory](research_papers.md)
@@ -17,23 +17,26 @@ speech, sounds, frames, action clips, timestamps, and playable evidence. The
 agent remains responsible for interpreting that evidence and answering the
 user. VidXP does not need to replace the agent with one all-in-one video model.
 
-A product-level comparison succeeds when VidXP preserves or improves the
-agent's grounded answer while reducing the media and text the agent must
-inspect. Report answer correctness and evidence support together with input,
-cached-input, output, and reasoning tokens; elapsed time and estimated cost;
-tool calls; and retrieval or timestamp metrics. Temporal IoU diagnoses interval
-quality, but it is not the product's only outcome.
+A product-level comparison succeeds when VidXP matches or improves the agent's
+bounded-chunk hit rate while using fewer total tokens. The current benchmark
+targets a 10-second evidence clip, accepts 8–12 seconds, and requires at least
+half of the event available to one target-size clip. This VidXP serving rule
+rejects both blink-length and whole-video answers. Report cached and uncached
+input, output, reasoning, time, cost, and calls alongside it. Temporal IoU and
+threshold recall remain secondary exact-boundary diagnostics and an explicit
+future research limitation.
 
 ## Current product path
 
 VidXP builds reusable local indexes for separate evidence types:
 
 - faster-whisper and Qwen3 Embedding produce timestamped speech evidence;
-- FineLAP retrieves environmental-sound clips;
+- FineLAP emits environmental-sound records, but its current selector is an
+  unvalidated control;
 - SigLIP 2 retrieves sampled visual frames;
 - VideoPrism ranks fixed multi-frame clips by global text-video similarity; and
-- reciprocal rank fusion groups overlapping results into coarse candidate
-  moments while preserving their source records.
+- reciprocal rank fusion ranks bounded candidates. Each candidate keeps one
+  anchor hit and at most one directly overlapping hit from each other modality.
 
 This modular path remains the product control. No current evidence requires
 replacing every provider or moving to a single trained temporal model.
@@ -68,55 +71,205 @@ VidXP's global top-three gate followed by one pooled activation ranking over
 those windows. Section 3.3 trains local scores against short event phrases and
 frame labels inside a clip; the paper's Limitations section explicitly leaves
 long-form audio and temporally enhanced audio-text retrieval unevaluated. The
-VidXP selector failed all four held-out tasks at final top-three target coverage
-and is rejected. Existing indexes remain usable for a FineLAP control because
-they already label both representations; a replacement provider requires a new
-sound index.
+VidXP selector returned no final top-three overlap against the four designated
+intervals and missed the two unambiguous cases. The four-task rate is not a
+valid provider score because one reference is silent and another query has
+multiple correct occurrences. Treat the selector as unvalidated, not adopted
+or conclusively rejected. Existing indexes remain usable for a FineLAP control
+because they already label both representations; a replacement provider
+requires a new sound index.
 
-The matching replacement task is audio moment retrieval: a full natural-language
-query and a long audio sequence go in, and ranked start/end intervals come out.
+The sound provider must localize a free-form acoustic description, including
+short environmental events, and return every useful occurrence. It does not
+need to interpret visual or speech-only clauses; those belong to the other
+providers and the agent. Two research tasks are therefore relevant:
+
+- audio moment retrieval tests sentence-to-interval retrieval over minutes of
+  audio; and
+- open-vocabulary sound-event grounding tests fine event boundaries and
+  repeated or overlapping occurrences.
+
+These are sound-provider diagnostics, not substitutes for LongVALE's combined
+task. Product search passes the same full query to each requested modality and
+applies reciprocal rank fusion. A hit seeds a bounded candidate and can receive
+support only from the best directly overlapping hit in each other modality.
+Indirect overlap cannot join distant moments, and hits from the same modality
+remain separate candidates. A sound result can therefore support a visual
+match without merging with another sound match elsewhere in the video.
+
+The API now separates candidate collection from final output. `top_k` limits
+only the fused results returned to the caller. `candidate_top_k` independently
+limits each modality to 100 hits by default; MCP evidence delivery then shows
+three fused candidates by default. Cormack, Clarke, and Buettcher's RRF paper
+supports the rank formula and its `k = 60` constant. It does not prescribe
+either output limit. The candidate budget is a VidXP resource cap: 100 matched
+exhaustive input on the corrected ten-task control, but is not a general
+accuracy optimum.
+
+Fresh fused queries use the `rrf_v2` identity. Existing indexes remain valid,
+and stored `connected_intervals` provenance remains readable.
+
+The original saved-ranking depth control confirmed that candidate depth could
+not be selected while transitive overlap corrupted the output. At full depth,
+every top result covered nearly its entire video. After direct-overlap fusion
+replaced that grouping, depths 100 through all produced identical metrics
+instead of collapsing. The corrected run still reached only `0.20` R@5 at
+tIoU 0.5, so it fixes candidate identity but not provider ranking or boundary
+errors. Neither curve selects a serving depth.
+
+The model papers keep this seam simpler than the current implementation.
+FineLAP exposes separate clip- and frame-level representations; VideoPrism is a
+frozen video encoder; and SigLIP 2 is an image-text encoder whose localization
+results use downstream heads. None defines temporal rank fusion. LongVALE
+Section 3.2 first builds semantically coherent visual and audio events, then
+combines those event boundaries while preserving audio integrity. VidXP's
+direct-overlap rule prevents false video-length unions, but model-specific
+event proposals remain the next boundary-quality seam.
+
 [DCASE 2026 Task 6](https://dcase.community/challenge2026/task-audio-moment-retrieval-from-long-audio-results)
-provides the current direct evidence. Its official MS-CLAP/QD-DETR baseline
-scored 13.56 R1@0.7 on the hidden evaluation, while a 211.87M-parameter
-M2D-CLAP/CG-DETR system scored 48.59. The winning system's code and checkpoint
-were not verified as public, so it is the architecture and quality target rather
-than an immediately adoptable provider.
+is the strongest direct long-audio evidence found. Its official
+MS-CLAP/QD-DETR baseline scored 13.56 R1@0.7; a 211.87M-parameter
+M2D-CLAP/CG-DETR entry reached 48.59, but public code and weights for that entry
+were not verified. The released CASTELLA/Lighthouse control reached only 20.3
+R1@0.7, is weak on sub-ten-second moments, truncates audio-feature sequences
+beyond 300 seconds, and conflicts with the managed runtime. A separate runtime
+would reproduce that baseline; it has no demonstrated product advantage.
 
-The released compatibility fallback is CASTELLA-trained UVCOM through
-[Lighthouse](https://github.com/line/lighthouse). It predicts intervals from a
-one-second audio-feature sequence, has an official checkpoint, documents CPU
-inference, and supports 300-second audio. Its published CASTELLA R1@0.7 is 20.3
-and the paper identifies sub-ten-second moments as a weakness. Test that provider
-in isolation before changing the default or rebuilding indexes. DASM, FlexSED,
-WSTAG, and PE-A-Frame remain separate short-event or event-phrase comparators.
+The first executable candidate tested was Meta's
+[PE-A-Frame Small](https://huggingface.co/facebook/pe-a-frame-small), from Vyas
+et al., [“Pushing the Frontier of Audiovisual Perception with Large-Scale
+Multimodal Correspondence Learning”](https://arxiv.org/abs/2512.19687). It
+accepts free-form audio descriptions and emits frame scores and multiple spans
+at about 40 ms resolution. The Apache-2.0 checkpoint has 450M parameters and a
+1,758,756,416-byte F32 weight file. Its official localization AUROC is
+0.83–0.96 across the published event-localization sets; AUROC is not interval
+IoU and does not establish VidXP accuracy. The installed Transformers runtime
+has the official PE-Audio classes, avoiding the source repository's optional
+`xformers` path.
 
-### Treat fused intervals as evidence envelopes
+The pinned Small checkpoint failed the Mac runtime gate. A complete 73.14-second
+soundtrack took 244.35 seconds on CPU and peaked at 4.30 GiB RSS. The full query
+missed the phone-ring target and produced 125 fragments at the official 0.3
+threshold. On target-aware clips, which test recognition but not retrieval, the
+mean best-span IoU was 0.1654 for full queries and 0.1151 for sound-only phrases;
+the target outscored surrounding audio on only one of four full-query cases and
+none of the sound-only cases. Threshold tuning cannot fix a target whose score
+is below the surrounding audio. PE-A-Frame is rejected as-is.
 
-The current fusion groups overlapping records, scores each group with
-reciprocal rank fusion, and returns its earliest start and latest end. The RRF
-formula and `k = 60` come from Gordon Cormack, Charles Clarke, and Stefan
-Buettcher, [“Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank
-Learning Methods”](https://doi.org/10.1145/1571941.1572114), SIGIR 2009. The
-temporal grouping and interval union are VidXP controls; that paper does not
-define them.
+For hour-long media, bounded overlapping sections, global timestamp mapping,
+and boundary duplicate removal remain VidXP engineering requirements, not
+claims from PE-A-Frame. Keep distinct repeated events separate.
 
-On the development query, relevant evidence ranked first but an eight-second
-action record widened a six-second reference to `0–8.0075` seconds. A separate
-eight-task control also showed that adding modality ranks can overrule a strong
-single-modality result. Therefore the fused interval is a coarse evidence
-envelope, not a claim of an exact event boundary. The agent should inspect the
-contained records or delivered clip before making a precise statement.
+### Treat fused intervals as bounded evidence candidates
+
+The current fusion anchors each candidate to one ranked hit. It adds at most
+the best directly overlapping hit from each other modality and returns the
+smallest interval containing that evidence. It never merges same-modality hits
+or follows an overlap chain into another moment. The RRF formula and `k = 60`
+come from Gordon Cormack, Charles Clarke, and Stefan Buettcher,
+[“Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning
+Methods”](https://doi.org/10.1145/1571941.1572114), SIGIR 2009. Candidate
+construction and interval boundaries remain VidXP engineering.
+
+The direct-overlap correction removes video-length chains, but its ten-task
+replay reached only `0.20` R@5 at tIoU 0.5. Several correct action regions
+remain eight-second windows around two-second references, and some target
+evidence is ranked far below five by its provider. Candidate construction no
+longer corrupts separate moments, but precise boundaries and ordering still
+depend on the modality providers.
 
 No replacement boundary model has been selected. The overlapping-action
-control did produce a near-target shorter record, but the existing union joined
-it to its neighbors. A held-out follow-up then tested a simple coarse-to-fine
-path without union. Fine candidate recall improved, but the coarse gate and
-similarity ranking missed most answers, so that path is not a product fix.
+control did produce a near-target shorter record, but the then-existing union
+joined it to its neighbors. A held-out follow-up then tested a simple
+coarse-to-fine path without union. Fine candidate recall improved, but the
+coarse gate and similarity ranking missed most answers, so that path is not a
+product fix.
 Point-to-Span and shot-proposal fusion also remain concluded benchmark controls.
 Their exact results and deviations are recorded in the
 [research adoption record](research_adoption.md).
 
-## Next action correction
+## Next actions
+
+### Sound
+
+FlexSED's pinned released path was also tested. It processed
+616.7 seconds of unique audio in 10.85 seconds and peaked at 1.57 GiB RSS, so
+the runtime fits. Quality did not: target audio outscored the rest of its
+soundtrack on 0/4 full queries and 0/4 sound-only phrases. At the published
+0.5 threshold with a nine-frame median, only the engine case overlapped its
+reference, at about 0.045 IoU. Overlap cannot repair raw target scores below
+unrelated regions. It also missed the two unambiguous audible targets, siren
+and drumbeat. Do not select it from this result, but do not report `0/4` as a
+valid provider-quality estimate: the phone reference is invalid and the engine
+query has multiple correct occurrences.
+
+The reference-audio check found one invalid component case. The annotated
+telephone-ring interval has `-91.75 dBFS` RMS and `-78.27 dBFS` peak signal;
+the preceding five seconds are `-45.85 dBFS`. The local MP4 is byte-identical
+to the downloaded LongVALE archive, so this is not local corruption. Quarantine
+that task from sound-only scoring pending human review; do not silently remove
+it from the multimodal pilot.
+
+The engine task exposes a separate protocol error. Its sound-only phrase can
+correctly match several engine-rev occurrences. WSTAG's top frame at 242.22
+seconds falls inside LongVALE's separate 241.760–243.554-second annotation for
+the Cayenne engine rumbling and revving. The scorer nevertheless marks it wrong
+because it accepts only 25.560–27.560 seconds, where the multimodal query also
+specifies a gesturing driver. A sound provider cannot use that visual clause.
+Sound-component evaluation must label every acoustically matching occurrence;
+the existing single reference remains valid only for the full multimodal
+fusion task.
+
+DASM is not an executable Mac candidate. The official text-query notebook at
+Transformer4SED revision `c3e883d0fbeaf7031b467d45a3c46a88a76c00b6`
+hard-codes CUDA and a local checkout, and requires a separate MGA-CLAP
+repository and checkpoint. Its model hub publishes 636 MB of DASM artifacts
+under MIT metadata, but the source repository contains no software license.
+Do not copy, port, or benchmark that implementation unless the authors clarify
+the code license and provide a supported non-CUDA path.
+
+Xu et al., [“Towards Weakly Supervised Text-to-Audio
+Grounding”](https://arxiv.org/abs/2401.02584), IEEE Transactions on Multimedia
+2024, provides the next lawful CPU path. The authors recommend a newer
+AudioCaps-v2/LAION-CLAP Hugging Face model rather than the paper's original
+checkpoint. Against the current single-reference control, neither the full
+query nor the sound phrase ranked the designated target first on the three
+audible tasks.
+Mean target-best frame percentile was 0.8688 and 0.8985 respectively, but the
+official `0.5` inference threshold returned no target-overlapping interval, so
+IoU was zero on all six passes. Six CPU forwards over 1,679.9 seconds of input
+audio took 25.82 seconds; each 247–296-second recording took 3.42–5.02 seconds,
+and peak process RSS was 4.15 GiB. WSTAG missed both unambiguous cases at that
+threshold; the engine top result was a separate valid occurrence. It is not
+selected, but the flawed three-task control cannot provide a final quality
+estimate. Its hub metadata is
+also missing the `AutoModel` mapping advertised by its README; the local test
+loaded the same published class and exact weights directly with zero checkpoint
+mismatches.
+
+Three stronger-looking releases do not satisfy the product gate:
+
+- Wu et al., [FLAM](https://arxiv.org/abs/2505.05335), ICML 2025, is the closest
+  compact technical fit, but OpenFLAM is non-commercial and its public model is
+  not the internal model used for the paper's reported results.
+- Sun et al., [SpotSound](https://arxiv.org/abs/2604.13023), ACM MM 2026, directly
+  trains short-event timestamp grounding, but it is a LoRA over the 8B
+  Audio Flamingo 3 base, whose license is non-commercial and whose supported
+  runtime is Linux/CUDA.
+- Wang et al., [TimeAudio](https://arxiv.org/abs/2511.11039), 2025, uses a
+  Vicuna-7B stack and documents more than 40 GB of GPU memory for inference.
+
+There is therefore no validated, distributable drop-in sound replacement for
+this Mac. Keep FineLAP as an explicitly unvalidated component while the paired
+LongVALE run measures the collective product. If standalone provider selection
+continues later, use a dedicated sound-retrieval or grounding protocol rather
+than treating a LongVALE modality slice as the product benchmark. A replacement
+still requires a maintainer decision between seeking a usable OpenFLAM license,
+allowing a non-commercial/GPU research runtime, or retaining FineLAP. Do not
+build a separate DCASE/Lighthouse runtime unless a reproducibility comparison
+is explicitly needed.
+
+### Action
 
 Do not tune fusion, window overlap, or query wording again for this failure.
 The held-out comparison already showed that useful fine windows exist but raw
@@ -134,7 +287,7 @@ Neither release can be adopted unchanged: both depend on a CUDA-oriented Mamba
 stack, and the checked repositories do not provide a top-level product license.
 The next implementation task is therefore a bounded compatibility decision:
 confirm a lawful checkpoint and a CPU or Apple-Silicon runtime for that exact
-grounder. If either requirement fails, reject it and evaluate the Apache-2.0
-Lighthouse CPU path as the fallback, recording its 150-second input limit. Do
+grounder. If either requirement fails, reject it; Lighthouse's 150-second video
+encoder limit is benchmark context, not a fallback for the sound provider. Do
 not change product ranking until one candidate passes that gate on the frozen
 action tasks.

@@ -4,7 +4,7 @@ Collection index: [Benchmarking research](README.md)
 
 Status: Development smoke recorded; held-out pilot not run
 
-Last verified: 2026-09-02
+Last verified: 2026-09-05
 
 This experiment measures whether the complete VidXP agent integration improves
 a Codex agent's ability to find timestamped evidence in long videos. The
@@ -12,10 +12,10 @@ integration consists of the shipped video-evidence skill and the local stdio
 MCP server. It is a product-level ablation, not a replacement for published
 model benchmarks such as MAEB, MVEB, or AEGBench.
 
-The product win is not limited to a higher IoU. Reaching a similarly grounded
-answer with fewer tokens, less time, or fewer direct media-inspection calls also
-counts, provided the evidence remains inspectable and the quality difference is
-reported rather than hidden.
+The primary product question is whether the agent returns a practical clip that
+contains the event while using fewer tokens. Exact temporal IoU remains a
+secondary boundary-quality measurement; it is not discarded or presented as
+the serving objective.
 
 ## What the comparison holds constant
 
@@ -208,10 +208,16 @@ Print the latest saved comparison again, without inference, with:
 Add `--all` to include every per-run interval in a full pilot report. Add
 `--responses` to print each final answer, returned modalities, source job, and
 evidence count. The report also shows total agent items, all tool calls, VidXP
-MCP calls, shell calls, and the FFmpeg/ffprobe subset.
+MCP calls, shell calls, and the FFmpeg/ffprobe subset. For VidXP-on runs, it
+also reads the saved job and reports the top fused interval, its constituent
+hits, and the best retained hit per modality. This exposes what fusion actually
+used and which fused rank retained each hit; it does not rerun retrieval.
+Candidates removed by the current pre-fusion or final `top_k` cannot be
+reconstructed from the saved job, and the report states that limitation. Use
+`--no-retrieval` only when the saved VidXP jobs are unavailable.
 
-To inspect the durable VidXP result behind the latest comparison, including
-the top fused interval and the best individual hit per modality, run:
+The `trace` command remains as an explicit alias for inspecting the same saved
+retrieval details:
 
 ```bash
 ./benchmarks/codex-mcp/run trace
@@ -238,6 +244,19 @@ fusion and IoU/boundary errors plus top-retrieved and best-individual-record
 IoU per modality, and prints those measurements directly after the run. The
 best-individual value is a diagnostic oracle, not a production prediction. The
 command does not invoke Codex or change production search.
+
+After all ten probes exist, replay their saved rankings at independent
+pre-fusion depths while holding the final result depth at ten:
+
+```bash
+./benchmarks/codex-mcp/run depth
+```
+
+This makes no model, Codex, or API calls. It prints R@1, evidence-board R@3,
+R@5, and R@10 curves and saves the per-task candidates beside the probes. The
+tested depths are diagnostic samples, not proposed defaults. The control shows
+whether candidate collection loses a match and whether fusion keeps separate
+moments bounded.
 
 Compare a saved probe with the benchmark-only Point-to-Span ASG adaptation:
 
@@ -370,18 +389,25 @@ diagnose the harness and current temporal behavior, not as held-out evidence.
 
 ## Scoring and interpretation
 
-Each current task asks for one event and interval, so this harness measures
-evidence-backed localization rather than general video question answering. The
-deterministic scorer records temporal IoU, R@1 at tIoU 0.3/0.5/0.7, interval
-validity, and whether the expected VidXP boundary was respected. Promptfoo
-traces supply skill use, MCP
+Each task asks for one event and one evidence clip, so this harness measures
+evidence-backed retrieval rather than general video question answering. The
+prompt targets a 10-second clip and accepts 8–12 seconds. A bounded chunk hit
+requires the clip to cover at least half of the annotated event that can fit in
+10 seconds. This lets a normal fixed window containing a short event pass while
+rejecting both a two-second blink and a whole-video answer. The 10-second target
+is a VidXP product-evaluation policy, not a metric taken from LongVALE.
+
+The deterministic scorer also retains temporal IoU, R@1 at tIoU 0.3/0.5/0.7,
+start/end/duration error, interval validity, and whether the expected VidXP
+boundary was respected. Promptfoo traces supply skill use, MCP
 tool names, ordering, and inputs; because its Codex trace adapter does not
 retain MCP result bodies, the scorer uses the returned source job ID to verify
 the authoritative result directly in VidXP's durable job store. It also matches
 each returned evidence ID, modality, and interval to ready evidence delivered
 by that job. Report at least:
 
-- success rate and mean IoU by condition;
+- bounded-chunk hit rate and mean event coverage by condition;
+- mean IoU and R@1 at tIoU 0.3/0.5/0.7 as secondary boundary diagnostics;
 - results by scene, action, sound, speech, and joint-modality task;
 - input/cached/uncached/output/reasoning token usage, provider-estimated cost,
   latency, failures, and requests;
@@ -389,10 +415,16 @@ by that job. Report at least:
 - indexing time, index size, model preparation, and machine details; and
 - every excluded or failed task.
 
-Interpret those fields together. A faster, lower-token VidXP run can be a
-product improvement even when its interval is slightly less precise, but the
-report must show both facts and must not call the localization loss a quality
-win.
+The paired product gate passes only when VidXP matches or improves the baseline
+bounded-chunk hit rate and uses fewer total tokens. Latency, cost, calls, and
+boundary quality remain visible supporting measurements. Exact-boundary
+underperformance is a documented research limitation, not grounds to fail a
+useful fixed-window retrieval result.
+
+The two recorded development pairs below predate this contract and used the
+old exact-interval prompt. Keep their raw IoU, token, and trace measurements,
+but do not report them as bounded-chunk product-gate results. A new paired run
+is required for that comparison.
 
 Do not call the nine-task held-out pilot a LongVALE result. A publishable result
 requires the complete official evaluation split, its one-interval output

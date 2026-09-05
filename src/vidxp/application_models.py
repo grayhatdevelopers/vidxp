@@ -806,7 +806,8 @@ class WorkspaceOverview(ApplicationModel):
 
 
 class FusionProfile(StrEnum):
-    reciprocal_rank = "rrf_v1"
+    legacy_reciprocal_rank = "rrf_v1"
+    reciprocal_rank = "rrf_v2"
 
 
 class EvidenceDeliveryMode(StrEnum):
@@ -873,6 +874,15 @@ class SearchCommand(ApplicationModel):
         gt=0,
         le=100,
         description="Maximum fused moments to return across the selected scope.",
+    )
+    candidate_top_k: int = Field(
+        default=100,
+        gt=0,
+        le=100,
+        description=(
+            "Maximum hits to retrieve from each modality before fusion. This "
+            "resource limit is independent from the final top_k."
+        ),
     )
     evidence_delivery: InitialEvidenceDeliveryPolicy | None = Field(
         default=None,
@@ -960,9 +970,15 @@ class SearchResult(ApplicationModel):
 
 
 class FusionProvenance(ApplicationModel):
-    profile: Literal[FusionProfile.reciprocal_rank] = FusionProfile.reciprocal_rank
+    profile: Literal[
+        FusionProfile.legacy_reciprocal_rank,
+        FusionProfile.reciprocal_rank,
+    ] = FusionProfile.reciprocal_rank
     rank_constant: int = Field(default=60, gt=0)
-    overlap_rule: Literal["connected_intervals"] = "connected_intervals"
+    overlap_rule: Literal[
+        "connected_intervals",
+        "rank_anchored_direct_overlap",
+    ] = "rank_anchored_direct_overlap"
     requested_modalities: tuple[Identifier, ...] = ()
     searched_modalities: tuple[Identifier, ...] = ()
 
@@ -1023,6 +1039,15 @@ class QueryVideoCommand(ApplicationModel):
         gt=0,
         le=50,
         description="Maximum ranked evidence moments used for the answer.",
+    )
+    candidate_top_k: int = Field(
+        default=100,
+        gt=0,
+        le=100,
+        description=(
+            "Maximum hits to retrieve from each modality before fusion. This "
+            "resource limit is independent from the final top_k."
+        ),
     )
     evidence_delivery: InitialEvidenceDeliveryPolicy | None = Field(
         default=None,

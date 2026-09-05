@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from vidxp.benchmarks.agent_ablation_score import (
+    event_coverage,
     interval_iou,
     score_ablation_boundary,
     score_temporal_grounding,
@@ -18,7 +19,7 @@ def test_interval_iou_matches_temporal_overlap() -> None:
     assert interval_iou(0, 5, 6, 10) == 0
 
 
-def test_temporal_grounding_reports_longvale_metrics() -> None:
+def test_temporal_grounding_uses_bounded_chunk_hit_as_primary_score() -> None:
     output = json.dumps(
         {
             "video_id": "video-1",
@@ -39,9 +40,52 @@ def test_temporal_grounding_reports_longvale_metrics() -> None:
     )
 
     assert result["pass"] is True
+    assert result["score"] == pytest.approx(0.5)
+    assert result["namedScores"]["bounded_chunk_hit"] == 1
+    assert result["namedScores"]["event_coverage"] == pytest.approx(0.5)
+    assert result["namedScores"]["chunk_duration_in_range"] == 1
     assert result["namedScores"]["temporal_iou"] == pytest.approx(1 / 3)
     assert result["namedScores"]["r1_tiou_0_3"] == 1
     assert result["namedScores"]["r1_tiou_0_5"] == 0
+
+
+def test_event_coverage_is_normalized_to_one_practical_chunk() -> None:
+    assert event_coverage(10, 20, 12, 14, target_chunk_seconds=10) == 1
+    assert event_coverage(10, 20, 5, 25, target_chunk_seconds=10) == 1
+    assert event_coverage(0, 8, 20, 22, target_chunk_seconds=10) == 0
+
+
+def test_temporal_grounding_rejects_blink_and_whole_video_answers() -> None:
+    context = {
+        "vars": {
+            "video_id": "video-1",
+            "duration_seconds": 30,
+            "expected_start": 10,
+            "expected_end": 12,
+        }
+    }
+
+    blink = score_temporal_grounding(
+        '{"video_id":"video-1","start_seconds":10,"end_seconds":12}',
+        context,
+    )
+    whole_video = score_temporal_grounding(
+        '{"video_id":"video-1","start_seconds":0,"end_seconds":30}',
+        context,
+    )
+    practical = score_temporal_grounding(
+        '{"video_id":"video-1","start_seconds":8,"end_seconds":16}',
+        context,
+    )
+
+    assert blink["pass"] is False
+    assert blink["namedScores"]["event_coverage"] == 1
+    assert blink["namedScores"]["chunk_duration_in_range"] == 0
+    assert whole_video["pass"] is False
+    assert whole_video["namedScores"]["event_coverage"] == 1
+    assert whole_video["namedScores"]["chunk_duration_in_range"] == 0
+    assert practical["pass"] is True
+    assert practical["namedScores"]["bounded_chunk_hit"] == 1
 
 
 def test_temporal_grounding_rejects_null_or_out_of_bounds_intervals() -> None:
@@ -309,6 +353,10 @@ def test_generator_pairs_each_manifest_task_across_conditions(
 
     assert [test["providers"] for test in tests] == [["on"], ["off"]]
     assert [test["vars"]["expected_vidxp"] for test in tests] == [True, False]
+    assert [test["vars"]["target_chunk_seconds"] for test in tests] == [10, 10]
+    assert [test["vars"]["min_chunk_seconds"] for test in tests] == [8, 8]
+    assert [test["vars"]["max_chunk_seconds"] for test in tests] == [12, 12]
+    assert [test["vars"]["min_event_coverage"] for test in tests] == [0.5, 0.5]
     assert [test["vars"]["modalities"] for test in tests] == [
         '["sound"]',
         '["sound"]',

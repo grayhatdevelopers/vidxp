@@ -79,7 +79,7 @@ def search(
             "-k",
             min=1,
             max=100,
-            help="Maximum ranked hits.",
+            help="Maximum fused results to return.",
         ),
     ] = 10,
     json_output: Annotated[

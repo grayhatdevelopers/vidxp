@@ -38,6 +38,11 @@ _MEDIA_INSPECTION_COMMAND = re.compile(
 _SKILL_NAME = "vidxp-find-video-evidence"
 _SKILL_PATH = ".agents/skills/vidxp-find-video-evidence/SKILL.md"
 
+DEFAULT_TARGET_CHUNK_SECONDS = 10.0
+DEFAULT_MIN_CHUNK_SECONDS = 8.0
+DEFAULT_MAX_CHUNK_SECONDS = 12.0
+DEFAULT_MIN_EVENT_COVERAGE = 0.5
+
 
 def interval_iou(
     predicted_start: float,
@@ -57,11 +62,34 @@ def interval_iou(
     return 0.0 if union <= 0 else intersection / union
 
 
+def event_coverage(
+    predicted_start: float,
+    predicted_end: float,
+    expected_start: float,
+    expected_end: float,
+    *,
+    target_chunk_seconds: float,
+) -> float:
+    """Return the useful-event coverage available to one target-size chunk."""
+
+    intersection = max(
+        0.0,
+        min(predicted_end, expected_end) - max(predicted_start, expected_start),
+    )
+    expected_duration = expected_end - expected_start
+    useful_duration = min(expected_duration, target_chunk_seconds)
+    return (
+        0.0
+        if useful_duration <= 0
+        else min(1.0, intersection / useful_duration)
+    )
+
+
 def score_temporal_grounding(
     output: str,
     context: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Score the single predicted interval using LongVALE grounding metrics."""
+    """Score practical chunk retrieval and retain LongVALE boundary metrics."""
 
     variables = context.get("vars", {})
     try:
@@ -88,18 +116,62 @@ def score_temporal_grounding(
     if start < 0 or end <= start or end > duration + 0.001:
         return _failed("The predicted interval is outside the video bounds.")
 
+    target_chunk = _positive_number(
+        variables.get("target_chunk_seconds", DEFAULT_TARGET_CHUNK_SECONDS)
+    )
+    min_chunk = _positive_number(
+        variables.get("min_chunk_seconds", DEFAULT_MIN_CHUNK_SECONDS)
+    )
+    max_chunk = _positive_number(
+        variables.get("max_chunk_seconds", DEFAULT_MAX_CHUNK_SECONDS)
+    )
+    min_coverage = _finite_number(
+        variables.get("min_event_coverage", DEFAULT_MIN_EVENT_COVERAGE)
+    )
+    if None in (target_chunk, min_chunk, max_chunk, min_coverage):
+        return _failed("The task has invalid bounded-chunk settings.")
+    assert target_chunk is not None
+    assert min_chunk is not None
+    assert max_chunk is not None
+    assert min_coverage is not None
+    if min_chunk > target_chunk or target_chunk > max_chunk:
+        return _failed("The task's chunk duration bounds are inconsistent.")
+    if not 0 < min_coverage <= 1:
+        return _failed("The task's event coverage threshold must be in (0, 1].")
+
+    predicted_duration = end - start
+    effective_min_chunk = min(min_chunk, duration)
+    duration_in_range = (
+        predicted_duration + 0.001 >= effective_min_chunk
+        and predicted_duration <= max_chunk + 0.001
+    )
+    coverage = event_coverage(
+        start,
+        end,
+        expected_start,
+        expected_end,
+        target_chunk_seconds=target_chunk,
+    )
+    bounded_chunk_hit = duration_in_range and coverage >= min_coverage
     iou = interval_iou(start, end, expected_start, expected_end)
     scores = {
         "valid_interval": 1.0,
+        "bounded_chunk_hit": float(bounded_chunk_hit),
+        "event_coverage": coverage,
+        "chunk_duration_in_range": float(duration_in_range),
         "temporal_iou": iou,
         "r1_tiou_0_3": float(iou >= 0.3),
         "r1_tiou_0_5": float(iou >= 0.5),
         "r1_tiou_0_7": float(iou >= 0.7),
     }
     return {
-        "pass": iou >= 0.3,
-        "score": iou,
-        "reason": f"Temporal IoU is {iou:.4f}.",
+        "pass": bounded_chunk_hit,
+        "score": coverage if duration_in_range else 0.0,
+        "reason": (
+            f"Bounded chunk {'hit' if bounded_chunk_hit else 'miss'}: "
+            f"{predicted_duration:.3f}s duration, {coverage:.4f} event coverage; "
+            f"temporal IoU {iou:.4f}."
+        ),
         "namedScores": scores,
     }
 
@@ -477,6 +549,11 @@ def _finite_number(value: Any) -> float | None:
         return None
     number = float(value)
     return number if number == number and abs(number) != float("inf") else None
+
+
+def _positive_number(value: Any) -> float | None:
+    number = _finite_number(value)
+    return number if number is not None and number > 0 else None
 
 
 def _passed(reason: str) -> dict[str, Any]:

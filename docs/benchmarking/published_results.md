@@ -73,11 +73,13 @@ and confidence jointly. The smallest tied winner adds 13.37M trainable parameter
 to a 198.5M frozen M2D-CLAP encoder. Its score establishes the architecture and
 encoder direction, but missing released weights prevent a product adoption claim.
 
-[CASTELLA](https://arxiv.org/abs/2511.15131) provides the current released
-fallback: its official Lighthouse UVCOM checkpoint reports R1@0.7 20.3 on the
+[CASTELLA](https://arxiv.org/abs/2511.15131) provides a released reproduction
+control: its official Lighthouse UVCOM checkpoint reports R1@0.7 20.3 on the
 CASTELLA test split. That is a trained long-audio result, not directly comparable
 with FineLAP's clip-retrieval R@1. CASTELLA also reports a marked weakness on
 moments shorter than ten seconds, which includes VidXP's four sound pilot events.
+Its published quality and conflicting dependencies do not justify a separate
+product runtime; use it only when that reproduction is explicitly needed.
 
 ### MVEB: current text-video embedding comparison
 

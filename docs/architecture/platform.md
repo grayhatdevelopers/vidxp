@@ -838,7 +838,9 @@ Flow:
 2. Ask an injected local SLM planner for a strictly typed `QueryPlan`.
 3. Validate that the plan uses registered operations and safe parameters only.
 4. Execute retrieval through application search/capability operations.
-5. Fuse overlapping intervals with deterministic reciprocal-rank fusion.
+5. Build bounded candidates from rank-anchored, directly overlapping evidence,
+   then order them with deterministic reciprocal-rank fusion. Indirect overlap
+   cannot join separate moments.
 6. Ask the answer synthesizer for a grounded answer.
 7. Return `QueryAnswer` with timestamped citations and supporting hits.
 

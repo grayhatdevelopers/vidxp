@@ -4,7 +4,7 @@ Collection index: [Benchmarking research](README.md)
 
 Status: Paper-level benchmark-use audit active
 
-Last verified: 2026-09-02
+Last verified: 2026-09-05
 
 Related records: [Published benchmark catalog](benchmark_catalog.md) and
 [research adoption record](research_adoption.md)
@@ -46,8 +46,8 @@ Start with these papers before reviewing individual model variants:
 
 1. **MAEB** and **MVEB** for the current common audio/video embedding landscape.
 2. **DCASE 2026 Task 6, AM-DETR, and CASTELLA** for free-form queries over
-   long audio; **DASM, FlexSED, WSTAG, FineLAP, and AEGBench** for the distinct
-   event-phrase detection and grounding problem.
+   long audio; **PE-A-Frame, DASM, FlexSED, WSTAG, FLAM, SpotSound, TimeAudio,
+   FineLAP, and AEGBench** for the complementary event-grounding problem.
 3. **LongVALE** and **FLARE** for combined long-video vision, sound, and speech.
 4. **TVR / XML** for the closest peer-reviewed corpus-level visual/transcript
    temporal-retrieval task.
@@ -79,9 +79,13 @@ Start with these papers before reviewing individual model variants:
 | [Language-based Audio Moment Retrieval](https://h-munakata.github.io/Language-based-Audio-Moment-Retrieval/) | ICASSP 2025 | Clotho-Moment, real UnAV-100 subset, TUT Sound Events 2017; AM-DETR | Direct long-audio text-to-interval task; shows that temporal modeling improves over independently scored sliding windows |
 | [CASTELLA: Long Audio Dataset with Captions and Temporal Boundaries](https://arxiv.org/abs/2511.15131) | ICASSP 2026 | 1,862 human-annotated recordings lasting 1–5 minutes; 3,881 captions and 11,308 intervals | Replaces the small real-audio check in the first AMR paper with a public long-audio benchmark and released Lighthouse checkpoints |
 | [DCASE 2026 Task 6: Audio Moment Retrieval from Long Audio](https://dcase.community/challenge2026/task-audio-moment-retrieval-from-long-audio-results) | DCASE Challenge 2026 | Hidden evaluation over 100 long recordings; natural-language query to ranked intervals | Current direct leaderboard. The best lightweight entry uses M2D-CLAP plus a query-conditioned DETR span model, not independent window ranking |
-| [Detect Any Sound](https://arxiv.org/abs/2507.16343) | ACM MM 2025 | AudioSet Strong and cross-dataset DESED; DASM | Open-vocabulary event-phrase detector with frame-level localization; relevant to short sound events, but not a full free-form long-audio retriever |
+| [Pushing the Frontier of Audiovisual Perception with Large-Scale Multimodal Correspondence Learning](https://arxiv.org/abs/2512.19687) | arXiv 2025 | PE-A-Frame on Internal, ASFX-SED, AudioSet Strong, DESED, and UrbanSED event localization | Released Apache-2.0 free-form audio grounder with about 40 ms frame scores and multiple output spans; Small is the first Mac candidate because it stays close to Base/Large localization AUROC |
+| [Detect Any Sound](https://arxiv.org/abs/2507.16343) | ACM MM 2025 | AudioSet Strong and cross-dataset DESED; DASM | Open-vocabulary event-phrase detector with frame-level localization; research reference only because its released source is unlicensed and its text inference requires CUDA plus external MGA-CLAP code/weights |
 | [FlexSED](https://arxiv.org/abs/2509.18606) | WASPAA 2025 | AudioSet Strong with zero- and few-shot event queries | Released open-vocabulary event detector; requires a list of event phrases rather than accepting VidXP's full query as an interval-retrieval request |
-| [Towards Weakly Supervised Text-to-Audio Grounding](https://arxiv.org/abs/2401.02584) | arXiv 2024 | AudioCaps-derived caption and phrase grounding; WSTAG | Earlier released caption/phrase-to-event grounding line; useful context for weak supervision, not the current long-audio leader |
+| [Towards Weakly Supervised Text-to-Audio Grounding](https://arxiv.org/abs/2401.02584) | IEEE Transactions on Multimedia 2024 | AudioCaps-derived caption and phrase grounding; WSTAG | Established weakly supervised grounding lineage; its newer author-recommended model missed two unique pilot events and exposed invalid single-reference scoring on a repeated engine sound |
+| [FLAM: Frame-Wise Language-Audio Modeling](https://arxiv.org/abs/2505.05335) | ICML 2025 | Open-vocabulary frame localization and clip retrieval | Closest compact technical match, but OpenFLAM is non-commercial and the public checkpoint differs from the unavailable internal model behind the paper results |
+| [SpotSound](https://arxiv.org/abs/2604.13023) | ACM MM 2026 | Clotho-Moment, UnAV-100, AudioGrounding, SpotSound-Bench, and SED | Direct short-event grounding ceiling; released adapter requires the non-commercial 8B Audio Flamingo 3 base and Linux/CUDA path |
+| [TimeAudio](https://arxiv.org/abs/2511.11039) | arXiv 2025 | Temporal grounding, dense captioning, and long-audio tasks | Direct long-audio reference; released Vicuna-7B stack requires more than 40 GB GPU memory |
 | [Auto-AEG and AEGBench](https://arxiv.org/abs/2607.04383) | arXiv 2026 | Open-vocabulary audio-event grounding and AEGBench | Direct sound-interval benchmark for hard, repeated, and overlapping environmental events |
 | [TimeLens2](https://github.com/MCG-NJU/TimeLens2) | arXiv 2026 | Seven visual temporal-grounding datasets | Recent visual-only ceiling with released checkpoints; not an established default or a complete LongVALE solution |
 | [Robust and Efficient Video Scene Detection using Optimal Sequential Grouping](https://research.ibm.com/publications/robust-and-efficient-video-scene-detection-using-optimal-sequential-grouping) | ISM 2016 | Introduces OVSD | Open-licensed semantic scene-boundary source; useful for segmentation only, not query retrieval, actions, sound, or speech |

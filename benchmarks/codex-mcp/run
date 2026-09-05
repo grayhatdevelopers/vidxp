@@ -51,6 +51,9 @@ case "$command" in
     probe)
         exec "$benchmark_dir/../../.venv/bin/python" scripts/modality_probe.py "$@"
         ;;
+    depth)
+        exec "$benchmark_dir/../../.venv/bin/python" scripts/candidate_depth_control.py "$@"
+        ;;
     compare)
         exec "$benchmark_dir/../../.venv/bin/python" scripts/compare_point_to_span.py "$@"
         ;;
@@ -70,7 +73,7 @@ case "$command" in
         exec npm run promptfoo -- view --yes "$@"
         ;;
     *)
-        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot|results|trace|probe|compare|representation|shots|queries|sound|view}" >&2
+        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot|results|trace|probe|depth|compare|representation|shots|queries|sound|view}" >&2
         exit 2
         ;;
 esac

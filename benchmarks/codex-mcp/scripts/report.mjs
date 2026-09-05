@@ -124,6 +124,11 @@ export function summarizeResults(results) {
       condition,
       runs: selected.length,
       passed: selected.filter((result) => result.success).length,
+      chunkHits: selected.filter((result) => result.chunkHit === 1).length,
+      chunkScored: selected.filter((result) => Number.isFinite(result.chunkHit)).length,
+      chunkHitRate: mean(selected.map((result) => result.chunkHit)),
+      meanEventCoverage: mean(selected.map((result) => result.eventCoverage)),
+      durationInRangeRate: mean(selected.map((result) => result.durationInRange)),
       meanIou: mean(selected.map((result) => result.iou)),
       recall03: mean(selected.map((result) => result.recall03)),
       recall05: mean(selected.map((result) => result.recall05)),
@@ -258,6 +263,15 @@ export function loadLatestEvaluation() {
         modalities: Array.isArray(output.modalities) ? output.modalities : [],
         sourceJobId: output.source_job_id,
         evidenceCount: Array.isArray(output.evidence) ? output.evidence.length : 0,
+        chunkHit: Number.isFinite(namedScores.bounded_chunk_hit)
+          ? namedScores.bounded_chunk_hit
+          : null,
+        eventCoverage: Number.isFinite(namedScores.event_coverage)
+          ? namedScores.event_coverage
+          : null,
+        durationInRange: Number.isFinite(namedScores.chunk_duration_in_range)
+          ? namedScores.chunk_duration_in_range
+          : null,
         iou: Number.isFinite(namedScores.temporal_iou) ? namedScores.temporal_iou : 0,
         recall03: Number.isFinite(namedScores.r1_tiou_0_3)
           ? namedScores.r1_tiou_0_3
@@ -310,7 +324,13 @@ export function summarizeRetrieval(result, trace) {
       );
       const current = bestByModality.get(hit.modality);
       if (current === undefined || (iou ?? -1) > (current.iou ?? -1)) {
-        bestByModality.set(hit.modality, { ...hit, iou });
+        bestByModality.set(hit.modality, {
+          ...hit,
+          iou,
+          fusedRank: moment.rank,
+          fusedStart: moment.start,
+          fusedEnd: moment.end,
+        });
       }
     }
   }
@@ -354,7 +374,7 @@ function loadRetrievalTraces(results) {
 
 export function renderReport(
   evaluation,
-  { showAll = false, showResponses = false, showRetrieval = false } = {},
+  { showAll = false, showResponses = false, showRetrieval = true } = {},
 ) {
   const summaries = summarizeResults(evaluation.results);
   const created = Number.isFinite(evaluation.created_at)
@@ -362,11 +382,27 @@ export function renderReport(
     : String(evaluation.created_at);
   console.log(`\nEvaluation comparison: ${evaluation.id}`);
   console.log(`Created: ${created} | wall time: ${seconds(evaluation.wallTimeMs)}`);
-  console.log('Quality and time:');
+  console.log('Product outcome:');
   console.table(summaries.map((summary) => ({
     condition: summary.condition,
     runs: summary.runs,
     passed: `${summary.passed}/${summary.runs}`,
+    'chunk hits': summary.chunkScored
+      ? `${summary.chunkHits}/${summary.chunkScored}`
+      : 'n/a',
+    'hit rate': fixed(summary.chunkHitRate, 3),
+    coverage: fixed(summary.meanEventCoverage, 3),
+    'duration valid': fixed(summary.durationInRangeRate, 3),
+    'avg time': seconds(summary.meanLatencyMs),
+    'total time': seconds(summary.totalLatencyMs),
+  })));
+  console.log(
+    '  Primary quality: an 8–12s clip covers at least half of the event available to a 10s clip. '
+    + 'Boundary IoU and R@ thresholds remain secondary exact-localization diagnostics.',
+  );
+  console.log('Boundary diagnostics (secondary):');
+  console.table(summaries.map((summary) => ({
+    condition: summary.condition,
     'mean IoU': fixed(summary.meanIou, 4),
     'R@.3': fixed(summary.recall03, 3),
     'R@.5': fixed(summary.recall05, 3),
@@ -374,8 +410,6 @@ export function renderReport(
     'start MAE': secondsValue(summary.meanStartError),
     'end MAE': secondsValue(summary.meanEndError),
     'duration MAE': secondsValue(summary.meanDurationError),
-    'avg time': seconds(summary.meanLatencyMs),
-    'total time': seconds(summary.totalLatencyMs),
   })));
   console.log('Token usage and estimated cost:');
   console.table(summaries.map((summary) => ({
@@ -422,7 +456,11 @@ export function renderReport(
       ? on.uncachedPromptTokens - off.uncachedPromptTokens
       : null;
     console.log('VidXP-on minus VidXP-off:');
-    console.log(`  mean IoU: ${signed(on.meanIou - off.meanIou, 4)}`);
+    const chunkHitDelta = Number.isFinite(on.chunkHitRate) && Number.isFinite(off.chunkHitRate)
+      ? on.chunkHitRate - off.chunkHitRate
+      : null;
+    console.log(`  bounded chunk hit rate: ${signed(chunkHitDelta, 3)}`);
+    console.log(`  boundary mean IoU: ${signed(on.meanIou - off.meanIou, 4)}`);
     console.log(
       `  average latency: ${signed(latencyDelta / 1000, 3)}s`
       + (Number.isFinite(latencyPercent)
@@ -443,10 +481,16 @@ export function renderReport(
       ? on.cost - off.cost
       : null;
     console.log(`  estimated cost: ${signedMoney(costDelta)}`);
+    const productGateAvailable = Number.isFinite(chunkHitDelta) && Number.isFinite(tokenDelta);
+    const productGatePassed = productGateAvailable && chunkHitDelta >= 0 && tokenDelta < 0;
+    console.log(
+      `  product gate: ${productGateAvailable ? (productGatePassed ? 'PASS' : 'FAIL') : 'n/a'}`
+      + ' (VidXP must match or improve bounded-chunk hit rate and use fewer total tokens)',
+    );
   }
 
   if (evaluation.results.length <= 20 || showAll) {
-    console.log('Per-run intervals:');
+    console.log('Per-run product result:');
     const tasks = new Set(evaluation.results.map((result) => result.task));
     if (tasks.size === 1) {
       console.log(`  task: ${evaluation.results[0].task}`);
@@ -455,13 +499,25 @@ export function renderReport(
       ...(tasks.size === 1 ? {} : { task: result.task }),
       condition: result.condition,
       pass: result.success ? 'yes' : 'NO',
+      'chunk hit': Number.isFinite(result.chunkHit)
+        ? (result.chunkHit === 1 ? 'yes' : 'NO')
+        : 'n/a',
       expected: interval(result.expectedStart, result.expectedEnd),
       predicted: interval(result.predictedStart, result.predictedEnd),
+      coverage: fixed(result.eventCoverage, 3),
+      'duration valid': Number.isFinite(result.durationInRange)
+        ? (result.durationInRange === 1 ? 'yes' : 'NO')
+        : 'n/a',
+      time: seconds(result.latencyMs),
+    })));
+    console.log('Per-run boundary diagnostics (secondary):');
+    console.table(evaluation.results.map((result) => ({
+      ...(tasks.size === 1 ? {} : { task: result.task }),
+      condition: result.condition,
       'start Δ': signedSeconds(boundaryError(result.predictedStart, result.expectedStart)),
       'end Δ': signedSeconds(boundaryError(result.predictedEnd, result.expectedEnd)),
       'duration Δ': signedSeconds(durationError(result)),
       IoU: fixed(result.iou, 4),
-      time: seconds(result.latencyMs),
     })));
     console.log('Per-run usage and tools:');
     console.table(evaluation.results.map((result) => ({
@@ -538,11 +594,16 @@ export function renderReport(
       [...retrieval.bestByModality.entries()].map(([modality, hit]) => ({
         task: retrieval.task,
         modality,
+        'fused rank': hit.fusedRank,
         rank: hit.rank,
         interval: interval(hit.start, hit.end),
         IoU: fixed(hit.iou, 4),
       }))
     )));
+    console.log(
+      '  Saved jobs contain hits retained in final fused moments. The current result schema cannot '
+      + 'recover modality candidates outside candidate_top_k or the final fused output.',
+    );
   }
 }
 
@@ -555,7 +616,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     printLatestReport({
       showAll: process.argv.includes('--all'),
       showResponses: process.argv.includes('--responses'),
-      showRetrieval: process.argv.includes('--retrieval'),
+      showRetrieval: !process.argv.includes('--no-retrieval'),
     });
   } catch (error) {
     console.error(`Could not report the latest evaluation: ${error.message}`);

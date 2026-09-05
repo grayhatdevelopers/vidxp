@@ -2,8 +2,8 @@
 
 > **Historical assessment:** Statements below that generic sound was unsupported
 > accurately describe the implementation when this assessment was written. The
-> active [multimodal model direction](model_selection.md) now records the shipped
-> FineLAP sound layer and places LongVALE and FLARE adapter validation next.
+> active [multimodal model direction](model_selection.md) records the shipped
+> FineLAP layer, its unvalidated selector, and the current sound replacement work.
 
 Collection index: [Benchmarking research](README.md)
 

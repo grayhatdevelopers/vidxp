@@ -47,9 +47,11 @@ The selected suite remains component-based:
 
 LongVALE is the strongest peer-reviewed combined vision–audio–speech temporal
 benchmark found. It still omits actor clustering and expects genuinely fused
-multi-modal interval predictions. FineLAP now supplies separate global-window and
-dense timestamped sound evidence, but the LongVALE adapter and fusion rule remain
-unimplemented and no quality score is claimed. FLARE is a smaller downloadable
+multi-modal interval predictions. FineLAP supplies separate global-window and
+dense timestamped sound evidence, but VidXP's tested selector missed the two
+unambiguous sound tasks and remains unvalidated because the other two labels do
+not support a provider score. No sound-provider or LongVALE quality score is
+claimed. FLARE is a smaller downloadable
 audio-visual stress test, but it is a 2026 preprint benchmark with generated,
 filtered queries. It belongs in a secondary experiment or watchlist until peer
 review and benchmark stability improve.

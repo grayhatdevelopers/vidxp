@@ -1,10 +1,15 @@
-Locate one event in the supplied video and return the single best time interval.
+Locate one event in the supplied video and return one practical evidence clip.
 
 Dataset: {{ dataset }}
 Video ID: {{ video_id }}
 Media path: {{ media_relpath }}
 Video duration: {{ duration_seconds }} seconds
 Event to locate: {{ query }}
+Evidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between
+{{ min_chunk_seconds }} and {{ max_chunk_seconds }} seconds. The clip must contain
+the event, but it does not need to trim the event's exact boundaries. For an
+event longer than the target, choose its most representative target-size part.
+Near the start or end of the video, shift the clip instead of shortening it.
 
 Use VidXP when it is available in this condition; otherwise use the local media
 and available read-only tools. Do not use the network, read benchmark

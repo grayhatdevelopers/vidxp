@@ -7,6 +7,7 @@ test('summarizes comparison metrics by benchmark condition', () => {
   const summaries = summarizeResults([
     {
       condition: 'vidxp-on', success: true, iou: 0.75,
+      chunkHit: 1, eventCoverage: 1, durationInRange: 1,
       recall03: 1, recall05: 1, recall07: 1,
       expectedStart: 0, expectedEnd: 6, predictedStart: 0, predictedEnd: 8,
       latencyMs: 75_000, totalTokens: 300_000, promptTokens: 298_000,
@@ -16,6 +17,7 @@ test('summarizes comparison metrics by benchmark condition', () => {
     },
     {
       condition: 'vidxp-off', success: true, iou: 0.88,
+      chunkHit: 1, eventCoverage: 1, durationInRange: 1,
       recall03: 1, recall05: 1, recall07: 1,
       expectedStart: 0, expectedEnd: 6, predictedStart: 0, predictedEnd: 6.8,
       latencyMs: 112_000, totalTokens: 330_000, promptTokens: 326_400,
@@ -27,6 +29,10 @@ test('summarizes comparison metrics by benchmark condition', () => {
 
   assert.deepEqual(summaries.map((summary) => summary.condition), ['vidxp-on', 'vidxp-off']);
   assert.equal(summaries[0].meanIou, 0.75);
+  assert.equal(summaries[0].chunkHits, 1);
+  assert.equal(summaries[0].chunkScored, 1);
+  assert.equal(summaries[0].chunkHitRate, 1);
+  assert.equal(summaries[0].meanEventCoverage, 1);
   assert.equal(summaries[0].totalTokens, 300_000);
   assert.equal(summaries[0].promptTokens, 298_000);
   assert.equal(summaries[0].uncachedPromptTokens, 48_000);
@@ -61,5 +67,6 @@ test('reports fused and per-modality retrieval boundary quality', () => {
   assert.equal(summary.topMomentIou, 0.75);
   assert.equal(summary.bestByModality.get('action').iou, 0.75);
   assert.equal(summary.bestByModality.get('scene').rank, 2);
+  assert.equal(summary.bestByModality.get('scene').fusedRank, 1);
   assert.equal(summary.bestByModality.get('scene').iou, 0.5);
 });

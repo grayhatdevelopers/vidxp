@@ -1,6 +1,6 @@
 # VidXP metric database
 
-Last verified: 2026-09-04
+Last verified: 2026-09-05
 
 This is the public index of VidXP's measured results. Each result identifies the
 research protocol or method it tests, VidXP's deviation from that work, the
@@ -27,7 +27,7 @@ unless a percent sign is shown.
 | Scene | SigLIP 2 `base-patch16-224@75de2d5` | Frames sampled at 1 fps | [SigLIP 2](https://arxiv.org/abs/2502.14786) supplies image-text similarity. It does not predict scene or event boundaries. |
 | Action | VideoPrism `lvt-base-f16r288@fb6de9f` | Sixteen-frame clips sampled at 2 fps, normally about eight seconds | [VideoPrism](https://arxiv.org/abs/2402.13217) supplies global video-text embeddings. VidXP's fixed windows and raw long-video ranking are not the paper's action-localization method. |
 | Sound | FineLAP `b419aa2` | Ten-second global windows and 0.16-second dense activations | [FineLAP](https://aclanthology.org/2026.acl-long.473/) trains separate global and local projections. VidXP's global-then-local search is its own long-video orchestration. |
-| Fusion | No model | Overlap-connected evidence groups ranked with RRF; group interval is the union of its records | [RRF](https://doi.org/10.1145/1571941.1572114) defines `sum(1 / (60 + rank))`. Temporal grouping, one rank per modality, and interval union are VidXP rules. |
+| Fusion | No model | Rank-anchored candidates with at most one directly overlapping hit per supporting modality | [RRF](https://doi.org/10.1145/1571941.1572114) defines `sum(1 / (60 + rank))`. Candidate construction and interval union are VidXP rules; indirect overlap cannot join separate moments. |
 
 Full immutable revisions are pinned in the
 [speech](../../src/vidxp/capabilities/speech/specs.py),
@@ -35,6 +35,24 @@ Full immutable revisions are pinned in the
 [action](../../src/vidxp/capabilities/action/specs.py), and
 [sound](../../src/vidxp/capabilities/sound/specs.py) specifications. A row below
 states when an experiment replaces these normal representations.
+
+## Agent product metrics
+
+| Metric | Definition | Role and research boundary |
+| --- | --- | --- |
+| Bounded-chunk hit | One 8–12-second result covers at least `0.5` of `min(annotation duration, 10 seconds)` | Primary per-task product retrieval metric. The ten-second target is a VidXP serving policy, not a LongVALE metric. It rejects blink-length and whole-video answers. |
+| Paired product gate | VidXP-on bounded-chunk hit rate is at least VidXP-off, and VidXP-on uses fewer total agent tokens | Primary whole-system decision. Cost, latency, and calls remain reported separately. |
+| Temporal IoU and R@1 at tIoU 0.3/0.5/0.7 | Exact predicted interval against the LongVALE-derived annotation | Retained secondary boundary-quality diagnostics. Poor exact trimming remains a product shortcoming and future research target. |
+
+Recorded September development runs used the earlier exact-interval prompt, so
+their raw measurements remain below but are not retroactively labeled as
+bounded-chunk product-gate results.
+
+## Input integrity checks
+
+| Check | Machine | Result | Decision |
+| --- | --- | --- | --- |
+| LongVALE-derived sound references | `mac-m2-01`; PCM levels measured over each exact reference interval and all annotations for the engine video checked | Siren RMS/peak `-18.83/-3.75 dBFS`; engine `-19.22/-2.81`; phone `-91.75/-78.27`; drumbeat `-39.60/-17.18`. The phone video matches the downloaded archive at SHA-256 `0468c1bde02a752d1f20ab370556e59768a5da19519ea1cfe4a0e9760fd5b2f7`. The engine video has several annotated rev/roar intervals; WSTAG's 242.22 s top lies inside the separate 241.760–243.554 s rev annotation. | The custom sound-only score is invalid for phone and engine. Keep the original intervals in the collective LongVALE tasks, where visual and action details disambiguate them; report the sound limitation instead of changing the multimodal labels. |
 
 ## Whole-system agent measurements
 
@@ -61,13 +79,19 @@ the returned list; it does not mean that VidXP selected that interval.
 
 | Experiment and research basis | Scope and cost | Result | What it establishes |
 | --- | --- | --- | --- |
-| `p2s_asg_vidxp_v1`; [Point-to-Span](https://arxiv.org/abs/2512.10363), Section 3.1 | One development task; saved score curves; no model calls | Current union IoU `0.7493`; adapted interval `0.64–6.72` s and IoU `0.7976`; direct-inspection IoU `0.8824` | The adaptive sound span helped, but the partial adaptation produced no scene or action span and remained below direct inspection. It is concluded, not adopted. |
+| `p2s_asg_vidxp_v1`; [Point-to-Span](https://arxiv.org/abs/2512.10363), Section 3.1 | One development task; saved score curves; no model calls | Previous union IoU `0.7493`; adapted interval `0.64–6.72` s and IoU `0.7976`; direct-inspection IoU `0.8824` | The adaptive sound span helped, but the partial adaptation produced no scene or action span and remained below direct inspection. It is concluded, not adopted. |
 | `videoprism_overlap_control_v1`; [CTAP](https://openaccess.thecvf.com/content_ECCV_2018/html/Jiyang_Gao_CTAP_Complementary_Temporal_ECCV_2018_paper.html) and [long-video guidance](https://openaccess.thecvf.com/content/ICCV2023/html/Barrios_Localizing_Moments_in_Long_Video_Via_Multimodal_Guidance_ICCV_2023_paper.html) motivate candidate coverage | Five action tasks; normal 79 records versus 307 four-second records; five text embeddings; fine index took 1,175.579 s and wrote 5,966,316 bytes | Eight-second top-1 mean IoU `0.0680`, R@1 at tIoU 0.5 `0`; four-second top-1 mean IoU `0.1297`, R@1 at tIoU 0.5 `.20`, top-3 candidate recall `.40`, full-list recall `.60`; top-three coarse gating reduced full-list recall to `.40` | Overlap improves candidate availability, but raw VideoPrism similarity and the tested gate do not rank it reliably. CTAP's learned proposal ranking and boundary adjustment were not implemented. |
 | `diwan_shotdetect_siglip2_v1`; [Off-the-Shelf VMR](https://proceedings.mlr.press/v203/diwan23a.html) | Eight tasks; 16 text embeddings; 46.744 s probe generation; 16.923 s shot detection; no model calls or index writes for detection | Development shot IoU `0.8902`. Held out: current union mean IoU `0.0418`; best-shot oracle `.5219`; on six scene-comparable tasks, scene ranking `.2841` versus proposal RRF `.1175` | Shot boundaries can supply useful candidates. VidXP's proposal RRF harmed ranking; five tasks were boundary-limited and three ranking-limited at tIoU 0.5. The paper's CLIP plus SimpleWatershed pipeline was not reproduced. |
 | `manual_modality_query_ceiling_v1`; query decomposition is compared with, not claimed from, [Zero-Shot VMR](https://openaccess.thecvf.com/content/WACV2024/html/Luo_Zero-Shot_Video_Moment_Retrieval_From_Frozen_Vision-Language_Models_WACV_2024_paper.html) | Eight tasks; 16 task-modality pairs; 32 text embeddings; 13.590 s | Target overlap in top 3 changed `7/16` to `8/16`; best-boundary record in top 3 changed `4/16` to `7/16`; nine overlap ranks improved and two worsened | Manual modality wording is an upper-bound control, not the paper's full method. Mixed results reject mandatory rewriting. |
 | `finelap_separate_streams_v1`; [FineLAP](https://aclanthology.org/2026.acl-long.473/), Sections 3.2–3.3 | Four sound tasks within the preceding query control | A target appeared in a top-three list on `0/4` tasks when global and dense records were mixed and `3/4` when the streams were ranked separately | The original mixed ranking was invalid. The result supports separate representation paths, not VidXP's final global-then-local selector. |
 | `finelap_two_stage_runtime_2026-09-03`; [FineLAP](https://aclanthology.org/2026.acl-long.473/) representations with VidXP orchestration | One real Apple Silicon query through FineLAP, Chroma, the application, fusion, and JSON output | Dense result `1.60–2.08` s with parent context `0–10` s | Real-path smoke only. It proves the current selector executes; it supplies no held-out IoU or comparative quality evidence. |
-| `finelap-two-stage-held-out@eae7000`; [FineLAP](https://aclanthology.org/2026.acl-long.473/), Sections 3.2–3.3, plus VidXP's selector | Four held-out sound tasks; full frozen application queries; top 3; eight local text embeddings including diagnostic duplication; 5.172 s total | Global gate coverage `2/4`; final activation top-1 and top-3 coverage `0/4`; full gated activation coverage `2/4`; final mean IoU `0`; R@1 at tIoU 0.3/0.5/0.7 all `0`; surviving target ranks `132` and `63` | Selector rejected. FineLAP validates separate clip and frame outputs, not VidXP's long-video gate or pooled cross-window activation ranking. Do not spend an agent run on this path. |
+| `finelap-two-stage-held-out@eae7000`; [FineLAP](https://aclanthology.org/2026.acl-long.473/), Sections 3.2–3.3, plus VidXP's selector | Four designated intervals; full frozen application queries; top 3; eight local text embeddings including diagnostic duplication; 5.172 s total | Global gate coverage `2/4`; final activation top-1 and top-3 coverage `0/4`; full gated activation coverage `2/4`; final mean IoU `0`; R@1 at tIoU 0.3/0.5/0.7 all `0`; surviving target ranks `132` and `63` | Exact diagnostic retained, but phone and engine invalidate it as a provider decision. It does not decide whether the paired multimodal run can proceed. |
+| `candidate-depth-fusion-control-v1`; [RRF](https://doi.org/10.1145/1571941.1572114) ranking over current VidXP temporal groups | All ten frozen collective tasks; saved full-query modality rankings; depths 1, 3, 5, 10, 20, 50, 100, 250, 500, 1,000, and all; final depth 10; no model or API calls | From depth 3 to 20, board R@3 at tIoU 0.5 rose `.30` to `.40` and output R@10 rose `.30` to `.40`, while R@1 stayed `.20`. At depth 100, R@1 fell to `0`; at full depth, every top result spanned nearly the whole video and all threshold rates were `0`. | Early truncation hides usable evidence, but a larger fixed depth is not the fix. Transitive overlap grouping turns denser input into video-length components. Candidate generation must be separated from final ranking before candidate depth can be selected. |
+| `candidate-depth-direct-overlap-control-v2`; [RRF](https://doi.org/10.1145/1571941.1572114) over VidXP's corrected bounded candidates | `mac-m2-01`; the same ten frozen tasks and saved rankings; identical depth sweep; final depth 10; no model or API calls | Depths 100 through all produced identical rates. At full depth, R@1/R@3/R@5/R@10 at tIoU 0.5 were `.10/.10/.20/.20`; no top result expanded to the full video. | Direct overlap fixes the transitive-union failure. Low R@5 remains attributable to provider ordering and source-window boundaries, not depth collapse. |
+| `pe-a-frame-small-mac-diagnostic`; [PE-AV](https://arxiv.org/abs/2512.19687), PE-A-Frame Small `e5fc71c1f0be50279f52f292390b589780079e13` | `mac-m2-01`; official Transformers implementation; F32 CPU; official threshold `0.3`; no API calls. One complete 73.14-second phone-ring track plus four label-centered clips. | Full track: 244.35 s, 4.30 GiB peak RSS, 125 predicted fragments, target miss. Target-aware clips: full-query mean best-span IoU `0.1654` and target score above surrounding audio `1/4`; sound-only mean `0.1151` and `0/4`. Best per-task full-query IoU: siren `0.0317`, engine `0.4615`, phone `0`, drumbeat `0.1682`. | Rejected as-is. The label-centered clips diagnose recognition and boundaries but are not a retrieval score. Sound-only wording did not rescue the model, and threshold tuning cannot repair target scores below surrounding scores. |
+| `flexsed-mac-held-out`; [FlexSED](https://arxiv.org/abs/2509.18606) detector `eefe52b7ad686a9bc9f1f5dd0803e2c52171e128`, LAION CLAP `8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a` | `mac-m2-01`; released non-overlapping ten-second path; 63 detector calls over 616.7 seconds of unique audio; full and sound-only wording; no API calls or tuned settings | Load `1.265` s; inference `10.854` s; peak RSS `1.57` GiB. Designated target score beat all surrounding frames on `0/4` full and `0/4` sound-only queries. Mean target-best frame percentile was `0.7962` full and `0.7439` sound-only. Published processing produced one designated-target overlap, engine at about `0.045` IoU. | Runtime passes, but the overall quality rate is invalid because phone is silent and engine has repeated valid matches. FlexSED missed both unique valid cases and is not selected; overlap cannot repair those raw misses. |
+| `dasm-release-compatibility-2026-09-05`; [DASM](https://arxiv.org/abs/2507.16343), Transformer4SED `c3e883d0fbeaf7031b467d45a3c46a88a76c00b6` | `mac-m2-01`; read-only inspection of official source, inference notebook, requirements, and 636 MB model-hub tree; no API calls | Text inference sets `device = 'cuda'`, requires an external MGA-CLAP checkout and checkpoint, and uses hard-coded local paths. The Transformer4SED repository has no software license. | Blocked before execution; no quality or runtime score. MIT metadata on the model hub does not grant a license to copy the separate source implementation. |
+| `wstag-audiocaps-v2-mac-held-out`; [WSTAG](https://arxiv.org/abs/2401.02584), model `c1ede4afca77acb67bbd20e48e3fc4657b96666a`, LAION CLAP `365dea6ef167def6676140ed93bbc43f84dabb28` | `mac-m2-01`; author-recommended post-paper 131.96M-parameter model; exact 528,030,960-byte weights; three audible designated intervals, full and sound-only wording; six whole-track CPU forwards over 1,679.9 input seconds; no API calls or tuned settings | Load `0.811` s from cache; inference `25.82` s; individual 247–296 s tracks `3.42–5.02` s; peak RSS `4.15` GiB. Designated target wins were `0/3` for either wording; mean target-best percentile `0.8688` full and `0.8985` sound-only. Designated-target IoU was zero at the released `0.5` threshold. The engine top at `242.22` s is inside another annotated rev interval (`241.760–243.554` s). | Runtime passes. WSTAG missed the two unique valid cases and is not selected, but no overall provider score is claimed. The hub's advertised AutoModel path is broken; the diagnostic loaded the same class and exact weights with zero checkpoint mismatches. |
 | `videoprism_provider_conformance_2026-09-03`; [VideoPrism](https://arxiv.org/abs/2402.13217) official preprocessing and checkpoint | One identical 16-frame tensor and six texts through official Flax and pinned Transformers implementations | Video and text embedding cosine parity rounded to `1.0`; every similarity score differed by less than `0.000051` | The port is numerically valid. Query canonicalization was fixed in `7e7d6c8`; the remaining failure is VidXP's global-similarity ranking design. |
 
 The action result motivates a trained sequence-to-interval grounder rather than
@@ -98,7 +122,7 @@ inputs and code needed to understand or reproduce them:
   [fixed agent prompt](../../benchmarks/codex-mcp/prompts/video-evidence.txt),
   [Promptfoo configuration](../../benchmarks/codex-mcp/promptfooconfig.yaml),
   and [reporter](../../benchmarks/codex-mcp/scripts/report.mjs);
-- the action, proposal, query, sound, and Point-to-Span controls under
+- the action, proposal, query, sound, candidate-depth, and Point-to-Span controls under
   `benchmarks/codex-mcp/scripts/`;
 - [current result interpretation](results.md), [paper validation](paper_validation.md),
   and [published comparison results](published_results.md).
@@ -109,8 +133,9 @@ paths are not part of this public evidence record.
 
 ## Measurements still required
 
-- Replace or remove the rejected FineLAP two-stage selector before another
-  paired agent run.
+- Evaluate sound providers separately on a suitable sound-retrieval or grounding
+  protocol if replacement work continues. Do not present the custom LongVALE
+  sound slice as the collective product benchmark.
 - Run the 54-run paired Codex pilot only after explicit maintainer approval.
 - Produce full-corpus DiDeMo and HiREST results for the current providers.
 - Add Git revision, machine snapshot, model revisions, task-manifest hash, wall
