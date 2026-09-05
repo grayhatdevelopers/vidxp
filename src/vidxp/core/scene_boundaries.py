@@ -6,8 +6,8 @@ from pathlib import Path
 def detect_shot_boundaries(path: str | Path) -> list[float]:
     """Return sorted shot-end timestamps (seconds) using PySceneDetect.
 
-    An empty list means no cuts were found (or detection failed) -
-    callers should treat that as "one shot covering the whole video".
+    An empty list means no cuts were found, so callers should treat
+    that as "one shot covering the whole video".
     """
     from scenedetect import ContentDetector, detect
 

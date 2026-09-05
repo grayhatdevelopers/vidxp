@@ -18,10 +18,10 @@ from vidxp.core.contracts import (
     stable_source_id,
 )
 from vidxp.core.indexing_common import ProgressCallback, report_progress
-from vidxp.core.video import FrameSample, FrameSampling
-from vidxp.ports import IndexStore, ModelRuntimePort
 from vidxp.core.clip import ClipStreamAccumulator, VideoClip
 from vidxp.core.scene_boundaries import detect_shot_boundaries
+from vidxp.core.video import FrameSample, FrameSampling
+from vidxp.ports import IndexStore, ModelRuntimePort
 
 
 CLIP_FRAMES = 16
@@ -114,7 +114,6 @@ def _store_clips(
     settings = videoprism_config(config)
     for group in batched(clips, settings.batch_size):
         cancellation.raise_if_cancelled()
-  
         model_clips = [
             VideoClip(
                 samples=clip.samples + (clip.samples[-1],) * (CLIP_FRAMES - clip.sample_count),

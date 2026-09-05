@@ -144,14 +144,14 @@ class VideoPrismTests(unittest.TestCase):
         records = [call.args[1][0] for call in storage.upsert.call_args_list]
         self.assertEqual(
             [record.metadata["sample_count"] for record in records],
-            [5, 6, 7],
+            [4, 6, 8],
         )
         self.assertEqual(
             [
                 (record.metadata["start"], record.metadata["end"])
                 for record in records
             ],
-            [(0.0, 2.5), (2.5, 5.5), (5.5, 9.0)],
+            [(0.0, 2.0), (2.0, 5.0), (5.0, 9.0)],
         )
 
 

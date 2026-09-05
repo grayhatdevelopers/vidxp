@@ -26,15 +26,18 @@ class ClipStreamAccumulator:
 
     def add(self, samples: Iterable[FrameSample]) -> Iterator[VideoClip]:
         for sample in samples:
-            self.pending.append(sample)
-            crossed = (
+            while (
                 self.boundaries is not None
                 and self._next_boundary < len(self.boundaries)
                 and sample.timestamp >= self.boundaries[self._next_boundary]
-            )
-            if crossed:
+            ):
+                if self.pending:
+                    yield self._flush()
                 self._next_boundary += 1
-            if crossed or len(self.pending) >= self.clip_frames:
+
+            self.pending.append(sample)
+
+            if len(self.pending) >= self.clip_frames:
                 yield self._flush()
 
     def finalize(self) -> VideoClip | None:
