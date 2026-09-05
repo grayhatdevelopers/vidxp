@@ -15,9 +15,9 @@ installation and product usage, start with the main
 | Shared benchmark support | Complete | Stable IDs, time ranges, metadata, top-k retrieval, isolated runs, checkpoints, and prediction files are implemented |
 | Guided input preparation | Complete | `vidxp benchmark prepare` estimates and confirms downloads, verifies pinned artifacts, validates DiDeMo media, resumes partial transfers, and prints the runnable benchmark command |
 | DiDeMo visual localization | Legacy full result + current smoke | The legacy CLIP stack completed 4,021 official test queries over 1,037 videos; the current SigLIP2 stack passed a one-annotation real execution smoke |
-| Action/video retrieval | Adapters wired; current provider unscored | MSR-VTT 1K-A measures complete-corpus VideoPrism ranking; Charades-STA separately measures VidXP's fixed-window temporal behavior |
+| Action/video retrieval | VideoPrism retained by a small candidate gate; canonical runs pending | VideoPrism scored 50/50 on a five-class Kinetics-mini gate. MSR-VTT 1K-A and Charades-STA remain the required corpus-ranking and temporal tests. |
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
-| Environmental-sound retrieval | Adapters wired; current provider unscored | FineLAP clip retrieval, dense phrase ranking, and audio-moment product gates are executable from supplied official-format data. The earlier LongVALE-derived diagnostic is not a provider benchmark. |
+| Environmental-sound retrieval | PE-A-Frame Small selected; product integration pending | An identical 149-query AEGBench comparison selected PE-A-Frame over FineLAP. The long-audio product gate remains required after the new provider and index are implemented. |
 | LongVALE combined evaluation | Pilot not run | The prepared paired tasks can measure evidence quality, localization, tokens, time, cost, and tool use after maintainer approval |
 | Codex MCP ablation | Development smoke traced | One paired task verified the harness and exposed a fixed-window boundary error; the 54-run held-out pilot has not run |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
@@ -58,10 +58,11 @@ The retained full DiDeMo and HiREST results establish separate legacy-provider
 visual and transcript baselines. Current SigLIP2 and Qwen3 checks establish
 adapter/runtime compatibility only; they do not yet provide full-corpus quality
 comparisons. VidXP can emit visual, speech, and FineLAP sound evidence, including
-global windows and dense timestamps for non-speech events. FineLAP now has
-native-format and product-task adapters, but neither has run on its actual
-dataset yet. Its recorded LongVALE-derived target-only result is kept for
-provenance, not treated as a provider-quality score.
+global windows and dense timestamps for non-speech events. The new AEGBench
+adapter compared the shipped FineLAP lane with PE-A-Frame Small over 149 valid
+event queries and selected PE-A-Frame for the next implementation. That frozen
+subset is a provider decision, not a full dataset or long-audio product score.
+The earlier LongVALE-derived target-only result remains provenance only.
 
 The first Codex MCP development pair found the requested opening event but
 returned an interval two seconds too long. It also finished faster and used

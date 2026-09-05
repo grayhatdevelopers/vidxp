@@ -31,14 +31,14 @@ labeled as such.
 
 | Source | Adopted part and location | Reason | VidXP deviation or limit |
 | --- | --- | --- | --- |
-| Li et al., [FineLAP](https://aclanthology.org/2026.acl-long.473/), ACL 2026, Sections 3.2–3.3 | Released global and local audio representations in `src/vidxp/capabilities/sound/` | Supplies environmental-sound retrieval and timestamped activation features | FineLAP evaluates clip captions globally and event phrases against frame labels locally. Its Limitations section excludes long-form retrieval. VidXP's current selector missed both unambiguous pilot cases but has not faced a valid provider gate, so it is not an adopted research method. |
+| Li et al., [FineLAP](https://aclanthology.org/2026.acl-long.473/), ACL 2026, Sections 3.2–3.3 | Released global and local audio representations in `src/vidxp/capabilities/sound/` | Supplies the currently shipped environmental-sound control | FineLAP evaluates clip captions globally and event phrases against frame labels locally. Its Limitations section excludes long-form retrieval. It lost the valid AEGBench provider comparison; VidXP's long-audio selector remains original, unvalidated orchestration. |
 | Cormack, Clarke, and Buettcher, [Reciprocal Rank Fusion](https://doi.org/10.1145/1571941.1572114), SIGIR 2009 | Rank-only formula with `k = 60` in `src/vidxp/search_fusion.py` | Combines modality rankings without treating their raw distances as one scale | Rank-anchored candidate construction, direct temporal matching, one hit per supporting modality, and interval union are VidXP controls, not parts of the paper. |
 | Zhao et al., [VideoPrism](https://arxiv.org/abs/2402.13217), ICML 2024, and Google's public LvT checkpoint | Global video-text embeddings and official text canonicalization in `src/vidxp/capabilities/action/` | Supplies cross-modal similarity for short action clips | VidXP's fixed windows and long-video ranking are not VideoPrism methods. The paper's action results use task-specific evaluation heads and do not validate raw similarity as temporal action localization. |
 | Tschannen et al., [SigLIP 2](https://arxiv.org/abs/2502.14786), 2025 | Released image-text encoder in `src/vidxp/capabilities/scene/` | Supplies visual-semantic frame retrieval | VidXP samples at 1 fps. These records are sampled frames, not detected semantic scenes. |
 | Radford et al., [Whisper](https://arxiv.org/abs/2212.04356), ICML 2023, and Zhang et al., [Qwen3 Embedding](https://arxiv.org/abs/2506.05176), 2025 | Speech recognition and text embeddings in `src/vidxp/capabilities/speech/` | Produces timestamped, searchable transcript evidence | `faster-whisper` is the runtime implementation. Segmentation, storage, and retrieval are VidXP choices. |
 
 Reverting the current selector does not require an index rebuild. Replacing
-FineLAP with a long-audio model uses different features and does require one.
+FineLAP with PE-A-Frame uses different features and does require one.
 
 ## Sound replacement decision
 
@@ -50,7 +50,7 @@ covers the whole multimodal product query.
 
 | Candidate | Grounded result | Product decision |
 | --- | --- | --- |
-| PE-AV and PE-A-Frame, Vyas et al. | Apache-2.0 family. PE-AV jointly embeds audio, video, audio-video, and text; PE-A-Frame produces dense sound-localization scores. | Candidate family. Only PE-A-Frame Small received a local diagnostic: it was slow and missed the two unambiguous LongVALE-derived sound cases. The four-slice diagnostic contained two invalid scoring assumptions and is not a native provider benchmark. PE-AV and PE-Video have not been evaluated by VidXP. |
+| PE-AV and PE-A-Frame, Vyas et al., [“Pushing the Frontier of Audiovisual Perception with Large-Scale Multimodal Correspondence Learning”](https://arxiv.org/abs/2512.19687) | Apache-2.0 family. PE-AV jointly embeds audio, video, audio-video, and text; PE-A-Frame produces dense sound-localization scores. | PE-A-Frame Small is selected for sound localization from the frozen AEGBench comparison. PE-AV is not selected for action: the small recognition gate was already at its ceiling, PE-AV has no interval head, and its checkpoint was larger and slower in the smoke. |
 | FlexSED, Hai et al. | MIT, 430.9 MB detector checkpoint plus pinned LAION CLAP; produces 25-fps scores for requested event phrases | Not selected. Runtime passed, but it missed the unique siren and drumbeat targets. The reported `0/4` target score is not a provider-quality rate because phone is invalid and engine has multiple correct occurrences. |
 | DASM, Cai et al. | The official model hub exposes 636 MB of MIT-marked weights, but released text-query inference hard-codes CUDA and depends on a separate MGA-CLAP checkout and checkpoint | Blocked, not benchmarked. The Transformer4SED source repository has no software license, so VidXP must not copy or port its implementation without clarification. |
 | WSTAG, Xu et al. | MIT source and an Apache-2.0 model-hub release provide a CPU code path and 40 ms probabilities; the authors recommend the newer 131.96M-parameter AudioCaps-v2/LAION-CLAP model | Not selected. It missed the unique siren and drumbeat targets at the released threshold. Its engine top result at 242.22 s matches another LongVALE engine-rev annotation, so the current target-only score is not a valid final quality estimate. |
@@ -66,10 +66,11 @@ and `-78.27 dBFS` peak despite an explicit ringing annotation. Its MP4 matches
 the downloaded archive, so quarantine it from sound-only scoring pending human
 review rather than changing its label silently. The engine sound phrase also
 has several correct occurrences, including WSTAG's top result inside a separate
-LongVALE engine-rev annotation. The current component score therefore has only
-two unambiguous cases; FineLAP, FlexSED, and WSTAG miss both. DASM and the
-remaining direct releases fail licensing or deployment gates. No provider
-adapter or sound-index rebuild is justified yet.
+LongVALE engine-rev annotation. The old component score therefore has only two
+unambiguous cases; FineLAP, FlexSED, and WSTAG miss both. It is superseded for
+provider selection by the 149-query AEGBench result. That result justifies
+implementing PE-A-Frame Small and rebuilding the sound index; it does not
+validate the long-audio serving path.
 
 Long media still requires overlapping bounded sections, global timestamp
 mapping, and removal of duplicate boundary predictions. That stitching is
@@ -104,7 +105,9 @@ multiplier was selected after one development example and has no general claim.
 | `finelap-two-stage-held-out` | FineLAP's two representations with VidXP's global top-three gate and pooled local ranking | Gate coverage `2/4`; final top-three coverage `0/4`; mean final IoU `0` against one accepted interval per task | Exact component diagnostic retained, but invalid labels prevent a provider decision; it does not gate the paired multimodal run |
 | `candidate-depth-fusion-control-v1` | Original VidXP diagnostic using saved full-query rankings and production connected-component RRF; RRF supplies only the rank formula | Depth 20 improved R@3 and R@10 at tIoU 0.5 from `0.30` to `0.40` versus depth 3, but R@1 stayed `0.20`. At depth 100 R@1 became `0`; full depth produced video-length top intervals. | No candidate depth adopted. Separate event proposals from ranking; do not replace one shared magic depth with another. |
 | `candidate-depth-direct-overlap-control-v2` | The same ten saved full-query rankings after replacing transitive components with rank-anchored direct overlap | Depths 100 through all were stable instead of collapsing. At full depth, R@1/R@3/R@5/R@10 at tIoU 0.5 were `.10/.10/.20/.20`. | Direct overlap adopted to preserve separate moments. Candidate collection now has an independent default cap of 100; this is not claimed as a general optimum. |
-| `pe-a-frame-small-mac-diagnostic` | Vyas et al. PE-A-Frame Small, exact released checkpoint; one full-track run plus four target-aware recognition clips | Full track: 244.35 s, 4.30 GiB peak RSS, target miss. Target-aware mean best-span IoU: 0.1654 full query, 0.1151 sound-only. | Candidate rejected as-is. The target-aware clips are not a retrieval score, and no threshold was selected from them. |
+| `pe-a-frame-small-mac-diagnostic` | Vyas et al. PE-A-Frame Small, exact released checkpoint; one full-track run plus four target-aware recognition clips | Full track: 244.35 s, 4.30 GiB peak RSS, target miss. Target-aware mean best-span IoU: 0.1654 full query, 0.1151 sound-only. | Inconclusive for selection because two sound labels were invalid. Retained as a runtime and failure diagnostic; the AEGBench result supersedes it. |
+| `aegbench-sound-seed42-n50` | Vyas et al. PE-A-Frame Small versus Li et al. FineLAP on 50 frozen AEGBench recordings; 149 annotated category queries; every repeated interval; provider default thresholds | PE-A versus FineLAP: frame AUROC `.8614/.8401`; frame AP `.7616/.7484`; top-point accuracy `.7651/.7315`; mean IoU `.5226/.2924`; CPU inference `183.30/17.98` s for 613.43 s of audio. | PE-A-Frame Small selected for sound localization. This is a candidate-selection subset, not a full AEGBench score; long-audio stitching remains unvalidated. |
+| `kinetics-mini-videoprism-2026-09-05` | VideoPrism through VidXP's 2 fps/16-frame records on the pinned 50-video, five-class Kinetics-mini validation set | Top-1 `50/50`; 390.49 s inference, or 7.81 s/video. A PE-AV Small 16-frame direct-forward smoke classified one archery clip correctly in 13.36 s; its checkpoint is 3,388,082,648 bytes. | Keep VideoPrism. This small gate establishes basic action recognition only; it does not repair or measure long-video temporal ranking. |
 | `flexsed-mac-held-out` | Hai et al. FlexSED, exact detector and LAION CLAP revisions; released non-overlapping ten-second path | 616.7 s audio in 10.85 s; 1.57 GiB peak RSS. Designated target beat surrounding audio on 0/4 full and 0/4 sound-only queries; best target overlap was about 0.045 IoU. | Runtime passes; not selected because it missed both unique valid cases. Overall quality is unscored until repeated sound occurrences are labeled. |
 | `dasm-release-compatibility-2026-09-05` | Cai et al. DASM; official Transformer4SED revision `c3e883d0fbeaf7031b467d45a3c46a88a76c00b6` and official model-hub tree | The hub contains 636 MB of detector/query artifacts. The only released interactive inference is a CUDA notebook with a hard-coded local path and external MGA-CLAP code/weights; the code repository has no license. | Blocked before model execution. This is an artifact, runtime, and licensing failure—not a quality result. |
 | `wstag-audiocaps-v2-mac-held-out` | Xu et al. architecture through the authors' newer recommended model `c1ede4afca77acb67bbd20e48e3fc4657b96666a`; LAION CLAP `365dea6ef167def6676140ed93bbc43f84dabb28` | Three audible full tracks: 0/3 designated-target wins in both wording modes; official threshold produced zero designated-target overlaps. Six CPU forwards took 25.82 s and peaked at 4.15 GiB RSS. | Not selected: both unique valid cases were missed. The engine top at 242.22 s is another annotated rev, so no overall provider score is claimed. This is a post-paper checkpoint, not the model reported in 2024. |
@@ -134,8 +137,9 @@ changes.
   conformance fix, not the ranking solution.
 - FineLAP's global and local records cannot be treated as one raw-distance
   ranking. Current sound search uses a global gate followed by local activations,
-  but the selector has not passed a valid component gate and must not be
-  described as an adopted research method.
+  but the selector lost the valid AEGBench comparison. PE-A-Frame Small is the
+  selected replacement; it is not product behavior until its provider and new
+  index are implemented.
 - RRF is useful as a transparent ranking control, but the current temporal
   grouping and union do not provide exact boundaries.
 - The original fusion chained adjacent records into video-length moments as

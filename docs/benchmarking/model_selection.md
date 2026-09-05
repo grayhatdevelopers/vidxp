@@ -26,13 +26,54 @@ input, output, reasoning, time, cost, and calls alongside it. Temporal IoU and
 threshold recall remain secondary exact-boundary diagnostics and an explicit
 future research limitation.
 
+## Provider decision for the next paired run
+
+| Lane | Selection | Evidence and limit |
+| --- | --- | --- |
+| Speech | Keep faster-whisper plus Qwen3 Embedding | The real runtime works; the complete HiREST ranking run and a transcription WER gate remain pending. |
+| Scene | Keep SigLIP 2 | The real runtime works; the complete DiDeMo current-provider run remains pending. |
+| Action | Keep VideoPrism LvT | It classified all 50 videos in the frozen five-class Kinetics-mini gate correctly through VidXP's current 2 fps/16-frame records. This establishes basic recognition, not temporal localization. |
+| Sound localization | Select PE-A-Frame Small; keep FineLAP only as the shipped control until replacement is implemented | On the identical 149-query AEGBench subset, PE-A improved frame AUROC from `.8401` to `.8614`, frame average precision from `.7484` to `.7616`, top-point accuracy from `.7315` to `.7651`, and default-threshold mean IoU from `.2924` to `.5226`. It was about 10.2 times slower, but still processed audio 3.35 times faster than playback on `mac-m2-01`. |
+
+This selects providers; it is not a full product score. The paid paired run
+must wait until PE-A-Frame is integrated and the unchanged scene and speech
+lanes complete their gates. Replacing VideoPrism with another global
+clip-similarity model would not fix temporal localization. PE-AV has no interval
+head, uses a 3.39 GB checkpoint, and its one-video direct-forward smoke took
+13.36 seconds versus VideoPrism's 7.81-second mean over the 50-video gate.
+
+## What the product can claim now
+
+- The intended answer is a ranked list of useful, playable evidence chunks,
+  normally about ten seconds each. It is not a promise to cut the event at its
+  exact first and last frame.
+- PE-A-Frame is the sound-localization choice, but the released product still
+  uses FineLAP until the provider and sound index are replaced. On the frozen
+  subset, PE-A put its highest-scoring 40 ms frame inside a labelled event for
+  `76.5%` of queries and reached `.523` mean IoU at its released threshold.
+- VideoPrism remains the action provider. Its perfect result on five easy
+  Kinetics classes shows that the model and VidXP preprocessing recognize broad
+  actions; it does not show that long-video moments are ranked or trimmed well.
+- No measured 70–80% whole-product accuracy claim exists yet. The scene and
+  speech full gates, PE-A long-audio indexing, and the held-out multimodal pair
+  are still required. Until then, describe VidXP as evidence retrieval that can
+  reduce how much media an agent inspects, with exact boundaries as a known
+  limitation.
+
+On this CPU-only Mac, PE-A processed 613.43 seconds of audio in about 183
+seconds, so a linear inference-only estimate is roughly 18 minutes per hour of
+audio. VideoPrism averaged 7.81 seconds per ten-second Kinetics clip, or roughly
+47 minutes per hour at the same sampling policy. These are lane estimates, not
+an end-to-end indexing promise; decoding, speech, scene indexing, storage, and
+long-video chunk overlap still need an hour-video run.
+
 ## Current product path
 
 VidXP builds reusable local indexes for separate evidence types:
 
 - faster-whisper and Qwen3 Embedding produce timestamped speech evidence;
-- FineLAP emits environmental-sound records, but its current selector is an
-  unvalidated control;
+- FineLAP emits the currently shipped environmental-sound records; PE-A-Frame
+  Small is selected to replace that localization lane after integration;
 - SigLIP 2 retrieves sampled visual frames;
 - VideoPrism ranks fixed multi-frame clips by global text-video similarity; and
 - reciprocal rank fusion ranks bounded candidates. Each candidate keeps one
@@ -147,7 +188,7 @@ IoU and does not establish VidXP accuracy. The installed Transformers runtime
 has the official PE-Audio classes, avoiding the source repository's optional
 `xformers` path.
 
-The pinned Small checkpoint failed the initial Mac product diagnostic. A
+The pinned Small checkpoint failed the initial flawed Mac product diagnostic. A
 complete 73.14-second soundtrack took 244.35 seconds on CPU and peaked at 4.30
 GiB RSS. The full query
 missed the phone-ring target and produced 125 fragments at the official 0.3
@@ -157,9 +198,16 @@ the target outscored surrounding audio on only one of four full-query cases and
 none of the sound-only cases. Threshold tuning cannot fix a target whose score
 is below the surrounding audio. PE-A-Frame Small was therefore not adopted from
 that run. The diagnostic was not a native provider benchmark: two of its four
-labels were unsuitable for sound-only scoring. It does not reject PE-AV,
-PE-Video, or the PE family. Run the frozen gates in
-[individual modality gates](modality_gates.md) before comparing those models.
+labels were unsuitable for sound-only scoring.
+
+The subsequent frozen AEGBench comparison supplied the missing valid gate. It
+used 50 recordings sampled with seed 42 from the 3,425-row manifest, 149
+categories with annotated intervals, and every repeated interval. Two manifest
+categories with no interval were excluded explicitly. PE-A-Frame Small beat
+FineLAP on every ranking and default-threshold interval measure in the selection
+table while remaining faster than playback on the CPU-only Mac. This selects
+PE-A-Frame Small for sound localization. It does not select PE-AV for
+action/video, and it is not a full AEGBench leaderboard result.
 
 For hour-long media, bounded overlapping sections, global timestamp mapping,
 and boundary duplicate removal remain VidXP engineering requirements, not

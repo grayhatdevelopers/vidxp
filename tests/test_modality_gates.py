@@ -2,8 +2,14 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import numpy as np
 import pytest
 
+from vidxp.benchmarks.aegbench import (
+    load_aegbench,
+    score_audio_event,
+    spans_from_scores,
+)
 from vidxp.benchmarks.modality_gates import (
     load_charades_sta,
     load_finelap_grounding,
@@ -145,3 +151,69 @@ def test_finelap_grounding_keeps_repeated_event_intervals() -> None:
         queries = load_finelap_grounding(metadata)
 
     assert queries[0].intervals == ((1.0, 2.0), (5.0, 6.0))
+
+
+def test_aegbench_loader_preserves_repeats_and_flags_missing_intervals() -> None:
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        audio = root / "sample.wav"
+        audio.write_bytes(b"audio")
+        metadata = root / "manifest.json"
+        metadata.write_text(
+            json.dumps(
+                {
+                    "items": [
+                        {
+                            "id": "sample",
+                            "audio_path": audio.name,
+                            "duration": 10,
+                            "categories": ["bell", "unlabelled"],
+                            "clips": [
+                                {"category": "bell", "start": 1, "end": 2},
+                                {"category": "bell", "start": 5, "end": 6},
+                            ],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        items, _metadata = load_aegbench(metadata)
+
+    assert items[0].queries[0].intervals == ((1.0, 2.0), (5.0, 6.0))
+    assert items[0].excluded_categories == ("unlabelled",)
+
+
+def test_audio_event_metrics_separate_ranking_from_default_threshold() -> None:
+    starts = np.asarray([0.0, 1.0, 2.0, 3.0])
+    ends = starts + 1.0
+    scores = np.asarray([0.1, 0.9, 0.8, 0.2])
+
+    spans = spans_from_scores(scores, starts, ends, threshold=0.5)
+    metrics = score_audio_event(
+        scores,
+        starts,
+        ends,
+        intervals=((1.0, 3.0),),
+        duration=4.0,
+        threshold=0.5,
+    )
+
+    assert spans == [(1.0, 3.0)]
+    assert metrics["frame_auc"] == 1.0
+    assert metrics["frame_average_precision"] == 1.0
+    assert metrics["mean_iou"] == 1.0
+
+
+def test_audio_event_average_precision_does_not_favor_tie_order() -> None:
+    metrics = score_audio_event(
+        np.asarray([0.9, 0.9, 0.1]),
+        np.asarray([0.0, 1.0, 2.0]),
+        np.asarray([1.0, 2.0, 3.0]),
+        intervals=((0.0, 1.0),),
+        duration=3.0,
+        threshold=0.5,
+    )
+
+    assert metrics["frame_average_precision"] == 0.5

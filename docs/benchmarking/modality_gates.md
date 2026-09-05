@@ -2,7 +2,7 @@
 
 Collection index: [Benchmarking research](README.md)
 
-Status: Adapters wired; current-provider dataset runs pending
+Status: Sound candidate selected; complete scene, speech, and action corpus gates pending
 
 Last verified: 2026-09-05
 
@@ -20,8 +20,8 @@ use the same dataset, split, query set, and metrics as the current provider.
 | Evidence lane | Current provider | Native or isolation gate | Product-task gate | Current state |
 | --- | --- | --- | --- | --- |
 | Scene | [SigLIP 2](https://arxiv.org/abs/2502.14786) | The existing [DiDeMo](https://github.com/LisaAnne/LocalizingMoments) adapter isolates sampled visual-frame ranking within one video | DiDeMo's fixed five-second moments measure whether those frame scores rank the described visual moment | Adapter complete; one current-provider smoke only |
-| Action/video | [VideoPrism LvT](https://arxiv.org/abs/2402.13217) | [MSR-VTT 1K-A](https://github.com/m-bain/frozen-in-time) text-to-video retrieval checks the published global video-text use case and complete-corpus ordering | [Charades-STA](https://github.com/jiyanggao/TALL) checks whether VidXP's independently ranked eight-second action records find labelled action intervals | Both adapters wired; no dataset run |
-| Environmental sound | [FineLAP](https://aclanthology.org/2026.acl-long.473/) | Clotho or AudioCaps text-to-audio retrieval checks global clip ranking; TAG checks local phrase-to-frame ordering | [Clotho-Moment](https://h-munakata.github.io/Language-based-Audio-Moment-Retrieval/) or [CASTELLA](https://arxiv.org/abs/2511.15131) checks text-to-interval retrieval over long audio | All three paths wired; no native dataset run |
+| Action/video | [VideoPrism LvT](https://arxiv.org/abs/2402.13217) | [MSR-VTT 1K-A](https://github.com/m-bain/frozen-in-time) text-to-video retrieval checks the published global video-text use case and complete-corpus ordering | [Charades-STA](https://github.com/jiyanggao/TALL) checks whether VidXP's independently ranked eight-second action records find labelled action intervals | Both canonical adapters wired; a 50-video Kinetics-mini candidate gate scored 50/50 and retains VideoPrism, but does not replace either canonical gate |
+| Environmental sound | FineLAP control; [PE-A-Frame Small](https://huggingface.co/facebook/pe-a-frame-small) selected | [AEGBench](https://huggingface.co/datasets/zihan-audio/AEGBench) checks open-vocabulary frame ranking, repeated events, and interval output; FineLAP clip retrieval remains a separate global check | [Clotho-Moment](https://h-munakata.github.io/Language-based-Audio-Moment-Retrieval/) or [CASTELLA](https://arxiv.org/abs/2511.15131) checks text-to-interval retrieval over long audio | AEGBench command wired; identical 50-recording/149-query comparison selects PE-A-Frame. Long-audio product gate pending |
 | Speech meaning | Qwen3 Embedding | HiREST with released transcripts isolates transcript chunking, embedding, and timestamp ranking | The same HiREST known-video moment task scores whether the relevant spoken procedure is localized | Adapter complete; two-pair current-provider smoke only |
 | Transcription | faster-whisper | A separate WER run is required on real audio because released-transcript HiREST bypasses transcription | An end-to-end speech run must transcribe media before applying the same retrieval task | Not wired; it does not block ranking-provider comparison but remains required before an ASR claim |
 
@@ -65,6 +65,22 @@ CASTELLA and runs VidXP's complete current sound search. This is the relevant
 product-fit check. A poor result cannot be dismissed by a good short-clip
 retrieval score.
 
+### AEGBench sound-provider comparison
+
+`aegbench-sound` reads AEGBench `categories` as the sound queries and every
+matching `clips` interval as ground truth. It reports threshold-free frame
+AUROC, frame average precision, and top-point accuracy separately from interval
+metrics. FineLAP interval output uses its calibrated `0.5` threshold; PE-A-Frame
+uses its published `0.3` default. No threshold is fitted on the test subset.
+Categories present in the manifest without any interval are recorded in
+`excluded.json`, not silently scored as misses.
+
+The frozen selection run sampled 50 of 3,425 manifest rows with
+`random.Random(42).sample`, yielding 149 scoreable queries. It is sufficient for
+provider selection and runtime comparison, not a full AEGBench leaderboard
+claim. The selected PE-A-Frame checkpoint still needs a VidXP provider and a new
+sound index before it can enter the paired agent run.
+
 ### Existing scene and speech adapters
 
 DiDeMo and HiREST already invoke their pinned official evaluators. Their legacy
@@ -86,9 +102,10 @@ same frozen gates above:
 
 PE-A-Frame Small was previously tested on four LongVALE-derived slices. One
 reference was effectively silent and another accepted only one of several valid
-sound occurrences. It also missed the two unambiguous examples and was slow on
-the Mac, so it was not adopted. That diagnostic does not replace TAG, AEGBench,
-or an audio-moment benchmark and does not reject PE-AV or PE-Video.
+sound occurrences, so that run could not decide provider quality. The later
+AEGBench comparison supersedes it for provider selection and selects PE-A-Frame
+Small. This still does not validate long-audio product retrieval or PE-AV video
+retrieval.
 
 ## Run commands
 
@@ -123,6 +140,19 @@ vidxp benchmark finelap-audio-moment \
   --metadata /path/to/clotho_moment_test.jsonl \
   --audio-directory /path/to/clotho-moment/audio \
   --run-id current-finelap
+
+vidxp benchmark aegbench-sound \
+  --manifest /path/to/aegbench/manifest.json \
+  --audio-directory /path/to/aegbench \
+  --provider finelap \
+  --run-id current-finelap
+
+vidxp benchmark aegbench-sound \
+  --manifest /path/to/aegbench/manifest.json \
+  --audio-directory /path/to/aegbench \
+  --provider pe-a-frame \
+  --pe-model-directory /path/to/pe-a-frame-small-snapshot \
+  --run-id candidate-pe-a-frame
 ```
 
 Use the optional subset-index flags only for execution smokes. A subset is never

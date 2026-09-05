@@ -16,6 +16,7 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
+from vidxp.benchmarks.aegbench import run_aegbench_sound
 from vidxp.benchmarks.didemo import run_didemo
 from vidxp.benchmarks.hirest import (
     HIREST_DEFAULT_WINDOW_FRACTION,
@@ -779,5 +780,48 @@ def finelap_audio_moment_command(
         output_root=output_root,
         device=state.settings.runtime_backend,
         reset=reset,
+    )
+    _emit_metrics(ctx, metrics, json_output)
+
+
+@app.command("aegbench-sound")
+def aegbench_sound_command(
+    ctx: typer.Context,
+    manifest: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    run_id: Annotated[str, typer.Option()],
+    provider: Annotated[
+        Literal["finelap", "pe-a-frame"],
+        typer.Option(help="Sound provider to evaluate on identical event queries."),
+    ] = "finelap",
+    audio_directory: Annotated[
+        Path | None,
+        typer.Option(exists=True, file_okay=False),
+    ] = None,
+    pe_model_directory: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            file_okay=False,
+            help="Prepared PE-A-Frame snapshot; required for that provider.",
+        ),
+    ] = None,
+    output_root: Annotated[Path, typer.Option()] = Path("benchmark_runs"),
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Compare sound event ranking and localization on AEGBench."""
+
+    _require_benchmark_dependencies("sound")
+    state = state_from_context(ctx)
+    metrics = run_aegbench_sound(
+        manifest_path=manifest,
+        audio_directory=audio_directory,
+        run_id=run_id,
+        provider=provider,
+        pe_model_directory=pe_model_directory,
+        output_root=output_root,
+        device=state.settings.runtime_backend,
     )
     _emit_metrics(ctx, metrics, json_output)

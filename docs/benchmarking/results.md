@@ -18,12 +18,15 @@ Detailed artifacts, hashes, commands, and evaluator behavior remain in the
 | Legacy full | HiREST | Released test: 776 known-video searches | Predictions generated, not scored | Public test boundaries are placeholders, so local scoring would be meaningless |
 | Current smoke | DiDeMo | Official test annotation index `0`; one video | Rank@1 **0**, Rank@5 **1**, mean IoU **0** | Real SigLIP2 execution, serialization, and official-evaluator check only |
 | Current smoke | HiREST | Two declared validation pairs over two videos | R@0.5 **50**, R@0.7 **50** | Real Qwen3 execution, multi-video storage, filtered search, serialization, and official-evaluator check only |
+| Current component gate | Kinetics-mini | 50 ten-second videos over five action classes | VideoPrism top-1 **50/50** | Broad-action recognition works; long-video ranking and boundaries are not measured |
+| Current component gate | AEGBench frozen subset | 50 recordings; 149 annotated sound queries | PE-A/FineLAP top-point **76.5%/73.2%**; mean IoU **.523/.292** | Select PE-A-Frame Small for sound localization; long-audio product integration remains untested |
 | Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; one paired run under the superseded exact-interval prompt | VidXP-on IoU **0.7493**; VidXP-off IoU **0.8824** | Harness, skill/MCP isolation, deterministic scoring, and reporting check only; not a bounded-chunk product-gate, held-out pilot, or LongVALE result |
 | Global-only sound diagnostic | Codex MCP ablation | Same development task after filtering sound search to global clips | VidXP-on IoU **0.6000**; VidXP-off IoU **0.8811** | Same answer content with 16.5% fewer VidXP tokens and 11.3% lower latency, but the ten-second sound clip worsened the endpoint |
 
 The current-provider rows are deliberately tiny regression runs. Their
 percentages are not quality estimates and must not be compared with the full
-legacy rows. A current full-corpus score has not been run.
+legacy rows. The two component gates make provider decisions only. A current
+full-corpus or whole-product score has not been run.
 
 ## Codex MCP development smoke
 
