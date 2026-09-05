@@ -13,11 +13,7 @@ from vidxp.benchmarks.indexed_modality import (
 )
 from vidxp.benchmarks.modality_metrics import RetrievalQuery, TemporalQuery
 from vidxp.capabilities.action.operations import search_videoprism
-from vidxp.capabilities.sound.operations import (
-    GLOBAL_REPRESENTATION,
-    LOCAL_REPRESENTATION,
-    search_sound,
-)
+from vidxp.capabilities.sound.operations import search_sound
 
 
 MSRVTT_SOURCE = "https://github.com/m-bain/frozen-in-time"
@@ -381,7 +377,6 @@ def run_finelap_retrieval(
         media=media,
         queries=queries,
         search=search_sound,
-        search_filters={"representation": GLOBAL_REPRESENTATION},
         run_id=run_id,
         artifacts=(
             input_artifact(
@@ -394,9 +389,9 @@ def run_finelap_retrieval(
         device=device,
         reset=reset,
         result_classification=(
-            "current_provider_native_clip_retrieval"
+            "selected_provider_native_clip_retrieval"
             if entry_indices is None
-            else "current_provider_native_clip_retrieval_subset"
+            else "selected_provider_native_clip_retrieval_subset"
         ),
     )
 
@@ -423,7 +418,6 @@ def run_finelap_grounding(
         ),
         queries=queries,
         search=search_sound,
-        search_filters={"representation": LOCAL_REPRESENTATION},
         run_id=run_id,
         artifacts=(
             input_artifact(
@@ -436,9 +430,9 @@ def run_finelap_grounding(
         device=device,
         reset=reset,
         result_classification=(
-            "current_provider_native_dense_ranking_diagnostic"
+            "selected_provider_native_frame_ranking_diagnostic"
             if query_indices is None
-            else "current_provider_native_dense_ranking_subset"
+            else "selected_provider_native_frame_ranking_subset"
         ),
     )
 

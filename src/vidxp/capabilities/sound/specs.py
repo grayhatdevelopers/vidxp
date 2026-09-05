@@ -1,6 +1,26 @@
 from vidxp.model_contracts import ArtifactSpec, ModelSpec
 
 
+PE_A_SAMPLE_RATE = 48_000
+PE_A_FRAME_HOP_SAMPLES = 1_920
+PE_A_FRAME_INTERVAL_SECONDS = PE_A_FRAME_HOP_SAMPLES / PE_A_SAMPLE_RATE
+
+PE_A_FRAME_MODEL = ModelSpec(
+    capability="sound",
+    provider="transformers",
+    model_id="facebook/pe-a-frame-small",
+    revision="e5fc71c1f0be50279f52f292390b589780079e13",
+    download_size_bytes=1_762_352_391,
+    weights_file="model.safetensors",
+    weights_sha256=(
+        "00ead719f02ef703ee1b55d6aee801074195d7d507a69622cda67ee4c484ed81"
+    ),
+    license="Apache-2.0",
+    weights_precision="float32",
+)
+
+
+# FineLAP remains available only to reproduce the recorded provider comparison.
 FINELAP_MODEL = ModelSpec(
     capability="sound.embedding",
     provider="transformers",
@@ -68,9 +88,11 @@ ROBERTA_MERGES = ArtifactSpec(
     weights_precision="not applicable",
 )
 
-SOUND_MODEL_SPECS = (
+FINELAP_MODEL_SPECS = (
     FINELAP_MODEL,
     ROBERTA_CONFIG,
     ROBERTA_VOCAB,
     ROBERTA_MERGES,
 )
+
+SOUND_MODEL_SPECS = (PE_A_FRAME_MODEL,)

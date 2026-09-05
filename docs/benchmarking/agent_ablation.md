@@ -348,7 +348,7 @@ and are not an automatic planner result. For sound, the report separately ranks
 FineLAP's whole-window and dense-activation records; it does not invent a final
 merge rule.
 
-Check the current FineLAP selector on the four held-out sound tasks:
+Check the historical FineLAP selector on the four held-out sound tasks:
 
 ```bash
 ./benchmarks/codex-mcp/run sound

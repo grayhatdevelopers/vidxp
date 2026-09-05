@@ -245,6 +245,22 @@ vidxp search speech "the bread just came out of the oven"
 Add `--media-id <media-id>` to a search command to restrict results to one
 video. Without it, VidXP searches all indexed videos in the active repository.
 
+Sound indexing defaults to one ten-second inference section per batch, two
+seconds of overlap, and ten-second search results. Override a value only when
+running a declared experiment, for example:
+
+```bash
+vidxp index create <media-id> --modality sound \
+  --option sound.inference_overlap_seconds=5
+```
+
+The corresponding option names are `batch_size`,
+`inference_window_seconds`, `inference_overlap_seconds`, and
+`evidence_window_seconds`. The overlap must be shorter than the inference
+window. The inference window bounds one model call, not the media duration;
+long videos are processed as successive sections. These settings change the
+index profile and require the affected media to be indexed again.
+
 ### Start an installed interface
 
 | Interface | Command |
@@ -427,9 +443,12 @@ vidxp doctor
 ```
 
 When an upgrade changes a search model or index format, existing videos may need
-to be indexed again. VidXP reports this instead of silently replacing a working
-index. Prepare the required models, re-index the affected videos, and keep the
-old repository until you have checked the replacement results.
+to be indexed again. Index schema 8 replaces FineLAP sound records with
+PE-A-Frame records and changes vector collections to inner-product ranking, so
+repositories from schema 7 must be rebuilt. VidXP reports the incompatibility
+instead of silently replacing a working index. Prepare the required models,
+re-index the affected videos, and keep the old repository until you have checked
+the replacement results.
 
 The current public capability names are `scene`, `action`, `sound`, `speech`,
 and `actor`. VidXP does not translate removed capability names.

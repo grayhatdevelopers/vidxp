@@ -33,11 +33,11 @@ future research limitation.
 | Speech | Keep faster-whisper plus Qwen3 Embedding | The real runtime works; the complete HiREST ranking run and a transcription WER gate remain pending. |
 | Scene | Keep SigLIP 2 | The real runtime works; the complete DiDeMo current-provider run remains pending. |
 | Action | Keep VideoPrism LvT | It classified all 50 videos in the frozen five-class Kinetics-mini gate correctly through VidXP's current 2 fps/16-frame records. This establishes basic recognition, not temporal localization. |
-| Sound localization | Select PE-A-Frame Small; keep FineLAP only as the shipped control until replacement is implemented | On the identical 149-query AEGBench subset, PE-A improved frame AUROC from `.8401` to `.8614`, frame average precision from `.7484` to `.7616`, top-point accuracy from `.7315` to `.7651`, and default-threshold mean IoU from `.2924` to `.5226`. It was about 10.2 times slower, but still processed audio 3.35 times faster than playback on `mac-m2-01`. |
+| Sound localization | Use PE-A-Frame Small; keep FineLAP only as a benchmark control | On the identical 149-query AEGBench subset, PE-A improved frame AUROC from `.8401` to `.8614`, frame average precision from `.7484` to `.7616`, top-point accuracy from `.7315` to `.7651`, and default-threshold mean IoU from `.2924` to `.5226`. It was about 10.2 times slower, but still processed audio 3.35 times faster than playback on `mac-m2-01`. |
 
 This selects providers; it is not a full product score. The paid paired run
-must wait until PE-A-Frame is integrated and the unchanged scene and speech
-lanes complete their gates. Replacing VideoPrism with another global
+must wait until the PE-A-Frame long-audio gate and the unchanged scene and
+speech lanes complete their gates. Replacing VideoPrism with another global
 clip-similarity model would not fix temporal localization. PE-AV has no interval
 head, uses a 3.39 GB checkpoint, and its one-video direct-forward smoke took
 13.36 seconds versus VideoPrism's 7.81-second mean over the 50-video gate.
@@ -47,9 +47,8 @@ head, uses a 3.39 GB checkpoint, and its one-video direct-forward smoke took
 - The intended answer is a ranked list of useful, playable evidence chunks,
   normally about ten seconds each. It is not a promise to cut the event at its
   exact first and last frame.
-- PE-A-Frame is the sound-localization choice, but the released product still
-  uses FineLAP until the provider and sound index are replaced. On the frozen
-  subset, PE-A put its highest-scoring 40 ms frame inside a labelled event for
+- PE-A-Frame is the integrated sound-localization provider. On the frozen
+  subset, it put its highest-scoring 40 ms frame inside a labelled event for
   `76.5%` of queries and reached `.523` mean IoU at its released threshold.
 - VideoPrism remains the action provider. Its perfect result on five easy
   Kinetics classes shows that the model and VidXP preprocessing recognize broad
@@ -72,8 +71,7 @@ long-video chunk overlap still need an hour-video run.
 VidXP builds reusable local indexes for separate evidence types:
 
 - faster-whisper and Qwen3 Embedding produce timestamped speech evidence;
-- FineLAP emits the currently shipped environmental-sound records; PE-A-Frame
-  Small is selected to replace that localization lane after integration;
+- PE-A-Frame Small produces frame-ranked environmental-sound evidence;
 - SigLIP 2 retrieves sampled visual frames;
 - VideoPrism ranks fixed multi-frame clips by global text-video similarity; and
 - reciprocal rank fusion ranks bounded candidates. Each candidate keeps one
@@ -95,7 +93,7 @@ latency, cost, and fallback behavior before becoming a default.
 
 ## Confirmed limits and decisions
 
-### Keep FineLAP's retrieval outputs separate
+### Keep FineLAP as a historical benchmark control
 
 Xiquan Li et al., [“FineLAP: Taming Heterogeneous Supervision for Fine-grained
 Language-Audio Pretraining”](https://aclanthology.org/2026.acl-long.473/), ACL
@@ -115,10 +113,10 @@ long-form audio and temporally enhanced audio-text retrieval unevaluated. The
 VidXP selector returned no final top-three overlap against the four designated
 intervals and missed the two unambiguous cases. The four-task rate is not a
 valid provider score because one reference is silent and another query has
-multiple correct occurrences. Treat the selector as unvalidated, not adopted
-or conclusively rejected. Existing indexes remain usable for a FineLAP control
-because they already label both representations; a replacement provider
-requires a new sound index.
+multiple correct occurrences. Treat the selector as historical and unvalidated,
+not adopted or conclusively rejected. It remains reproducible in the benchmark
+adapter. Product index schema 8 replaces both representations with PE-A frames,
+so older indexes must be rebuilt.
 
 The sound provider must localize a free-form acoustic description, including
 short environmental events, and return every useful occurrence. It does not
@@ -209,9 +207,12 @@ table while remaining faster than playback on the CPU-only Mac. This selects
 PE-A-Frame Small for sound localization. It does not select PE-AV for
 action/video, and it is not a full AEGBench leaderboard result.
 
-For hour-long media, bounded overlapping sections, global timestamp mapping,
-and boundary duplicate removal remain VidXP engineering requirements, not
-claims from PE-A-Frame. Keep distinct repeated events separate.
+For long media, VidXP defaults to ten-second inference sections with a
+two-second overlap, assigns each overlap at its midpoint, and maps the retained
+40 ms frames to global timestamps. Search ranks with the checkpoint's dot
+product and returns the best frame per fixed ten-second evidence window. The
+values are configurable deployment defaults, not PE-A-Frame claims or measured
+accuracy optima. Keep distinct repeated events separate.
 
 ### Treat fused intervals as bounded evidence candidates
 
@@ -312,15 +313,11 @@ Three stronger-looking releases do not satisfy the product gate:
 - Wang et al., [TimeAudio](https://arxiv.org/abs/2511.11039), 2025, uses a
   Vicuna-7B stack and documents more than 40 GB of GPU memory for inference.
 
-There is therefore no validated, distributable drop-in sound replacement for
-this Mac. Keep FineLAP as an explicitly unvalidated component while the paired
-LongVALE run measures the collective product. If standalone provider selection
-continues later, use a dedicated sound-retrieval or grounding protocol rather
-than treating a LongVALE modality slice as the product benchmark. A replacement
-still requires a maintainer decision between seeking a usable OpenFLAM license,
-allowing a non-commercial/GPU research runtime, or retaining FineLAP. Do not
-build a separate DCASE/Lighthouse runtime unless a reproducibility comparison
-is explicitly needed.
+Those candidates supplied no better distributable Mac path. The later valid
+AEGBench comparison selected PE-A-Frame Small, which is now integrated. FineLAP
+remains only as the recorded comparison control. Do not build a separate
+DCASE/Lighthouse runtime unless a reproducibility comparison is explicitly
+needed.
 
 ### Action
 

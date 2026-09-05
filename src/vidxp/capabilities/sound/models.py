@@ -6,6 +6,9 @@ from typing import Any, Callable, Sequence
 
 from vidxp.capabilities.sound.specs import (
     FINELAP_MODEL,
+    PE_A_FRAME_HOP_SAMPLES,
+    PE_A_FRAME_MODEL,
+    PE_A_SAMPLE_RATE,
     ROBERTA_CONFIG,
     ROBERTA_MERGES,
     ROBERTA_VOCAB,
@@ -97,6 +100,72 @@ class FineLAPProvider:
         return embedding.cpu().numpy().tolist()[0]
 
 
+@dataclass(frozen=True)
+class PEAFrameProvider:
+    model: Any
+    processor: Any
+    device: str
+
+    def encode_audio(self, pcm_windows: Sequence[bytes]) -> tuple[Any, ...]:
+        """Return the checkpoint's 40 ms audio-frame embeddings."""
+        import numpy as np
+        import torch
+
+        waveforms = []
+        for pcm in pcm_windows:
+            waveform = (
+                np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+            )
+            if waveform.size < PE_A_FRAME_HOP_SAMPLES:
+                waveform = np.pad(
+                    waveform,
+                    (0, PE_A_FRAME_HOP_SAMPLES - waveform.size),
+                )
+            waveforms.append(waveform)
+        inputs = self.processor.feature_extractor(
+            waveforms,
+            sampling_rate=PE_A_SAMPLE_RATE,
+            padding=True,
+            return_tensors="pt",
+        )
+        inputs = {name: value.to(self.device) for name, value in inputs.items()}
+        with torch.inference_mode():
+            embeddings = self.model.get_audio_embeds(**inputs).cpu()
+        valid_embeddings = []
+        for pcm, embedding in zip(pcm_windows, embeddings):
+            valid_frames = min(
+                embedding.shape[0],
+                (len(pcm) // 2 + PE_A_FRAME_HOP_SAMPLES - 1)
+                // PE_A_FRAME_HOP_SAMPLES,
+            )
+            valid_embeddings.append(embedding[:valid_frames])
+        return tuple(valid_embeddings)
+
+    def encode_text(self, query: str) -> list[float]:
+        """Return PE-A's text vector from the same frame-level score space."""
+        import torch
+
+        inputs = self.processor.tokenizer(
+            [query],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+        )
+        inputs = {name: value.to(self.device) for name, value in inputs.items()}
+        with torch.inference_mode():
+            # Transformers 5.14's convenience method omits the hidden-state
+            # request it consumes. This is the same path used by model.forward.
+            outputs = self.model.text_model(
+                **inputs,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            embedding = self.model.text_audio_head(
+                outputs.hidden_states[-1][:, 0]
+            )
+        return embedding.cpu().numpy().tolist()[0]
+
+
 def _load_finelap_class(snapshot: str, module_cache: str) -> type:
     from transformers import AutoConfig
     from transformers import dynamic_module_utils
@@ -180,7 +249,7 @@ def _load_finelap_model(
     )
 
 
-def get_sound_model(
+def get_finelap_model(
     runtime: ModelRuntimePort,
     *,
     download: bool = False,
@@ -235,5 +304,48 @@ def get_sound_model(
             ),
         )
         return FineLAPProvider(model=model, device=device)
+
+    return runtime.get_or_load(key, load)
+
+
+def get_sound_model(
+    runtime: ModelRuntimePort,
+    *,
+    download: bool = False,
+    progress: Callable[[dict[str, Any]], None] | None = None,
+) -> PEAFrameProvider:
+    device = runtime.device_for("sound")
+    key = PE_A_FRAME_MODEL.key(device)
+
+    def load() -> PEAFrameProvider:
+        from transformers import PeAudioFrameLevelModel, PeAudioProcessor
+
+        snapshot = runtime.resolve_model(
+            PE_A_FRAME_MODEL,
+            download=download,
+            progress=progress,
+        )
+        report_preparation(
+            progress,
+            "loading_model",
+            f"Loading {PE_A_FRAME_MODEL.model_id}.",
+        )
+        common = {"local_files_only": True}
+        model = PeAudioFrameLevelModel.from_pretrained(snapshot, **common).to(
+            device
+        )
+        model.eval()
+        runtime.record_compute_precision(
+            PE_A_FRAME_MODEL.capability,
+            loaded_compute_precision(
+                model,
+                fallback=PE_A_FRAME_MODEL.weights_precision,
+            ),
+        )
+        return PEAFrameProvider(
+            model=model,
+            processor=PeAudioProcessor.from_pretrained(snapshot, **common),
+            device=device,
+        )
 
     return runtime.get_or_load(key, load)

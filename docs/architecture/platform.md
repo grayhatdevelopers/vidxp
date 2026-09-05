@@ -503,6 +503,9 @@ by that immutable snapshot. Indexing and search therefore coexist safely.
 The Chroma adapter stores generation identity with every record and implements
 snapshot-scoped search and garbage collection. Chroma remains replaceable behind the
 `IndexRepository` port; snapshot semantics do not depend on Chroma collection layout.
+Index schema 8 defaults collections to inner-product distance so PE-A retains its
+released dot-product frame ordering. Scene, action, and default speech vectors are
+unit-normalized, so their ordering is unchanged from squared L2 distance.
 For the embedded adapter, `indexes/store/` is the shared physical Chroma database;
 generation directories own manifests and checkpoints, while exact generation record
 counts in those manifests are revalidated before committed reads. A missing database,
@@ -773,18 +776,17 @@ composition root and is sorted deterministically.
   `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`; its published multilingual MTEB
   retrieval results materially exceed the older multilingual E5 baseline and its
   Apache-2.0 license permits the intended deployment.
-- Sound: use FineLAP at immutable Hugging Face revision
-  `b419aa22947d29907a5567f21b81bf3b39a40449`. Each video audio stream is decoded
-  once into ten-second windows. The sound collection stores one normalized global
-  embedding per window and the model's normalized dense embeddings as timestamped
-  activation records. Both use the shared text/audio space, and search results
-  retain `representation`, window, and activation provenance. FineLAP requires
-  repository-supplied Transformers code; VidXP loads only the pinned snapshot,
-  keeps runtime loading offline, and prepares the two small pinned RoBERTa
-  tokenizer artifacts explicitly instead of allowing a constructor-time model
-  download. The Hugging Face model card declares MIT; the upstream GitHub source
-  repository does not contain a separate license file, so redistribution review
-  must preserve that qualification.
+- Sound: use PE-A-Frame Small at immutable Hugging Face revision
+  `e5fc71c1f0be50279f52f292390b589780079e13`. Its released audio and text heads
+  produce one comparable embedding every 40 ms; the sound collection ranks those
+  embeddings with inner product, matching the checkpoint's scoring rule. VidXP
+  decodes at 48 kHz and defaults to ten-second inference sections with two seconds
+  of overlap. Each overlap is split at its midpoint so a global timestamp is stored
+  once. Search keeps the best frame score per fixed ten-second evidence window;
+  the exact frame timestamp remains in metadata. The section length, overlap,
+  evidence window, and batch size of one are configurable VidXP deployment
+  defaults, not methods claimed from the PE-A paper. FineLAP remains benchmark-only
+  to reproduce the recorded provider comparison.
 - Actor: replace `face_recognition`/dlib with OpenCV Zoo YuNet plus SFace through
   OpenCV's maintained DNN APIs. Model files are retrieved with `pooch`, pinned to
   OpenCV Zoo commit `47534e27c9851bb1128ccc0102f1145e27f23f98`, and verified

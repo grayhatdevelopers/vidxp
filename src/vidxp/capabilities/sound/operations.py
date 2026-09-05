@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 
 from vidxp.capabilities.contracts import (
@@ -9,8 +10,10 @@ from vidxp.capabilities.contracts import (
 from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.capabilities.schemas import SearchHit, SearchInput, SearchResult
 from vidxp.capabilities.search import search_embeddings
+from vidxp.capabilities.sound.config import sound_config
 from vidxp.capabilities.sound.indexing import index_sound
 from vidxp.capabilities.sound.models import get_sound_model
+from vidxp.capabilities.sound.specs import PE_A_FRAME_INTERVAL_SECONDS
 from vidxp.core.contracts import (
     CancellationToken,
     IndexConfig,
@@ -30,82 +33,34 @@ REQUIRED_METADATA = frozenset(
         "start",
         "end",
         "representation",
-        "window_index",
+        "section_index",
+        "frame_index",
+        "evidence_index",
+        "timestamp",
+        "frame_end",
         "modality",
     }
 )
 
-GLOBAL_REPRESENTATION = "window"
-LOCAL_REPRESENTATION = "activation"
+FRAME_REPRESENTATION = "frame"
 
 
-def _activation_scope(
-    windows: tuple[SearchHit, ...],
+def _collapse_evidence_windows(
+    result: SearchResult,
     *,
-    video_id: str | None,
-) -> dict[str, Any]:
-    selected = tuple(
-        dict.fromkeys(
-            (
-                hit.media_id,
-                int(hit.metadata["window_index"]),
-            )
-            for hit in windows
-        )
-    )
-    filters: dict[str, Any] = {"representation": LOCAL_REPRESENTATION}
-    media_ids = {media_id for media_id, _window_index in selected}
-    if len(media_ids) == 1:
-        selected_media_id = next(iter(media_ids))
-        if video_id is None:
-            filters["video_id"] = selected_media_id
-        window_indices = [window_index for _media_id, window_index in selected]
-        filters["window_index"] = (
-            window_indices[0]
-            if len(window_indices) == 1
-            else {"$in": window_indices}
-        )
-        return filters
-    filters["$or"] = [
-        {
-            "$and": [
-                {"video_id": selected_media_id},
-                {"window_index": window_index},
-            ]
-        }
-        for selected_media_id, window_index in selected
-    ]
-    return filters
-
-
-def _attach_window_context(
-    activations: SearchResult,
-    windows: tuple[SearchHit, ...],
+    top_k: int,
 ) -> SearchResult:
-    by_window = {
-        (hit.media_id, int(hit.metadata["window_index"])): hit for hit in windows
-    }
-    hits = []
-    for activation in activations.hits:
-        key = (
-            activation.media_id,
-            int(activation.metadata["window_index"]),
-        )
-        window = by_window[key]
-        hits.append(
-            activation.model_copy(
-                update={
-                    "metadata": {
-                        **activation.metadata,
-                        "context_source_id": window.source_id,
-                        "context_start": window.start,
-                        "context_end": window.end,
-                        "context_rank": window.rank,
-                    }
-                }
-            )
-        )
-    return activations.model_copy(update={"hits": tuple(hits)})
+    selected: list[SearchHit] = []
+    seen: set[tuple[str, float, float]] = set()
+    for hit in result.hits:
+        key = (hit.media_id, hit.start, hit.end)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(hit.model_copy(update={"rank": len(selected) + 1}))
+        if len(selected) == top_k:
+            break
+    return result.model_copy(update={"hits": tuple(selected)})
 
 
 def index_capability(
@@ -154,54 +109,32 @@ def search_sound(
     if top_k <= 0:
         raise ValueError("top_k must be greater than zero.")
     embedding = sound_embedding(cleaned, runtime)
-    if filters:
-        explicit_filters = dict(filters)
-        explicit_filters.setdefault("representation", GLOBAL_REPRESENTATION)
-        return search_embeddings(
-            cleaned,
-            "sound",
-            embedding,
-            config=config,
-            required_metadata=REQUIRED_METADATA,
-            top_k=top_k,
-            video_id=video_id,
-            query_id=query_id,
-            filters=explicit_filters,
-            storage=storage,
-        )
-
-    # FineLAP Sections 3.2–3.3 train global and local audio outputs separately.
-    # Global matches select regions; only local distances rank the final hits.
-    windows = search_embeddings(
+    explicit_filters = dict(filters or {})
+    representation = explicit_filters.get("representation")
+    if representation not in {None, FRAME_REPRESENTATION}:
+        raise ValueError("Sound search only supports PE-A frame records.")
+    explicit_filters["representation"] = FRAME_REPRESENTATION
+    settings = sound_config(config)
+    frames_per_window = math.ceil(
+        settings.evidence_window_seconds / PE_A_FRAME_INTERVAL_SECONDS
+    )
+    # Each evidence window contains at most this many frame records. Fetching
+    # top_k times that bound guarantees top_k distinct windows when they exist.
+    ranked_frames = search_embeddings(
         cleaned,
         "sound",
         embedding,
         config=config,
         required_metadata=REQUIRED_METADATA,
-        top_k=top_k,
+        top_k=top_k * frames_per_window,
         video_id=video_id,
         query_id=query_id,
-        filters={"representation": GLOBAL_REPRESENTATION},
+        filters=explicit_filters,
         storage=storage,
     )
-    if not windows.hits:
-        return windows
-    activations = search_embeddings(
-        cleaned,
-        "sound",
-        embedding,
-        config=config,
-        required_metadata=REQUIRED_METADATA,
+    return _collapse_evidence_windows(
+        ranked_frames,
         top_k=top_k,
-        video_id=video_id,
-        query_id=windows.query_id,
-        filters=_activation_scope(windows.hits, video_id=video_id),
-        storage=storage,
-    )
-    return (
-        _attach_window_context(activations, windows.hits)
-        if activations.hits
-        else windows
     )
 
 

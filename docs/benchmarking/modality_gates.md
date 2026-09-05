@@ -21,7 +21,7 @@ use the same dataset, split, query set, and metrics as the current provider.
 | --- | --- | --- | --- | --- |
 | Scene | [SigLIP 2](https://arxiv.org/abs/2502.14786) | The existing [DiDeMo](https://github.com/LisaAnne/LocalizingMoments) adapter isolates sampled visual-frame ranking within one video | DiDeMo's fixed five-second moments measure whether those frame scores rank the described visual moment | Adapter complete; one current-provider smoke only |
 | Action/video | [VideoPrism LvT](https://arxiv.org/abs/2402.13217) | [MSR-VTT 1K-A](https://github.com/m-bain/frozen-in-time) text-to-video retrieval checks the published global video-text use case and complete-corpus ordering | [Charades-STA](https://github.com/jiyanggao/TALL) checks whether VidXP's independently ranked eight-second action records find labelled action intervals | Both canonical adapters wired; a 50-video Kinetics-mini candidate gate scored 50/50 and retains VideoPrism, but does not replace either canonical gate |
-| Environmental sound | FineLAP control; [PE-A-Frame Small](https://huggingface.co/facebook/pe-a-frame-small) selected | [AEGBench](https://huggingface.co/datasets/zihan-audio/AEGBench) checks open-vocabulary frame ranking, repeated events, and interval output; FineLAP clip retrieval remains a separate global check | [Clotho-Moment](https://h-munakata.github.io/Language-based-Audio-Moment-Retrieval/) or [CASTELLA](https://arxiv.org/abs/2511.15131) checks text-to-interval retrieval over long audio | AEGBench command wired; identical 50-recording/149-query comparison selects PE-A-Frame. Long-audio product gate pending |
+| Environmental sound | [PE-A-Frame Small](https://huggingface.co/facebook/pe-a-frame-small) integrated; FineLAP retained as a control | [AEGBench](https://huggingface.co/datasets/zihan-audio/AEGBench) checks open-vocabulary frame ranking, repeated events, and interval output | [Clotho-Moment](https://h-munakata.github.io/Language-based-Audio-Moment-Retrieval/) or [CASTELLA](https://arxiv.org/abs/2511.15131) checks text-to-interval retrieval over long audio | Identical 50-recording/149-query comparison selected PE-A-Frame; product-path sectioning smoke passes; long-audio quality gate pending |
 | Speech meaning | Qwen3 Embedding | HiREST with released transcripts isolates transcript chunking, embedding, and timestamp ranking | The same HiREST known-video moment task scores whether the relevant spoken procedure is localized | Adapter complete; two-pair current-provider smoke only |
 | Transcription | faster-whisper | A separate WER run is required on real audio because released-transcript HiREST bypasses transcription | An end-to-end speech run must transcribe media before applying the same retrieval task | Not wired; it does not block ranking-provider comparison but remains required before an ASR claim |
 
@@ -45,19 +45,18 @@ that representation difference instead of claiming exact leaderboard parity.
 R@1/R@5 at temporal-IoU 0.3/0.5/0.7 plus mean top-one IoU. It tests VidXP's
 fixed-window temporal behavior, not VideoPrism's published classification score.
 
-### FineLAP
+### Sound
 
-`finelap-retrieval` accepts FineLAP's official five-caption JSONL format and
-queries only its global audio representation. This prevents the earlier error
-where global and dense vectors were treated as one calibrated ranking. It
-reports the paper's text-to-audio metrics, including R@50. VidXP has no
+`finelap-retrieval` retains its command name because it accepts FineLAP's
+official five-caption JSONL format. It now evaluates the selected product sound
+provider and reports text-to-audio metrics, including R@50. VidXP has no
 audio-to-text product operation, so the command does not claim FineLAP's reverse
 retrieval score.
 
-`finelap-grounding` accepts FineLAP's published TAG metadata shape, queries only
-dense activation records, preserves every labelled occurrence, and reports
-ranked temporal-IoU diagnostics. FineLAP's official aggregate uses PSDS and
-threshold AUC; VidXP's current command is an ordering diagnostic and must not be
+`finelap-grounding` likewise names its TAG-format input, not the active model.
+It preserves every labelled occurrence and reports ranked temporal-IoU
+diagnostics over PE-A evidence windows. FineLAP's official aggregate uses PSDS
+and threshold AUC; this command is an ordering diagnostic and must not be
 reported as that official score.
 
 `finelap-audio-moment` accepts Lighthouse JSONL records for Clotho-Moment or
@@ -78,8 +77,8 @@ Categories present in the manifest without any interval are recorded in
 The frozen selection run sampled 50 of 3,425 manifest rows with
 `random.Random(42).sample`, yielding 149 scoreable queries. It is sufficient for
 provider selection and runtime comparison, not a full AEGBench leaderboard
-claim. The selected PE-A-Frame checkpoint still needs a VidXP provider and a new
-sound index before it can enter the paired agent run.
+claim. The selected PE-A-Frame checkpoint is now the product provider; its
+long-audio quality gate remains before the paired agent run.
 
 ### Existing scene and speech adapters
 
@@ -94,7 +93,7 @@ same frozen gates above:
 
 | Candidate | Run it on | What it can replace if it wins |
 | --- | --- | --- |
-| [PE-AV](https://huggingface.co/facebook/pe-av-small) | MSR-VTT plus Clotho/AudioCaps, then the temporal product gates | Global VideoPrism and FineLAP retrieval representations; it does not supply interval prediction by itself |
+| [PE-AV](https://huggingface.co/facebook/pe-av-small) | MSR-VTT plus Clotho/AudioCaps, then the temporal product gates | Global VideoPrism retrieval and PE-A frame localization; PE-AV does not supply interval prediction by itself |
 | PE-Video or PE-Core video checkpoints | Do not score as text retrieval without an official paired text head | Video encoders, not established drop-in text-video search providers |
 | [PE-A-Frame](https://huggingface.co/facebook/pe-a-frame-small) | TAG or [AEGBench](https://arxiv.org/abs/2607.04383), then Clotho-Moment/CASTELLA | Fine-grained sound localization only |
 | [AM-DETR](https://h-munakata.github.io/Language-based-Audio-Moment-Retrieval/) or another audio moment grounder | Clotho-Moment, real UnAV-100, and CASTELLA when available | The current custom long-audio selector |

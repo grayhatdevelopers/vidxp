@@ -115,7 +115,7 @@ class LocalProbeTests(unittest.TestCase):
         self.assertEqual(sound["extra"], "sound")
         self.assertEqual(
             sum(model["download_size_bytes"] for model in sound["models"]),
-            981_760_363,
+            1_762_352_391,
         )
 
     def test_missing_optional_frontend_does_not_make_product_incompatible(self):
@@ -265,7 +265,7 @@ class LocalProbeTests(unittest.TestCase):
     def test_desktop_model_catalog_is_derived_from_canonical_specs(self):
         catalog = desktop_model_cache_catalog()
 
-        self.assertEqual(len(catalog), 10)
+        self.assertEqual(len(catalog), 7)
         self.assertEqual(
             {item["id"] for item in catalog},
             {
@@ -273,10 +273,7 @@ class LocalProbeTests(unittest.TestCase):
                 "google/videoprism-lvt-base-f16r288",
                 "Qwen/Qwen3-Embedding-0.6B",
                 "dropbox-dash/faster-whisper-large-v3-turbo",
-                "AndreasXi/FineLAP",
-                "FacebookAI/roberta-base config",
-                "FacebookAI/roberta-base vocab",
-                "FacebookAI/roberta-base merges",
+                "facebook/pe-a-frame-small",
                 "yunet",
                 "sface",
             },

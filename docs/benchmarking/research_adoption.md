@@ -31,14 +31,14 @@ labeled as such.
 
 | Source | Adopted part and location | Reason | VidXP deviation or limit |
 | --- | --- | --- | --- |
-| Li et al., [FineLAP](https://aclanthology.org/2026.acl-long.473/), ACL 2026, Sections 3.2–3.3 | Released global and local audio representations in `src/vidxp/capabilities/sound/` | Supplies the currently shipped environmental-sound control | FineLAP evaluates clip captions globally and event phrases against frame labels locally. Its Limitations section excludes long-form retrieval. It lost the valid AEGBench provider comparison; VidXP's long-audio selector remains original, unvalidated orchestration. |
+| Vyas et al., [PE-AV and PE-A-Frame](https://arxiv.org/abs/2512.19687), CVPR 2026 | PE-A-Frame Small's released audio-frame and text embeddings in `src/vidxp/capabilities/sound/` | Supplies free-form sound-event ranking at the model's 40 ms frame rate | The paper establishes the model and dot-product scoring, not long-media chunking or user-facing intervals. VidXP adds bounded overlapping inference and fixed evidence windows as documented deployment controls. |
 | Cormack, Clarke, and Buettcher, [Reciprocal Rank Fusion](https://doi.org/10.1145/1571941.1572114), SIGIR 2009 | Rank-only formula with `k = 60` in `src/vidxp/search_fusion.py` | Combines modality rankings without treating their raw distances as one scale | Rank-anchored candidate construction, direct temporal matching, one hit per supporting modality, and interval union are VidXP controls, not parts of the paper. |
 | Zhao et al., [VideoPrism](https://arxiv.org/abs/2402.13217), ICML 2024, and Google's public LvT checkpoint | Global video-text embeddings and official text canonicalization in `src/vidxp/capabilities/action/` | Supplies cross-modal similarity for short action clips | VidXP's fixed windows and long-video ranking are not VideoPrism methods. The paper's action results use task-specific evaluation heads and do not validate raw similarity as temporal action localization. |
 | Tschannen et al., [SigLIP 2](https://arxiv.org/abs/2502.14786), 2025 | Released image-text encoder in `src/vidxp/capabilities/scene/` | Supplies visual-semantic frame retrieval | VidXP samples at 1 fps. These records are sampled frames, not detected semantic scenes. |
 | Radford et al., [Whisper](https://arxiv.org/abs/2212.04356), ICML 2023, and Zhang et al., [Qwen3 Embedding](https://arxiv.org/abs/2506.05176), 2025 | Speech recognition and text embeddings in `src/vidxp/capabilities/speech/` | Produces timestamped, searchable transcript evidence | `faster-whisper` is the runtime implementation. Segmentation, storage, and retrieval are VidXP choices. |
 
-Reverting the current selector does not require an index rebuild. Replacing
-FineLAP with PE-A-Frame uses different features and does require one.
+Index schema 8 changes the vector metric and sound representation. Rebuild
+repositories created by older versions before using this product path.
 
 ## Sound replacement decision
 
@@ -72,10 +72,20 @@ provider selection by the 149-query AEGBench result. That result justifies
 implementing PE-A-Frame Small and rebuilding the sound index; it does not
 validate the long-audio serving path.
 
-Long media still requires overlapping bounded sections, global timestamp
-mapping, and removal of duplicate boundary predictions. That stitching is
-VidXP engineering. It must preserve distinct repeated events and must not merge
-nearby occurrences merely because their windows overlap.
+VidXP splits overlap ownership at the midpoint, maps retained frames to global
+timestamps, and stores each timestamp once. Search ranks frames with the model's
+dot product, then returns the best frame from each fixed evidence window.
+
+| Sound default | Basis |
+| --- | --- |
+| 10-second inference section | The product-path smoke took 22.156 seconds with ten-second sections versus 198.651 seconds with 60-second sections on the same 75.81-second video. This is a Mac resource choice, not a PE-A accuracy setting. |
+| 2-second inference overlap | Smallest nonzero overlap tested; it preserved context across section edges without increasing the measured run time. Five seconds increased the run to 33.564 seconds and did not change the two checked top results. |
+| 10-second evidence window | Returns a playable context chunk while retaining the best 40 ms timestamp as metadata. It does not claim an exact event boundary. |
+| Batch size 1 | Conservative default after PE-A reached 5.30 GiB peak RSS in the AEGBench provider run. |
+
+These are configurable VidXP engineering defaults, not PE-A-Frame methods or
+measured accuracy optima; the long-audio gate remains required. Distinct
+repeated events remain separate windows.
 
 ## Original product controls
 
@@ -84,7 +94,7 @@ nearby occurrences merely because their windows overlap.
 | Fixed VideoPrism records | Sixteen frames sampled at 2 fps form a record of about eight seconds. No paper was adopted to select this temporal unit. |
 | Raw VideoPrism similarity ranking | Global LvT cosine similarity ranks the fixed records. This is a product control, not the action-localization method evaluated in the paper. |
 | One-second SigLIP 2 records | They provide dense visual evidence, not shot or scene boundaries. |
-| FineLAP two-stage search | Current code retrieves up to `candidate_top_k` global windows, then ranks local activations only inside those windows; the default cap is 100 at each stage. This is VidXP engineering, not FineLAP's published long-audio method. The historical top-three control below used invalid labels and cannot validate the selector. |
+| PE-A frame-to-evidence retrieval | Chroma uses inner product because PE-A ranks frames by dot product. For each requested evidence result, search reads at most the mathematically bounded number of frames that one ten-second window can contain, then keeps the best frame per distinct window. No empirical over-fetch multiplier or score threshold is used. |
 | Rank-anchored direct overlap | A hit seeds a candidate and takes at most the best directly overlapping hit from each other modality. Same-modality hits and indirect overlap remain separate. This is VidXP logic. |
 | Candidate interval union | A candidate starts at its earliest supporting hit and ends at its latest. A broad source hit can still produce a broad result, but neighboring hits cannot extend it transitively. |
 | Separate candidate and output depth | `top_k` limits final fused results. `candidate_top_k` limits each modality to 100 hits by default. The corrected ten-task replay was identical from 100 through exhaustive input; this supports a resource cap, not a general accuracy optimum. |
@@ -135,16 +145,15 @@ changes.
   action search path. On the five held-out action tasks, the correction left
   mean top-1 IoU at `0.1297` and did not improve any threshold rate; it is a
   conformance fix, not the ranking solution.
-- FineLAP's global and local records cannot be treated as one raw-distance
-  ranking. Current sound search uses a global gate followed by local activations,
-  but the selector lost the valid AEGBench comparison. PE-A-Frame Small is the
-  selected replacement; it is not product behavior until its provider and new
-  index are implemented.
+- FineLAP's global and local records could not be treated as one raw-distance
+  ranking, and its unvalidated global gate is no longer product behavior.
+  PE-A-Frame Small now supplies one frame-level score space. FineLAP remains only
+  in benchmark code for reproducibility.
 - RRF is useful as a transparent ranking control, but the current temporal
   grouping and union do not provide exact boundaries.
 - The original fusion chained adjacent records into video-length moments as
   candidate depth increased. Rank-anchored direct overlap removes that failure;
-  the full-depth replay is now stable. FineLAP, VideoPrism, and SigLIP 2 define
+  the full-depth replay is now stable. PE-A-Frame, VideoPrism, and SigLIP 2 define
   representations, not VidXP's grouping. LongVALE Section 3.2 constructs
   single-modal semantic events before combining modalities; that supports the
   proposal-first direction but is not a drop-in algorithm for raw records.

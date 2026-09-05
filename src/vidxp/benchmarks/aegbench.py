@@ -22,7 +22,8 @@ from vidxp.capabilities.sound.indexing import (
     DENSE_INTERVAL_SECONDS,
     iter_audio_windows,
 )
-from vidxp.capabilities.sound.models import get_sound_model
+from vidxp.capabilities.sound.models import get_finelap_model
+from vidxp.capabilities.sound.specs import FINELAP_MODEL_SPECS
 from vidxp.core.contracts import CancellationToken, IndexConfig
 from vidxp.core.manifest import ManifestStore, sha256_file, write_json_atomic
 from vidxp.infrastructure.local_index import LOCAL_INDEX_RUNTIME_CHECKS
@@ -288,7 +289,7 @@ class _FineLAPScorer:
     threshold = 0.5
 
     def __init__(self, runtime: ModelRuntime):
-        self.provider = get_sound_model(runtime)
+        self.provider = get_finelap_model(runtime)
 
     def scores(
         self,
@@ -440,7 +441,7 @@ def run_aegbench_sound(
             repository_root=run_directory,
             runtime_backend=device,
         ),
-        allowed_specs=registry.model_specs(),
+        allowed_specs=(*registry.model_specs(), *FINELAP_MODEL_SPECS),
     )
     manifest_store = ManifestStore(config, registry=registry, runtime=runtime)
     manifest_store.initialize([])

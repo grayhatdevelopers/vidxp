@@ -11,7 +11,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import quote
 
 
-INDEX_SCHEMA_VERSION = 7
+INDEX_SCHEMA_VERSION = 8
 MANIFEST_SCHEMA_VERSION = 2
 
 
@@ -90,7 +90,7 @@ class IndexConfig:
     enabled_modalities: tuple[str, ...] = ()
     frame_stride: int = 1
     storage_batch_size: int = 256
-    vector_distance: str = "l2"
+    vector_distance: str = "ip"
     device: str = "cpu"
     capability_options: Mapping[str, Mapping[str, Any]] = field(
         default_factory=dict
