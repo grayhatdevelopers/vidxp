@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
-export type TargetKind = 'existing_local' | 'managed';
+export type TargetKind = 'existing_local' | 'managed' | 'remote';
 export type LifecycleOwnership = 'external' | 'desktop';
 
 const WINDOWS_EXTENDED_PATH_PREFIX = '\\\\?\\';
@@ -61,6 +61,11 @@ interface WireTargetProfile {
   capabilities: string[];
   surfaces: string[];
   model_directory?: string;
+  remote_url?: string;
+  remote_auth_scheme?: string;
+  remote_repository?: string;
+  remote_model_config?: string;
+  remote_job_ready: boolean;
 }
 
 interface WireTargetState {
@@ -75,6 +80,20 @@ export interface TargetProfile extends WireTargetProfile {
   display_repository_root: string;
   display_model_directory?: string;
   last_validated_at: string | null;
+}
+
+export interface RemoteTargetInspection {
+  url: string;
+  reachable: boolean;
+  compatible: boolean;
+  requires_authentication: boolean;
+  authentication_scheme: string | null;
+  product_version: string | null;
+  capabilities: string[];
+  repository: string | null;
+  model_config: string | null;
+  job_ready: boolean;
+  message: string;
 }
 
 export interface TargetSetupState {
@@ -375,6 +394,18 @@ export function activateLocalTarget(executable: string, displayName?: string): P
   return invoke<WireTargetState>('adopt_local_target', {
     executable,
     displayName: displayName || null,
+  }).then(normalizeState);
+}
+
+export function inspectRemoteTarget(url: string, authorization?: string): Promise<RemoteTargetInspection> {
+  return invoke<RemoteTargetInspection>('inspect_remote_target', { url, authorization: authorization || null });
+}
+
+export function activateRemoteTarget(url: string, displayName: string, authorization?: string): Promise<TargetSetupState> {
+  return invoke<WireTargetState>('adopt_remote_target', {
+    url,
+    displayName: displayName || null,
+    authorization: authorization || null,
   }).then(normalizeState);
 }
 

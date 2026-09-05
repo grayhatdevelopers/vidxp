@@ -29,12 +29,14 @@ const PRODUCT_ID: &str = "dev.grayhat.vidxp";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const VALIDATION_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_PROBE_STREAM_BYTES: usize = 256 * 1024;
+const REMOTE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetKind {
     ExistingLocal,
     Managed,
+    Remote,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -86,6 +88,9 @@ pub enum TargetErrorCode {
     DraftMismatch,
     DraftApplying,
     ManagedProfileOwned,
+    RemoteUnavailable,
+    RemoteAuthenticationRequired,
+    RemoteIncompatible,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -169,6 +174,18 @@ pub struct TargetProfile {
     pub surfaces: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_directory: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_auth_scheme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_auth_header: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_repository: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_model_config: Option<String>,
+    #[serde(default)]
+    pub remote_job_ready: bool,
 }
 
 impl TargetProfile {
@@ -200,6 +217,28 @@ pub struct ValidatedTarget {
     pub capabilities: Vec<String>,
     pub surfaces: Vec<String>,
     pub validated_at: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RemoteTargetInspection {
+    pub url: String,
+    pub reachable: bool,
+    pub compatible: bool,
+    pub requires_authentication: bool,
+    pub authentication_scheme: Option<String>,
+    pub product_version: Option<String>,
+    pub capabilities: Vec<String>,
+    pub repository: Option<String>,
+    pub model_config: Option<String>,
+    pub job_ready: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct RemoteTargetInput {
+    pub url: String,
+    pub display_name: Option<String>,
+    pub authorization: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -777,6 +816,7 @@ pub fn authorize_lifecycle(
         (&profile.kind, &profile.lifecycle_ownership),
         (TargetKind::ExistingLocal, LifecycleOwnership::External)
             | (TargetKind::Managed, LifecycleOwnership::Desktop)
+            | (TargetKind::Remote, LifecycleOwnership::External)
     );
     if !structurally_valid {
         return Err(TargetError::new(
@@ -852,7 +892,170 @@ fn local_profile(validated: ValidatedTarget, display_name: Option<String>) -> Ta
         capabilities: validated.capabilities,
         surfaces: validated.surfaces,
         model_directory: None,
+        remote_url: None,
+        remote_auth_scheme: None,
+        remote_auth_header: None,
+        remote_repository: None,
+        remote_model_config: None,
+        remote_job_ready: false,
     }
+}
+
+fn remote_url(value: &str) -> Result<String, TargetError> {
+    let value = value.trim().trim_end_matches('/');
+    if value.is_empty() || !(value.starts_with("http://") || value.starts_with("https://")) {
+        return Err(TargetError::new(
+            TargetErrorCode::RemoteUnavailable,
+            "Enter a VidXP server URL beginning with http:// or https://.",
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+fn authentication_scheme(value: &str) -> Option<String> {
+    value.split_whitespace().next().filter(|scheme| !scheme.is_empty()).map(str::to_owned)
+}
+
+fn remote_get(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    authorization: Option<&str>,
+) -> Result<reqwest::blocking::Response, TargetError> {
+    let mut request = client.get(url);
+    if let Some(authorization) = authorization.filter(|value| !value.trim().is_empty()) {
+        request = request.header(reqwest::header::AUTHORIZATION, authorization);
+    }
+    request.send().map_err(|error| {
+        TargetError::new(
+            TargetErrorCode::RemoteUnavailable,
+            format!("The VidXP server could not be reached: {error}"),
+        )
+    })
+}
+
+fn remote_json(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    authorization: Option<&str>,
+) -> Result<(Value, Option<String>), TargetError> {
+    let response = remote_get(client, url, authorization)?;
+    let challenge = response
+        .headers()
+        .get(reqwest::header::WWW_AUTHENTICATE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(authentication_scheme);
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(TargetError::new(
+            TargetErrorCode::RemoteAuthenticationRequired,
+            challenge
+                .as_deref()
+                .map(|scheme| format!("This VidXP server requires {scheme} authentication."))
+                .unwrap_or_else(|| "This VidXP server requires authentication.".to_owned()),
+        ));
+    }
+    if !response.status().is_success() {
+        return Err(TargetError::new(
+            TargetErrorCode::RemoteUnavailable,
+            format!("The VidXP server returned HTTP {}.", response.status()),
+        ));
+    }
+    let value = response.json::<Value>().map_err(|error| {
+        TargetError::new(
+            TargetErrorCode::RemoteIncompatible,
+            format!("The VidXP server returned invalid JSON: {error}"),
+        )
+    })?;
+    Ok((value, challenge))
+}
+
+fn remote_field(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| value.get(*key).and_then(Value::as_str).map(str::to_owned))
+}
+
+fn remote_capabilities(value: &Value) -> Vec<String> {
+    value
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("name").or_else(|| item.get("id")).and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn validate_remote(input: &RemoteTargetInput) -> Result<(TargetProfile, RemoteTargetInspection), TargetError> {
+    let base = remote_url(&input.url)?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(REMOTE_TIMEOUT)
+        .build()
+        .map_err(|error| TargetError::new(TargetErrorCode::RemoteUnavailable, format!("The remote connection could not be created: {error}")))?;
+    let (_, challenge) = remote_json(&client, &format!("{base}/health"), input.authorization.as_deref())?;
+    let (capability_value, protected_challenge) = remote_json(&client, &format!("{base}/api/v1/capabilities"), input.authorization.as_deref())?;
+    let (readiness, _) = remote_json(&client, &format!("{base}/api/v1/runtime/readiness"), input.authorization.as_deref())?;
+    let (workspace, _) = remote_json(&client, &format!("{base}/api/v1/workspace?page_size=1"), input.authorization.as_deref())?;
+    let capabilities = remote_capabilities(&capability_value);
+    let job_ready = readiness.get("ready").and_then(Value::as_bool).unwrap_or(false);
+    let repository = workspace
+        .get("index")
+        .and_then(|index| index.get("snapshot_id").or_else(|| index.get("state")))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let model_config = readiness
+        .get("runtime")
+        .and_then(|runtime| runtime.get("name").or_else(|| runtime.get("profile")))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let auth_scheme = protected_challenge.or(challenge);
+    let profile_id = format!("remote-{}", &hex::encode(Sha256::digest(base.as_bytes()))[..24]);
+    let display_name = input.display_name.clone().filter(|name| !name.trim().is_empty()).unwrap_or_else(|| base.clone());
+    let now = unix_timestamp()?;
+    let profile = TargetProfile {
+        id: profile_id,
+        display_name,
+        schema_version: CURRENT_PROFILE_SCHEMA_VERSION,
+        kind: TargetKind::Remote,
+        lifecycle_ownership: LifecycleOwnership::External,
+        executable: PathBuf::new(),
+        data_root: PathBuf::new(),
+        repository_root: PathBuf::from(repository.clone().unwrap_or_else(|| base.clone())),
+        observed_vidxp_version: remote_field(&workspace, &["version", "product_version"]).unwrap_or_else(|| "remote".into()),
+        probe_schema_version: 1,
+        probe_protocol_version: 1,
+        launch_protocol_version: 1,
+        runtime: None,
+        frontend: FrontendCapability { available: true, launchable: true, optional: true, code: "remote_server".into(), message: "The remote server provides its browser interface.".into(), remediation: String::new() },
+        last_successful_validation_at: Some(now),
+        validation_error: None,
+        managed_runtime_profile: None,
+        capabilities,
+        surfaces: vec!["browser".into(), "server".into()],
+        model_directory: None,
+        remote_url: Some(base),
+        remote_auth_scheme: auth_scheme.clone(),
+        remote_auth_header: input.authorization.clone(),
+        remote_repository: repository.clone(),
+        remote_model_config: model_config.clone(),
+        remote_job_ready: job_ready,
+    };
+    let product_version = profile.observed_vidxp_version.clone();
+    let profile_capabilities = profile.capabilities.clone();
+    Ok((profile, RemoteTargetInspection { url: input.url.clone(), reachable: true, compatible: true, requires_authentication: input.authorization.is_none() && auth_scheme.is_some(), authentication_scheme: auth_scheme, product_version: Some(product_version), capabilities: profile_capabilities, repository, model_config, job_ready, message: "The remote VidXP server is compatible and ready to connect.".into() }))
+}
+
+pub fn inspect_remote(input: RemoteTargetInput) -> Result<RemoteTargetInspection, TargetError> {
+    validate_remote(&input).map(|(_, inspection)| inspection).or_else(|error| {
+        Ok(RemoteTargetInspection { url: input.url, reachable: !matches!(error.code, TargetErrorCode::RemoteUnavailable), compatible: false, requires_authentication: error.code == TargetErrorCode::RemoteAuthenticationRequired, authentication_scheme: None, product_version: None, capabilities: Vec::new(), repository: None, model_config: None, job_ready: false, message: error.message })
+    })
+}
+
+pub fn adopt_remote(app: &AppHandle, input: RemoteTargetInput) -> Result<TargetState, TargetError> {
+    let (profile, _) = validate_remote(&input)?;
+    let (store, mut decoded) = load_state(app)?;
+    let id = profile.id.clone();
+    upsert_profile(&mut decoded, profile);
+    decoded.selected_profile_id = Some(id);
+    persist_state(&store, &decoded)?;
+    Ok(state_snapshot(decoded))
 }
 
 fn managed_profile(managed: ManagedRuntimeProjection) -> TargetProfile {
@@ -887,6 +1090,12 @@ fn managed_profile(managed: ManagedRuntimeProjection) -> TargetProfile {
         capabilities: managed.capabilities,
         surfaces: managed.surfaces,
         model_directory: Some(managed.model_directory),
+        remote_url: None,
+        remote_auth_scheme: None,
+        remote_auth_header: None,
+        remote_repository: None,
+        remote_model_config: None,
+        remote_job_ready: false,
     }
 }
 
@@ -1247,6 +1456,9 @@ pub fn validated_selected_profile_with_cancellation(
     cancellation: Option<&CancellationToken>,
 ) -> Result<TargetProfile, TargetError> {
     let profile = selected_profile(app)?;
+    if profile.kind == TargetKind::Remote {
+        return validated_selected_remote_profile(app);
+    }
     let validated = validate_executable_with(
         &profile.executable,
         desktop_version,
@@ -1267,6 +1479,31 @@ pub fn validated_selected_profile_with_cancellation(
         },
     );
     persist_selected_validation(app, validated)
+}
+
+pub fn validated_selected_remote_profile(app: &AppHandle) -> Result<TargetProfile, TargetError> {
+    let profile = selected_profile(app)?;
+    let input = RemoteTargetInput {
+        url: profile.remote_url.clone().ok_or_else(|| TargetError::new(TargetErrorCode::ProfileMalformed, "The remote target is missing its server URL."))?,
+        display_name: Some(profile.display_name.clone()),
+        authorization: profile.remote_auth_header.clone(),
+    };
+    let updated = validate_remote(&input);
+    let (store, mut decoded) = load_state(app)?;
+    let current = decoded.profiles.iter_mut().find(|candidate| candidate.id == profile.id).ok_or_else(|| TargetError::new(TargetErrorCode::ProfileNotFound, "The selected remote target no longer exists."))?;
+    match updated {
+        Ok((updated, _)) => {
+            *current = updated;
+            let result = current.clone();
+            persist_state(&store, &decoded)?;
+            Ok(result)
+        }
+        Err(error) => {
+            current.validation_error = Some(error.clone());
+            persist_state(&store, &decoded)?;
+            Err(error)
+        }
+    }
 }
 
 pub(crate) fn persist_selected_validation(
@@ -1335,6 +1572,19 @@ pub fn select_profile(
                 "The selected VidXP target no longer exists.",
             )
         })?;
+    if profile.kind == TargetKind::Remote {
+        let (updated, _) = validate_remote(&RemoteTargetInput {
+            url: profile.remote_url.clone().ok_or_else(|| TargetError::new(TargetErrorCode::ProfileMalformed, "The remote target is missing its server URL."))?,
+            display_name: Some(profile.display_name.clone()),
+            authorization: profile.remote_auth_header.clone(),
+        })?;
+        let (store, mut decoded) = load_state(app)?;
+        let current = decoded.profiles.iter_mut().find(|candidate| candidate.id == profile_id).ok_or_else(|| TargetError::new(TargetErrorCode::ProfileNotFound, "The selected remote target no longer exists."))?;
+        *current = updated;
+        decoded.selected_profile_id = Some(profile_id.to_owned());
+        persist_state(&store, &decoded)?;
+        return Ok(state_snapshot(decoded));
+    }
     let validated = validate_executable(&profile.executable, desktop_version)?;
     select_validated_profile(app, profile_id, validated)
 }
