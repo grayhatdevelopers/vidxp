@@ -5,8 +5,10 @@ import json
 
 from vidxp.application_models import (
     ActorEvidence,
+    ActorOverviewPlanStep,
     DraftAnswer,
     Evidence,
+    EvidenceRequestPlanStep,
     FusedSearchResult,
     GroundedClaim,
     IndexSnapshotReference,
@@ -18,7 +20,7 @@ from vidxp.application_models import (
     QuerySynthesisRequest,
     QueryVideoCommand,
     SearchMomentsPlanStep,
-    ActorOverviewPlanStep,
+    TemporalRelationPlanStep,
 )
 from vidxp.capabilities.actor.schemas import ActorClusterSummary
 from vidxp.ports import QueryModelPort, QueryProviderError
@@ -39,6 +41,8 @@ def _default_plan(
     *,
     search_modalities: tuple[str, ...],
     actor_overview: bool,
+    temporal_relations: bool = False,
+    evidence_requests: bool = False,
 ) -> QueryPlan:
     steps = [
         SearchMomentsPlanStep(
@@ -57,6 +61,8 @@ def _valid_plan(
     *,
     search_modalities: tuple[str, ...],
     actor_overview: bool,
+    temporal_relations: bool = False,
+    evidence_requests: bool = False,
 ) -> bool:
     searches = [
         step.modality
@@ -66,6 +72,16 @@ def _valid_plan(
     actor_steps = sum(
         isinstance(step, ActorOverviewPlanStep) for step in plan.steps
     )
+    temporal_steps = sum(
+        isinstance(step, TemporalRelationPlanStep) for step in plan.steps
+    )
+    evidence_steps = sum(
+        isinstance(step, EvidenceRequestPlanStep) for step in plan.steps
+    )
+    if not temporal_relations and temporal_steps > 0:
+        return False
+    if not evidence_requests and evidence_steps > 0:
+        return False
     return (
         len(searches) == len(set(searches))
         and set(searches) == set(search_modalities)
@@ -85,11 +101,15 @@ class GroundedQueryService:
         *,
         search_modalities: tuple[str, ...],
         actor_overview: bool,
+        temporal_relations: bool = False,
+        evidence_requests: bool = False,
     ) -> tuple[QueryPlan, str | None]:
         fallback = _default_plan(
             command,
             search_modalities=search_modalities,
             actor_overview=actor_overview,
+            temporal_relations=temporal_relations,
+            evidence_requests=evidence_requests,
         )
         if self.model is None:
             return fallback, "query_model_not_configured"
@@ -99,6 +119,8 @@ class GroundedQueryService:
                     question=command.question,
                     allowed_modalities=search_modalities,
                     actor_overview_allowed=actor_overview,
+                    temporal_relations_allowed=temporal_relations,
+                    evidence_requests_allowed=evidence_requests,
                 )
             )
         except QueryProviderError:
@@ -107,6 +129,8 @@ class GroundedQueryService:
             proposed,
             search_modalities=search_modalities,
             actor_overview=actor_overview,
+            temporal_relations=temporal_relations,
+            evidence_requests=evidence_requests,
         ):
             return fallback, "query_plan_rejected"
         return proposed, None
