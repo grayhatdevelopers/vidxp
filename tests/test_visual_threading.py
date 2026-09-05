@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from contextvars import ContextVar
 from unittest.mock import Mock, patch
 
 from vidxp.capabilities.visual import (
@@ -291,6 +292,73 @@ class ConsumeVisualStreamTests(unittest.TestCase):
             "_consume_visual_stream deadlocked on a failed participant",
         )
         self.assertIsInstance(outcome.get("error"), ValueError)
+
+    def test_worker_callbacks_inherit_owning_thread_context(self):
+        workflow_id: ContextVar[str | None] = ContextVar(
+            "vidxp_test_workflow_id", default=None
+        )
+
+        class ContextAwareCancellationEvent:
+            def __init__(self) -> None:
+                self._cancelled = False
+
+            def is_set(self) -> bool:
+                if workflow_id.get() is None:
+                    raise RuntimeError(
+                        "DBOS workflow context missing in cancellation"
+                    )
+                return self._cancelled
+
+            def set(self) -> None:
+                self._cancelled = True
+
+        scene = _mock_participant("scene")
+        actor = _mock_participant("actor")
+        source = VideoSource(video_id="v1", path="unused.mp4")
+        config = IndexConfig(video_id="v1", enabled_modalities=("scene", "actor"))
+        storage = Mock()
+        cancellation = CancellationToken(ContextAwareCancellationEvent())
+        timings = {"frame_stream": 0.0, "scene": 0.3, "actor": 0.2}
+        batches = [
+            [_sample(0, 0.0), _sample(1, 0.04)],
+            [_sample(2, 0.08)],
+        ]
+        progress_events = []
+
+        def fake_stream(path, *, stats=None, **kw):
+            stats.frames_advanced = 3
+            stats.frames_materialized = 3
+            return iter(batches)
+
+        def publish(event):
+            if workflow_id.get() is None:
+                raise RuntimeError("DBOS workflow context missing in progress")
+            progress_events.append(event)
+
+        token = workflow_id.set("test-workflow")
+        try:
+            with patch(
+                "vidxp.capabilities.visual.iter_frame_batches",
+                side_effect=fake_stream,
+            ):
+                _consume_visual_stream(
+                    source,
+                    participants=[scene, actor],
+                    expected=3,
+                    info=Mock(
+                        fps=24, frame_count=3, duration=0.12, width=2, height=2
+                    ),
+                    config=config,
+                    storage=storage,
+                    cancellation=cancellation,
+                    progress=publish,
+                    timings=timings,
+                )
+        finally:
+            workflow_id.reset(token)
+
+        self.assertTrue(progress_events)
+        self.assertIsNone(workflow_id.get())
 
     def test_slow_participant_at_shutdown_does_not_deadlock(self):
         scene = _mock_participant("scene")

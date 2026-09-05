@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import contextvars
 import queue
 import threading
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, Protocol, Sequence
+from typing import Any, Callable, Protocol, Sequence
 
 from vidxp.capabilities.contracts import CapabilityIndexResult
 from vidxp.capabilities.registry import CapabilityRegistry
@@ -258,13 +259,26 @@ def _consume_visual_stream(
         except Exception as exc:
             _record_error(exc)
 
+    def _in_context(
+        target: Callable[..., None],
+        *args: Any,
+    ) -> Callable[[], None]:
+        thread_context = contextvars.copy_context()
+
+        def runner() -> None:
+            thread_context.run(target, *args)
+
+        return runner
+
     decode_thread = threading.Thread(
-        target=_decode_worker, name="vidxp-visual-decode"
+        target=_in_context(_decode_worker),
+        name="vidxp-visual-decode",
     )
     participant_threads = [
         threading.Thread(
-            target=_participant_worker,
-            args=(p, participant_queues[p.name]),
+            target=_in_context(
+                _participant_worker, p, participant_queues[p.name]
+            ),
             name=f"vidxp-visual-{p.name}",
         )
         for p in participants
