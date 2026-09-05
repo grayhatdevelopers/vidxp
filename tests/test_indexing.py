@@ -444,6 +444,7 @@ class IndexingTests(unittest.TestCase):
                     "frame_index": 0,
                     "timestamp": 0.0,
                     "bbox": (1, 2, 3, 0),
+                    "encoding": [0.6, 0.8],
                 }
             ],
             config,
@@ -455,6 +456,73 @@ class IndexingTests(unittest.TestCase):
             "generation-1:actors:video-1:actor-cluster:1",
         )
         self.assertEqual(records[0].metadata["bbox_top"], 1)
+        self.assertEqual(records[0].embedding, [0.6, 0.8])
+
+    def test_actor_indexing_persists_real_face_embeddings_not_placeholders(self):
+        import numpy as np
+        from unittest.mock import Mock
+
+        from vidxp.capabilities.actor.indexing import (
+            ActorIndexState,
+            process_actor_samples,
+        )
+        from vidxp.core.video import FrameSample
+
+        config = IndexConfig(
+            dataset="sample",
+            split="test",
+            run_id="actors",
+            video_id="video-1",
+            generation_id="generation-1",
+            enabled_modalities=("actor",),
+        )
+
+        raw_encoding = np.array([3.0, 4.0], dtype="float32")
+        expected_normalized = (raw_encoding / np.linalg.norm(raw_encoding)).tolist()
+
+        detector = Mock()
+        detector.setInputSize = Mock()
+        detector.setScoreThreshold = Mock()
+        detector.detect.return_value = (
+            True,
+            np.array([[10.0, 10.0, 20.0, 20.0]], dtype="float32"),
+        )
+
+        recognizer = Mock()
+        recognizer.alignCrop.return_value = np.zeros((112, 112, 3), dtype="uint8")
+        recognizer.feature.return_value = raw_encoding.reshape(1, -1)
+
+        state = ActorIndexState(
+            models=Mock(detector=detector, recognizer=recognizer)
+        )
+        storage = Mock()
+
+        samples = [
+            FrameSample(
+                frame_index=0,
+                timestamp=0.0,
+                frame=np.zeros((48, 48, 3), dtype="uint8"),
+            ),
+        ]
+
+        process_actor_samples(
+            samples,
+            state=state,
+            config=config,
+            storage=storage,
+            cancellation=CancellationToken(),
+        )
+
+        self.assertEqual(storage.upsert.call_count, 1)
+        (_, records), _ = storage.upsert.call_args
+        self.assertEqual(len(records), 1)
+        record = records[0]
+
+        self.assertIsNotNone(record.embedding)
+        self.assertNotEqual(list(record.embedding), [0.0])
+        self.assertEqual(len(record.embedding), 2)
+        for actual, expected in zip(record.embedding, expected_normalized):
+            self.assertAlmostEqual(actual, expected, places=5)
 
     def test_actor_cluster_identity_is_unique_by_media_and_generation(self):
         def config(video_id, generation_id):
