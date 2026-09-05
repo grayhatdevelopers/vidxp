@@ -25,9 +25,22 @@ test('summarizes comparison metrics by benchmark condition', () => {
       requests: 1, cost: 0.81, agentItems: 12, toolCalls: 10, mcpCalls: 0,
       shellCalls: 10, mediaShellCalls: 10, skillLoads: 0,
     },
+    {
+      condition: 'model-only', success: true, iou: 0.9,
+      chunkHit: 1, eventCoverage: 1, durationInRange: 1,
+      recall03: 1, recall05: 1, recall07: 1,
+      expectedStart: 0, expectedEnd: 6, predictedStart: 0, predictedEnd: 6.5,
+      latencyMs: 80_000, totalTokens: 310_000, promptTokens: 307_000,
+      cachedTokens: 270_000, completionTokens: 3_000, reasoningTokens: 1_000,
+      requests: 1, cost: 0.7, agentItems: 11, toolCalls: 9, mcpCalls: 5,
+      shellCalls: 4, mediaShellCalls: 3, skillLoads: 1,
+    },
   ]);
 
-  assert.deepEqual(summaries.map((summary) => summary.condition), ['vidxp-on', 'vidxp-off']);
+  assert.deepEqual(
+    summaries.map((summary) => summary.condition),
+    ['vidxp-on', 'vidxp-off', 'model-only'],
+  );
   assert.equal(summaries[0].meanIou, 0.75);
   assert.equal(summaries[0].chunkHits, 1);
   assert.equal(summaries[0].chunkScored, 1);
@@ -43,6 +56,7 @@ test('summarizes comparison metrics by benchmark condition', () => {
   assert.equal(summaries[0].mcpCalls, 6);
   assert.equal(summaries[1].meanLatencyMs, 112_000);
   assert.equal(summaries[1].mediaShellCalls, 10);
+  assert.equal(summaries[2].mcpCalls, 5);
 });
 
 test('reports fused and per-modality retrieval boundary quality', () => {
@@ -60,6 +74,8 @@ test('reports fused and per-modality retrieval boundary quality', () => {
             { modality: 'scene', rank: 2, start: 1, end: 4 },
           ],
         },
+        { rank: 2, start: 20, end: 30, hits: [] },
+        { rank: 3, start: 0, end: 6, hits: [] },
       ],
     },
   );
@@ -69,4 +85,5 @@ test('reports fused and per-modality retrieval boundary quality', () => {
   assert.equal(summary.bestByModality.get('scene').rank, 2);
   assert.equal(summary.bestByModality.get('scene').fusedRank, 1);
   assert.equal(summary.bestByModality.get('scene').iou, 0.5);
+  assert.deepEqual(summary.momentIous, [0.75, 0, 1]);
 });

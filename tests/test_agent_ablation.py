@@ -139,6 +139,8 @@ def _ablation_fixture() -> tuple[str, dict, dict]:
             "media_relpath": "media/video-1.mp4",
             "query": "the event",
             "modalities": '["sound"]',
+            "retrieval_nonce": "fresh-search-0001",
+            "allow_media_shell": False,
         },
         "trace": {
             "spans": [
@@ -302,6 +304,32 @@ def test_ablation_boundary_accepts_isolated_baseline() -> None:
     assert result["pass"] is True
 
 
+def test_ablation_boundary_rejects_tools_in_model_only_condition() -> None:
+    output = json.dumps({"source_job_id": None, "evidence": []})
+    trace = {
+        "spans": [
+            {
+                "name": "command",
+                "attributes": {
+                    "codex.item.type": "command_execution",
+                    "codex.command": "ffprobe media/video-1.mp4",
+                },
+            }
+        ]
+    }
+
+    result = score_ablation_boundary(
+        output,
+        {
+            "vars": {"expected_vidxp": False, "allow_agent_tools": False},
+            "trace": trace,
+        },
+    )
+
+    assert result["pass"] is False
+    assert "model-only" in result["reason"]
+
+
 def test_ablation_boundary_rejects_direct_vidxp_cli_bypass() -> None:
     trace = {
         "spans": [
@@ -347,27 +375,47 @@ def test_generator_pairs_each_manifest_task_across_conditions(
     tests = generate_tests(
         {
             "manifest": str(manifest),
-            "providers": {"vidxp_on": "on", "vidxp_off": "off"},
+            "providers": {
+                "vidxp_on": "on",
+                "vidxp_off": "off",
+                "model_only": "model",
+            },
         }
     )
 
-    assert [test["providers"] for test in tests] == [["on"], ["off"]]
-    assert [test["vars"]["expected_vidxp"] for test in tests] == [True, False]
-    assert [test["vars"]["target_chunk_seconds"] for test in tests] == [10, 10]
-    assert [test["vars"]["min_chunk_seconds"] for test in tests] == [8, 8]
-    assert [test["vars"]["max_chunk_seconds"] for test in tests] == [12, 12]
-    assert [test["vars"]["min_event_coverage"] for test in tests] == [0.5, 0.5]
+    assert [test["providers"] for test in tests] == [["on"], ["off"], ["model"]]
+    assert [test["vars"]["expected_vidxp"] for test in tests] == [
+        True,
+        False,
+        False,
+    ]
+    assert [test["vars"]["allow_agent_tools"] for test in tests] == [
+        True,
+        True,
+        False,
+    ]
+    assert [test["vars"]["allow_media_shell"] for test in tests] == [
+        False,
+        True,
+        False,
+    ]
+    assert [test["vars"]["target_chunk_seconds"] for test in tests] == [10] * 3
+    assert [test["vars"]["min_chunk_seconds"] for test in tests] == [8] * 3
+    assert [test["vars"]["max_chunk_seconds"] for test in tests] == [12] * 3
+    assert [test["vars"]["min_event_coverage"] for test in tests] == [0.5] * 3
     assert [test["vars"]["modalities"] for test in tests] == [
+        '["sound"]',
         '["sound"]',
         '["sound"]',
     ]
     assert [test["metadata"]["modalities"] for test in tests] == [
         ["sound"],
         ["sound"],
+        ["sound"],
     ]
 
 
-def test_committed_pilot_expands_to_ten_matched_pairs(
+def test_committed_manifest_expands_to_ten_matched_condition_sets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     benchmark = Path(__file__).parents[1] / "benchmarks" / "codex-mcp"
@@ -376,13 +424,56 @@ def test_committed_pilot_expands_to_ten_matched_pairs(
     tests = generate_tests(
         {
             "manifest": "tasks/longvale-part9-pilot.json",
-            "providers": {"vidxp_on": "on", "vidxp_off": "off"},
+            "providers": {
+                "vidxp_on": "on",
+                "vidxp_off": "off",
+                "model_only": "model",
+            },
         }
     )
 
-    assert len(tests) == 20
+    assert len(tests) == 30
     assert {test["metadata"]["condition"] for test in tests} == {
         "vidxp-on",
         "vidxp-off",
+        "model-only",
     }
     assert len({test["metadata"]["task_id"] for test in tests}) == 10
+
+
+def test_pilot_uses_three_fresh_counterbalanced_repetitions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = Path(__file__).parents[1] / "benchmarks" / "codex-mcp"
+    monkeypatch.chdir(benchmark)
+    monkeypatch.setenv("VIDXP_EVAL_MODE", "pilot")
+    monkeypatch.setenv("VIDXP_EVAL_RUN_ID", "run-1")
+
+    tests = generate_tests(
+        {
+            "manifest": "tasks/longvale-part9-pilot.json",
+            "providers": {
+                "vidxp_on": "on",
+                "vidxp_off": "off",
+                "model_only": "model",
+            },
+        }
+    )
+
+    assert len(tests) == 81
+    assert len({test["vars"]["retrieval_nonce"] for test in tests}) == 81
+    first_task_id = tests[0]["metadata"]["task_id"]
+    first_task = [
+        test for test in tests if test["metadata"]["task_id"] == first_task_id
+    ]
+    assert [test["metadata"]["condition"] for test in first_task] == [
+        "vidxp-on",
+        "vidxp-off",
+        "model-only",
+        "vidxp-off",
+        "model-only",
+        "vidxp-on",
+        "model-only",
+        "vidxp-on",
+        "vidxp-off",
+    ]

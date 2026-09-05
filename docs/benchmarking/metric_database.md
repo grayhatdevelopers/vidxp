@@ -1,6 +1,6 @@
 # VidXP metric database
 
-Last verified: 2026-09-05
+Last verified: 2026-09-06
 
 This is the public index of VidXP's measured results. Each result identifies the
 research protocol or method it tests, VidXP's deviation from that work, the
@@ -44,9 +44,9 @@ states when an experiment replaces these normal representations.
 | Paired product gate | VidXP-on bounded-chunk hit rate is at least VidXP-off, and VidXP-on uses fewer total agent tokens | Primary whole-system decision. Cost, latency, and calls remain reported separately. |
 | Temporal IoU and R@1 at tIoU 0.3/0.5/0.7 | Exact predicted interval against the LongVALE-derived annotation | Retained secondary boundary-quality diagnostics. Poor exact trimming remains a product shortcoming and future research target. |
 
-Recorded September development runs used the earlier exact-interval prompt, so
-their raw measurements remain below but are not retroactively labeled as
-bounded-chunk product-gate results.
+The two older September development runs used the earlier exact-interval prompt.
+The latest uses the bounded-clip contract. All remain development smokes and are
+not product-gate results.
 
 ## Input integrity checks
 
@@ -62,8 +62,9 @@ Codex model with VidXP MCP evidence and with direct media inspection. They prove
 the harness and expose product behavior; one task is not a LongVALE score or a
 held-out quality estimate.
 
-| Evaluation | Machine | VidXP-on | Direct inspection | Efficiency comparison | Valid conclusion |
+| Evaluation | Machine | VidXP-on | VidXP-off | Efficiency comparison | Valid conclusion |
 | --- | --- | --- | --- | --- | --- |
+| `eval-2uz-2026-09-05T17:39:13` | `mac-m2-01` | `0–10` s; bounded hit `1`; coverage `1`; IoU `.6000`; 78.660 s; 200,142 total tokens; 52,458 uncached input; 1,636 output; 5 MCP calls; $0.384394 estimate | `0–10` s; bounded hit `1`; coverage `1`; IoU `.6000`; 90.582 s; 277,660 total tokens; 27,837 uncached input; 2,527 output; 7 shell calls, 6 through FFmpeg/ffprobe; $0.639381 estimate | VidXP used 77,518 fewer tokens, 11.922 fewer seconds, and a $0.254987 lower provider estimate; uncached input was 24,621 higher | Both found the same useful fixed window. Current bounded-clip harness smoke with durable VidXP evidence; no product gate or held-out claim. It predates the third model-only condition. |
 | `eval-J6s-2026-09-01T19:30:07` | `mac-m2-01` | `0–8.0075` s; IoU `0.7493`; 74.552 s; 301,712 total tokens; 48,423 uncached input; 1,769 output; 6 MCP calls; $0.815355 provider estimate | `0–6.8` s; IoU `0.8824`; 112.209 s; 329,961 total tokens; 35,906 uncached input; 3,623 output; 10 media shell calls; $0.812527 estimate | VidXP used 28,249 fewer tokens and 37.657 fewer seconds, but more uncached input made its estimate $0.002828 higher. | Both found the event. VidXP's connected union adopted the eight-second action endpoint. This is the valid development harness smoke. |
 | `eval-mw5-2026-09-02T19:40:44` | `mac-m2-01` | `0–10` s; IoU `0.6000`; 79.647 s; 261,995 total tokens; 48,523 uncached input; 1,760 output; 7 tools, including 6 MCP calls; $0.401271 estimate | `0–6.81` s; IoU `0.8811`; 89.757 s; 313,617 total tokens; 56,950 uncached input; 3,227 output; 9 media shell calls; $0.968155 estimate | VidXP used 51,622 fewer tokens, 10.110 fewer seconds, two fewer tools, and a $0.566884 lower estimate. | Superseded global-only FineLAP diagnostic. The ten-second result rejects a global sound window as the final boundary; it does not measure current two-stage sound search. |
 
@@ -139,7 +140,8 @@ paths are not part of this public evidence record.
 - Rebuild the sound index and run the PE-A-Frame long-audio product gate. The
   provider and bounded section path are implemented, but the one-video smoke
   does not validate hour-long or fused retrieval.
-- Run the 54-run paired Codex pilot only after explicit maintainer approval.
+- Run the 81-run, three-condition Codex pilot only after explicit maintainer
+  approval.
 - Produce full-corpus DiDeMo and HiREST results for the current providers.
 - Add Git revision, machine snapshot, model revisions, task-manifest hash, wall
   time, peak memory, model-call counts, agent/API usage, and raw-prediction

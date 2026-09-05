@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -6,18 +7,19 @@ import { loadLatestEvaluation, renderReport } from './report.mjs';
 
 const benchmarkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const mode = process.argv[2];
-const modeArguments = {
-  smoke: ['--filter-first-n', '2', '--repeat', '1'],
-  pilot: ['--filter-range', '2:', '--repeat', '3'],
-};
-if (!(mode in modeArguments)) {
+if (!['smoke', 'pilot'].includes(mode)) {
   throw new Error('Evaluation mode must be smoke or pilot.');
 }
+const evaluationEnvironment = {
+  ...process.env,
+  VIDXP_EVAL_MODE: mode,
+  VIDXP_EVAL_RUN_ID: randomUUID(),
+};
 
 const preflight = spawnSync(
   process.execPath,
   [join(benchmarkRoot, 'scripts', 'preflight.mjs')],
-  { cwd: benchmarkRoot, env: process.env, stdio: 'inherit' },
+  { cwd: benchmarkRoot, env: evaluationEnvironment, stdio: 'inherit' },
 );
 if (preflight.status !== 0) {
   process.exitCode = preflight.status ?? 1;
@@ -35,11 +37,10 @@ if (preflight.status !== 0) {
       'eval',
       '-c',
       'promptfooconfig.yaml',
-      ...modeArguments[mode],
       '--no-cache',
       '--no-share',
     ],
-    { cwd: benchmarkRoot, env: process.env, stdio: 'inherit' },
+    { cwd: benchmarkRoot, env: evaluationEnvironment, stdio: 'inherit' },
   );
   let reportFailed = false;
   try {

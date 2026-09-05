@@ -16,15 +16,15 @@ sys.modules["av"] = None
 
 from scenedetect import ContentDetector, detect  # noqa: E402
 
-from vidxp.benchmarks.agent_ablation_score import interval_iou
-from vidxp.benchmarks.shot_proposals import (
+from vidxp.benchmarks.agent_ablation_score import interval_iou  # noqa: E402
+from vidxp.benchmarks.shot_proposals import (  # noqa: E402
     DIWAN_CONTENT_THRESHOLD,
     DIWAN_PAPER_URL,
     TemporalShot,
     rank_shots_from_scene_records,
     rank_shots_with_rrf_evidence,
 )
-from vidxp.search_fusion import RRF_RANK_CONSTANT
+from vidxp.search_fusion import RRF_RANK_CONSTANT  # noqa: E402
 
 
 BENCHMARK_ROOT = Path(__file__).resolve().parent.parent

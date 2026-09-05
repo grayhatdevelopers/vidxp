@@ -129,7 +129,10 @@ async function main() {
   };
   run(
     'uv',
-    ['sync', '--frozen', '--extra', 'local-worker', '--extra', 'mcp', '--extra', 'benchmarks'],
+    [
+      'sync', '--frozen', '--extra', 'local-worker', '--extra', 'mcp',
+      '--extra', 'benchmarks', '--extra', 'test',
+    ],
   );
   const indexSchemaVersion = Number(run(
     'uv',
@@ -203,6 +206,8 @@ async function main() {
     join(setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE, 'media'),
     setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE,
     join(setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE, 'media'),
+    setupEnvironment.VIDXP_EVAL_MODEL_ONLY_WORKSPACE,
+    join(setupEnvironment.VIDXP_EVAL_MODEL_ONLY_WORKSPACE, 'media'),
     setupEnvironment.VIDXP_EVAL_DATA_DIR,
     setupEnvironment.VIDXP_EVAL_INDEX_DIR,
     setupEnvironment.VIDXP_EVAL_ARTIFACT_DIR,
@@ -282,6 +287,7 @@ async function main() {
     for (const conditionWorkspace of [
       setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE,
       setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE,
+      setupEnvironment.VIDXP_EVAL_MODEL_ONLY_WORKSPACE,
     ]) {
       const conditionMedia = join(conditionWorkspace, 'media', `${videoId}.mp4`);
       if (!existsSync(conditionMedia)) {

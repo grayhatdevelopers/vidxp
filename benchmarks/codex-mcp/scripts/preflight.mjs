@@ -40,6 +40,7 @@ const codexHome = requireDirectory('VIDXP_EVAL_CODEX_HOME');
 const workspace = requireDirectory('VIDXP_EVAL_WORKSPACE');
 const vidxpOnWorkspace = requireDirectory('VIDXP_EVAL_VIDXP_ON_WORKSPACE');
 const vidxpOffWorkspace = requireDirectory('VIDXP_EVAL_VIDXP_OFF_WORKSPACE');
+const modelOnlyWorkspace = requireDirectory('VIDXP_EVAL_MODEL_ONLY_WORKSPACE');
 requireDirectory('VIDXP_EVAL_DATA_DIR');
 requireDirectory('VIDXP_EVAL_INDEX_DIR');
 requireDirectory('VIDXP_MODEL_CACHE');
@@ -79,7 +80,8 @@ if (existsSync(codexConfig)) {
 }
 
 const tasks = JSON.parse(readFileSync(manifestPath, 'utf8'));
-const missingMedia = [...new Set([workspace, vidxpOnWorkspace, vidxpOffWorkspace]
+const conditionWorkspaces = [vidxpOnWorkspace, vidxpOffWorkspace, modelOnlyWorkspace];
+const missingMedia = [...new Set([workspace, ...conditionWorkspaces]
   .flatMap((conditionWorkspace) => tasks
     .map((task) => join(conditionWorkspace, task.media_relpath)))
   .filter((path) => !existsSync(path)))];
@@ -90,11 +92,14 @@ for (const task of tasks) {
   const shared = statSync(join(workspace, task.media_relpath));
   const on = statSync(join(vidxpOnWorkspace, task.media_relpath));
   const off = statSync(join(vidxpOffWorkspace, task.media_relpath));
+  const modelOnly = statSync(join(modelOnlyWorkspace, task.media_relpath));
   if (
     on.dev !== shared.dev
     || on.ino !== shared.ino
     || off.dev !== shared.dev
     || off.ino !== shared.ino
+    || modelOnly.dev !== shared.dev
+    || modelOnly.ino !== shared.ino
   ) {
     throw new Error(
       `Condition media is not hard-linked to the shared bytes: ${task.media_relpath}`,
@@ -121,6 +126,12 @@ const offSkillDirectory = join(
   'skills',
   'vidxp-find-video-evidence',
 );
+const modelOnlySkillDirectory = join(
+  modelOnlyWorkspace,
+  '.agents',
+  'skills',
+  'vidxp-find-video-evidence',
+);
 const sharedSkillDirectory = join(
   workspace,
   '.agents',
@@ -140,6 +151,9 @@ for (const relativePath of ['SKILL.md', join('agents', 'openai.yaml')]) {
 }
 if (existsSync(offSkillDirectory)) {
   throw new Error('The VidXP-off workspace must not contain the VidXP evidence skill.');
+}
+if (existsSync(modelOnlySkillDirectory)) {
+  throw new Error('The model-only workspace must not contain the VidXP evidence skill.');
 }
 if (existsSync(sharedSkillDirectory)) {
   throw new Error('The shared parent workspace must not contain the VidXP evidence skill.');
@@ -169,5 +183,5 @@ if (check.status !== 0) {
 
 process.stdout.write(check.stdout);
 process.stdout.write(
-  `Ready: ${tasks.length} tasks, VidXP skill+MCP on versus VidXP off, no Codex or model inference calls made.\n`,
+  `Ready: ${tasks.length} tasks across VidXP, local-tool, and model-only conditions; no Codex or model inference calls made.\n`,
 );

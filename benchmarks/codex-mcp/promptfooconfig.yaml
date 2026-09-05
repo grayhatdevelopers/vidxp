@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
-description: VidXP integration-on versus integration-off temporal evidence evaluation
+description: VidXP, local-tool, and model-only temporal evidence evaluation
 
 prompts:
   - id: video-evidence-task
@@ -9,7 +9,7 @@ prompts:
 providers:
   - id: openai:codex-sdk
     label: codex-vidxp
-    config:
+    config: &vidxp_provider
       model: "{{ env.VIDXP_EVAL_MODEL | default('gpt-5.6-sol') }}"
       model_reasoning_effort: "{{ env.VIDXP_EVAL_REASONING | default('medium') }}"
       maxRetries: 0
@@ -111,23 +111,32 @@ providers:
   - id: openai:codex-sdk
     label: codex-baseline
     config:
-      model: "{{ env.VIDXP_EVAL_MODEL | default('gpt-5.6-sol') }}"
-      model_reasoning_effort: "{{ env.VIDXP_EVAL_REASONING | default('medium') }}"
-      maxRetries: 0
+      <<: *vidxp_provider
       working_dir: "{{ env.VIDXP_EVAL_VIDXP_OFF_WORKSPACE }}"
-      skip_git_repo_check: true
-      sandbox_mode: read-only
-      approval_policy: never
-      network_access_enabled: false
-      web_search_mode: disabled
-      persist_threads: false
-      enable_streaming: true
-      output_schema: *result_schema
-      cli_env:
-        CODEX_HOME: "{{ env.VIDXP_EVAL_CODEX_HOME }}"
       cli_config:
         features:
           multi_agent: false
+
+  - id: openai:codex-sdk
+    label: codex-model-only
+    config:
+      <<: *vidxp_provider
+      working_dir: "{{ env.VIDXP_EVAL_MODEL_ONLY_WORKSPACE }}"
+      cli_config:
+        features:
+          multi_agent: false
+          shell_tool: false
+          view_image: false
+          browser_use: false
+          in_app_browser: false
+          computer_use: false
+          apps: false
+          image_generation: false
+          plugins: false
+          skill_search: false
+          skill_mcp_dependency_install: false
+          tool_suggest: false
+          workspace_dependencies: false
 
 tests:
   - path: file://../../src/vidxp/benchmarks/agent_ablation_tests.py:generate_tests
@@ -136,6 +145,7 @@ tests:
       providers:
         vidxp_on: codex-vidxp
         vidxp_off: codex-baseline
+        model_only: codex-model-only
 
 evaluateOptions:
   cache: false

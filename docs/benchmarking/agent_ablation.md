@@ -4,7 +4,7 @@ Collection index: [Benchmarking research](README.md)
 
 Status: Development smoke recorded; held-out pilot not run
 
-Last verified: 2026-09-05
+Last verified: 2026-09-06
 
 This experiment measures whether the complete VidXP agent integration improves
 a Codex agent's ability to find timestamped evidence in long videos. The
@@ -19,31 +19,37 @@ the serving objective.
 
 ## What the comparison holds constant
 
-Every task runs once in each condition with the same Codex model, reasoning
-effort, prompt, media bytes, filesystem sandbox, network policy, output schema,
-and fresh thread:
+Each repetition uses the same Codex model, reasoning effort, task, media bytes,
+filesystem sandbox, network policy, output schema, and fresh thread:
 
 | Condition | VidXP access | Purpose |
 | --- | --- | --- |
 | `codex-vidxp` | The committed `vidxp-find-video-evidence` skill and local `vidxp-mcp` server | Measure the complete installed agent-plus-VidXP workflow |
-| `codex-baseline` | No VidXP skill, MCP server, or direct VidXP CLI use | Measure what the same Codex agent can recover from local media without VidXP |
+| `codex-baseline` | No VidXP skill, MCP server, or direct VidXP CLI use; other local tools are unrestricted | Measure what the same Codex agent does without VidXP |
+| `codex-model-only` | No VidXP, shell, image viewer, browser, computer-use tool, or discovered skill | Measure the same model without developer or MCP tooling |
 
 The conditions share an isolated `CODEX_HOME` that contains authentication but
-no ambient MCP configuration. They use separate working directories so Codex's
-repository skill discovery cannot leak the VidXP skill into the baseline. Setup
-copies the exact committed skill into only the VidXP-on directory, and Promptfoo
-passes the MCP definition only to the VidXP-on provider. Both directories expose
-hard links to the same media bytes. Preflight compares the installed skill with
-the committed source and rejects a VidXP skill in either the baseline or shared
-parent workspace. Streaming traces record skill use and the complete MCP
-trajectory. VidXP-off must use neither the skill nor VidXP through MCP or the
-shell. VidXP-on may not fall back to FFmpeg or direct media inspection after
-retrieval failure. Its response must preserve the source job and evidence IDs;
-the scorer reopens the durable VidXP job and verifies that it was created
-during the current trial, succeeded, matches the task query and media,
-delivered ready evidence, and supports the returned intervals. Legitimate
-discovery and polling choices are reported rather than forced into one exact
-call sequence.
+no ambient MCP configuration. Separate working directories prevent repository
+skill discovery from leaking VidXP into the baselines. Setup installs the exact
+committed skill only in the VidXP directory, and Promptfoo passes the MCP
+definition only to that provider. All three directories expose hard links
+to the same media bytes. Preflight verifies those links and rejects a VidXP skill
+in the baseline or shared parent directory.
+
+The scorer enforces capability boundaries, not an agent script. The baseline
+cannot call VidXP but may use any other available local tool. The model-only
+condition exposes neither VidXP nor local agent tools. The VidXP condition
+cannot inspect media directly through the agent shell, but the MCP server may
+use VidXP's configured FFmpeg runtime internally. Loading the skill or following
+one discovery sequence is not required; the agent must submit a matching MCP
+retrieval and return evidence from its durable result. Every generated case receives one opaque
+retrieval nonce. The scorer requires that nonce as the job's idempotency key,
+which keeps repeated tasks fresh without relying on an agent-created name.
+Skill use, polling choices, FFmpeg use, and every tool call remain reported.
+
+The model-only condition is a tool-free model control, not a native video-model
+benchmark. The Codex SDK does not attach the MP4 as model input, so this lane
+measures what the model returns without a media access path.
 
 The committed configuration disables network access, persistent threads, result
 caching, provider retries, parallel execution, and Codex subagents. These
@@ -52,7 +58,7 @@ controls reduce leakage, cross-task state, and accidental extra model runs.
 ## Why Promptfoo owns orchestration
 
 [Promptfoo](https://www.promptfoo.dev/docs/providers/openai-codex-sdk/) runs the
-paired provider matrix, repetitions, structured output, traces, usage
+three-condition provider matrix, repetitions, structured output, traces, usage
 collection, and local reports. VidXP's Python benchmark code owns task expansion
 and deterministic scoring. This division avoids rebuilding a general evaluation
 runner while keeping official temporal metrics and dataset logic reviewable in
@@ -70,7 +76,7 @@ constraint, not just against generic eval feature lists:
 
 | Harness | Decision for this experiment |
 | --- | --- |
-| Promptfoo Codex SDK | Selected: directly reuses Codex login, forwards per-provider Codex/MCP configuration, repeats paired cases, and captures usage and tool traces |
+| Promptfoo Codex SDK | Selected: directly reuses Codex login, forwards each condition's Codex/MCP configuration, repeats cases, and captures usage and tool traces |
 | Native Codex SDK/CLI | Capable, but would require custom pairing, retry, aggregation, and report plumbing that Promptfoo already provides |
 | [Inspect AI](https://inspect.aisi.org.uk/) | Stronger for portable research evals, but subscription-authenticated Codex requires a custom bridge rather than its standard model path |
 | [EvalBench](https://github.com/GoogleCloudPlatform/evalbench) | Supports MCP scenarios, but its documented Codex path is API-key oriented and its simulated-user turns would add runs not needed here |
@@ -132,9 +138,9 @@ From the repository root, run the automated setup:
 
 The command installs the pinned Python and Node dependencies, creates isolated
 state outside the checkout, installs the committed VidXP evidence skill only in
-the VidXP-on workspace, initializes the system media runtime, opens Codex login
+the VidXP workspace, initializes the system media runtime, opens Codex login
 when authentication is absent, downloads and verifies the pinned LongVALE
-archive, links the same five pilot videos into both condition workspaces,
+archive, links the same five pilot videos into all three condition workspaces,
 prepares the four required capabilities, indexes the media, saves the evaluation
 environment in the ignored `benchmarks/codex-mcp/.env` file, and runs preflight.
 Accept the LongVALE dataset terms before running it. Do not copy or commit the
@@ -166,7 +172,7 @@ the install.
 
 Setup finishes by running preflight, which verifies the dedicated Codex
 authentication, absence of ambient MCP configuration, skill isolation, all
-five media files in both conditions, and the index paths. It then starts the
+five media files in all three conditions, and the index paths. It then starts the
 exact configured VidXP MCP process, checks required tools and prepared models,
 and verifies that every pilot video is ready and indexed for all four
 modalities. This makes a missing or incorrectly forwarded model cache fail
@@ -178,17 +184,19 @@ VidXP model inference, run:
 ./benchmarks/codex-mcp/run preflight
 ```
 
-The first paid/allowance-consuming smoke is one task in both conditions: two
-Codex runs total.
+The first paid/allowance-consuming smoke is one task in all three conditions:
+three Codex runs total.
 
 ```bash
 ./benchmarks/codex-mcp/run smoke
 ```
 
-Inspect both outputs and their trajectories before continuing. This first pair
+Inspect all outputs and their trajectories before continuing. This first set
 is development data: after any prompt, skill, tool, or scorer change, exclude it
-from quality claims. The pilot command skips that pair and runs the remaining
-nine tasks in two conditions with three repetitions: 54 Codex runs total.
+from quality claims. The pilot command skips that task and runs the remaining
+nine tasks in three conditions with three repetitions: 81 Codex runs total.
+Condition order rotates across repetitions so serial timing does not always put
+the same condition first or last.
 
 ```bash
 ./benchmarks/codex-mcp/run pilot
@@ -211,10 +219,11 @@ Print the latest saved comparison again, without inference, with:
 Add `--all` to include every per-run interval in a full pilot report. Add
 `--responses` to print each final answer, returned modalities, source job, and
 evidence count. The report also shows total agent items, all tool calls, VidXP
-MCP calls, shell calls, and the FFmpeg/ffprobe subset. For VidXP-on runs, it
-also reads the saved job and reports the top fused interval, its constituent
-hits, and the best retained hit per modality. This exposes what fusion actually
-used and which fused rank retained each hit; it does not rerun retrieval.
+MCP calls, shell calls, and the FFmpeg/ffprobe subset. For VidXP runs, it
+also reads each saved job and reports fused retrieval R@1, R@3, and R@5, the top
+fused interval, its constituent hits, and the best retained hit per modality.
+This exposes what fusion actually used and which fused rank retained each hit;
+it does not rerun retrieval.
 Candidates removed by the current pre-fusion or final `top_k` cannot be
 reconstructed from the saved job, and the report states that limitation. Use
 `--no-retrieval` only when the saved VidXP jobs are unavailable.
@@ -380,13 +389,13 @@ the dataset and model licenses still apply. Codex inference authenticated
 through the dedicated ChatGPT login consumes the account's Codex plan allowance
 or credits. API-key authentication instead incurs API usage charges. No
 LLM-as-judge assertion is enabled, so this scaffold does not add grader calls.
-The run count is therefore exactly two for the development smoke and 54 for the
-held-out pilot.
+The run count is therefore exactly three for the development smoke and 81 for
+the held-out pilot.
 Promptfoo reports usage, but it cannot determine the remaining ChatGPT-plan
 allowance or convert subscription-authenticated runs into an exact dollar
 charge; use the Codex account usage display for that limit.
 
-The recorded development pair is summarized in
+The recorded development runs are summarized in
 [Benchmark results](results.md#codex-mcp-development-smoke). It is retained to
 diagnose the harness and current temporal behavior, not as held-out evidence.
 
@@ -418,16 +427,20 @@ by that job. Report at least:
 - indexing time, index size, model preparation, and machine details; and
 - every excluded or failed task.
 
-The paired product gate passes only when VidXP matches or improves the baseline
-bounded-chunk hit rate and uses fewer total tokens. Latency, cost, calls, and
-boundary quality remain visible supporting measurements. Exact-boundary
-underperformance is a documented research limitation, not grounds to fail a
-useful fixed-window retrieval result.
+The report never applies the product gate to a development smoke. For the pilot,
+the high-level gate passes only when VidXP matches or improves the local-tool
+baseline's bounded-chunk hit rate and uses fewer total tokens. The model-only
+condition is supporting evidence, not part of that gate. Latency, cost, calls,
+boundary quality, and all three raw condition summaries remain visible; the
+single verdict does not replace them. Exact-boundary underperformance is a
+documented research limitation, not grounds to fail a useful fixed-window
+retrieval result.
 
-The two recorded development pairs below predate this contract and used the
-old exact-interval prompt. Keep their raw IoU, token, and trace measurements,
-but do not report them as bounded-chunk product-gate results. A new paired run
-is required for that comparison.
+Two recorded development pairs predate this contract and used the old
+exact-interval prompt. Keep their raw IoU, token, and trace measurements, but do
+not report them as bounded-chunk product-gate results. Evaluation
+`eval-2uz-2026-09-05T17:39:13` uses the bounded-clip contract but predates the
+third condition; it remains a two-condition smoke rather than a product gate.
 
 Do not call the nine-task held-out pilot a LongVALE result. A publishable result
 requires the complete official evaluation split, its one-interval output
@@ -435,10 +448,9 @@ conversion, and the official evaluator. A centralized benchmark would
 additionally need frozen agent versions, provider-independent authentication,
 portable environments, and public result governance.
 
-The VidXP-off condition is intentionally a local-agent baseline, not a native
-video-model benchmark. The Codex SDK accepts text and local images but does not
-accept video or audio inputs directly. With the network disabled and the
-workspace read-only, VidXP-off may use installed read-only shell inspection
-tools but cannot call VidXP or persist extracted media. Report this limitation
-with the results; component-model quality remains covered by the published
-benchmark record elsewhere in this collection.
+The VidXP-off condition is intentionally the same local agent without VidXP. It
+is not required to use FFmpeg, inspect a particular artifact, or follow a
+prescribed call sequence. The model-only condition removes the Codex local-tool
+surface as well. Neither is a native video-model benchmark because the Codex SDK
+does not pass the MP4 directly to the model. Component-model quality remains
+covered by the published benchmark record elsewhere in this collection.

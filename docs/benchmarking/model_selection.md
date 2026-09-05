@@ -4,7 +4,7 @@ Collection index: [Benchmarking research](README.md)
 
 Status: Current product and evaluation decision
 
-Last verified: 2026-09-05
+Last verified: 2026-09-06
 
 The [research adoption record](research_adoption.md) is the source of truth for
 paper-derived product behavior. The [paper inventory](research_papers.md)
@@ -26,7 +26,7 @@ input, output, reasoning, time, cost, and calls alongside it. Temporal IoU and
 threshold recall remain secondary exact-boundary diagnostics and an explicit
 future research limitation.
 
-## Provider decision for the next paired run
+## Provider decision for the next agent run
 
 | Lane | Selection | Evidence and limit |
 | --- | --- | --- |
@@ -35,7 +35,7 @@ future research limitation.
 | Action | Keep VideoPrism LvT | It classified all 50 videos in the frozen five-class Kinetics-mini gate correctly through VidXP's current 2 fps/16-frame records. This establishes basic recognition, not temporal localization. |
 | Sound localization | Use PE-A-Frame Small; keep FineLAP only as a benchmark control | On the identical 149-query AEGBench subset, PE-A improved frame AUROC from `.8401` to `.8614`, frame average precision from `.7484` to `.7616`, top-point accuracy from `.7315` to `.7651`, and default-threshold mean IoU from `.2924` to `.5226`. It was about 10.2 times slower, but still processed audio 3.35 times faster than playback on `mac-m2-01`. |
 
-This selects providers; it is not a full product score. The paid paired run
+This selects providers; it is not a full product score. The paid agent run
 must wait until the PE-A-Frame long-audio gate and the unchanged scene and
 speech lanes complete their gates. Replacing VideoPrism with another global
 clip-similarity model would not fix temporal localization. PE-AV has no interval
@@ -54,7 +54,7 @@ head, uses a 3.39 GB checkpoint, and its one-video direct-forward smoke took
   Kinetics classes shows that the model and VidXP preprocessing recognize broad
   actions; it does not show that long-video moments are ranked or trimmed well.
 - No measured 70–80% whole-product accuracy claim exists yet. The scene and
-  speech full gates, PE-A long-audio indexing, and the held-out multimodal pair
+  speech full gates, PE-A long-audio indexing, and the held-out multimodal run
   are still required. Until then, describe VidXP as evidence retrieval that can
   reduce how much media an agent inspects, with exact boundaries as a known
   limitation.

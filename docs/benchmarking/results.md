@@ -21,7 +21,7 @@ Detailed artifacts, hashes, commands, and evaluator behavior remain in the
 | Current component gate | Kinetics-mini | 50 ten-second videos over five action classes | VideoPrism top-1 **50/50** | Broad-action recognition works; long-video ranking and boundaries are not measured |
 | Current component gate | AEGBench frozen subset | 50 recordings; 149 annotated sound queries | PE-A/FineLAP top-point **76.5%/73.2%**; mean IoU **.523/.292** | Select PE-A-Frame Small for sound localization |
 | Current product smoke | PE-A bounded sections | One 75.81-second development video; two known sound queries | 1,896 unique frames; both target ten-second windows ranked first; **22.156 s** indexing after model load | Product decoder/runtime/storage/search integration works; long-audio quality is still unmeasured |
-| Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; one paired run under the superseded exact-interval prompt | VidXP-on IoU **0.7493**; VidXP-off IoU **0.8824** | Harness, skill/MCP isolation, deterministic scoring, and reporting check only; not a bounded-chunk product-gate, held-out pilot, or LongVALE result |
+| Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; latest two-condition run uses the bounded ten-second clip contract | Both conditions returned `0–10` seconds, bounded-chunk hit **1**, coverage **1**, and IoU **.600**; VidXP used **27.9%** fewer tokens | Harness, capability isolation, durable evidence attestation, and reporting check only; not a product gate, held-out pilot, or LongVALE result |
 | Global-only sound diagnostic | Codex MCP ablation | Same development task after filtering sound search to global clips | VidXP-on IoU **0.6000**; VidXP-off IoU **0.8811** | Same answer content with 16.5% fewer VidXP tokens and 11.3% lower latency, but the ten-second sound clip worsened the endpoint |
 
 The current-provider rows are deliberately tiny regression runs. Their
@@ -31,10 +31,28 @@ full-corpus or whole-product score has not been run.
 
 ## Codex MCP development smoke
 
-These saved runs predate the current practical-clip contract. That contract
-uses bounded-chunk hit as the primary quality measure and keeps IoU as a
-secondary boundary diagnostic. The old outputs are not silently re-scored; a
-new paired run is required to measure the current product gate.
+The latest saved run uses the practical-clip contract. It treats bounded-chunk
+hit as the primary quality measure and keeps IoU as a secondary boundary
+diagnostic. It predates the third model-only condition, so it remains a
+development smoke rather than a product-gate result.
+
+Evaluation `eval-2uz-2026-09-05T17:39:13` asked both conditions for an 8–12
+second practical clip around the `0–6` second rain, wind, and engine event.
+
+| Condition | Result | Time | Token usage | Tools | Provider estimate |
+| --- | --- | ---: | --- | --- | ---: |
+| VidXP-on | `0–10` s; bounded hit `1`; coverage `1`; IoU `.6000` | 78.660 s | 200,142 total; 198,506 input; 146,048 cached; 52,458 uncached; 1,636 output; 490 reasoning | one skill read; five MCP calls; no media-shell calls | $0.384394 |
+| VidXP-off | `0–10` s; bounded hit `1`; coverage `1`; IoU `.6000` | 90.582 s | 277,660 total; 275,133 input; 247,296 cached; 27,837 uncached; 2,527 output; 1,100 reasoning | seven shell calls, including six FFmpeg/ffprobe calls | $0.639381 |
+
+VidXP used 77,518 fewer total tokens, finished 11.922 seconds faster, and had a
+$0.254987 lower provider estimate. It used 24,621 more uncached input tokens,
+which is why cached and uncached counts must remain visible. The durable job
+ranked `0–10` seconds first with action, scene, and sound support. This confirms
+the current integration path on one development query; it does not estimate
+held-out accuracy. The report must not print a product-gate verdict for it.
+
+The two older runs below used the superseded exact-interval prompt. Their raw
+measurements are retained rather than silently rescored.
 
 Evaluation `eval-J6s-2026-09-01T19:30:07` asked the same Codex model to locate
 one 0–6 second rain, wind, and engine event with and without VidXP. Both runs

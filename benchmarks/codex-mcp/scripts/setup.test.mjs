@@ -72,6 +72,10 @@ test('builds and serializes the environment consumed by Promptfoo', () => {
   assert.match(serialized, /VIDXP_EVAL_INDEX_DIR="C:\/eval\/vidxp-index-schema-8"/);
   assert.match(serialized, /VIDXP_EVAL_VIDXP_ON_WORKSPACE="C:\/eval\/workspace\/vidxp-on"/);
   assert.match(serialized, /VIDXP_EVAL_VIDXP_OFF_WORKSPACE="C:\/eval\/workspace\/vidxp-off"/);
+  assert.match(
+    serialized,
+    /VIDXP_EVAL_MODEL_ONLY_WORKSPACE="C:\/eval\/workspace\/model-only"/,
+  );
   assert.match(serialized, /VIDXP_MCP_COMMAND="C:\/repo\/\.venv\/Scripts\/vidxp-mcp\.exe"/);
   assert.match(serialized, /PROMPTFOO_PYTHON="C:\/repo\/\.venv\/Scripts\/python\.exe"/);
   assert.match(serialized, /VIDXP_EVAL_MODEL="gpt-5\.6-sol"/);

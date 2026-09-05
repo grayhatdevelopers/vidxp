@@ -49,6 +49,11 @@ export function evaluationEnvironment({
     VIDXP_EVAL_WORKSPACE: paths.join(evaluationRoot, 'workspace'),
     VIDXP_EVAL_VIDXP_ON_WORKSPACE: paths.join(evaluationRoot, 'workspace', 'vidxp-on'),
     VIDXP_EVAL_VIDXP_OFF_WORKSPACE: paths.join(evaluationRoot, 'workspace', 'vidxp-off'),
+    VIDXP_EVAL_MODEL_ONLY_WORKSPACE: paths.join(
+      evaluationRoot,
+      'workspace',
+      'model-only',
+    ),
     VIDXP_EVAL_DATA_DIR: paths.join(evaluationRoot, 'vidxp-data'),
     VIDXP_EVAL_INDEX_DIR: paths.join(
       evaluationRoot,

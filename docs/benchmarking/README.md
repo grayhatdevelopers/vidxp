@@ -18,8 +18,8 @@ installation and product usage, start with the main
 | Action/video retrieval | VideoPrism retained by a small candidate gate; canonical runs pending | VideoPrism scored 50/50 on a five-class Kinetics-mini gate. MSR-VTT 1K-A and Charades-STA remain the required corpus-ranking and temporal tests. |
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
 | Environmental-sound retrieval | PE-A-Frame Small integrated; long-audio gate pending | An identical 149-query AEGBench comparison selected PE-A-Frame over FineLAP. The product now indexes its 40 ms frames through bounded overlapping sections and returns distinct ten-second evidence windows. |
-| LongVALE combined evaluation | Pilot not run | The prepared paired tasks can measure evidence quality, localization, tokens, time, cost, and tool use after maintainer approval |
-| Codex MCP ablation | Development smoke traced | One paired task verified the harness and exposed a fixed-window boundary error; the 54-run held-out pilot has not run |
+| LongVALE combined evaluation | Pilot not run | The prepared three-condition tasks can measure evidence quality, localization, tokens, time, cost, and tool use after maintainer approval |
+| Codex MCP ablation | Development smoke traced | The latest two-condition smoke returned the correct practical window with 27.9% fewer VidXP tokens. A third model-only condition is now defined; the 81-run held-out pilot has not run. |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
 
 Read [current results](results.md) for the scores, plain-language metric
@@ -63,10 +63,10 @@ queries and selected the latter for the product. That frozen subset is a
 provider decision, not a full dataset or long-audio product score.
 The earlier LongVALE-derived target-only result remains provenance only.
 
-The first Codex MCP development pair found the requested opening event but
-returned an interval two seconds too long. It also finished faster and used
-fewer total tokens than direct inspection, although its estimated cost was
-slightly higher because more input was uncached. Later local controls exposed a
+The latest Codex MCP development pair returned the same useful `0–10` second
+window in both conditions. VidXP finished 11.922 seconds faster, used 77,518
+fewer total tokens, and had a $0.254987 lower provider estimate. This is a
+bounded-clip harness smoke, not a product gate. Earlier local controls exposed a
 separate historical FineLAP integration error: global clip and dense activation
 records were cross-ranked. Separating those representations was correct, but
 the later selector produced no target-overlapping final top-three result on the
@@ -76,12 +76,11 @@ query has several valid occurrences but only one accepted interval. That result
 is an auxiliary diagnosis; it neither validates nor rejects the selector and it
 does not decide whether the collective agent comparison can run.
 
-After explicit maintainer approval, the next paid paired run should test whether
-VidXP gives the agent enough combined evidence to reach a similarly grounded
-answer with fewer tokens, less time, or fewer media-inspection calls. It must
-retain the atomic modality hits so the report shows whether scene, action,
-speech, sound, or their agreement produced the answer. IoU and boundary errors
-remain important diagnostics, not the entire product decision.
+After explicit maintainer approval, the next paid run should compare VidXP,
+the same local agent without VidXP, and the model without local tools. It must retain the atomic
+modality hits so the report shows whether scene, action, speech, sound, or their
+agreement produced the answer. IoU and boundary errors remain important
+diagnostics, not the entire product decision.
 See [current model direction](model_selection.md) and the
 [research adoption record](research_adoption.md).
 

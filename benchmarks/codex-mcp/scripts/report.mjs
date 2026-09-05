@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { spawnSync } from 'node:child_process';
 
+const CONDITION_ORDER = ['vidxp-on', 'vidxp-off', 'model-only'];
+
 function parseJson(value, fallback = {}) {
   if (typeof value !== 'string') {
     return fallback;
@@ -118,7 +120,13 @@ function signedSeconds(value) {
 }
 
 export function summarizeResults(results) {
-  return ['vidxp-on', 'vidxp-off'].map((condition) => {
+  const conditions = [
+    ...CONDITION_ORDER,
+    ...new Set(results.map((result) => result.condition).filter(
+      (condition) => !CONDITION_ORDER.includes(condition),
+    )),
+  ];
+  return conditions.map((condition) => {
     const selected = results.filter((result) => result.condition === condition);
     return {
       condition,
@@ -253,6 +261,10 @@ export function loadLatestEvaluation() {
       return {
         task: testCase.metadata?.task_id || testCase.vars?.id || String(row.test_idx),
         condition: testCase.vars?.condition || 'unknown',
+        evaluationMode: testCase.vars?.evaluation_mode
+          || testCase.metadata?.evaluation_mode
+          || 'unknown',
+        repetition: testCase.vars?.repetition || testCase.metadata?.repetition || 1,
         success: row.success === 1,
         reason: parseJson(row.grading_result).reason || row.error || '',
         expectedStart: testCase.vars?.expected_start,
@@ -303,6 +315,10 @@ export function loadLatestEvaluation() {
     return {
       ...evaluation,
       results,
+      mode: (() => {
+        const modes = new Set(results.map((result) => result.evaluationMode));
+        return modes.size === 1 ? [...modes][0] : 'unknown';
+      })(),
       wallTimeMs: firstSpan === null || lastSpan === null ? null : lastSpan - firstSpan,
     };
   } finally {
@@ -311,7 +327,9 @@ export function loadLatestEvaluation() {
 }
 
 export function summarizeRetrieval(result, trace) {
-  const moments = Array.isArray(trace?.moments) ? trace.moments : [];
+  const moments = (Array.isArray(trace?.moments) ? trace.moments : [])
+    .slice()
+    .sort((left, right) => (left?.rank ?? Infinity) - (right?.rank ?? Infinity));
   const topMoment = moments.find((moment) => moment?.rank === 1) || moments[0];
   const bestByModality = new Map();
   for (const moment of moments) {
@@ -336,6 +354,7 @@ export function summarizeRetrieval(result, trace) {
   }
   return {
     task: result.task,
+    condition: result.condition,
     expectedStart: result.expectedStart,
     expectedEnd: result.expectedEnd,
     topMoment,
@@ -347,8 +366,21 @@ export function summarizeRetrieval(result, trace) {
         result.expectedEnd,
       )
       : null,
+    momentIous: moments.map((moment) => intervalIou(
+      moment.start,
+      moment.end,
+      result.expectedStart,
+      result.expectedEnd,
+    )),
     bestByModality,
   };
+}
+
+function retrievalRecallAt(retrievals, depth, threshold) {
+  return mean(retrievals.map((retrieval) => {
+    const candidates = retrieval.momentIous.slice(0, depth).filter(Number.isFinite);
+    return candidates.length > 0 && Math.max(...candidates) >= threshold ? 1 : 0;
+  }));
 }
 
 function loadRetrievalTraces(results) {
@@ -380,8 +412,19 @@ export function renderReport(
   const created = Number.isFinite(evaluation.created_at)
     ? new Date(evaluation.created_at).toISOString()
     : String(evaluation.created_at);
+  const taskCount = new Set(evaluation.results.map((result) => result.task)).size;
+  const isSmoke = evaluation.mode === 'smoke'
+    || (evaluation.mode === 'unknown' && taskCount === 1);
+  const runType = isSmoke ? 'development smoke' : evaluation.mode;
   console.log(`\nEvaluation comparison: ${evaluation.id}`);
-  console.log(`Created: ${created} | wall time: ${seconds(evaluation.wallTimeMs)}`);
+  console.log(
+    `Run type: ${runType} | created: ${created} | wall time: ${seconds(evaluation.wallTimeMs)}`,
+  );
+  const passedAssertions = evaluation.results.filter((result) => result.success).length;
+  console.log(
+    `Evaluation assertions: ${passedAssertions === evaluation.results.length ? 'PASS' : 'FAIL'}`
+    + ` (${passedAssertions}/${evaluation.results.length} condition runs passed)`,
+  );
   console.log('Product outcome:');
   console.table(summaries.map((summary) => ({
     condition: summary.condition,
@@ -420,7 +463,7 @@ export function renderReport(
     'input uncached': integer(summary.uncachedPromptTokens),
     output: integer(summary.completionTokens),
     reasoning: integer(summary.reasoningTokens),
-    requests: integer(summary.requests),
+    'Codex runs': integer(summary.requests),
     'est. cost': money(summary.cost),
   })));
   console.log(
@@ -440,6 +483,7 @@ export function renderReport(
 
   const on = summaries.find((summary) => summary.condition === 'vidxp-on');
   const off = summaries.find((summary) => summary.condition === 'vidxp-off');
+  const modelOnly = summaries.find((summary) => summary.condition === 'model-only');
   if (on && off) {
     const latencyDelta = on.meanLatencyMs - off.meanLatencyMs;
     const latencyPercent = off.meanLatencyMs
@@ -481,12 +525,28 @@ export function renderReport(
       ? on.cost - off.cost
       : null;
     console.log(`  estimated cost: ${signedMoney(costDelta)}`);
-    const productGateAvailable = Number.isFinite(chunkHitDelta) && Number.isFinite(tokenDelta);
-    const productGatePassed = productGateAvailable && chunkHitDelta >= 0 && tokenDelta < 0;
-    console.log(
-      `  product gate: ${productGateAvailable ? (productGatePassed ? 'PASS' : 'FAIL') : 'n/a'}`
-      + ' (VidXP must match or improve bounded-chunk hit rate and use fewer total tokens)',
-    );
+    if (evaluation.mode === 'pilot') {
+      const productGateAvailable = Number.isFinite(chunkHitDelta) && Number.isFinite(tokenDelta);
+      const productGatePassed = productGateAvailable && chunkHitDelta >= 0 && tokenDelta < 0;
+      console.log(
+        `  product gate: ${productGateAvailable ? (productGatePassed ? 'PASS' : 'FAIL') : 'n/a'}`
+        + ' (VidXP must match or improve bounded-chunk hit rate and use fewer total tokens)',
+      );
+    } else {
+      console.log('  product gate: NOT SCORED (development smoke)');
+    }
+  }
+
+  if (modelOnly) {
+    console.log('Model-only supporting comparisons:');
+    console.table([off, on].filter(Boolean).map((reference) => ({
+      comparison: `model-only minus ${reference.condition}`,
+      'hit-rate Δ': signed(modelOnly.chunkHitRate - reference.chunkHitRate, 3),
+      'mean IoU Δ': signed(modelOnly.meanIou - reference.meanIou, 4),
+      'avg time Δ': signedSeconds((modelOnly.meanLatencyMs - reference.meanLatencyMs) / 1000),
+      'tokens Δ': integer(modelOnly.totalTokens - reference.totalTokens),
+      'cost Δ': signedMoney(modelOnly.cost - reference.cost),
+    })));
   }
 
   if (evaluation.results.length <= 20 || showAll) {
@@ -495,8 +555,10 @@ export function renderReport(
     if (tasks.size === 1) {
       console.log(`  task: ${evaluation.results[0].task}`);
     }
+    const repeated = evaluation.results.some((result) => result.repetition > 1);
     console.table(evaluation.results.map((result) => ({
       ...(tasks.size === 1 ? {} : { task: result.task }),
+      ...(repeated ? { repetition: result.repetition } : {}),
       condition: result.condition,
       pass: result.success ? 'yes' : 'NO',
       'chunk hit': Number.isFinite(result.chunkHit)
@@ -566,6 +628,7 @@ export function renderReport(
     console.log('VidXP retrieval boundaries:');
     console.table(retrievals.map((retrieval) => ({
       task: retrieval.task,
+      condition: retrieval.condition,
       expected: interval(retrieval.expectedStart, retrieval.expectedEnd),
       'top fused': interval(retrieval.topMoment?.start, retrieval.topMoment?.end),
       'fused IoU': fixed(retrieval.topMomentIou, 4),
@@ -574,6 +637,19 @@ export function renderReport(
         : 'n/a',
       hits: Array.isArray(retrieval.topMoment?.hits) ? retrieval.topMoment.hits.length : 0,
     })));
+    console.log('VidXP fused retrieval recall:');
+    console.table(CONDITION_ORDER.filter((condition) => (
+      retrievals.some((retrieval) => retrieval.condition === condition)
+    )).flatMap((condition) => {
+      const selected = retrievals.filter((retrieval) => retrieval.condition === condition);
+      return [0.3, 0.5, 0.7].map((threshold) => ({
+        condition,
+        threshold,
+        'R@1': fixed(retrievalRecallAt(selected, 1, threshold), 3),
+        'R@3': fixed(retrievalRecallAt(selected, 3, threshold), 3),
+        'R@5': fixed(retrievalRecallAt(selected, 5, threshold), 3),
+      }));
+    }));
     console.log('Hits in the top fused interval:');
     console.table(retrievals.flatMap((retrieval) => (
       (Array.isArray(retrieval.topMoment?.hits) ? retrieval.topMoment.hits : []).map((hit) => ({
@@ -602,7 +678,8 @@ export function renderReport(
     )));
     console.log(
       '  Saved jobs contain hits retained in final fused moments. The current result schema cannot '
-      + 'recover modality candidates outside candidate_top_k or the final fused output.',
+      + 'recover modality candidates outside candidate_top_k or the final fused output. Retrieval '
+      + 'R@K therefore covers only the fused moments saved by each agent-requested top_k.',
     );
   }
 }

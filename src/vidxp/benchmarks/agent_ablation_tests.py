@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ from vidxp.benchmarks.agent_ablation_score import (
 
 _SCORER = "file://../../src/vidxp/benchmarks/agent_ablation_score.py"
 _MODALITIES = frozenset({"scene", "action", "sound", "speech"})
+_RUN_MODES = frozenset({"all", "smoke", "pilot"})
 
 
 def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -30,56 +33,118 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
         raise ValueError("The agent-ablation manifest must not be empty.")
     providers = options.get("providers", {})
     conditions = (
-        ("vidxp-on", providers.get("vidxp_on", "codex-vidxp"), True),
-        ("vidxp-off", providers.get("vidxp_off", "codex-baseline"), False),
+        (
+            "vidxp-on",
+            providers.get("vidxp_on", "codex-vidxp"),
+            True,
+            False,
+            True,
+            "Use VidXP evidence; do not inspect the media with FFmpeg or ffprobe.",
+        ),
+        (
+            "vidxp-off",
+            providers.get("vidxp_off", "codex-baseline"),
+            False,
+            True,
+            True,
+            "VidXP is unavailable; use the local media and any available local tools.",
+        ),
+        (
+            "model-only",
+            providers.get("model_only", "codex-model-only"),
+            False,
+            False,
+            False,
+            "VidXP and local tools are unavailable; use only the model's native "
+            "capabilities.",
+        ),
     )
+
+    mode = os.environ.get("VIDXP_EVAL_MODE", "all")
+    if mode not in _RUN_MODES:
+        raise ValueError(f"Unknown agent-ablation run mode: {mode}")
+    selected_tasks = (
+        tasks[:1] if mode == "smoke" else tasks[1:] if mode == "pilot" else tasks
+    )
+    repetitions = 3 if mode == "pilot" else 1
+    run_id = os.environ.get("VIDXP_EVAL_RUN_ID", "validation")
 
     generated: list[dict[str, Any]] = []
     task_ids: set[str] = set()
-    for task in tasks:
+    for task in selected_tasks:
         _validate_task(task)
         if task["id"] in task_ids:
             raise ValueError(f"Duplicate agent-ablation task ID: {task['id']}")
         task_ids.add(task["id"])
-        for condition, provider, expected_vidxp in conditions:
-            variables = dict(task)
-            # Promptfoo expands array-valued vars into separate test cases.
-            # Keep modalities reportable without multiplying each task.
-            variables["modalities"] = json.dumps(
-                task["modalities"], separators=(",", ":")
-            )
-            variables["condition"] = condition
-            variables["expected_vidxp"] = expected_vidxp
-            variables["target_chunk_seconds"] = DEFAULT_TARGET_CHUNK_SECONDS
-            variables["min_chunk_seconds"] = DEFAULT_MIN_CHUNK_SECONDS
-            variables["max_chunk_seconds"] = DEFAULT_MAX_CHUNK_SECONDS
-            variables["min_event_coverage"] = DEFAULT_MIN_EVENT_COVERAGE
-            generated.append(
-                {
-                    "description": f"{task['id']} [{condition}]",
-                    "providers": [provider],
-                    "vars": variables,
-                    "metadata": {
-                        "dataset": task["dataset"],
-                        "task_id": task["id"],
-                        "condition": condition,
-                        "modalities": task["modalities"],
-                    },
-                    "assert": [
-                        {"type": "is-json"},
-                        {
-                            "type": "python",
-                            "value": f"{_SCORER}:score_temporal_grounding",
-                            "metric": "temporal_grounding",
+        for repetition in range(repetitions):
+            # Rotate serial execution order so three pilot repetitions do not
+            # always time the same condition first or last.
+            ordered_conditions = conditions[repetition:] + conditions[:repetition]
+            for (
+                condition,
+                provider,
+                expected_vidxp,
+                allow_media_shell,
+                allow_agent_tools,
+                evidence_access,
+            ) in ordered_conditions:
+                nonce_source = f"{run_id}\0{task['id']}\0{repetition}\0{condition}"
+                retrieval_nonce = hashlib.sha256(
+                    nonce_source.encode("utf-8")
+                ).hexdigest()[:32]
+                variables = dict(task)
+                # Promptfoo expands array-valued vars into separate test cases.
+                # Keep modalities reportable without multiplying each task.
+                variables["modalities"] = json.dumps(
+                    task["modalities"], separators=(",", ":")
+                )
+                variables["condition"] = condition
+                variables["expected_vidxp"] = expected_vidxp
+                variables["allow_media_shell"] = allow_media_shell
+                variables["allow_agent_tools"] = allow_agent_tools
+                variables["evidence_access"] = evidence_access
+                variables["evaluation_mode"] = mode
+                variables["repetition"] = repetition + 1
+                variables["retrieval_nonce"] = retrieval_nonce
+                variables["target_chunk_seconds"] = DEFAULT_TARGET_CHUNK_SECONDS
+                variables["min_chunk_seconds"] = DEFAULT_MIN_CHUNK_SECONDS
+                variables["max_chunk_seconds"] = DEFAULT_MAX_CHUNK_SECONDS
+                variables["min_event_coverage"] = DEFAULT_MIN_EVENT_COVERAGE
+                generated.append(
+                    {
+                        "description": (
+                            f"{task['id']} [{condition}]"
+                            + (
+                                f" repetition {repetition + 1}"
+                                if repetitions > 1
+                                else ""
+                            )
+                        ),
+                        "providers": [provider],
+                        "vars": variables,
+                        "metadata": {
+                            "dataset": task["dataset"],
+                            "task_id": task["id"],
+                            "condition": condition,
+                            "modalities": task["modalities"],
+                            "evaluation_mode": mode,
+                            "repetition": repetition + 1,
                         },
-                        {
-                            "type": "python",
-                            "value": f"{_SCORER}:score_ablation_boundary",
-                            "metric": "ablation_boundary",
-                        },
-                    ],
-                }
-            )
+                        "assert": [
+                            {"type": "is-json"},
+                            {
+                                "type": "python",
+                                "value": f"{_SCORER}:score_temporal_grounding",
+                                "metric": "temporal_grounding",
+                            },
+                            {
+                                "type": "python",
+                                "value": f"{_SCORER}:score_ablation_boundary",
+                                "metric": "ablation_boundary",
+                            },
+                        ],
+                    }
+                )
     return generated
 
 
