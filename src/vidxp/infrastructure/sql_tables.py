@@ -201,3 +201,63 @@ Index(
     upload_intents.c.expires_at,
     upload_intents.c.state,
 )
+people = Table(
+    "people",
+    metadata,
+    Column("person_id", String(32), primary_key=True),
+    Column("created_at", Text, nullable=False),
+    Column("payload", JSON, nullable=False),
+)
+
+person_aliases = Table(
+    "person_aliases",
+    metadata,
+    Column(
+        "person_id",
+        String(32),
+        ForeignKey("people.person_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("alias", String(255), primary_key=True),
+)
+
+person_references = Table(
+    "person_references",
+    metadata,
+    Column("reference_id", String(32), primary_key=True),
+    Column(
+        "person_id",
+        String(32),
+        ForeignKey("people.person_id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("storage_key", Text, nullable=False),
+    Column("sha256", String(64), nullable=False),
+    Column("byte_size", BigInteger, nullable=False),
+    Column("mime_type", String(127), nullable=False),
+    Column("created_at", Text, nullable=False),
+)
+Index("person_references_person_id", person_references.c.person_id)
+
+person_cluster_links = Table(
+    "person_cluster_links",
+    metadata,
+    Column(
+        "person_id",
+        String(32),
+        ForeignKey("people.person_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("cluster_id", String(512), primary_key=True),
+    Column("media_id", String(32), primary_key=True),
+    Column("generation_id", String(32), primary_key=True),
+    Column("created_at", Text, nullable=False),
+)
+Index(
+    "person_cluster_links_media_id",
+    person_cluster_links.c.media_id,
+)
+Index(
+    "person_cluster_links_cluster_id",
+    person_cluster_links.c.cluster_id,
+)
