@@ -54,6 +54,8 @@
       .notice { min-height: 20px; color: var(--muted); font-size: 13px; }
       .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
       @media (max-width: 560px) { .app { padding: 12px; } .header { align-items: stretch; flex-direction: column; } .header .button { align-self: flex-start; } }
+      .track { height: 6px; border-radius: 999px; background: var(--surface-2, rgba(127, 127, 127, 0.2)); overflow: hidden; }
+      .track > span { display: block; height: 100%; border-radius: inherit; background: var(--accent, #4f7cff); transition: width 160ms ease; }
     </style>
   </head>
   <body>
@@ -82,6 +84,7 @@
         const selected = new Set();
         let requestId = 1;
         let latestResult = null;
+        let progressTimer = null;
         let uploadPageUrl = null;
         let connected = false;
         let hostCapabilities = {};
@@ -403,12 +406,185 @@
           content.replaceChildren(wrapper);
         };
 
+        const persistMediaSelection = (mediaId) => {
+          if (connected) {
+            void request("ui/update-model-context", {
+              structuredContent: { selectedMediaId: mediaId },
+            }).catch(() => undefined);
+          }
+          if (window.openai?.setWidgetState) {
+            void Promise.resolve(window.openai.setWidgetState({ selectedMediaId: mediaId })).catch(() => undefined);
+          }
+        };
+
+        const humanBytes = (value) => {
+          const bytes = Number(value);
+          if (!Number.isFinite(bytes) || bytes <= 0) return "";
+          const units = ["B", "KB", "MB", "GB", "TB"];
+          let size = bytes;
+          let unit = 0;
+          while (size >= 1024 && unit < units.length - 1) {
+            size /= 1024;
+            unit += 1;
+          }
+          return `${size < 10 && unit > 0 ? size.toFixed(1) : Math.round(size)} ${units[unit]}`;
+        };
+
+        const humanDuration = (value) => {
+          const total = Number(value);
+          if (!Number.isFinite(total) || total <= 0) return "";
+          const seconds = Math.round(total);
+          const minutes = Math.floor(seconds / 60);
+          return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+        };
+
+        const renderLibrary = (data) => {
+          const items = asArray(data.items).map(asObject);
+          title.textContent = "Select a video";
+          lede.textContent = items.length
+            ? "Choose a registered video to work with, or load more from the library."
+            : "No registered videos yet. Upload one first.";
+          const wrapper = document.createDocumentFragment();
+
+          const overview = panel("Library");
+          const metrics = element("div", "metrics");
+          metrics.append(
+            metric(data.total ?? items.length, "registered"),
+            metric(items.length, "shown"),
+            metric(items.filter((item) => item.state === "ready").length, "ready")
+          );
+          overview.append(metrics);
+          wrapper.append(overview);
+
+          if (items.length) {
+            const listing = panel("Videos");
+            const list = element("div", "tile-list");
+            for (const item of items) {
+              if (typeof item.media_id !== "string") continue;
+              const tile = element("div", "tile");
+              const copy = element("div", "tile-copy");
+              copy.append(element("p", "tile-title", item.original_filename || item.media_id));
+              const facts = [item.state, humanDuration(item.duration_seconds), humanBytes(item.byte_size), item.container]
+                .filter((fact) => typeof fact === "string" && fact.length > 0);
+              copy.append(element("p", "tile-meta", facts.join(" · ")));
+              tile.append(copy);
+
+              const choose = element("button", "button primary", "Use this video");
+              choose.type = "button";
+              choose.addEventListener("click", async () => {
+                choose.disabled = true;
+                notice.textContent = "";
+                try {
+                  persistMediaSelection(item.media_id);
+                  const next = await callTool("get_media", { media_id: item.media_id });
+                  const detail = next.structuredContent;
+                  lede.textContent = `Selected ${detail.original_filename || item.original_filename || item.media_id}.`;
+                } catch (_error) {
+                  notice.textContent = "Could not select that video.";
+                } finally {
+                  choose.disabled = false;
+                }
+              });
+              tile.append(choose);
+              list.append(tile);
+            }
+            listing.append(list);
+            wrapper.append(listing);
+          }
+
+          if (typeof data.next_cursor === "string" && data.next_cursor) {
+            const actions = element("div", "toolbar");
+            const more = element("button", "button", "Load more");
+            more.type = "button";
+            more.addEventListener("click", async () => {
+              more.disabled = true;
+              notice.textContent = "";
+              try {
+                render(await callTool("list_media", { cursor: data.next_cursor }));
+              } catch (_error) {
+                notice.textContent = "Could not load more videos.";
+                more.disabled = false;
+              }
+            });
+            actions.append(more);
+            wrapper.append(actions);
+          }
+
+          content.replaceChildren(wrapper);
+        };
+
+        const renderProgress = (data) => {
+          if (progressTimer !== null) {
+            window.clearTimeout(progressTimer);
+            progressTimer = null;
+          }
+          const progress = asObject(data.progress);
+          const state = typeof data.state === "string" ? data.state : "unknown";
+          const kind = typeof data.kind === "string" ? data.kind : "job";
+          title.textContent = kind === "index" ? "Indexing progress" : `VidXP ${kind}`;
+          lede.textContent = progress.message || `Job is ${state}.`;
+          const wrapper = document.createDocumentFragment();
+
+          const overview = panel("Status");
+          const metrics = element("div", "metrics");
+          metrics.append(metric(state, "state"), metric(progress.stage || "—", "stage"));
+          const current = Number(progress.current);
+          const total = Number(progress.total);
+          const measured = Number.isFinite(current) && Number.isFinite(total) && total > 0;
+          if (measured) metrics.append(metric(`${current}/${total}`, "steps"));
+          overview.append(metrics);
+          if (measured) {
+            const track = element("div", "track");
+            const fill = element("span");
+            fill.style.width = `${Math.min(100, Math.round((current / total) * 100))}%`;
+            track.append(fill);
+            overview.append(track);
+          }
+          wrapper.append(overview);
+
+          const error = asObject(data.error);
+          if (error.message) {
+            const failure = panel("Error");
+            failure.append(element("p", "error", error.message));
+            wrapper.append(failure);
+          }
+
+          const jobId = typeof data.job_id === "string" ? data.job_id : "";
+          if (jobId) {
+            const poll = async () => {
+              try {
+                render(await callTool("get_job_status", { job_id: jobId }));
+              } catch (_error) {
+                notice.textContent = "Could not refresh job status.";
+              }
+            };
+            const actions = element("div", "toolbar");
+            const refresh = element("button", "button", "Refresh status");
+            refresh.type = "button";
+            refresh.addEventListener("click", async () => {
+              refresh.disabled = true;
+              notice.textContent = "";
+              await poll();
+            });
+            actions.append(refresh);
+            wrapper.append(actions);
+            if (data.terminal === false) {
+              const delay = Number(data.poll_after_seconds);
+              progressTimer = window.setTimeout(poll, (Number.isFinite(delay) && delay > 0 ? delay : 1) * 1000);
+            }
+          }
+
+          content.replaceChildren(wrapper);
+        };
+
         const render = (result) => {
           latestResult = normalizeResult(result);
           const data = latestResult.structuredContent;
           notice.textContent = latestResult.isError ? "VidXP returned an error." : "";
           if (data.view === "upload" || data.upload_session_url || data.aggregate_state) renderUpload(data);
           else if (data.view === "evidence" || data.board) renderEvidence(data, latestResult);
+          else if (data.view === "library" || asArray(data.items).some((item) => typeof asObject(item).media_id === "string")) renderLibrary(data);
+          else if (data.view === "job" || typeof data.job_id === "string") renderProgress(data);
           else {
             title.textContent = "VidXP";
             lede.textContent = "This tool result does not include an interactive view.";
