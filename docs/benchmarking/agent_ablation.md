@@ -292,7 +292,11 @@ It uses the same prompt, output schema, scorer, prepared index, and evidence
 attestation as VidXP-on, while sending model requests only to the loopback
 runtime. Promptfoo runs the nine held-out tasks three times by default, stores
 the detailed run in its normal local database, and includes it in `run results`,
-`run view`, and `run export`. First run
+`run view`, and `run export`. Before Promptfoo creates an evaluation, preflight
+builds the exact structured-output agent, discovers its five allowed MCP tools,
+and closes the MCP session. That wiring check uses Pydantic AI's test model, so
+it makes neither a local-model request nor an MCP tool call. The separate MCP
+preflight verifies the prepared models and five indexed videos. First run
 `uv run --no-sync vidxp local-answers prepare --yes`. The benchmark starts the
 saved local runtime when needed and stops only the process it started. It does
 not download or substitute a model. The first provider call includes a managed

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import atexit
 import asyncio
-import json
 import os
 import sys
 import time
@@ -17,6 +16,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.ollama import OllamaModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.ollama import OllamaProvider
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
@@ -70,6 +70,11 @@ class LocalAgentAnswer(BaseModel):
     answer: str
     source_job_id: str | None
     candidates: list[Candidate] = Field(max_length=DEFAULT_MAX_CANDIDATES)
+
+
+# Promptfoo imports providers without registering the module in sys.modules.
+# Resolve postponed field annotations while this module namespace is available.
+LocalAgentAnswer.model_rebuild(_types_namespace=globals())
 
 
 class StdioMCPToolset(AbstractToolset[None]):
@@ -483,8 +488,45 @@ def call_api(
         return {"error": str(error)}
 
 
+async def _check_agent_wiring(*, base_url: str, model_name: str) -> int:
+    """Exercise agent schemas and MCP discovery without model inference or tool calls."""
+
+    toolset = StdioMCPToolset(_mcp_parameters())
+    await toolset.open()
+    try:
+        agent = _build_agent(
+            base_url=base_url,
+            model_name=model_name,
+            toolset=toolset,
+            max_output_tokens=1,
+            model_timeout_seconds=1,
+        )
+        model = TestModel(
+            call_tools=[],
+            custom_output_args={
+                "video_id": "preflight",
+                "answer": "preflight",
+                "source_job_id": None,
+                "candidates": [],
+            },
+        )
+        result = await agent.run("Provider wiring preflight.", model=model)
+        parameters = model.last_model_request_parameters
+        tools = {tool.name for tool in parameters.function_tools} if parameters else set()
+        if tools != ALLOWED_TOOLS:
+            raise RuntimeError(
+                "The local-SLM agent exposed an unexpected MCP tool set: "
+                f"{', '.join(sorted(tools)) or 'none'}."
+            )
+        if result.output.video_id != "preflight" or toolset.calls:
+            raise RuntimeError("The local-SLM no-inference wiring check was not isolated.")
+        return len(tools)
+    finally:
+        await toolset.close()
+
+
 def check_configuration() -> dict[str, Any]:
-    """Validate the prepared local runtime without starting inference."""
+    """Validate the prepared runtime and agent wiring without model inference."""
 
     _load_environment()
     configured, base_url, model_name = _selected_model()
@@ -500,20 +542,16 @@ def check_configuration() -> dict[str, Any]:
         "VIDXP_EVAL_MACHINE_ID",
     ):
         _required_environment(name)
-    # Construct the exact agent type without starting the runtime or inference.
-    # This catches installed Pydantic-AI API incompatibilities during preflight.
-    _build_agent(
-        base_url=base_url,
-        model_name=model_name,
-        toolset=StdioMCPToolset(_mcp_parameters()),
-        max_output_tokens=1,
-        model_timeout_seconds=1,
+    LocalAgentAnswer.model_json_schema()
+    tool_count = asyncio.run(
+        _check_agent_wiring(base_url=base_url, model_name=model_name)
     )
     return {
         "model": model_name,
         "base_url": base_url,
         "runtime": str(configured.executable),
         "model_directory": str(configured.model_directory),
+        "mcp_tools": tool_count,
     }
 
 
@@ -521,6 +559,11 @@ if __name__ == "__main__":
     if sys.argv[1:] != ["--check"]:
         raise SystemExit("Usage: local_slm_provider.py --check")
     try:
-        print(json.dumps(check_configuration(), sort_keys=True))
+        checked = check_configuration()
+        print(
+            "Local SLM provider ready without inference: "
+            f"{checked['model']}, {checked['mcp_tools']} MCP tools, and structured "
+            "output verified."
+        )
     except (RuntimeError, ValueError) as error:
         raise SystemExit(str(error)) from error
