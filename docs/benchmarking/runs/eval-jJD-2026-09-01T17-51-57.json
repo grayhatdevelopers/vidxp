@@ -965,10 +965,11 @@
     "nodeVersion": "v22.23.2",
     "platform": "darwin",
     "arch": "arm64",
-    "exportedAt": "2026-09-05T23:33:16.542Z",
+    "exportedAt": "2026-09-05T23:57:00.798Z",
     "evaluationCreatedAt": "2026-09-01T17:51:57.430Z",
     "vidxpExport": {
-      "version": 1,
+      "version": 2,
+      "machineId": "mac-m2-01",
       "sanitized": true,
       "omitted": [
         "Codex raw response bodies",

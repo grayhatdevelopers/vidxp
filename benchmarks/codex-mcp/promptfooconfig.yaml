@@ -144,6 +144,7 @@ tests:
   - path: file://../../src/vidxp/benchmarks/agent_ablation_tests.py:generate_tests
     config:
       manifest: tasks/longvale-part9-pilot.json
+      machine_id: "{{ env.VIDXP_EVAL_MACHINE_ID }}"
       providers:
         vidxp_on: codex-vidxp
         vidxp_off: codex-baseline

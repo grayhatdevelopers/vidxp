@@ -14,6 +14,11 @@ from vidxp.benchmarks.agent_ablation_score import (
 from vidxp.benchmarks.agent_ablation_tests import generate_tests
 
 
+@pytest.fixture(autouse=True)
+def _repository_machine_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VIDXP_EVAL_MACHINE_ID", "test-machine-01")
+
+
 def test_interval_iou_matches_temporal_overlap() -> None:
     assert interval_iou(10, 20, 15, 25) == pytest.approx(1 / 3)
     assert interval_iou(0, 5, 6, 10) == 0
@@ -411,6 +416,9 @@ def test_generator_pairs_each_manifest_task_across_conditions(
         ["sound"],
         ["sound"],
     ]
+    assert {test["metadata"]["machine_id"] for test in tests} == {
+        "test-machine-01"
+    }
 
 
 def test_committed_manifest_expands_to_ten_matched_condition_sets(

@@ -16,6 +16,8 @@ import {
   evaluationEnvironment,
   indexContainsPilot,
   libsqlBindingName,
+  requireMachineId,
+  savedMachineId,
   serializeEnvironment,
   versionAtLeast,
 } from './setup-lib.mjs';
@@ -74,12 +76,16 @@ test('builds and serializes the environment consumed by Promptfoo', () => {
     repositoryRoot: 'C:/repo',
     evaluationRoot: 'C:/eval',
     indexSchemaVersion: 8,
-    environment: { VIDXP_MODEL_CACHE: 'C:/shared-models' },
+    environment: {
+      VIDXP_EVAL_MACHINE_ID: 'win-test-01',
+      VIDXP_MODEL_CACHE: 'C:/shared-models',
+    },
     platform: 'win32',
   });
   const serialized = serializeEnvironment(environment);
 
   assert.match(serialized, /VIDXP_EVAL_WORKSPACE="C:\/eval\/workspace"/);
+  assert.match(serialized, /VIDXP_EVAL_MACHINE_ID="win-test-01"/);
   assert.match(serialized, /VIDXP_EVAL_INDEX_DIR="C:\/eval\/vidxp-index-schema-8"/);
   assert.match(serialized, /VIDXP_EVAL_VIDXP_ON_WORKSPACE="C:\/eval\/workspace\/vidxp-on"/);
   assert.match(serialized, /VIDXP_EVAL_VIDXP_OFF_WORKSPACE="C:\/eval\/workspace\/vidxp-off"/);
@@ -109,11 +115,22 @@ test('always records the model cache used by the isolated runtime', () => {
     repositoryRoot: '/repo',
     evaluationRoot: '/eval',
     indexSchemaVersion: 8,
-    environment: {},
+    environment: { VIDXP_EVAL_MACHINE_ID: 'linux-test-01' },
     platform: 'linux',
   });
 
   assert.equal(environment.VIDXP_MODEL_CACHE, '/eval/vidxp-data/models');
+});
+
+test('requires and reloads a stable repository machine ID', () => {
+  assert.equal(requireMachineId('mac-m2-01'), 'mac-m2-01');
+  assert.throws(() => requireMachineId('MacBook Pro'), /machine ID/);
+
+  const root = mkdtempSync(join(tmpdir(), 'vidxp-eval-machine-'));
+  const envPath = join(root, '.env');
+  writeFileSync(envPath, 'VIDXP_EVAL_MACHINE_ID="mac-m2-01"\n');
+  assert.equal(savedMachineId(envPath), 'mac-m2-01');
+  rmSync(root, { recursive: true, force: true });
 });
 
 test('resets clean-user state before every condition run', () => {

@@ -50,6 +50,12 @@ requireDirectory('VIDXP_MODEL_CACHE');
 const uvCacheDirectory = requireDirectory('VIDXP_EVAL_UV_CACHE_DIR');
 requireFile('VIDXP_MCP_COMMAND');
 const promptfooPython = requireFile('PROMPTFOO_PYTHON');
+const machineId = process.env.VIDXP_EVAL_MACHINE_ID;
+if (!machineId || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(machineId)) {
+  throw new Error(
+    'VIDXP_EVAL_MACHINE_ID must be a stable repository machine ID; rerun setup with --machine-id.',
+  );
+}
 
 if (!existsSync(join(codexHome, 'auth.json'))) {
   throw new Error('The isolated authentication home has no auth.json; run setup first.');
@@ -230,5 +236,5 @@ if (check.status !== 0) {
 
 process.stdout.write(check.stdout);
 process.stdout.write(
-  `Ready: ${tasks.length} tasks across VidXP, direct-local, and clean-user conditions; no Codex or model inference calls made.\n`,
+  `Ready on ${machineId}: ${tasks.length} tasks across VidXP, direct-local, and clean-user conditions; no Codex or model inference calls made.\n`,
 );

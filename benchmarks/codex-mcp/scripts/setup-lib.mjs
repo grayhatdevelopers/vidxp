@@ -1,7 +1,30 @@
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { posix, win32 } from 'node:path';
 
 export const REQUIRED_NODE_VERSION = [22, 22, 0];
+const MACHINE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+export function requireMachineId(value) {
+  if (typeof value !== 'string' || !MACHINE_ID_PATTERN.test(value)) {
+    throw new Error(
+      'A repository machine ID such as mac-m2-01 is required; '
+      + 'pass it to setup with --machine-id.',
+    );
+  }
+  return value;
+}
+
+export function savedMachineId(envPath) {
+  try {
+    const match = readFileSync(envPath, 'utf8').match(
+      /^VIDXP_EVAL_MACHINE_ID=(?:"([^"]+)"|'([^']+)'|([^\r\n]+))$/m,
+    );
+    return match ? match[1] || match[2] || match[3] : null;
+  } catch {
+    return null;
+  }
+}
 
 export function versionAtLeast(actual, required = REQUIRED_NODE_VERSION) {
   const parts = actual.split('.').map(Number);
@@ -50,7 +73,9 @@ export function evaluationEnvironment({
       environment.SystemRoot || 'C:\\Windows',
     ].join(';')
     : '/usr/bin:/bin:/usr/sbin:/sbin';
+  const machineId = requireMachineId(environment.VIDXP_EVAL_MACHINE_ID);
   return {
+    VIDXP_EVAL_MACHINE_ID: machineId,
     VIDXP_EVAL_CODEX_HOME: paths.join(evaluationRoot, 'codex-home'),
     VIDXP_EVAL_VIDXP_ON_CODEX_HOME: paths.join(evaluationRoot, 'codex-home', 'vidxp-on'),
     VIDXP_EVAL_VIDXP_OFF_CODEX_HOME: paths.join(evaluationRoot, 'codex-home', 'vidxp-off'),

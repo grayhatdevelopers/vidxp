@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,11 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
         tasks[:1] if mode == "smoke" else tasks[1:] if mode == "pilot" else tasks
     )
     repetitions = _repetitions(mode)
+    machine_id = str(
+        options.get("machine_id") or os.environ.get("VIDXP_EVAL_MACHINE_ID", "")
+    )
+    if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", machine_id) is None:
+        raise ValueError("A stable VIDXP_EVAL_MACHINE_ID is required.")
 
     generated: list[dict[str, Any]] = []
     task_ids: set[str] = set()
@@ -111,6 +117,7 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
                         "providers": [provider],
                         "vars": variables,
                         "metadata": {
+                            "machine_id": machine_id,
                             "dataset": task["dataset"],
                             "task_id": task["id"],
                             "condition": condition,

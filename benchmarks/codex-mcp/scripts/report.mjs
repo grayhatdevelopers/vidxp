@@ -350,6 +350,7 @@ export function loadLatestEvaluation() {
       );
       return {
         task: testCase.metadata?.task_id || testCase.vars?.id || String(row.test_idx),
+        machineId: testCase.metadata?.machine_id || process.env.VIDXP_EVAL_MACHINE_ID,
         condition: testCase.vars?.condition || 'unknown',
         expectedVidxp: testCase.vars?.expected_vidxp === true,
         evaluationMode: testCase.vars?.evaluation_mode
@@ -411,6 +412,10 @@ export function loadLatestEvaluation() {
         return modes.size === 1 ? [...modes][0] : 'unknown';
       })(),
       wallTimeMs: firstSpan === null || lastSpan === null ? null : lastSpan - firstSpan,
+      machineId: (() => {
+        const ids = new Set(results.map((result) => result.machineId).filter(Boolean));
+        return ids.size === 1 ? [...ids][0] : 'unknown';
+      })(),
     };
   } finally {
     database.close();
@@ -510,7 +515,8 @@ export function renderReport(
   const runType = isSmoke ? 'development smoke' : evaluation.mode;
   console.log(`\nEvaluation comparison: ${evaluation.id}`);
   console.log(
-    `Run type: ${runType} | created: ${created} | wall time: ${seconds(evaluation.wallTimeMs)}`,
+    `Run type: ${runType} | machine: ${evaluation.machineId || 'unknown'} `
+    + `| created: ${created} | wall time: ${seconds(evaluation.wallTimeMs)}`,
   );
   const passedAssertions = evaluation.results.filter((result) => result.success).length;
   console.log(

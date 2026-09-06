@@ -30,7 +30,7 @@ definitions, honest comparisons, and the next benchmark decision.
 | If you need to… | Read |
 |---|---|
 | Understand how VidXP performed | [Current results](results.md) |
-| Compare consolidated metrics, machine profiles, and retained run artifacts | [Metric database](metric_database.md) |
+| Start a paper-facing audit of benchmark premise, constraints, consolidated metrics, machine profiles, and retained artifacts | [Metric database](metric_database.md) |
 | See the required per-modality gates and exact commands | [Individual modality gates](modality_gates.md) |
 | Reproduce DiDeMo or HiREST | [Adapter validation ledger](adapter_validation.md) |
 | Understand the benchmark-ready Python structure | [Core contract](core_contract.md) |

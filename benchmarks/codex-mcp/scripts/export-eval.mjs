@@ -66,8 +66,15 @@ function sanitizeValue(value, replacements, userName) {
 
 export function sanitizePromptfooExport(
   document,
-  { repoRoot = repositoryRoot, userHome = homedir() } = {},
+  {
+    repoRoot = repositoryRoot,
+    userHome = homedir(),
+    machineId = process.env.VIDXP_EVAL_MACHINE_ID,
+  } = {},
 ) {
+  if (!machineId) {
+    throw new Error('VIDXP_EVAL_MACHINE_ID is required to export a run.');
+  }
   const copy = structuredClone(document);
   for (const result of copy?.results?.results || []) {
     if (result?.response && typeof result.response === 'object') {
@@ -82,7 +89,8 @@ export function sanitizePromptfooExport(
   sanitized.metadata = {
     ...sanitized.metadata,
     vidxpExport: {
-      version: 1,
+      version: 2,
+      machineId,
       sanitized: true,
       omitted: ['Codex raw response bodies', 'session IDs', 'secret values'],
       pathPlaceholders: ['<REPO>', '<HOME>', '<USER>'],

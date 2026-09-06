@@ -12,11 +12,35 @@ reported scores and [research adoption](research_adoption.md) for the smaller
 list of ideas accepted into VidXP. Scores below use proportions from `0` to `1`
 unless a percent sign is shown.
 
+## Research question and protocol
+
+The whole-system benchmark asks whether giving the same Codex agent VidXP's
+already-indexed video evidence preserves useful retrieval while reducing agent
+tokens and, ideally, elapsed time. It does not ask VidXP to trim a two-second
+event into a two-second deliverable.
+
+| Item | Fixed protocol |
+| --- | --- |
+| Evidence unit | Aim for one playable 10-second clip; accept 8–12 seconds. A bounded-chunk hit requires at least half of the annotated event that can fit in 10 seconds. |
+| Data | Ten selected, LongVALE-derived tasks over five videos, covering scene, action, sound, speech, and joint evidence. The development smoke uses the first task; the held-out pilot uses the remaining nine. This is not an official LongVALE score. |
+| Timed starting state | All three conditions receive the same media bytes. VidXP-on starts with all five videos already indexed for scene, action, sound, and speech. Dataset download, model preparation, media import, and indexing are outside agent time. |
+| Comparison | Same Codex model, reasoning effort, neutral user prompt, output schema, and fresh state. VidXP-on has the shipped skill and MCP; direct-local has ordinary local tools but no VidXP; clean-user starts with OS tools plus terminal and network. |
+| Decision | VidXP must match or improve direct-local bounded-chunk hit rate and use fewer total agent tokens. Latency, Promptfoo cost, calls, IoU, R@K, and boundary errors remain visible rather than being folded into the pass/fail label. |
+| Repetition | The pilot defaults to three repetitions with rotated serial condition order. Per-run values, means, totals, and failures are retained. |
+| Machine identity | Every new test row and repository export carries a stable repository ID such as `mac-m2-01`. The table below defines that ID; no hardware serial number or host-generated UUID is stored. |
+| Offline cost | Indexing is measured separately on fresh isolated indexes. The agent benchmark must not hide that cost or add it to only the VidXP-on response time. |
+
+The task design comes from
+[LongVALE](https://openaccess.thecvf.com/content/CVPR2025/papers/Geng_LongVALE_Vision-Audio-Language-Event_Benchmark_Towards_Time-Aware_Omni-Modal_Perception_of_Long_Videos_CVPR_2025_paper.pdf);
+the practical ten-second serving unit and product gate are VidXP evaluation
+choices. See [agent ablation](agent_ablation.md) for the executable method and
+[research adoption](research_adoption.md) for paper-derived product decisions.
+
 ## Machines used
 
 | ID | Hardware | Software and execution | Applies to |
 | --- | --- | --- | --- |
-| `mac-m2-01` | MacBook Pro `Mac14,7`; Apple M2; 8 CPU cores (4 performance, 4 efficiency); 10 GPU cores; 8 GB memory; ARM64 | macOS 15.6.1 (`24G90`); Python 3.14.7; PyTorch 2.13.0; Transformers 5.14.1; ChromaDB 1.5.9; NumPy 2.5.1; FFmpeg 8.1.1; Node.js 22.23.2; Promptfoo 0.122.2. VidXP selected CPU; PyTorch reported neither MPS nor CUDA available. | September 2026 agent and component rows. The profile was captured on September 4; the older artifacts do not embed their own machine snapshot, so this assignment is retrospective. |
+| `mac-m2-01` | MacBook Pro `Mac14,7`; Apple M2; 8 CPU cores (4 performance, 4 efficiency); 10 GPU cores; 8 GB memory; ARM64 | macOS 15.6.1 (`24G90`); Python 3.14.7; PyTorch 2.13.0; Transformers 5.14.1; ChromaDB 1.5.9; NumPy 2.5.1; FFmpeg 8.1.1; Node.js 22.23.2; Promptfoo 0.122.2. VidXP selected CPU; PyTorch reported neither MPS nor CUDA available. | September 2026 agent and component rows. Selected exports carry this stable ID; the hardware/software definition remains centralized here. The ID on older exports is a retrospective assignment, not a machine snapshot captured by those runs. |
 | `win-hp-01` | HP ENVY Laptop 16-h0xxx; Intel Core i7-12700H; 14 cores, 20 logical processors; 15.72 GiB memory; NVIDIA RTX 3060 Laptop GPU with 4 GiB VRAM | Windows 11; Python 3.14.0; PyTorch 2.13.0+cpu; Transformers 5.14.1; Sentence Transformers 5.6.1; ChromaDB 1.5.9. The GPU was present but unused. | July 2026 official-adapter rows. Current-provider manifests contain this snapshot; surviving legacy artifacts do not contain every package or immutable model revision. |
 
 ## System evaluated
@@ -60,7 +84,9 @@ These paired runs use one [LongVALE](https://openaccess.thecvf.com/content/CVPR2
 development task with reference interval `0–6` seconds. They compare the same
 Codex model with VidXP MCP evidence, direct local inspection, and a clean-user
 bootstrap condition. They prove the harness and expose product behavior; one
-task is not a LongVALE score or a held-out quality estimate.
+task is not a LongVALE score or a held-out quality estimate. VidXP-on begins
+with the five pilot videos already indexed in all four modalities; the times in
+this table exclude download, preparation, import, and indexing.
 
 | Evaluation | Machine | VidXP | Direct local | Clean user | Valid conclusion |
 | --- | --- | --- | --- | --- | --- |
@@ -91,6 +117,22 @@ report preserves them unchanged. Use them only to compare conditions using the
 same pinned Promptfoo version and model configuration; they are not measured
 subscription charges or invoices. Reasoning tokens are already included in
 output tokens.
+
+## Offline indexing measurements
+
+Index construction is a separate systems benchmark because users pay it before
+search while the agent comparison measures work after the index exists.
+
+| Protocol | Measurement | Current status |
+| --- | --- | --- |
+| Five pilot videos totalling 914.789 seconds; scene, action, sound, and speech; prepared pinned model cache; model downloads disabled; fresh data and index directories for each repetition; sequential CLI path matching benchmark setup | Per-video import, four-modality indexing, combined time, indexing real-time factor, total wall time, and final index bytes. Report every repetition plus mean, median, sample standard deviation, minimum, and maximum. | Not run. Use `./benchmarks/codex-mcp/run indexing` for three repetitions. The command does not touch the prepared agent index and writes a path-free JSON artifact under `docs/benchmarking/runs/` for review and later linkage here. |
+
+The first repetition may benefit less from operating-system file cache than the
+later ones, so raw repetitions stay visible; averages do not erase that order
+effect. This measures the existing product CLI path, including process and
+model load inside each per-video index command. It excludes dataset download,
+model preparation, agent inference, and search. This is resource accounting,
+not a paper-derived ranking method or an accuracy score.
 
 ## Component and ranking measurements
 
@@ -165,8 +207,9 @@ usage, traces, and tool items needed to audit selected agent runs.
   does not validate hour-long or fused retrieval.
 - Run the 81-run, three-condition Codex pilot only after explicit maintainer
   approval.
+- Run the isolated three-repetition indexing benchmark and link its reviewed
+  JSON artifact from the offline-indexing table above.
 - Produce full-corpus DiDeMo and HiREST results for the current providers.
-- Add Git revision, machine snapshot, model revisions, task-manifest hash, wall
-  time, peak memory, model-call counts, agent/API usage, and raw-prediction
-  identity to future generated run manifests. Do not infer missing historical
-  fields.
+- Add model revisions, peak memory, model-call counts, and raw-prediction
+  identity to future generated run manifests. New agent exports now carry the
+  stable machine ID; do not infer fields missing from historical execution.

@@ -20,6 +20,8 @@ import {
   evaluationEnvironment,
   indexContainsPilot,
   libsqlBindingName,
+  requireMachineId,
+  savedMachineId,
   serializeEnvironment,
   versionAtLeast,
 } from './setup-lib.mjs';
@@ -119,13 +121,28 @@ async function main() {
 
   run('uv', ['--version'], { capture: true });
 
+  const argumentsList = process.argv.slice(2);
+  let requestedMachineId = null;
+  if (argumentsList.length > 0) {
+    if (argumentsList.length !== 2 || argumentsList[0] !== '--machine-id') {
+      throw new Error('Usage: setup --machine-id <repository-machine-id>');
+    }
+    requestedMachineId = argumentsList[1];
+  }
+
   const evaluationRoot = defaultEvaluationRoot(process.env);
   const uvCacheDirectory = join(evaluationRoot, 'uv-cache');
   mkdirSync(uvCacheDirectory, { recursive: true });
   const uvEnvironment = { ...process.env, UV_CACHE_DIR: uvCacheDirectory };
   const desktopModelCache = installedDesktopModelCache();
+  const machineId = requireMachineId(
+    requestedMachineId
+      || process.env.VIDXP_EVAL_MACHINE_ID
+      || savedMachineId(join(benchmarkRoot, '.env')),
+  );
   const setupSourceEnvironment = {
     ...process.env,
+    VIDXP_EVAL_MACHINE_ID: machineId,
     ...(process.env.VIDXP_MODEL_CACHE || !desktopModelCache
       ? {}
       : { VIDXP_MODEL_CACHE: desktopModelCache }),

@@ -63,6 +63,11 @@ enables it so the agent can bootstrap tools. Every lane disables persistent
 threads, result caching, provider retries, parallel execution, and Codex
 subagents.
 
+The timed comparison starts after setup: all five videos are already indexed
+for scene, action, sound, and speech in VidXP. Download, model preparation,
+media import, and indexing are excluded from all three agent times and measured
+separately below.
+
 ## Why Promptfoo owns orchestration
 
 [Promptfoo](https://www.promptfoo.dev/docs/providers/openai-codex-sdk/) runs the
@@ -141,7 +146,7 @@ when needed.
 From the repository root, run the automated setup:
 
 ```bash
-./benchmarks/codex-mcp/run setup
+./benchmarks/codex-mcp/run setup --machine-id mac-m2-01
 ```
 
 The command installs the pinned Python and Node dependencies, creates isolated
@@ -153,14 +158,18 @@ archive, links the same five pilot videos into all three condition workspaces,
 prepares the four required capabilities, indexes the media, saves the evaluation
 environment in the ignored `benchmarks/codex-mcp/.env` file, and runs preflight.
 Accept the LongVALE dataset terms before running it. Do not copy or commit the
-generated `auth.json`.
+generated `auth.json`. `--machine-id` selects the stable ID defined in the
+[metric database](metric_database.md#machines-used); it is stored in `.env`, so
+rerunning setup does not require an export or another flag. Add a new machine
+to that table before assigning it a new ID, and replace `mac-m2-01` in the
+example when running elsewhere.
 
 By default, mutable state goes under the operating system's user data
 directory. Set only `VIDXP_EVAL_ROOT` when it needs to live elsewhere:
 
 ```powershell
 $env:VIDXP_EVAL_ROOT = 'D:\vidxp-eval'
-npm --prefix benchmarks/codex-mcp run setup
+npm --prefix benchmarks/codex-mcp run setup -- --machine-id win-hp-01
 ```
 
 The setup is safe to rerun. Cached downloads and prepared models are reused,
@@ -177,12 +186,33 @@ the same prepared artifacts that setup verified. The benchmark pins the Codex
 SDK directly and omits Promptfoo's unrelated optional provider packages from
 the install.
 
+### Measure indexing separately
+
+The agent ablation intentionally starts from an existing index. Measure its
+offline cost with three fresh, isolated index builds:
+
+```bash
+./benchmarks/codex-mcp/run indexing
+```
+
+Pass another positive repetition count only when needed. This command reuses
+the prepared pinned model cache with downloads disabled, rotates video order,
+and records import and four-modality indexing time per video, whole-run time,
+real-time factor, index bytes, and aggregate statistics. It removes only its
+own temporary data and index directories; it does not modify the prepared index
+used by the agent runs. The path-free JSON result is written under
+`docs/benchmarking/runs/` for review, then linked from the
+[metric database](metric_database.md#offline-indexing-measurements). It can take
+substantially longer than the agent smoke because it rebuilds every modality
+for all five videos in every repetition.
+
 ## Validate before spending runs
 
 Setup finishes by running preflight, which verifies the dedicated Codex
 authentication, separate condition homes, absence of ambient MCP configuration,
 skill and clean-PATH isolation, all
-five media files in all three conditions, and the index paths. It then starts the
+five media files in all three conditions, the repository machine ID, and the
+index paths. It then starts the
 exact configured VidXP MCP process, checks required tools and prepared models,
 and verifies that every pilot video is ready and indexed for all four
 modalities. This makes a missing or incorrectly forwarded model cache fail
@@ -430,6 +460,11 @@ final responses, scores, usage, traces, and recorded tool items. Import one into
 a separate Promptfoo database with
 `npm --prefix benchmarks/codex-mcp run promptfoo -- import <artifact> --new-id`
 when the full UI is needed.
+
+Every newly generated test row records `VIDXP_EVAL_MACHINE_ID`, and the export
+wrapper repeats that stable ID at `metadata.vidxpExport.machineId`. Machine
+hardware and software are defined once in the metric database instead of copied
+into every large Promptfoo artifact.
 
 Promptfoo Community and the repository's Python evaluation code are no-cost
 open-source software. The local MCP server and local VidXP processing create no

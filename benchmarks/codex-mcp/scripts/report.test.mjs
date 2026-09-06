@@ -15,7 +15,11 @@ test('sanitizes a Promptfoo export without removing its audit data', () => {
       }],
     },
     traces: [{ spans: [{ attributes: { command: '/Users/test/tool --version' } }] }],
-  }, { repoRoot: '/Users/test/repo', userHome: '/Users/test' });
+  }, {
+    repoRoot: '/Users/test/repo',
+    userHome: '/Users/test',
+    machineId: 'mac-fixture-01',
+  });
 
   assert.equal(sanitized.config.apiKey, '<REDACTED>');
   assert.equal(sanitized.config.workingDir, '<REPO>/workspace');
@@ -26,6 +30,7 @@ test('sanitizes a Promptfoo export without removing its audit data', () => {
   assert.equal(sanitized.traces[0].spans[0].attributes.command, '<HOME>/tool --version');
   assert.doesNotMatch(JSON.stringify(sanitized), /\btest\b/);
   assert.equal(sanitized.metadata.vidxpExport.sanitized, true);
+  assert.equal(sanitized.metadata.vidxpExport.machineId, 'mac-fixture-01');
 });
 
 test('summarizes comparison metrics by benchmark condition', () => {
