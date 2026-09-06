@@ -36,6 +36,11 @@ from vidxp.benchmarks.agent_ablation_score import (
     score_ablation_boundary,
     score_temporal_grounding,
 )
+from vidxp.local_answers import (
+    LocalAnswerError,
+    ManagedOllamaSession,
+    load_local_answer_configuration,
+)
 from vidxp.settings import DEFAULT_LOCAL_QUERY_MODEL
 
 from modality_probe import (
@@ -191,8 +196,8 @@ def _require_local_model(base_url: str, model_name: str) -> dict[str, Any]:
             payload = json.load(response)
     except Exception as error:
         raise RuntimeError(
-            "The local-answer service is not running. Enable Local grounded "
-            "answers in VidXP Desktop setup, leave VidXP open, and retry."
+            "The prepared local-answer service could not be reached. Run "
+            "`uv run --no-sync vidxp local-answers prepare --yes`, then retry."
         ) from error
     models = payload.get("models", []) if isinstance(payload, dict) else []
     installed = {
@@ -204,8 +209,8 @@ def _require_local_model(base_url: str, model_name: str) -> dict[str, Any]:
     }
     if model_name not in installed:
         raise RuntimeError(
-            f"The managed local-answer model {model_name} is not installed. "
-            "Enable Local grounded answers in VidXP Desktop setup and retry."
+            f"The local-answer model {model_name} is not installed. Run "
+            "`uv run --no-sync vidxp local-answers prepare --yes`, then retry."
         )
     return {"provider": "ollama", "model": model_name, "endpoint_scope": "loopback"}
 
@@ -261,11 +266,13 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-async def _run_benchmark(repetitions: int) -> dict[str, Any]:
-    _load_environment()
-    base_url = os.environ.get("VIDXP_SLM_BASE_URL", DEFAULT_SLM_BASE_URL)
-    model_name = os.environ.get("VIDXP_SLM_MODEL", DEFAULT_LOCAL_QUERY_MODEL)
-    model_identity = _require_local_model(base_url, model_name)
+async def _run_benchmark(
+    repetitions: int,
+    *,
+    base_url: str,
+    model_name: str,
+    model_identity: dict[str, Any],
+) -> dict[str, Any]:
     tasks = json.loads(TASKS_PATH.read_text(encoding="utf-8"))[1:]
     mcp_environment = {
         **os.environ,
@@ -443,7 +450,44 @@ async def _run_benchmark(repetitions: int) -> dict[str, Any]:
 
 
 def run_benchmark(repetitions: int) -> dict[str, Any]:
-    return asyncio.run(_run_benchmark(repetitions))
+    _load_environment()
+    try:
+        configured = load_local_answer_configuration()
+    except (OSError, ValueError) as error:
+        raise RuntimeError(
+            "The saved local-answer configuration is invalid. Rerun "
+            "`uv run --no-sync vidxp local-answers prepare --yes`."
+        ) from error
+    base_url = os.environ.get("VIDXP_SLM_BASE_URL") or (
+        configured.base_url if configured is not None else DEFAULT_SLM_BASE_URL
+    )
+    model_name = os.environ.get("VIDXP_SLM_MODEL") or (
+        configured.model if configured is not None else DEFAULT_LOCAL_QUERY_MODEL
+    )
+    runtime = None
+    if configured is not None:
+        runtime = ManagedOllamaSession(
+            configured.model_copy(
+                update={"base_url": base_url, "model": model_name}
+            )
+        )
+        try:
+            runtime.ensure_started()
+        except LocalAnswerError as error:
+            raise RuntimeError(str(error)) from error
+    try:
+        model_identity = _require_local_model(base_url, model_name)
+        return asyncio.run(
+            _run_benchmark(
+                repetitions,
+                base_url=base_url,
+                model_name=model_name,
+                model_identity=model_identity,
+            )
+        )
+    finally:
+        if runtime is not None:
+            runtime.close()
 
 
 if __name__ == "__main__":

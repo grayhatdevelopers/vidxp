@@ -289,10 +289,11 @@ MCP tools to the approved self-hosted Ollama model:
 It uses the same prompt, output schema, scorer, prepared index, and evidence
 attestation as VidXP-on, while sending model requests only to the loopback
 runtime. It runs three repetitions by default and writes a path-free result
-under `docs/benchmarking/runs/`. VidXP Desktop must first have **Local grounded
-answers** enabled and remain open so its managed Ollama service is available.
-The runner does not download or substitute a model. It reports bounded-chunk
-quality, local input/output tokens and model requests, MCP calls, and latency.
+under `docs/benchmarking/runs/`. First run
+`uv run --no-sync vidxp local-answers prepare --yes`. The benchmark starts the
+saved local runtime when needed and stops only the process it started. It does
+not download or substitute a model. It reports bounded-chunk quality, local
+input/output tokens and model requests, MCP calls, and latency.
 External-agent calls and provider cost are zero; memory and energy are not
 measured. Each task is bounded at 12 local-model requests and 10 tool calls;
 limit failures remain failed runs rather than being retried outside the record.
