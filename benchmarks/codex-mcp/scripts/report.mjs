@@ -213,26 +213,31 @@ export function summarizeResults(results) {
   ];
   return conditions.map((condition) => {
     const selected = results.filter((result) => result.condition === condition);
+    const valid = selected.filter((result) => result.integrityPassed === true);
+    const scored = valid.filter((result) => Number.isFinite(result.chunkHit));
     return {
       condition,
       runs: selected.length,
       passed: selected.filter((result) => result.success).length,
-      chunkHits: selected.filter((result) => result.chunkHit === 1).length,
-      chunkScored: selected.filter((result) => Number.isFinite(result.chunkHit)).length,
-      chunkHitRate: mean(selected.map((result) => result.chunkHit)),
-      meanEventCoverage: mean(selected.map((result) => result.eventCoverage)),
-      durationInRangeRate: mean(selected.map((result) => result.durationInRange)),
-      meanIou: mean(selected.map((result) => result.iou)),
-      recall03: mean(selected.map((result) => result.recall03)),
-      recall05: mean(selected.map((result) => result.recall05)),
-      recall07: mean(selected.map((result) => result.recall07)),
-      meanStartError: mean(selected.map((result) => (
+      integrityPassed: valid.length,
+      chunkHits: scored.filter((result) => result.chunkHit === 1).length,
+      chunkScored: scored.length,
+      rawChunkHits: selected.filter((result) => result.chunkHit === 1).length,
+      rawChunkScored: selected.filter((result) => Number.isFinite(result.chunkHit)).length,
+      chunkHitRate: mean(scored.map((result) => result.chunkHit)),
+      meanEventCoverage: mean(scored.map((result) => result.eventCoverage)),
+      durationInRangeRate: mean(scored.map((result) => result.durationInRange)),
+      meanIou: mean(scored.map((result) => result.iou)),
+      recall03: mean(scored.map((result) => result.recall03)),
+      recall05: mean(scored.map((result) => result.recall05)),
+      recall07: mean(scored.map((result) => result.recall07)),
+      meanStartError: mean(scored.map((result) => (
         absolute(boundaryError(result.predictedStart, result.expectedStart))
       ))),
-      meanEndError: mean(selected.map((result) => (
+      meanEndError: mean(scored.map((result) => (
         absolute(boundaryError(result.predictedEnd, result.expectedEnd))
       ))),
-      meanDurationError: mean(selected.map((result) => absolute(durationError(result)))),
+      meanDurationError: mean(scored.map((result) => absolute(durationError(result)))),
       meanLatencyMs: mean(selected.map((result) => result.latencyMs)),
       totalLatencyMs: sum(selected.map((result) => result.latencyMs)),
       meanTotalTokens: mean(selected.map((result) => result.totalTokens)),
@@ -264,7 +269,84 @@ export function summarizeResults(results) {
   }).filter((summary) => summary.runs > 0);
 }
 
-export function loadLatestEvaluation() {
+export function summarizePrimaryPairs(results) {
+  const byCondition = new Map(CONDITION_ORDER.slice(0, 2).map((condition) => [condition, new Map()]));
+  for (const result of results) {
+    const selected = byCondition.get(result.condition);
+    if (selected) {
+      selected.set(`${result.task}\u0000${result.repetition}`, result);
+    }
+  }
+  const on = byCondition.get('vidxp-on');
+  const off = byCondition.get('vidxp-off');
+  const keys = new Set([...on.keys(), ...off.keys()]);
+  const pairs = [...keys].map((key) => ({ on: on.get(key), off: off.get(key) }));
+  const valid = pairs.filter(({ on: onResult, off: offResult }) => (
+    onResult?.integrityPassed === true
+    && offResult?.integrityPassed === true
+    && Number.isFinite(onResult?.chunkHit)
+    && Number.isFinite(offResult?.chunkHit)
+    && Number.isFinite(onResult?.totalTokens)
+    && Number.isFinite(offResult?.totalTokens)
+  ));
+  return {
+    totalPairs: pairs.length,
+    validPairs: valid.length,
+    results: valid.flatMap(({ on: onResult, off: offResult }) => [onResult, offResult]),
+  };
+}
+
+function deterministicRescore(results, evaluationId) {
+  const python = process.env.PROMPTFOO_PYTHON || 'python3';
+  const script = fileURLToPath(new URL('./rescore_eval.py', import.meta.url));
+  const manifest = parseJson(readFileSync(
+    fileURLToPath(new URL('../tasks/longvale-part9-pilot.json', import.meta.url)),
+    'utf8',
+  ), []);
+  const durationByTask = new Map(manifest.map((task) => [task.id, task.duration_seconds]));
+  const input = results.map((result) => ({
+    test_idx: result.testIdx,
+    output: result.outputText,
+    vars: {
+      ...result.testVars,
+      duration_seconds: durationByTask.get(result.task) ?? result.testVars.duration_seconds,
+    },
+    metadata: { evaluationId },
+    spans: result.traceSpans,
+  }));
+  const completed = spawnSync(python, [script], {
+    encoding: 'utf8',
+    env: process.env,
+    input: JSON.stringify(input),
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (completed.status !== 0) {
+    throw new Error(completed.stderr.trim() || 'deterministic rescore failed');
+  }
+  const byIndex = new Map(parseJson(completed.stdout, []).map((item) => [item.test_idx, item]));
+  for (const result of results) {
+    const audit = byIndex.get(result.testIdx);
+    if (!audit) {
+      throw new Error(`deterministic rescore omitted test ${result.testIdx}`);
+    }
+    const named = audit.temporal?.namedScores || {};
+    result.integrityPassed = audit.boundary?.pass === true;
+    result.integrityReason = audit.boundary?.reason || '';
+    result.qualityReason = audit.temporal?.reason || '';
+    result.chunkHit = Number.isFinite(named.bounded_chunk_hit)
+      ? named.bounded_chunk_hit : null;
+    result.eventCoverage = Number.isFinite(named.event_coverage)
+      ? named.event_coverage : null;
+    result.durationInRange = Number.isFinite(named.chunk_duration_in_range)
+      ? named.chunk_duration_in_range : null;
+    result.iou = Number.isFinite(named.temporal_iou) ? named.temporal_iou : null;
+    result.recall03 = Number.isFinite(named.r1_tiou_0_3) ? named.r1_tiou_0_3 : null;
+    result.recall05 = Number.isFinite(named.r1_tiou_0_5) ? named.r1_tiou_0_5 : null;
+    result.recall07 = Number.isFinite(named.r1_tiou_0_7) ? named.r1_tiou_0_7 : null;
+  }
+}
+
+export function loadLatestEvaluation({ rescore = false } = {}) {
   const configDirectory = process.env.PROMPTFOO_CONFIG_DIR || join(homedir(), '.promptfoo');
   const databasePath = join(configDirectory, 'promptfoo.db');
   const database = new DatabaseSync(databasePath, { readOnly: true });
@@ -333,6 +415,12 @@ export function loadLatestEvaluation() {
         toolCalls,
         mcpCalls,
         shellCalls,
+        spans: spans.map((span) => ({
+          name: span.name,
+          start_time: span.start_time,
+          end_time: span.end_time,
+          attributes: parseJson(span.attributes),
+        })),
       });
     }
 
@@ -357,8 +445,19 @@ export function loadLatestEvaluation() {
           || testCase.metadata?.evaluation_mode
           || 'unknown',
         repetition: testCase.vars?.repetition || testCase.metadata?.repetition || 1,
+        testIdx: row.test_idx,
+        testVars: testCase.vars || {},
+        outputText: typeof response.output === 'string' ? response.output : '',
+        traceSpans: stats.spans || [],
         success: row.success === 1,
         reason: parseJson(row.grading_result).reason || row.error || '',
+        integrityPassed: namedScores.ablation_boundary === 1,
+        integrityReason: namedScores.ablation_boundary === 1
+          ? ''
+          : (parseJson(row.grading_result).reason || row.error || ''),
+        qualityReason: Number.isFinite(namedScores.bounded_chunk_hit)
+          ? ''
+          : (parseJson(row.grading_result).reason || row.error || ''),
         expectedStart: testCase.vars?.expected_start,
         expectedEnd: testCase.vars?.expected_end,
         predictedStart: output.start_seconds,
@@ -376,16 +475,16 @@ export function loadLatestEvaluation() {
         durationInRange: Number.isFinite(namedScores.chunk_duration_in_range)
           ? namedScores.chunk_duration_in_range
           : null,
-        iou: Number.isFinite(namedScores.temporal_iou) ? namedScores.temporal_iou : 0,
+        iou: Number.isFinite(namedScores.temporal_iou) ? namedScores.temporal_iou : null,
         recall03: Number.isFinite(namedScores.r1_tiou_0_3)
           ? namedScores.r1_tiou_0_3
-          : 0,
+          : null,
         recall05: Number.isFinite(namedScores.r1_tiou_0_5)
           ? namedScores.r1_tiou_0_5
-          : 0,
+          : null,
         recall07: Number.isFinite(namedScores.r1_tiou_0_7)
           ? namedScores.r1_tiou_0_7
-          : 0,
+          : null,
         latencyMs: row.latency_ms,
         totalTokens: response.tokenUsage?.total,
         promptTokens: response.tokenUsage?.prompt,
@@ -404,6 +503,9 @@ export function loadLatestEvaluation() {
           : 0,
       };
     });
+    if (rescore) {
+      deterministicRescore(results, evaluation.id);
+    }
     return {
       ...evaluation,
       results,
@@ -416,6 +518,7 @@ export function loadLatestEvaluation() {
         const ids = new Set(results.map((result) => result.machineId).filter(Boolean));
         return ids.size === 1 ? [...ids][0] : 'unknown';
       })(),
+      rescored: rescore,
     };
   } finally {
     database.close();
@@ -513,6 +616,8 @@ export function renderReport(
   const isSmoke = evaluation.mode === 'smoke'
     || (evaluation.mode === 'unknown' && taskCount === 1);
   const runType = isSmoke ? 'development smoke' : evaluation.mode;
+  const primaryPairs = summarizePrimaryPairs(evaluation.results);
+  const pairedSummaries = summarizeResults(primaryPairs.results);
   console.log(`\nEvaluation comparison: ${evaluation.id}`);
   console.log(
     `Run type: ${runType} | machine: ${evaluation.machineId || 'unknown'} `
@@ -520,16 +625,26 @@ export function renderReport(
   );
   const passedAssertions = evaluation.results.filter((result) => result.success).length;
   console.log(
-    `Evaluation assertions: ${passedAssertions === evaluation.results.length ? 'PASS' : 'FAIL'}`
-    + ` (${passedAssertions}/${evaluation.results.length} condition runs passed)`,
+    `Stored Promptfoo assertions: ${passedAssertions === evaluation.results.length ? 'PASS' : 'FAIL'}`
+    + ` (${passedAssertions}/${evaluation.results.length} runs passed every at-run assertion)`,
   );
+  if (evaluation.rescored) {
+    console.log(
+      'Current deterministic audit: saved responses and traces rescored against the current '
+      + 'scorer and validated media durations; no agent or model calls made.',
+    );
+  }
   console.log('Product outcome:');
   console.table(summaries.map((summary) => ({
     condition: summary.condition,
     runs: summary.runs,
-    passed: `${summary.passed}/${summary.runs}`,
-    'chunk hits': summary.chunkScored
+    integrity: `${summary.integrityPassed}/${summary.runs}`,
+    scorable: `${summary.chunkScored}/${summary.runs}`,
+    'valid hits': summary.chunkScored
       ? `${summary.chunkHits}/${summary.chunkScored}`
+      : 'n/a',
+    'all output hits': summary.rawChunkScored
+      ? `${summary.rawChunkHits}/${summary.rawChunkScored}`
       : 'n/a',
     'hit rate': fixed(summary.chunkHitRate, 3),
     coverage: fixed(summary.meanEventCoverage, 3),
@@ -539,7 +654,8 @@ export function renderReport(
   })));
   console.log(
     '  Primary quality: an 8–12s clip covers at least half of the event available to a 10s clip. '
-    + 'Boundary IoU and R@ thresholds remain secondary exact-localization diagnostics.',
+    + 'Quality rates exclude runs that violated their condition. Time, tokens, and activity include '
+    + 'all runs. Boundary IoU and R@ thresholds remain secondary diagnostics.',
   );
   console.log('Boundary diagnostics (secondary):');
   console.table(summaries.map((summary) => ({
@@ -590,27 +706,34 @@ export function renderReport(
   const on = summaries.find((summary) => summary.condition === 'vidxp-on');
   const off = summaries.find((summary) => summary.condition === 'vidxp-off');
   const cleanUser = summaries.find((summary) => summary.condition === 'clean-user');
-  if (on && off) {
-    const latencyDelta = on.meanLatencyMs - off.meanLatencyMs;
-    const latencyPercent = off.meanLatencyMs
-      ? Math.abs(latencyDelta) / off.meanLatencyMs * 100
+  const pairedOn = pairedSummaries.find((summary) => summary.condition === 'vidxp-on');
+  const pairedOff = pairedSummaries.find((summary) => summary.condition === 'vidxp-off');
+  if (on && off && pairedOn && pairedOff) {
+    const latencyDelta = pairedOn.meanLatencyMs - pairedOff.meanLatencyMs;
+    const latencyPercent = pairedOff.meanLatencyMs
+      ? Math.abs(latencyDelta) / pairedOff.meanLatencyMs * 100
       : null;
-    const tokenDelta = Number.isFinite(on.meanTotalTokens) && Number.isFinite(off.meanTotalTokens)
-      ? on.meanTotalTokens - off.meanTotalTokens
+    const tokenDelta = Number.isFinite(pairedOn.meanTotalTokens)
+      && Number.isFinite(pairedOff.meanTotalTokens)
+      ? pairedOn.meanTotalTokens - pairedOff.meanTotalTokens
       : null;
-    const tokenPercent = Number.isFinite(tokenDelta) && off.meanTotalTokens
-      ? Math.abs(tokenDelta) / off.meanTotalTokens * 100
+    const tokenPercent = Number.isFinite(tokenDelta) && pairedOff.meanTotalTokens
+      ? Math.abs(tokenDelta) / pairedOff.meanTotalTokens * 100
       : null;
-    const uncachedDelta = Number.isFinite(on.meanUncachedPromptTokens)
-      && Number.isFinite(off.meanUncachedPromptTokens)
-      ? on.meanUncachedPromptTokens - off.meanUncachedPromptTokens
+    const uncachedDelta = Number.isFinite(pairedOn.meanUncachedPromptTokens)
+      && Number.isFinite(pairedOff.meanUncachedPromptTokens)
+      ? pairedOn.meanUncachedPromptTokens - pairedOff.meanUncachedPromptTokens
       : null;
-    console.log('VidXP-on minus VidXP-off:');
-    const chunkHitDelta = Number.isFinite(on.chunkHitRate) && Number.isFinite(off.chunkHitRate)
-      ? on.chunkHitRate - off.chunkHitRate
+    console.log(
+      `Matched condition-valid, scorable VidXP-on minus VidXP-off (${primaryPairs.validPairs}`
+      + `/${primaryPairs.totalPairs} pairs):`,
+    );
+    const chunkHitDelta = Number.isFinite(pairedOn.chunkHitRate)
+      && Number.isFinite(pairedOff.chunkHitRate)
+      ? pairedOn.chunkHitRate - pairedOff.chunkHitRate
       : null;
     console.log(`  bounded chunk hit rate: ${signed(chunkHitDelta, 3)}`);
-    console.log(`  boundary mean IoU: ${signed(on.meanIou - off.meanIou, 4)}`);
+    console.log(`  boundary mean IoU: ${signed(pairedOn.meanIou - pairedOff.meanIou, 4)}`);
     console.log(
       `  average latency: ${signed(latencyDelta / 1000, 3)}s`
       + (Number.isFinite(latencyPercent)
@@ -627,15 +750,22 @@ export function renderReport(
       `  average uncached input tokens: ${Number.isFinite(uncachedDelta) && uncachedDelta >= 0 ? '+' : ''}`
       + integer(uncachedDelta),
     );
-    const costDelta = Number.isFinite(on.meanCost) && Number.isFinite(off.meanCost)
-      ? on.meanCost - off.meanCost
+    const costDelta = Number.isFinite(pairedOn.meanCost) && Number.isFinite(pairedOff.meanCost)
+      ? pairedOn.meanCost - pairedOff.meanCost
       : null;
     console.log(`  average Promptfoo cost: ${signedMoney(costDelta)}`);
     if (evaluation.mode === 'pilot') {
-      const productGateAvailable = Number.isFinite(chunkHitDelta) && Number.isFinite(tokenDelta);
+      const integrityComplete = primaryPairs.validPairs === primaryPairs.totalPairs
+        && primaryPairs.totalPairs === on.runs
+        && primaryPairs.totalPairs === off.runs;
+      const productGateAvailable = integrityComplete
+        && Number.isFinite(chunkHitDelta)
+        && Number.isFinite(tokenDelta);
       const productGatePassed = productGateAvailable && chunkHitDelta >= 0 && tokenDelta < 0;
       console.log(
-        `  product gate: ${productGateAvailable ? (productGatePassed ? 'PASS' : 'FAIL') : 'n/a'}`
+        `  product gate: ${productGateAvailable
+          ? (productGatePassed ? 'PASS' : 'FAIL')
+          : 'NOT SCORED (incomplete valid/scorable pairs)'}`
         + ' (VidXP must match or improve bounded-chunk hit rate and use fewer total tokens)',
       );
     } else {
@@ -666,7 +796,7 @@ export function renderReport(
       ...(tasks.size === 1 ? {} : { task: result.task }),
       ...(repeated ? { repetition: result.repetition } : {}),
       condition: result.condition,
-      pass: result.success ? 'yes' : 'NO',
+      integrity: result.integrityPassed ? 'yes' : 'NO',
       'chunk hit': Number.isFinite(result.chunkHit)
         ? (result.chunkHit === 1 ? 'yes' : 'NO')
         : 'n/a',
@@ -709,11 +839,26 @@ export function renderReport(
     console.log(`Per-run table omitted for ${evaluation.results.length} runs; use results --all to print it.`);
   }
 
-  const failures = evaluation.results.filter((result) => !result.success);
+  const failures = evaluation.results.filter((result) => result.integrityPassed === false);
   if (failures.length > 0) {
-    console.log('Failures:');
+    console.log('Condition-integrity exclusions:');
     for (const failure of failures) {
-      console.log(`  ${failure.task} [${failure.condition}]: ${failure.reason}`);
+      console.log(
+        `  ${failure.task} repetition ${failure.repetition} [${failure.condition}]: `
+        + failure.integrityReason,
+      );
+    }
+  }
+  const unscorable = evaluation.results.filter((result) => (
+    result.integrityPassed === true && !Number.isFinite(result.chunkHit)
+  ));
+  if (unscorable.length > 0) {
+    console.log('Condition-valid but unscorable outputs:');
+    for (const failure of unscorable) {
+      console.log(
+        `  ${failure.task} repetition ${failure.repetition} [${failure.condition}]: `
+        + failure.qualityReason,
+      );
     }
   }
 
@@ -792,7 +937,7 @@ export function renderReport(
 }
 
 export function printLatestReport(options = {}) {
-  renderReport(loadLatestEvaluation(), options);
+  renderReport(loadLatestEvaluation({ rescore: options.rescore === true }), options);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
@@ -801,6 +946,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
       showAll: process.argv.includes('--all'),
       showResponses: process.argv.includes('--responses'),
       showRetrieval: !process.argv.includes('--no-retrieval'),
+      rescore: process.argv.includes('--rescore'),
     });
   } catch (error) {
     console.error(`Could not report the latest evaluation: ${error.message}`);

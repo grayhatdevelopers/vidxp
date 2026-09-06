@@ -85,6 +85,7 @@ test('builds and serializes the environment consumed by Promptfoo', () => {
   const serialized = serializeEnvironment(environment);
 
   assert.match(serialized, /VIDXP_EVAL_WORKSPACE="C:\/eval\/workspace"/);
+  assert.match(serialized, /VIDXP_EVAL_PROJECT_ROOT="C:\/repo"/);
   assert.match(serialized, /VIDXP_EVAL_MACHINE_ID="win-test-01"/);
   assert.match(serialized, /VIDXP_EVAL_INDEX_DIR="C:\/eval\/vidxp-index-schema-8"/);
   assert.match(serialized, /VIDXP_EVAL_VIDXP_ON_WORKSPACE="C:\/eval\/workspace\/vidxp-on"/);
@@ -155,5 +156,25 @@ test('resets clean-user state before every condition run', () => {
     readFileSync(join(cleanWorkspace, '.zshenv'), 'utf8'),
     'export PATH="/usr/bin:/bin"\n',
   );
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('removes source media while retaining the VidXP-on skill', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vidxp-eval-reset-'));
+  const workspaceRoot = join(root, 'workspace');
+  const onWorkspace = join(workspaceRoot, 'vidxp-on');
+  mkdirSync(join(onWorkspace, 'media'), { recursive: true });
+  mkdirSync(join(onWorkspace, '.agents'), { recursive: true });
+  writeFileSync(join(onWorkspace, 'media', 'video.mp4'), 'source');
+  writeFileSync(join(onWorkspace, '.agents', 'skill'), 'installed');
+
+  resetEvaluationWorkspace('vidxp-on', {
+    VIDXP_EVAL_WORKSPACE: workspaceRoot,
+    VIDXP_EVAL_VIDXP_ON_WORKSPACE: onWorkspace,
+  });
+
+  assert.equal(existsSync(join(onWorkspace, 'media')), false);
+  assert.equal(existsSync(join(onWorkspace, '.agents', 'skill')), true);
+  assert.equal(existsSync(join(onWorkspace, 'tmp')), true);
   rmSync(root, { recursive: true, force: true });
 });

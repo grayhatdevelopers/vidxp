@@ -20,7 +20,10 @@ function requireIsolatedWorkspace(condition, environment) {
   if (!child || child.startsWith('..') || resolve(sharedRoot, child) !== workspace) {
     throw new Error(`Refusing to reset non-isolated ${condition} workspace: ${workspace}`);
   }
-  if (!existsSync(workspace) || !existsSync(resolve(workspace, 'media'))) {
+  if (
+    !existsSync(workspace)
+    || (condition !== 'vidxp-on' && !existsSync(resolve(workspace, 'media')))
+  ) {
     throw new Error(`The ${condition} workspace is not prepared: ${workspace}`);
   }
   return workspace;
@@ -31,10 +34,7 @@ export function resetEvaluationWorkspace(condition, environment = process.env) {
     throw new Error(`Unknown evaluation condition: ${condition}`);
   }
   const workspace = requireIsolatedWorkspace(condition, environment);
-  const preserved = new Set(['media']);
-  if (condition === 'vidxp-on') {
-    preserved.add('.agents');
-  }
+  const preserved = new Set(condition === 'vidxp-on' ? ['.agents'] : ['media']);
   for (const entry of readdirSync(workspace)) {
     if (!preserved.has(entry)) {
       rmSync(resolve(workspace, entry), { recursive: true, force: true });

@@ -28,11 +28,16 @@ VIDXP_TOOL_NAMES = frozenset(
     }
 )
 _VIDXP_COMMAND = re.compile(
-    r"(?:^|[\s'\"/\\])vidxp(?:-mcp)?(?:\.exe)?(?:\s|$)",
+    r"(?:^|[;&|]\s*|['\"]\s*|(?:command|exec)\s+)"
+    r"(?:[^\s'\";&|]*[/\\])?vidxp(?:-mcp)?(?:\.exe)?(?:\s|$)",
     re.IGNORECASE,
 )
 _MEDIA_INSPECTION_COMMAND = re.compile(
     r"(?:^|[\s'\"/\\])ff(?:mpeg|probe)(?:\.exe)?(?:\s|$)",
+    re.IGNORECASE,
+)
+_MEDIA_PATH = re.compile(
+    r"/[^\s'\";&|]+\.(?:aac|flac|jpe?g|m4a|mkv|mov|mp3|mp4|ogg|png|wav|webm|webp)",
     re.IGNORECASE,
 )
 _HOST_DEVELOPER_PATH = re.compile(
@@ -206,9 +211,10 @@ def score_ablation_boundary(
 
     tool_calls: list[tuple[int, str, Mapping[str, Any]]] = []
     invoked_vidxp_command = False
-    inspected_media_from_shell = False
+    media_shell_commands: list[str] = []
     skill_used = False
     used_host_developer_path = False
+    used_external_benchmark_state = False
     media_filename = Path(str(variables.get("media_relpath", ""))).name
     for index, span in enumerate(spans):
         if not isinstance(span, Mapping):
@@ -232,23 +238,34 @@ def score_ablation_boundary(
             used_host_developer_path = used_host_developer_path or bool(
                 _HOST_DEVELOPER_PATH.search(text)
             )
+            used_external_benchmark_state = (
+                used_external_benchmark_state
+                or _uses_external_benchmark_state(
+                    text,
+                    str(variables.get("condition", "")),
+                )
+            )
             invoked_vidxp_command = invoked_vidxp_command or bool(
                 _VIDXP_COMMAND.search(text)
             )
-            inspected_media_from_shell = inspected_media_from_shell or bool(
-                _MEDIA_INSPECTION_COMMAND.search(text)
-                or (media_filename and media_filename in text)
-            )
+            if _MEDIA_INSPECTION_COMMAND.search(text) or (
+                media_filename and media_filename in text
+            ):
+                media_shell_commands.append(text)
 
-    if invoked_vidxp_command:
+    if used_external_benchmark_state:
         return _failed(
-            "The agent invoked VidXP through the shell and bypassed the condition."
+            "The condition inspected benchmark state outside its isolated workspace."
         )
     if forbid_host_tools and used_host_developer_path:
         return _failed(
             "The clean-user condition reached into a host developer-tool path."
-        )
+    )
     if not expected_vidxp:
+        if invoked_vidxp_command:
+            return _failed(
+                "The agent invoked VidXP through the shell and bypassed the condition."
+            )
         if tool_calls:
             return _failed("VidXP-off used a VidXP MCP tool.")
         if skill_used:
@@ -257,9 +274,9 @@ def score_ablation_boundary(
             "The condition remained isolated from VidXP and respected its tool policy."
         )
 
-    if inspected_media_from_shell and not allow_media_shell:
+    if invoked_vidxp_command:
         return _failed(
-            "VidXP-on inspected the media through the shell instead of using MCP evidence."
+            "The agent invoked VidXP through the shell and bypassed the condition."
         )
     retrieval_calls = [
         call
@@ -282,44 +299,58 @@ def score_ablation_boundary(
         job = (job_loader or _load_durable_job)(source_job_id)
     except Exception as exc:  # pragma: no cover - exact backend errors vary
         return _failed(f"Could not attest the durable VidXP job: {exc}")
+    if not allow_media_shell and any(
+        not _inspects_delivered_artifact(command, job)
+        for command in media_shell_commands
+    ):
+        return _failed(
+            "VidXP-on inspected the source media through the shell instead of "
+            "using MCP evidence."
+        )
     expected_tool = {
         "search": "search_moments",
         "query": "query_video",
     }.get(job.get("kind"))
-    matching_calls: list[tuple[str, str]] = []
+    matching_calls: list[tuple[str, str, str]] = []
     for _, tool, arguments in retrieval_calls:
         command = arguments.get("command")
         if not isinstance(command, Mapping):
             continue
         query_key = "query" if tool == "search_moments" else "question"
         media_id = command.get("media_id")
+        submitted_query = command.get(query_key)
         if (
             tool == expected_tool
-            and command.get(query_key) == variables.get("query")
+            and isinstance(submitted_query, str)
+            and submitted_query.strip()
             and isinstance(media_id, str)
             and media_id
         ):
-            matching_calls.append((tool, media_id))
+            matching_calls.append((tool, media_id, submitted_query))
     if not matching_calls:
         return _failed(
-            "No retrieval call matches the source job kind, task query, and media."
+            "No retrieval call matches the source job kind and supplies a query and media."
         )
-    search_tool, media_id = matching_calls[-1]
     trace_started_at = _trace_started_at(context, spans)
     if trace_started_at is None:
         return _failed("The trace has no usable start time for job freshness.")
 
-    attestation_error = _attest_job(
-        job=job,
-        result=result,
-        variables=variables,
-        source_job_id=source_job_id,
-        search_tool=search_tool,
-        media_id=media_id,
-        trace_started_at=trace_started_at,
-    )
-    if attestation_error is not None:
-        return _failed(attestation_error)
+    attestation_errors: list[str] = []
+    for search_tool, media_id, submitted_query in reversed(matching_calls):
+        attestation_error = _attest_job(
+            job=job,
+            result=result,
+            source_job_id=source_job_id,
+            search_tool=search_tool,
+            media_id=media_id,
+            submitted_query=submitted_query,
+            trace_started_at=trace_started_at,
+        )
+        if attestation_error is None:
+            break
+        attestation_errors.append(attestation_error)
+    else:
+        return _failed(attestation_errors[0])
     return _passed(
         "VidXP-on returned evidence from a fresh, successful, matching MCP job."
     )
@@ -329,10 +360,10 @@ def _attest_job(
     *,
     job: Mapping[str, Any],
     result: Mapping[str, Any],
-    variables: Mapping[str, Any],
     source_job_id: str,
     search_tool: str,
     media_id: str,
+    submitted_query: str,
     trace_started_at: float,
 ) -> str | None:
     expected_kind = "search" if search_tool == "search_moments" else "query"
@@ -352,8 +383,8 @@ def _attest_job(
     if wrapper.get("kind") != expected_kind:
         return "The durable job result kind does not match the retrieval tool."
     query_key = "query" if expected_kind == "search" else "question"
-    if payload.get(query_key) != variables.get("query"):
-        return "The durable VidXP result does not match the benchmark query."
+    if payload.get(query_key) != submitted_query:
+        return "The durable VidXP result does not match the submitted MCP query."
 
     delivery = payload.get("evidence_delivery")
     delivered = delivery.get("items") if isinstance(delivery, Mapping) else None
@@ -421,6 +452,80 @@ def _attest_job(
     if not hits or any(hit.get("media_id") != media_id for hit in hits):
         return "The durable VidXP moments do not belong to the task video."
     return None
+
+
+def _inspects_delivered_artifact(
+    command: str,
+    job: Mapping[str, Any],
+) -> bool:
+    """Return whether a media command reads an artifact delivered by the job."""
+
+    normalized = command.replace("\\", "/")
+    if "/artifacts/objects/" not in normalized:
+        return False
+    wrapper = job.get("result")
+    payload = wrapper.get("result") if isinstance(wrapper, Mapping) else None
+    delivery = payload.get("evidence_delivery") if isinstance(payload, Mapping) else None
+    items = delivery.get("items") if isinstance(delivery, Mapping) else None
+    if not isinstance(items, list):
+        return False
+    artifact_ids: set[str] = set()
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        keyframe = item.get("keyframe")
+        evidence_artifacts = (
+            item.get("clip"),
+            keyframe.get("artifact") if isinstance(keyframe, Mapping) else None,
+        )
+        for evidence_artifact in evidence_artifacts:
+            artifact = (
+                evidence_artifact.get("artifact")
+                if isinstance(evidence_artifact, Mapping)
+                else None
+            )
+            artifact_id = (
+                artifact.get("artifact_id") if isinstance(artifact, Mapping) else None
+            )
+            if isinstance(artifact_id, str) and artifact_id:
+                artifact_ids.add(artifact_id)
+    media_paths = _MEDIA_PATH.findall(normalized)
+    return bool(media_paths) and all(
+        "/artifacts/objects/" in media_path
+        and any(artifact_id in media_path for artifact_id in artifact_ids)
+        for media_path in media_paths
+    )
+
+
+def _uses_external_benchmark_state(command: str, condition: str) -> bool:
+    evaluation_workspace = os.environ.get("VIDXP_EVAL_WORKSPACE")
+    workspace_name = {
+        "vidxp-off": "VIDXP_EVAL_VIDXP_OFF_WORKSPACE",
+        "clean-user": "VIDXP_EVAL_CLEAN_USER_WORKSPACE",
+    }.get(condition)
+    isolated_workspace = os.environ.get(workspace_name or "")
+    if not evaluation_workspace or not isolated_workspace:
+        return False
+    protected_roots = [Path(evaluation_workspace).resolve().parent]
+    project_root = os.environ.get("VIDXP_EVAL_PROJECT_ROOT")
+    if not project_root:
+        promptfoo_python = os.environ.get("PROMPTFOO_PYTHON")
+        if promptfoo_python:
+            project_root = str(Path(promptfoo_python).resolve().parents[2])
+    if project_root:
+        protected_roots.append(Path(project_root).resolve())
+    allowed_root = Path(isolated_workspace).resolve()
+    for raw_path in re.findall(r"/[^\s'\";|]+", command.replace("\\", "/")):
+        candidate = Path(raw_path.rstrip(",:)")).resolve()
+        if candidate.is_relative_to(allowed_root):
+            continue
+        if any(
+            candidate.is_relative_to(protected_root)
+            or protected_root.is_relative_to(candidate)
+            for protected_root in protected_roots
+        ):
+            return True
+    return False
 
 
 def _load_durable_job(job_id: str) -> Mapping[str, Any]:

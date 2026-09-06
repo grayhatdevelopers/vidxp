@@ -1,7 +1,7 @@
 Locate one event in the supplied video and return one practical evidence clip.
 
 Video ID: {{ video_id }}
-Media path: {{ media_relpath }}
+Local media path, when available: {{ media_relpath }}
 Video duration: {{ duration_seconds }} seconds
 Event to locate: {{ query }}
 Evidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between

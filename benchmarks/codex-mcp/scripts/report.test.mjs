@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { sanitizePromptfooExport } from './export-eval.mjs';
-import { summarizeRecordedItems, summarizeResults, summarizeRetrieval } from './report.mjs';
+import {
+  summarizePrimaryPairs,
+  summarizeRecordedItems,
+  summarizeResults,
+  summarizeRetrieval,
+} from './report.mjs';
 
 test('sanitizes a Promptfoo export without removing its audit data', () => {
   const sanitized = sanitizePromptfooExport({
@@ -14,7 +19,13 @@ test('sanitizes a Promptfoo export without removing its audit data', () => {
         response: { raw: 'large command output', sessionId: 'session-1', output: '{}' },
       }],
     },
-    traces: [{ spans: [{ attributes: { command: '/Users/test/tool --version' } }] }],
+    traces: [{
+      spans: [{
+        attributes: {
+          command: '/Users/test/tool --version; inspect /Users/t…/truncated',
+        },
+      }],
+    }],
   }, {
     repoRoot: '/Users/test/repo',
     userHome: '/Users/test',
@@ -27,7 +38,10 @@ test('sanitizes a Promptfoo export without removing its audit data', () => {
   assert.equal(sanitized.results.results[0].response.output, '{}');
   assert.equal('raw' in sanitized.results.results[0].response, false);
   assert.equal('sessionId' in sanitized.results.results[0].response, false);
-  assert.equal(sanitized.traces[0].spans[0].attributes.command, '<HOME>/tool --version');
+  assert.equal(
+    sanitized.traces[0].spans[0].attributes.command,
+    '<HOME>/tool --version; inspect <HOME>/truncated',
+  );
   assert.doesNotMatch(JSON.stringify(sanitized), /\btest\b/);
   assert.equal(sanitized.metadata.vidxpExport.sanitized, true);
   assert.equal(sanitized.metadata.vidxpExport.machineId, 'mac-fixture-01');
@@ -37,6 +51,7 @@ test('summarizes comparison metrics by benchmark condition', () => {
   const summaries = summarizeResults([
     {
       condition: 'vidxp-on', success: true, iou: 0.75,
+      integrityPassed: true,
       chunkHit: 1, eventCoverage: 1, durationInRange: 1,
       recall03: 1, recall05: 1, recall07: 1,
       expectedStart: 0, expectedEnd: 6, predictedStart: 0, predictedEnd: 8,
@@ -47,6 +62,7 @@ test('summarizes comparison metrics by benchmark condition', () => {
     },
     {
       condition: 'vidxp-off', success: true, iou: 0.88,
+      integrityPassed: true,
       chunkHit: 1, eventCoverage: 1, durationInRange: 1,
       recall03: 1, recall05: 1, recall07: 1,
       expectedStart: 0, expectedEnd: 6, predictedStart: 0, predictedEnd: 6.8,
@@ -57,6 +73,7 @@ test('summarizes comparison metrics by benchmark condition', () => {
     },
     {
       condition: 'clean-user', success: true, iou: 0.9,
+      integrityPassed: true,
       chunkHit: 1, eventCoverage: 1, durationInRange: 1,
       recall03: 1, recall05: 1, recall07: 1,
       expectedStart: 0, expectedEnd: 6, predictedStart: 0, predictedEnd: 6.5,
@@ -87,6 +104,31 @@ test('summarizes comparison metrics by benchmark condition', () => {
   assert.equal(summaries[0].mcpCalls, 6);
   assert.equal(summaries[1].meanLatencyMs, 112_000);
   assert.equal(summaries[2].mcpCalls, 5);
+});
+
+test('uses only matched integrity-valid primary pairs for the product comparison', () => {
+  const paired = summarizePrimaryPairs([
+    {
+      task: 'one', repetition: 1, condition: 'vidxp-on', integrityPassed: true,
+      chunkHit: 1, totalTokens: 100,
+    },
+    {
+      task: 'one', repetition: 1, condition: 'vidxp-off', integrityPassed: true,
+      chunkHit: 1, totalTokens: 200,
+    },
+    {
+      task: 'two', repetition: 1, condition: 'vidxp-on', integrityPassed: false,
+      chunkHit: 1, totalTokens: 100,
+    },
+    {
+      task: 'two', repetition: 1, condition: 'vidxp-off', integrityPassed: true,
+      chunkHit: 0, totalTokens: 200,
+    },
+  ]);
+
+  assert.equal(paired.totalPairs, 2);
+  assert.equal(paired.validPairs, 1);
+  assert.deepEqual(paired.results.map((result) => result.task), ['one', 'one']);
 });
 
 test('counts Promptfoo recorded items without parsing command text', () => {

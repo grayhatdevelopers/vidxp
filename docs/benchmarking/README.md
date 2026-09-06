@@ -18,8 +18,8 @@ installation and product usage, start with the main
 | Action/video retrieval | VideoPrism retained by a small candidate gate; canonical runs pending | VideoPrism scored 50/50 on a five-class Kinetics-mini gate. MSR-VTT 1K-A and Charades-STA remain the required corpus-ranking and temporal tests. |
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
 | Environmental-sound retrieval | PE-A-Frame Small integrated; long-audio gate pending | An identical 149-query AEGBench comparison selected PE-A-Frame over FineLAP. The product now indexes its 40 ms frames through bounded overlapping sections and returns distinct ten-second evidence windows. |
-| LongVALE combined evaluation | Pilot not run | The prepared three-condition tasks can measure evidence quality, localization, tokens, time, cost, and tool use after maintainer approval |
-| Codex MCP ablation | Corrected smoke complete; pilot pending | The neutral, isolated three-condition smoke found the target in every condition. VidXP used 40.9% fewer tokens and finished 22.1% faster than direct local inspection; the 81-run pilot has not run. |
+| LongVALE combined evaluation | First pilot unscored | All 81 runs completed, but only 17/27 primary pairs were isolated and scorable. This selected set is not an official LongVALE result. |
+| Codex MCP ablation | Scorer corrected; pilot rerun required | The first pilot exposed condition bypasses and top-result ranking weakness. Its filtered comparisons are diagnostic because 10 primary pairs were excluded. |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
 
 Read [current results](results.md) for the scores, plain-language metric
@@ -80,11 +80,15 @@ query has several valid occurrences but only one accepted interval. That result
 is an auxiliary diagnosis; it neither validates nor rejects the selector and it
 does not decide whether the collective agent comparison can run.
 
-After explicit maintainer approval, the next paid run is the 81-run pilot over
-the remaining nine tasks. It compares VidXP, direct local inspection, and the
-clean-user bootstrap condition while retaining the atomic modality hits. IoU
-and boundary errors remain important diagnostics, not the entire product
-decision.
+The first 81-run pilot completed, but condition bypasses and invalid VidXP
+outputs left only 17/27 primary pairs usable. It therefore has no product-gate
+verdict. The next formal run requires an outer container, VM, or separate
+machine/account because the current Codex SDK sandbox modes do not physically
+hide other host paths. The retained VidXP jobs found a tIoU-0.5 candidate
+within the top three for 14/26 jobs but at rank one for only 6/26, making final
+ordering the clearest product weakness. A corrected pilot rerun is required;
+IoU and boundary errors
+remain diagnostics rather than the entire product decision.
 See [current model direction](model_selection.md) and the
 [research adoption record](research_adoption.md).
 

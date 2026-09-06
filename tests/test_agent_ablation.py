@@ -251,6 +251,78 @@ def test_ablation_boundary_attests_successful_vidxp_evidence_job() -> None:
     assert result["pass"] is True
 
 
+def test_ablation_boundary_attests_agent_query_paraphrase() -> None:
+    output, context, job = _ablation_fixture()
+    command = json.loads(
+        context["trace"]["spans"][3]["attributes"]["codex.mcp.input"]
+    )
+    command["command"]["query"] = "the same event, with useful context"
+    context["trace"]["spans"][3]["attributes"]["codex.mcp.input"] = json.dumps(
+        command
+    )
+    job["result"]["result"]["query"] = "the same event, with useful context"
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is True
+
+
+def test_ablation_boundary_allows_inspecting_delivered_clip() -> None:
+    output, context, job = _ablation_fixture()
+    job["result"]["result"]["evidence_delivery"]["items"][0]["clip"] = {
+        "artifact": {"artifact_id": "artifact-clip-1"}
+    }
+    context["trace"]["spans"].append(
+        {
+            "name": "exec /bin/zsh",
+            "attributes": {
+                "codex.command": (
+                    "ffprobe /tmp/index/artifacts/objects/ar/artifact-clip-1.mp4"
+                )
+            },
+        }
+    )
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is True
+
+
+def test_ablation_boundary_rejects_source_media_mixed_with_delivered_clip() -> None:
+    output, context, job = _ablation_fixture()
+    job["result"]["result"]["evidence_delivery"]["items"][0]["clip"] = {
+        "artifact": {"artifact_id": "artifact-clip-1"}
+    }
+    context["trace"]["spans"].append(
+        {
+            "name": "exec /bin/zsh",
+            "attributes": {
+                "codex.command": (
+                    "ffmpeg -i /tmp/index/artifacts/objects/ar/artifact-clip-1.mp4 "
+                    "-i /tmp/source.mp4 -f null -"
+                )
+            },
+        }
+    )
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is False
+    assert "source media" in result["reason"]
+
+
 def test_ablation_boundary_rejects_failed_job_or_shell_fallback() -> None:
     output, context, job = _ablation_fixture()
     failed_job = {**job, "state": "failed", "result": None}
@@ -324,6 +396,72 @@ def test_ablation_boundary_rejects_direct_vidxp_cli_bypass() -> None:
 
     assert result["pass"] is False
     assert "bypassed" in result["reason"]
+
+
+def test_baseline_rejects_prior_benchmark_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    evaluation_root = tmp_path / "evaluation"
+    workspace = evaluation_root / "workspace"
+    baseline = workspace / "vidxp-off"
+    monkeypatch.setenv("VIDXP_EVAL_WORKSPACE", str(workspace))
+    monkeypatch.setenv("VIDXP_EVAL_VIDXP_OFF_WORKSPACE", str(baseline))
+    trace = {
+        "spans": [
+            {
+                "name": "command",
+                "attributes": {
+                    "command": f"sed -n 1,20p {evaluation_root / 'localization' / 'prior.json'}"
+                },
+            }
+        ]
+    }
+
+    result = score_ablation_boundary(
+        "{}",
+        {
+            "vars": {"condition": "vidxp-off", "expected_vidxp": False},
+            "trace": trace,
+        },
+    )
+
+    assert result["pass"] is False
+    assert "outside its isolated workspace" in result["reason"]
+
+
+def test_baseline_rejects_repository_benchmark_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    evaluation_root = tmp_path / "evaluation"
+    workspace = evaluation_root / "workspace"
+    baseline = workspace / "vidxp-off"
+    project_root = tmp_path / "project"
+    monkeypatch.setenv("VIDXP_EVAL_WORKSPACE", str(workspace))
+    monkeypatch.setenv("VIDXP_EVAL_VIDXP_OFF_WORKSPACE", str(baseline))
+    monkeypatch.setenv("VIDXP_EVAL_PROJECT_ROOT", str(project_root))
+    trace = {
+        "spans": [
+            {
+                "name": "command",
+                "attributes": {
+                    "command": f"rg expected_start {project_root / 'benchmarks'}"
+                },
+            }
+        ]
+    }
+
+    result = score_ablation_boundary(
+        "{}",
+        {
+            "vars": {"condition": "vidxp-off", "expected_vidxp": False},
+            "trace": trace,
+        },
+    )
+
+    assert result["pass"] is False
+    assert "outside its isolated workspace" in result["reason"]
 
 
 def test_clean_user_rejects_host_developer_tool_paths() -> None:

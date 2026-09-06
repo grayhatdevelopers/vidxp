@@ -42,9 +42,15 @@ function escapeRegExp(value) {
 function sanitizeValue(value, replacements, userName) {
   if (typeof value === 'string') {
     const withPathsReplaced = replaceAll(value, replacements);
+    const withHomeDirectoriesReplaced = withPathsReplaced
+      .replace(/\/Users\/[^/\s'"\\]+/g, '<HOME>')
+      .replace(/[A-Za-z]:[\\/]Users[\\/][^\\/\s'"\\]+/gi, '<HOME>');
     return userName
-      ? withPathsReplaced.replace(new RegExp(`\\b${escapeRegExp(userName)}\\b`, 'g'), '<USER>')
-      : withPathsReplaced;
+      ? withHomeDirectoriesReplaced.replace(
+        new RegExp(`\\b${escapeRegExp(userName)}\\b`, 'g'),
+        '<USER>',
+      )
+      : withHomeDirectoriesReplaced;
   }
   if (Array.isArray(value)) {
     return value.map((item) => sanitizeValue(item, replacements, userName));

@@ -23,12 +23,31 @@ behavior remain in the [adapter validation ledger](adapter_validation.md).
 | Current component gate | AEGBench frozen subset | 50 recordings; 149 annotated sound queries | PE-A/FineLAP top-point **76.5%/73.2%**; mean IoU **.523/.292** | Select PE-A-Frame Small for sound localization |
 | Current product smoke | PE-A bounded sections | One 75.81-second development video; two known sound queries | 1,896 unique frames; both target ten-second windows ranked first; **22.156 s** indexing after model load | Product decoder/runtime/storage/search integration works; long-audio quality is still unmeasured |
 | Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; neutral prompt and three isolated conditions | Every condition achieved bounded-chunk hit **1** and coverage **1**. Against direct local inspection, VidXP used **40.9%** fewer tokens and finished **22.1%** faster. | Corrected harness smoke only; one development task is not a product gate or held-out result. |
+| Agent held-out pilot | Codex MCP ablation | Nine LongVALE-derived tasks; three conditions; three repetitions | Only **17/27** VidXP/direct-local pairs were valid and scorable. | Product gate not scored because 10 pairs were excluded; filtered comparisons are diagnostic only. |
 | Global-only sound diagnostic | Codex MCP ablation | Same development task after filtering sound search to global clips | VidXP-on IoU **0.6000**; VidXP-off IoU **0.8811** | Same answer content with 16.5% fewer VidXP tokens and 11.3% lower latency, but the ten-second sound clip worsened the endpoint |
 
 The current-provider rows are deliberately tiny regression runs. Their
 percentages are not quality estimates and must not be compared with the full
 legacy rows. The two component gates make provider decisions only. A current
-full-corpus or whole-product score has not been run.
+full-corpus score has not been run. The first whole-product pilot completed but
+failed its condition-integrity requirement, so it has no gate verdict.
+
+## Codex MCP held-out pilot
+
+Evaluation
+[`eval-dxR-2026-09-06T00:15:35`](runs/eval-dxR-2026-09-06T00-15-35.json)
+completed all 81 agent runs in 2 h 55 min 24.855 s on `mac-m2-01`. Its current
+deterministic audit leaves the product gate unscored: only 17 of 27 matched
+VidXP/direct-local pairs were both isolated and scorable.
+
+On those 17 pairs, VidXP found 8 bounded chunks and direct local found 7.
+VidXP averaged 194,499 tokens and 70.045 seconds, versus 263,239 tokens and
+94.565 seconds. These filtered deltas cannot establish a win because the ten
+excluded pairs may bias them. Separately, the saved VidXP jobs put a tIoU-0.5
+match at rank one for 6/26 jobs and within the top three for 14/26. That points
+to final ranking, not candidate absence alone, as the main product limitation.
+The [metric database](metric_database.md#first-held-out-pilot-audit) records the
+full condition totals, exclusion causes, and research boundary.
 
 ## Codex MCP development smoke
 

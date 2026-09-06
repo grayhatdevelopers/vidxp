@@ -9,6 +9,7 @@ import {
   linkSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -228,7 +229,6 @@ async function main() {
     setupEnvironment.VIDXP_EVAL_WORKSPACE,
     join(setupEnvironment.VIDXP_EVAL_WORKSPACE, 'media'),
     setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE,
-    join(setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE, 'media'),
     setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE,
     join(setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE, 'media'),
     setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE,
@@ -241,6 +241,10 @@ async function main() {
   ]) {
     mkdirSync(directory, { recursive: true });
   }
+  rmSync(
+    join(setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE, 'media'),
+    { recursive: true, force: true },
+  );
   if (!existsSync(setupEnvironment.VIDXP_MCP_COMMAND)) {
     throw new Error(`VidXP MCP executable was not created at ${setupEnvironment.VIDXP_MCP_COMMAND}.`);
   }
@@ -331,7 +335,6 @@ async function main() {
     const sharedMedia = join(setupEnvironment.VIDXP_EVAL_WORKSPACE, 'media', `${videoId}.mp4`);
     copyFileSync(source, sharedMedia);
     for (const conditionWorkspace of [
-      setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE,
       setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE,
       setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE,
     ]) {

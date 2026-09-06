@@ -99,7 +99,7 @@ for (const conditionHome of [
 }
 
 const tasks = JSON.parse(readFileSync(manifestPath, 'utf8'));
-const conditionWorkspaces = [vidxpOnWorkspace, vidxpOffWorkspace, cleanUserWorkspace];
+const conditionWorkspaces = [vidxpOffWorkspace, cleanUserWorkspace];
 const missingMedia = [...new Set([workspace, ...conditionWorkspaces]
   .flatMap((conditionWorkspace) => tasks
     .map((task) => join(conditionWorkspace, task.media_relpath)))
@@ -109,19 +109,21 @@ if (missingMedia.length > 0) {
 }
 for (const task of tasks) {
   const shared = statSync(join(workspace, task.media_relpath));
-  const on = statSync(join(vidxpOnWorkspace, task.media_relpath));
   const off = statSync(join(vidxpOffWorkspace, task.media_relpath));
   const cleanUser = statSync(join(cleanUserWorkspace, task.media_relpath));
   if (
-    on.dev !== shared.dev
-    || on.ino !== shared.ino
-    || off.dev !== shared.dev
+    off.dev !== shared.dev
     || off.ino !== shared.ino
     || cleanUser.dev !== shared.dev
     || cleanUser.ino !== shared.ino
   ) {
     throw new Error(
       `Condition media is not hard-linked to the shared bytes: ${task.media_relpath}`,
+    );
+  }
+  if (existsSync(join(vidxpOnWorkspace, task.media_relpath))) {
+    throw new Error(
+      `VidXP-on exposes source media that would permit a shell bypass: ${task.media_relpath}`,
     );
   }
 }

@@ -37,6 +37,10 @@ def _structured(result: Any, tool: str) -> dict[str, Any]:
 async def _preflight() -> None:
     tasks = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     filenames = {Path(task["media_relpath"]).name for task in tasks}
+    expected_durations = {
+        Path(task["media_relpath"]).name: float(task["duration_seconds"])
+        for task in tasks
+    }
     server_environment = dict(os.environ)
     server_environment["VIDXP_MODEL_CACHE"] = _required_environment(
         "VIDXP_MODEL_CACHE"
@@ -133,6 +137,14 @@ async def _preflight() -> None:
                 )
             for filename in sorted(filenames):
                 item = media[filename]
+                duration = item.get("duration_seconds")
+                if (
+                    not isinstance(duration, (int, float))
+                    or abs(float(duration) - expected_durations[filename]) > 0.001
+                ):
+                    raise RuntimeError(
+                        f"Pilot manifest duration does not match {filename}."
+                    )
                 indexed = {
                     capability.get("name")
                     for capability in item.get("capabilities", [])

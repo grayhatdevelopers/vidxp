@@ -2,7 +2,7 @@
 
 Collection index: [Benchmarking research](README.md)
 
-Status: Development smoke recorded; held-out pilot not run
+Status: First held-out pilot retained but unscored; isolated rerun required
 
 Last verified: 2026-09-06
 
@@ -20,8 +20,10 @@ the serving objective.
 ## What the comparison holds constant
 
 Each repetition uses the same Codex model, reasoning effort, user prompt, task,
-media bytes, output schema, and fresh thread. Only the available evidence path
-and the isolation needed to provide it differ:
+source-video identity, output schema, and fresh thread. The direct-local and
+clean-user workspaces receive hard links to the same bytes. VidXP indexes those
+bytes before timing, then its agent workspace omits the relative source path so
+ordinary shell inspection fails and any detected host-path bypass is excluded.
 
 | Condition | VidXP access | Purpose |
 | --- | --- | --- |
@@ -34,16 +36,20 @@ only authentication from a common isolated login home; it does not share
 configuration, sessions, or discovered skills. It installs the committed skill
 only in the VidXP workspace and passes the MCP definition only to that provider.
 Before every condition run, a Promptfoo hook clears prior outputs and installed
-tools from that condition's workspace while retaining the fixed media and, only
-for VidXP, the committed skill. This makes repetitions independent instead of
+tools from that condition's workspace. It retains fixed media for the two
+non-VidXP conditions and only the committed skill for VidXP. This makes
+repetitions independent instead of
 letting a previous agent's files or clean-user bootstrap affect the next run.
-All three directories expose hard links to the same media bytes. Preflight
-checks the links, rejects ambient MCP configuration and leaked VidXP skills,
-and verifies that the clean-user login shell cannot initially resolve
+Preflight checks both hard links, rejects any VidXP-on source path, rejects
+ambient MCP configuration and leaked VidXP skills, and verifies that the
+clean-user login shell cannot initially resolve
 `ffmpeg`, `ffprobe`, `vidxp`, or `vidxp-mcp`.
-The scorer invalidates a run that reaches an absolute Homebrew, `/usr/local`, or
-repository `.venv` path. This is accepted-run isolation, not a VM boundary;
-physical removal of host paths requires a container or separate machine.
+The scorer invalidates a run that reaches an absolute Homebrew, `/usr/local`,
+repository `.venv`, or another benchmark workspace. This is accepted-run
+isolation, not a VM boundary. The Codex SDK exposes `read-only`,
+`workspace-write`, and `danger-full-access` modes; the first two still permit
+host reads. A formal rerun therefore requires an outer container, VM, or
+separate machine/account that physically hides host paths.
 
 The scorer enforces capability boundaries, not an agent script. The direct-local
 baseline cannot call VidXP but may use any other available local tool. The
@@ -211,7 +217,8 @@ for all five videos in every repetition.
 Setup finishes by running preflight, which verifies the dedicated Codex
 authentication, separate condition homes, absence of ambient MCP configuration,
 skill and clean-PATH isolation, all
-five media files in all three conditions, the repository machine ID, and the
+five media files in the direct-local and clean-user conditions, their exact
+durations, the absent VidXP-on source paths, the repository machine ID, and the
 index paths. It then starts the
 exact configured VidXP MCP process, checks required tools and prepared models,
 and verifies that every pilot video is ready and indexed for all four
@@ -288,6 +295,12 @@ it does not rerun retrieval.
 Candidates removed by the current pre-fusion or final `top_k` cannot be
 reconstructed from the saved job, and the report states that limitation. Use
 `--no-retrieval` only when the saved VidXP jobs are unavailable.
+
+After a scorer or media-duration correction, add `--rescore` to re-audit saved
+responses and traces against the current scorer and validated task durations,
+without calling Codex or another model. This requires the original VidXP
+durable jobs and labels the output as a current deterministic audit; it does
+not overwrite the at-run Promptfoo scores in the retained export.
 
 The `trace` command remains as an explicit alias for inspecting the same saved
 retrieval details:
@@ -515,14 +528,18 @@ by that job. Report at least:
 - indexing time, index size, model preparation, and machine details; and
 - every excluded or failed task.
 
+The scorer binds each durable result to the query the agent actually submitted;
+it does not require a verbatim copy of the user's wording. Inspecting a clip
+delivered by that job remains VidXP use, while opening the source media directly
+is a condition violation.
+
 The report never applies the product gate to a development smoke. For the pilot,
-the high-level gate passes only when VidXP matches or improves the direct-local
-baseline's bounded-chunk hit rate and uses fewer total tokens. The clean-user
-condition is supporting evidence, not part of that gate. Latency, cost, calls,
-boundary quality, and all three raw condition summaries remain visible; the
-single verdict does not replace them. Exact-boundary underperformance is a
-documented research limitation, not grounds to fail a useful fixed-window
-retrieval result.
+every matched VidXP/direct-local pair must first be condition-valid and
+scorable. Otherwise the gate is not scored and any valid-pair comparison is
+diagnostic only. With complete pairs, the gate passes only when VidXP matches
+or improves bounded-chunk hit rate and uses fewer total tokens. The clean-user
+condition is supporting evidence. Latency, cost, calls, boundary quality, and
+all three raw summaries remain visible; the verdict does not replace them.
 
 Evaluation
 [`eval-0eL-2026-09-05T22:40:10`](runs/eval-0eL-2026-09-05T22-40-10.json)

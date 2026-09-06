@@ -76,6 +76,7 @@ export function evaluationEnvironment({
   const machineId = requireMachineId(environment.VIDXP_EVAL_MACHINE_ID);
   return {
     VIDXP_EVAL_MACHINE_ID: machineId,
+    VIDXP_EVAL_PROJECT_ROOT: repositoryRoot,
     VIDXP_EVAL_CODEX_HOME: paths.join(evaluationRoot, 'codex-home'),
     VIDXP_EVAL_VIDXP_ON_CODEX_HOME: paths.join(evaluationRoot, 'codex-home', 'vidxp-on'),
     VIDXP_EVAL_VIDXP_OFF_CODEX_HOME: paths.join(evaluationRoot, 'codex-home', 'vidxp-off'),
