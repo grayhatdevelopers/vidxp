@@ -332,26 +332,33 @@ and sharing behavior.
 ## Optional local grounded answers
 
 VidXP search does not require a language model. To let CLI, HTTP, or MCP
-queries plan searches and draft grounded answers locally, enable **Local
-grounded answers** in VidXP Desktop setup. Desktop checks for a compatible
-loopback Ollama service and then for an existing Ollama executable. When neither
-is available on Windows x86-64 or macOS Apple Silicon, Desktop asks before
-downloading a pinned, checksum-verified headless runtime into VidXP's private
-data. It does not install the Ollama desktop app. Linux setup links to Ollama's
-official installation instructions instead of running a privileged script.
+queries plan searches and draft grounded answers locally, run:
+
+```bash
+vidxp local-answers prepare
+vidxp local-answers status
+```
+
+The recommended `local-worker` installation already includes the required
+client. Custom package installations must include the `slm` extra.
+
+Preparation reuses a healthy self-hosted Ollama service or an existing Ollama
+executable. When neither is available on Windows x86-64 or macOS Apple Silicon,
+VidXP discloses the download sizes and asks before installing its pinned,
+checksum-verified headless runtime. It does not install the Ollama desktop app.
+Linux requires an existing Ollama installation.
 
 This optional feature follows Ollama's platform floor: Windows 10 22H2 or
 newer, or macOS 14 or newer. VidXP Desktop itself can still run without local
 grounded answers on older supported systems.
 
-The model is an additional approximately 3.4 GB download. When Desktop must
-provide the headless runtime, that download is up to approximately 1.36 GiB;
-reusing Ollama avoids it. Local answers have no per-run API charge or numbered
-hosted-model allowance, but they use local storage, memory, compute time, and
-electricity. Desktop configures the private service address for its browser,
-worker, API, Premiere, and generated MCP/Codex setup; there is no URL field to
-fill in. A command-line-only installation remains available for developers and
-custom deployments.
+The model is an additional approximately 3.4 GB download. A managed headless
+runtime can add up to approximately 1.36 GiB; reusing Ollama avoids it. Local
+answers have no per-run API charge or numbered hosted-model allowance, but they
+use local storage, memory, compute time, and electricity. The command saves the
+local endpoint and model selection, so later VidXP CLI, HTTP, and MCP processes
+do not need shell exports. Desktop setup invokes the same preparation operation
+inside its managed runtime and carries the settings into Desktop-owned services.
 
 The complete setup and its current evidence limitations are documented under
 [Enable local grounded answers](docs/local-api.md#enable-local-grounded-answers).

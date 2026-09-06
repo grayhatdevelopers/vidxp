@@ -23,11 +23,12 @@ from vidxp.app_paths import (
     default_repository_directory,
 )
 from vidxp.media_runtime import default_media_executable
+from vidxp.local_answers import local_answer_spec
 from vidxp.repository_layout import RepositoryLayout
 
 
 DEFAULT_HTTP_PORT = 32191
-DEFAULT_LOCAL_QUERY_MODEL = "qwen3.5:4b-q4_K_M"
+DEFAULT_LOCAL_QUERY_MODEL = local_answer_spec().model
 _TUSD_EXACT_ORIGIN = re.compile(
     r"(?P<scheme>https|http)://(?P<host>"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
@@ -350,6 +351,10 @@ class VidXPSettings(BaseSettings):
             "model_cache",
             default_model_directory(data_directory),
         )
+        if "slm_base_url" not in configured and "slm_model" not in configured:
+            from vidxp.local_answers import configured_local_answer_values
+
+            configured.update(configured_local_answer_values())
         if configured.get("slm_base_url") not in {None, ""} and configured.get(
             "slm_model"
         ) in {None, ""}:

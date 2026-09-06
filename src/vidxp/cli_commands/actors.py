@@ -9,13 +9,13 @@ from rich.table import Table
 from vidxp.application_models import CreateActorOverlayCommand
 from vidxp.cli_support import (
     CLIState,
+    LiveProgress,
     OutputFormat,
     effective_output_format,
-    emit_job_progress,
     emit_json,
-    emit_progress,
     state_from_context,
 )
+
 app = typer.Typer(
     no_args_is_help=True,
     help="Inspect and render actor clusters.",
@@ -184,16 +184,15 @@ def actors_render(
         and not state.quiet
         and output_format == OutputFormat.rich
     )
-    if show_progress:
-        emit_progress("Starting actor-overlay rendering...")
-    job = state.jobs.submit_actor_overlay(
-        CreateActorOverlayCommand(cluster_id=cluster_id)
-    )
-    if not detach:
-        job = state.jobs.wait(
-            job.job_id,
-            progress=emit_job_progress if show_progress else None,
+    with LiveProgress(show_progress) as live_progress:
+        job = state.jobs.submit_actor_overlay(
+            CreateActorOverlayCommand(cluster_id=cluster_id)
         )
+        if not detach:
+            job = state.jobs.wait(
+                job.job_id,
+                progress=live_progress.update_job if show_progress else None,
+            )
     payload = job.model_dump(mode="json")
     if output_format == OutputFormat.json:
         emit_json(payload)

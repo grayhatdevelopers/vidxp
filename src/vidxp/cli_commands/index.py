@@ -12,7 +12,7 @@ from vidxp.application_models import (
 )
 from vidxp.cli_support import (
     CLIState,
-    IndexProgress,
+    LiveProgress,
     OutputFormat,
     effective_output_format,
     emit_json,
@@ -40,7 +40,7 @@ def create_index(
         not state.quiet and state.output_format == OutputFormat.rich
     )
     selected = tuple(modalities)
-    with IndexProgress(show_progress) as progress:
+    with LiveProgress(show_progress) as progress:
         job = state.jobs.submit_index(
             CreateIndexCommand(
                 media_id=media_id,
@@ -53,13 +53,7 @@ def create_index(
         if not detach:
             job = state.jobs.wait(
                 job.job_id,
-                progress=lambda current: (
-                    progress.update(
-                        current.progress.model_dump(mode="python")
-                    )
-                    if current.progress is not None
-                    else None
-                ),
+                progress=progress.update_job,
             )
         summary = job.model_dump(mode="json")
     if state.output_format == OutputFormat.json:

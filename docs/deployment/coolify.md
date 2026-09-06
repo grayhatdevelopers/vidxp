@@ -246,12 +246,14 @@ VIDXP_SLM_BASE_URL=http://ollama:11434/v1
 VidXP uses the official `qwen3.5:4b-q4_K_M` Ollama build by default. Set
 `VIDXP_SLM_MODEL` only to make an intentional operator override.
 
-Start Ollama and explicitly download the model:
+Start Ollama, then use VidXP's shared preparation command to download and check
+the approved model:
 
 ```bash
 docker compose --env-file .env -f compose.coolify.yaml --profile slm up -d ollama
-docker compose --env-file .env -f compose.coolify.yaml --profile slm exec ollama \
-  ollama pull qwen3.5:4b-q4_K_M
+docker compose --env-file .env -f compose.coolify.yaml --profile slm run \
+  --rm --no-deps worker vidxp local-answers prepare \
+  --base-url http://ollama:11434/v1 --no-save --yes
 docker compose --env-file .env -f compose.coolify.yaml up -d worker
 ```
 

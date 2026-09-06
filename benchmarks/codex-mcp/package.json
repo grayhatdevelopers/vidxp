@@ -14,6 +14,7 @@
     "preflight": "node --env-file=.env scripts/preflight.mjs",
     "eval:smoke": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs smoke",
     "eval:pilot": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs pilot",
+    "eval:vidxp": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs pilot vidxp-on",
     "export": "node --env-file=.env --no-warnings scripts/export-eval.mjs",
     "report": "node --env-file-if-exists=.env --no-warnings scripts/report.mjs",
     "view": "npm run promptfoo -- view"

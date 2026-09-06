@@ -71,6 +71,7 @@ include = ["vidxp*"]
 
 [tool.setuptools.package-data]
 vidxp = [
+  "assets/local-answers.json",
   "assets/artifact_download/*",
   "assets/mcp_app/*",
   "assets/upload_page/*",

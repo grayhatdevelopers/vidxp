@@ -17,9 +17,9 @@ from vidxp.application_models import (
     PrepareModelsCommand,
 )
 from vidxp.cli_support import (
+    LiveProgress,
     OutputFormat,
     effective_output_format,
-    emit_job_progress,
     emit_json,
     emit_progress,
     parse_capability_options,
@@ -484,32 +484,31 @@ def prepare(
             )
         typer.confirm("Download these models?", abort=True)
     show_progress = not state.quiet and output_format == OutputFormat.rich
-    if show_progress:
-        action = "Downloading and validating" if missing else "Validating cached"
-        emit_progress(f"{action} models for " + ", ".join(selected) + ".")
-    job = state.jobs.submit_prepare_models(
-        PrepareModelsCommand(
-            modalities=selected,
-            capability_options=parse_capability_options(capability_options),
+    with LiveProgress(show_progress) as live_progress:
+        job = state.jobs.submit_prepare_models(
+            PrepareModelsCommand(
+                modalities=selected,
+                capability_options=parse_capability_options(capability_options),
+            )
         )
-    )
-    if not detach:
+        if not detach:
 
-        def report_progress(job: Job) -> None:
-            if show_progress:
-                emit_job_progress(job)
-            if progress_file is not None and job.progress is not None:
-                write_json_atomic(
-                    progress_file,
-                    job.progress.model_dump(mode="json"),
-                )
+            def report_progress(job: Job) -> None:
+                live_progress.update_job(job)
+                if progress_file is not None and job.progress is not None:
+                    write_json_atomic(
+                        progress_file,
+                        job.progress.model_dump(mode="json"),
+                    )
 
-        job = state.jobs.wait(
-            job.job_id,
-            progress=(
-                report_progress if show_progress or progress_file is not None else None
-            ),
-        )
+            job = state.jobs.wait(
+                job.job_id,
+                progress=(
+                    report_progress
+                    if show_progress or progress_file is not None
+                    else None
+                ),
+            )
     if output_format == OutputFormat.json:
         emit_json(job.model_dump(mode="json"))
     else:

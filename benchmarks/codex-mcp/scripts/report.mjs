@@ -186,6 +186,21 @@ function intervalIou(start, end, expectedStart, expectedEnd) {
   return union > 0 ? intersection / union : 0;
 }
 
+function eventCoverage(start, end, expectedStart, expectedEnd, targetChunkSeconds) {
+  if (![start, end, expectedStart, expectedEnd, targetChunkSeconds].every(Number.isFinite)) {
+    return null;
+  }
+  const intersection = Math.max(0, Math.min(end, expectedEnd) - Math.max(start, expectedStart));
+  const usefulDuration = Math.min(expectedEnd - expectedStart, targetChunkSeconds);
+  return usefulDuration > 0 ? Math.min(1, intersection / usefulDuration) : null;
+}
+
+export function assertionReason(grading, metric) {
+  const component = (Array.isArray(grading?.componentResults) ? grading.componentResults : [])
+    .find((result) => result?.assertion?.metric === metric);
+  return typeof component?.reason === 'string' ? component.reason : '';
+}
+
 function outputCandidates(output) {
   if (Array.isArray(output?.candidates)) {
     return output.candidates;
@@ -326,6 +341,7 @@ export function summarizePrimaryPairs(results) {
   return {
     totalPairs: pairs.length,
     validPairs: valid.length,
+    pairs: valid,
     results: valid.flatMap(({ on: onResult, off: offResult }) => [onResult, offResult]),
   };
 }
@@ -479,6 +495,7 @@ export function loadLatestEvaluation({ rescore = false } = {}) {
       const candidates = outputCandidates(output);
       const topCandidate = candidates[0] || {};
       const namedScores = parseJson(row.named_scores);
+      const grading = parseJson(row.grading_result);
       const responseMetadata = response.metadata || {};
       const stats = traceStats.get(row.test_idx) || {};
       const recordedItems = summarizeRecordedItems(response.raw) || stats;
@@ -500,14 +517,13 @@ export function loadLatestEvaluation({ rescore = false } = {}) {
         outputText: typeof response.output === 'string' ? response.output : '',
         traceSpans: stats.spans || [],
         success: row.success === 1,
-        reason: parseJson(row.grading_result).reason || row.error || '',
+        reason: grading.reason || row.error || '',
         integrityPassed: namedScores.ablation_boundary === 1,
         integrityReason: namedScores.ablation_boundary === 1
           ? ''
-          : (parseJson(row.grading_result).reason || row.error || ''),
-        qualityReason: Number.isFinite(namedScores.bounded_chunk_hit)
-          ? ''
-          : (parseJson(row.grading_result).reason || row.error || ''),
+          : (assertionReason(grading, 'ablation_boundary') || row.error || grading.reason || ''),
+        qualityReason: assertionReason(grading, 'temporal_grounding')
+          || row.error || grading.reason || '',
         expectedStart: testCase.vars?.expected_start,
         expectedEnd: testCase.vars?.expected_end,
         predictedStart: topCandidate.start_seconds,
@@ -612,6 +628,17 @@ export function summarizeRetrieval(result, trace) {
     .slice()
     .sort((left, right) => (left?.rank ?? Infinity) - (right?.rank ?? Infinity));
   const topMoment = moments.find((moment) => moment?.rank === 1) || moments[0];
+  const targetChunkSeconds = Number(result.testVars?.target_chunk_seconds) > 0
+    ? Number(result.testVars.target_chunk_seconds)
+    : 10;
+  const minEventCoverage = Number(result.testVars?.min_event_coverage) > 0
+    ? Number(result.testVars.min_event_coverage)
+    : 0.5;
+  const surfaceCandidates = (Array.isArray(trace?.surface_candidates)
+    ? trace.surface_candidates : [])
+    .filter((candidate) => candidate?.state === 'ready')
+    .slice()
+    .sort((left, right) => (left?.rank ?? Infinity) - (right?.rank ?? Infinity));
   const bestByModality = new Map();
   for (const moment of moments) {
     for (const hit of Array.isArray(moment?.hits) ? moment.hits : []) {
@@ -635,7 +662,9 @@ export function summarizeRetrieval(result, trace) {
   }
   return {
     task: result.task,
+    repetition: result.repetition,
     condition: result.condition,
+    finalChunkHit: result.chunkHit,
     expectedStart: result.expectedStart,
     expectedEnd: result.expectedEnd,
     topMoment,
@@ -653,8 +682,63 @@ export function summarizeRetrieval(result, trace) {
       result.expectedStart,
       result.expectedEnd,
     )),
+    surfaceCandidates,
+    surfaceRanks: surfaceCandidates.map((candidate, index) => (
+      Number.isFinite(candidate.rank) ? candidate.rank : index + 1
+    )),
+    surfaceCoverages: surfaceCandidates.map((candidate) => eventCoverage(
+      candidate.start,
+      candidate.end,
+      result.expectedStart,
+      result.expectedEnd,
+      targetChunkSeconds,
+    )),
+    minEventCoverage,
     bestByModality,
   };
+}
+
+export function summarizeSurfaceRecall(retrievals, depth) {
+  const scored = retrievals.filter((retrieval) => retrieval.surfaceCoverages.some(Number.isFinite));
+  const bestCoverages = scored.map((retrieval) => {
+    const candidates = retrieval.surfaceCoverages.filter((coverage, index) => (
+      Number.isFinite(coverage) && retrieval.surfaceRanks[index] <= depth
+    ));
+    return candidates.length > 0 ? Math.max(...candidates) : 0;
+  });
+  const hits = bestCoverages.filter((coverage, index) => (
+    coverage >= scored[index].minEventCoverage
+  )).length;
+  return {
+    hits,
+    scored: scored.length,
+    rate: scored.length > 0 ? hits / scored.length : null,
+    meanBestCoverage: mean(bestCoverages),
+  };
+}
+
+export function summarizeSurfaceTransfer(retrievals, depth) {
+  const summary = {
+    surfacedAndReturned: 0,
+    surfacedOnly: 0,
+    returnedOnly: 0,
+    neither: 0,
+  };
+  for (const retrieval of retrievals) {
+    const candidates = retrieval.surfaceCoverages.filter((coverage, index) => (
+      Number.isFinite(coverage) && retrieval.surfaceRanks[index] <= depth
+    ));
+    if (candidates.length === 0 || !Number.isFinite(retrieval.finalChunkHit)) {
+      continue;
+    }
+    const surfaced = Math.max(...candidates) >= retrieval.minEventCoverage;
+    const returned = retrieval.finalChunkHit === 1;
+    if (surfaced && returned) summary.surfacedAndReturned += 1;
+    else if (surfaced) summary.surfacedOnly += 1;
+    else if (returned) summary.returnedOnly += 1;
+    else summary.neither += 1;
+  }
+  return summary;
 }
 
 function retrievalRecallAt(retrievals, depth, threshold) {
@@ -708,7 +792,8 @@ export function renderReport(
   );
   const passedAssertions = evaluation.results.filter((result) => result.success).length;
   console.log(
-    `Stored Promptfoo assertions: ${passedAssertions === evaluation.results.length ? 'PASS' : 'FAIL'}`
+    `${evaluation.rescored ? 'Original at-run Promptfoo assertions' : 'Stored Promptfoo assertions'}: `
+    + `${passedAssertions === evaluation.results.length ? 'PASS' : 'FAIL'}`
     + ` (${passedAssertions}/${evaluation.results.length} runs passed every at-run assertion)`,
   );
   if (evaluation.rescored) {
@@ -869,6 +954,24 @@ export function renderReport(
       ? pairedOn.meanCost - pairedOff.meanCost
       : null;
     console.log(`  average Promptfoo cost: ${signedMoney(costDelta)}`);
+    const latencyWins = primaryPairs.pairs.filter(({ on: onResult, off: offResult }) => (
+      Number.isFinite(onResult.latencyMs)
+      && Number.isFinite(offResult.latencyMs)
+      && onResult.latencyMs < offResult.latencyMs
+    )).length;
+    const tokenWins = primaryPairs.pairs.filter(({ on: onResult, off: offResult }) => (
+      onResult.totalTokens < offResult.totalTokens
+    )).length;
+    const costWins = primaryPairs.pairs.filter(({ on: onResult, off: offResult }) => (
+      Number.isFinite(onResult.cost)
+      && Number.isFinite(offResult.cost)
+      && onResult.cost < offResult.cost
+    )).length;
+    console.log(
+      `  pairwise efficiency wins: faster ${latencyWins}/${primaryPairs.validPairs}; `
+      + `fewer tokens ${tokenWins}/${primaryPairs.validPairs}; lower Promptfoo cost `
+      + `${costWins}/${primaryPairs.validPairs}`,
+    );
     if (evaluation.mode === 'pilot') {
       const integrityComplete = primaryPairs.validPairs === primaryPairs.totalPairs
         && primaryPairs.totalPairs === on.runs
@@ -999,8 +1102,43 @@ export function renderReport(
   if (showRetrieval) {
     const traces = loadRetrievalTraces(evaluation.results);
     const retrievals = evaluation.results
-      .filter((result) => traces[result.sourceJobId])
+      .filter((result) => (
+        result.expectedVidxp
+        && result.integrityPassed === true
+        && traces[result.sourceJobId]
+      ))
       .map((result) => summarizeRetrieval(result, traces[result.sourceJobId]));
+    if (retrievals.length > 0) {
+      console.log('VidXP MCP surfaced-target recall:');
+      console.table(CONDITION_ORDER.filter((condition) => (
+        retrievals.some((retrieval) => retrieval.condition === condition)
+      )).map((condition) => {
+        const selected = retrievals.filter((retrieval) => retrieval.condition === condition);
+        const at1 = summarizeSurfaceRecall(selected, 1);
+        const at3 = summarizeSurfaceRecall(selected, 3);
+        return {
+          condition,
+          jobs: at3.scored,
+          'hit@1': `${at1.hits}/${at1.scored}`,
+          'hit@1 rate': fixed(at1.rate, 3),
+          'hit@3': `${at3.hits}/${at3.scored}`,
+          'hit@3 rate': fixed(at3.rate, 3),
+          'coverage@3': fixed(at3.meanBestCoverage, 3),
+        };
+      }));
+      const transfer = summarizeSurfaceTransfer(retrievals, 3);
+      console.log(
+        `  Top-three evidence to final answer: ${transfer.surfacedAndReturned} surfaced and returned; `
+        + `${transfer.surfacedOnly} surfaced but not returned; ${transfer.returnedOnly} returned `
+        + `without a top-three surfaced hit; ${transfer.neither} neither.`,
+      );
+      console.log(
+        '  This VidXP-only diagnostic scores the ready evidence tiles actually exposed by '
+        + 'get_job_evidence. A hit covers at least half of the event available to a 10s window; '
+        + 'it measures retrieval availability and does not replace the cross-condition 8–12s '
+        + 'final-answer gate.',
+      );
+    }
     console.log('VidXP retrieval boundaries:');
     console.table(retrievals.map((retrieval) => ({
       task: retrieval.task,

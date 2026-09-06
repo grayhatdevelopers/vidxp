@@ -18,6 +18,7 @@ from vidxp.benchmarks.agent_ablation_score import (
 _SCORER = "file://../../src/vidxp/benchmarks/agent_ablation_score.py"
 _MODALITIES = frozenset({"scene", "action", "sound", "speech"})
 _RUN_MODES = frozenset({"all", "smoke", "pilot"})
+_CONDITIONS = frozenset({"vidxp-on", "vidxp-off", "clean-user"})
 _DEFAULT_PILOT_REPETITIONS = 3
 
 
@@ -40,22 +41,23 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
             providers.get("vidxp_on", "codex-vidxp"),
             True,
             False,
-            False,
         ),
         (
             "vidxp-off",
             providers.get("vidxp_off", "codex-baseline"),
             False,
             True,
-            False,
         ),
         (
             "clean-user",
             providers.get("clean_user", "codex-clean-user"),
             False,
             True,
-            True,
         ),
+    )
+    requested_conditions = _requested_conditions()
+    conditions = tuple(
+        condition for condition in conditions if condition[0] in requested_conditions
     )
 
     mode = os.environ.get("VIDXP_EVAL_MODE", "all")
@@ -87,7 +89,6 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
                 provider,
                 expected_vidxp,
                 allow_media_shell,
-                forbid_host_tools,
             ) in ordered_conditions:
                 variables = dict(task)
                 # Promptfoo expands array-valued vars into separate test cases.
@@ -98,7 +99,6 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
                 variables["condition"] = condition
                 variables["expected_vidxp"] = expected_vidxp
                 variables["allow_media_shell"] = allow_media_shell
-                variables["forbid_host_tools"] = forbid_host_tools
                 variables["evaluation_mode"] = mode
                 variables["repetition"] = repetition + 1
                 variables["target_chunk_seconds"] = DEFAULT_TARGET_CHUNK_SECONDS
@@ -158,6 +158,20 @@ def _repetitions(mode: str) -> int:
     if repetitions < 1:
         raise ValueError("VIDXP_EVAL_REPETITIONS must be a positive integer.")
     return repetitions
+
+
+def _requested_conditions() -> frozenset[str]:
+    raw = os.environ.get("VIDXP_EVAL_CONDITIONS")
+    if raw is None:
+        return _CONDITIONS
+    requested = frozenset(
+        condition.strip() for condition in raw.split(",") if condition.strip()
+    )
+    unknown = requested.difference(_CONDITIONS)
+    if not requested or unknown:
+        detail = ", ".join(sorted(unknown)) if unknown else "none supplied"
+        raise ValueError(f"Invalid VIDXP_EVAL_CONDITIONS: {detail}")
+    return requested
 
 
 def _validate_task(task: Any) -> None:

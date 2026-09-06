@@ -15,6 +15,7 @@ from vidxp.application_models import (
     QueryPlanningRequest,
     QuerySynthesisRequest,
 )
+from vidxp.local_answers import LocalAnswerError, ManagedOllamaSession
 from vidxp.ports import QueryProviderError
 
 
@@ -44,6 +45,7 @@ class OllamaQueryModel:
         timeout_seconds: float,
         output_retries: int,
         http_client: httpx.AsyncClient | None = None,
+        runtime: ManagedOllamaSession | None = None,
     ) -> None:
         model = OllamaModel(
             model_name,
@@ -57,6 +59,7 @@ class OllamaQueryModel:
             provider="ollama",
             model=model_name,
         )
+        self._runtime = runtime
         self._planner = Agent(
             model,
             output_type=NativeOutput(QueryPlan),
@@ -92,12 +95,14 @@ class OllamaQueryModel:
     def synthesize(self, request: QuerySynthesisRequest) -> DraftAnswer:
         return self._run(self._synthesizer, request.model_dump_json())
 
-    @staticmethod
-    def _run(agent: Agent, prompt: str):
+    def _run(self, agent: Agent, prompt: str):
         try:
+            if self._runtime is not None:
+                self._runtime.ensure_started()
             return agent.run_sync(prompt).output
         except (
             AgentRunError,
+            LocalAnswerError,
             OpenAIError,
             httpx.HTTPError,
             TimeoutError,
@@ -106,3 +111,7 @@ class OllamaQueryModel:
             raise QueryProviderError(
                 "The configured Ollama query model is unavailable."
             ) from exc
+
+    def close(self) -> None:
+        if self._runtime is not None:
+            self._runtime.close()

@@ -59,6 +59,22 @@ case "$command" in
         fi
         exec npm run eval:pilot
         ;;
+    vidxp)
+        case "${1:-3}" in
+            *[!0-9]*|0)
+                echo "VidXP repetitions must be a positive integer." >&2
+                exit 2
+                ;;
+        esac
+        repetitions=${1:-3}
+        if [ "$#" -gt 1 ]; then
+            echo "Usage: ./benchmarks/codex-mcp/run vidxp [repetitions]" >&2
+            exit 2
+        fi
+        VIDXP_EVAL_REPETITIONS=$repetitions
+        export VIDXP_EVAL_REPETITIONS
+        exec npm run eval:vidxp
+        ;;
     indexing)
         case "${1:-3}" in
             *[!0-9]*|0)
@@ -72,6 +88,20 @@ case "$command" in
             exit 2
         fi
         exec node --env-file=.env --no-warnings scripts/indexing-benchmark.mjs "$repetitions"
+        ;;
+    slm)
+        case "${1:-3}" in
+            *[!0-9]*|0)
+                echo "SLM repetitions must be a positive integer." >&2
+                exit 2
+                ;;
+        esac
+        repetitions=${1:-3}
+        if [ "$#" -gt 1 ]; then
+            echo "Usage: ./benchmarks/codex-mcp/run slm [repetitions]" >&2
+            exit 2
+        fi
+        exec "$benchmark_dir/../../.venv/bin/python" scripts/local_slm_benchmark.py "$repetitions"
         ;;
     results)
         exec npm run report -- "$@"
@@ -107,7 +137,7 @@ case "$command" in
         exec npm run promptfoo -- view --yes "$@"
         ;;
     *)
-        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot [repetitions]|indexing [repetitions]|results|export|trace|probe|depth|compare|representation|shots|queries|sound|view}" >&2
+        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot [repetitions]|vidxp [repetitions]|slm [repetitions]|indexing [repetitions]|results|export|trace|probe|depth|compare|representation|shots|queries|sound|view}" >&2
         exit 2
         ;;
 esac

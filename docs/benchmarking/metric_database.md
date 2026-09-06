@@ -23,13 +23,22 @@ event into a two-second deliverable.
 | --- | --- |
 | Evidence unit | Return up to three distinct 8–12-second clips in ranked order. Success@3 requires at least one clip to cover half of the annotated event that can fit in 10 seconds. Returning fewer candidates is valid. |
 | Data | Ten selected, LongVALE-derived tasks over five videos, covering scene, action, sound, speech, and joint evidence. The development smoke uses the first task; the held-out pilot uses the remaining nine. This is not an official LongVALE score. |
-| Timed starting state | Direct-local and clean-user receive hard links to the same media bytes. VidXP-on receives the index built from those bytes but no source-media path in its workspace; detected host-path bypasses are excluded. All five videos start indexed for scene, action, sound, and speech. Dataset download, model preparation, media import, and indexing are outside agent time. |
+| Timed starting state | Direct-local and clean-user receive hard links to the same media bytes. VidXP-on receives the index built from those bytes but no source-media path in its workspace. All five videos start indexed for scene, action, sound, and speech. Dataset download, model preparation, media import, and indexing are outside agent time. |
 | Comparison | Same Codex model, reasoning effort, neutral user prompt, output schema, and fresh state. VidXP-on has the shipped skill and MCP; direct-local has system commands plus host FFmpeg and ffprobe but no VidXP; clean-user starts with OS tools plus terminal and network. |
 | Decision | Across every matched, condition-valid pilot pair, VidXP must match or improve direct-local bounded-chunk Success@3 and use fewer total agent tokens. Missing, contaminated, or unscorable primary pairs make the gate unscored. Success@1, rank, latency, Promptfoo cost, calls, IoU, R@K, and boundary errors remain visible. |
 | Repetition | The pilot defaults to three repetitions with rotated serial condition order. Per-run values, means, totals, and failures are retained. |
 | Machine identity | Every new test row and repository export carries a stable repository ID such as `mac-m2-01`. The table below defines that ID; no hardware serial number or host-generated UUID is stored. |
 | Offline cost | Indexing is measured separately on fresh isolated indexes. The agent benchmark must not hide that cost or add it to only the VidXP-on response time. |
-| Required isolation | Separate workspaces and homes prevent state reuse. A Codex permission profile denies filesystem-root access and reopens only minimal runtime paths, the current condition workspace, and—for direct-local—the FFmpeg installation prefix. On macOS, preflight tests those OS-enforced boundaries before model calls; the scorer separately rejects detected bypasses. |
+| Required isolation | Separate workspaces and homes prevent state reuse. A Codex permission profile denies filesystem-root access and reopens only minimal runtime paths, the current condition workspace, and—for direct-local—the FFmpeg installation prefix. On macOS, preflight tests those OS-enforced boundaries before model calls. Blocked path attempts are allowed agent behavior; the scorer rejects actual cross-condition capability use. |
+
+Two declared follow-ups reuse the frozen controls rather than repeating them.
+`./benchmarks/codex-mcp/run vidxp` measures a VidXP-only evidence-handoff
+intervention; it is not counterbalanced with the earlier controls. The separate
+`./benchmarks/codex-mcp/run slm` lane gives the same shipped skill and required
+VidXP MCP tools to the managed loopback model. It reports local tokens, model
+requests, MCP calls, latency, and quality with zero external-agent calls and
+provider cost; memory and energy remain unmeasured. Each task is capped at 12
+model requests and 10 tool calls.
 
 The task design comes from
 [LongVALE](https://openaccess.thecvf.com/content/CVPR2025/papers/Geng_LongVALE_Vision-Audio-Language-Event_Benchmark_Towards_Time-Aware_Omni-Modal_Perception_of_Long_Videos_CVPR_2025_paper.pdf);
@@ -67,11 +76,13 @@ states when an experiment replaces these normal representations.
 | --- | --- | --- |
 | Bounded-chunk Success@3 | At least one of up to three ordered 8–12-second results covers `0.5` of `min(annotation duration, 10 seconds)` | Primary per-task product retrieval metric. The ten-second target and three-result limit are VidXP serving choices, not LongVALE metrics. They reject blink-length, whole-video, and unbounded-list answers. |
 | Success@1 and reciprocal rank | Whether the first clip succeeds, and `1 / first successful rank` | Exposes ordering quality without making a top-one miss erase useful evidence returned immediately after it. |
+| MCP surfaced-target Hit@1/Hit@3 | Whether a ready evidence tile exposed by `get_job_evidence` covers `0.5` of `min(annotation duration, 10 seconds)` within the first one or three tiles | VidXP-only retrieval diagnostic. It separates evidence availability from the agent's final selection and does not replace the cross-condition bounded-clip gate. |
 | Paired product gate | VidXP-on Success@3 is at least VidXP-off, and VidXP-on uses fewer total agent tokens | Primary whole-system decision. Candidate count, cost, latency, and calls remain reported separately, so returning more clips does not hide its overhead. |
 | Temporal IoU and R@1/R@3 at tIoU 0.3/0.5/0.7 | Exact predicted intervals against the LongVALE-derived annotation | Retained secondary boundary-quality diagnostics. Poor exact trimming and ordering remain product shortcomings and future research targets. |
+| Local-SLM bounded-chunk Success@3 | The same output contract and deterministic scorer used by the Codex arms | Separate local-agent result. It tests whether the approved local model can use the shipped skill and VidXP MCP to return comparable grounded chunks without an external agent; it is not a Promptfoo/Codex run. |
 
 The two older September development runs used the earlier exact-interval prompt.
-The later smoke and first pilot used one bounded clip. The next isolated run
+The later smoke and first pilot used one bounded clip. The current isolated run
 uses the ranked three-candidate contract above. Historical results are not
 rescored as if their agents had been allowed to return three clips.
 
@@ -87,6 +98,34 @@ The agent runs compare the same Codex model with VidXP MCP evidence, direct
 local inspection, and a clean-user bootstrap condition. VidXP-on begins with
 the five pilot videos already indexed in all four modalities; all agent times
 exclude download, preparation, import, and indexing.
+
+### Current isolated held-out pilot
+
+Evaluation
+[`eval-7VR-2026-09-06T10:58:07`](runs/eval-7VR-2026-09-06T10-58-07.json)
+completed 81 runs: nine tasks, three conditions, and three repetitions on
+`mac-m2-01`. Wall time was 11,621.136 seconds, or 3 h 13 min 41.136 s. The
+table uses the current deterministic rescore of the saved responses, traces,
+and durable VidXP jobs; it makes no new model calls.
+
+| Condition | Quality | Efficiency | Recorded activity |
+| --- | --- | --- | --- |
+| VidXP | 27/27 valid and scorable; Success@3 `15/27`; Success@1 `15/27`; visible MCP evidence Hit@3 `19/27`, Hit@1 `9/27` | 81.423 s and 236,060 tokens per run; 6,373,630 tokens total; $10.894431 Promptfoo estimate | 266 model turns; 186 tools: 158 MCP and 28 shell; 27 skill loads |
+| Direct local | 27/27 valid and scorable; Success@3 `18/27`; Success@1 `18/27` | 99.669 s and 297,310 tokens per run; 8,027,375 tokens total; $14.702576 estimate | 310 model turns; 169 shell tools |
+| Clean user | 27/27 valid and scorable; Success@3 `16/27`; Success@1 `16/27` | 247.446 s and 697,139 tokens per run; 18,822,764 tokens total; $36.348442 estimate | 592 model turns; 421 shell tools |
+
+Against direct local inspection, VidXP used 20.6% fewer tokens and was 18.3%
+faster on average. It used fewer tokens in 20/27 matched pairs, was faster in
+19/27, and had a lower Promptfoo comparison cost in 19/27. Its Success@3 was
+lower by `3/27` or 11.1 percentage points, so the product gate **failed**.
+Agents returned only 1.15 VidXP candidates on average, so agent Success@3
+equalled Success@1. The visible MCP evidence
+result is a separate product diagnostic: Hit@3 `19/27` versus Hit@1 `9/27`.
+Fourteen runs both surfaced and returned a hit, five surfaced one without
+returning a qualifying final clip, one returned a hit outside the visible
+top-three metric, and seven did neither. Thus 5/12 final-answer misses expose an
+agent-selection opportunity, while 7/12 still require better retrieval or
+ranking. This does not convert the failed paired gate into a pass.
 
 ### First held-out pilot audit
 
@@ -260,8 +299,14 @@ usage, traces, and tool items needed to audit selected agent runs.
 - Rebuild the sound index and run the PE-A-Frame long-audio product gate. The
   provider and bounded section path are implemented, but the one-video smoke
   does not validate hour-long or fused retrieval.
-- Run the three-condition smoke under the root-denied permission profiles, then
-  rerun the 81-run pilot; the first pilot is retained but unscored.
+- Repeat the 81-run pilot only after a retrieval-ranking or agent-selection
+  change when a new matched, counterbalanced gate is required. The current
+  evidence-handoff intervention can instead use the selective `vidxp` run and
+  the completed controls, with that later-run limitation disclosed.
+- Run the local Ollama agent with `./benchmarks/codex-mcp/run slm`. Record
+  bounded-chunk quality, latency, local tokens and model requests, MCP calls,
+  model identity, and condition validity. Provider cost and external-agent
+  tokens are zero; memory, energy, and local compute cost remain unmeasured.
 - Run the isolated three-repetition indexing benchmark and link its reviewed
   JSON artifact from the offline-indexing table above.
 - Produce full-corpus DiDeMo and HiREST results for the current providers.

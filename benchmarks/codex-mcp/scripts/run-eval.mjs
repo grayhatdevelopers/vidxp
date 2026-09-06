@@ -11,9 +11,11 @@ const mode = process.argv[2];
 if (!['smoke', 'pilot'].includes(mode)) {
   throw new Error('Evaluation mode must be smoke or pilot.');
 }
+const conditions = process.argv[3];
 const evaluationEnvironment = {
   ...process.env,
   VIDXP_EVAL_MODE: mode,
+  ...(conditions ? { VIDXP_EVAL_CONDITIONS: conditions } : {}),
 };
 prepareConditionState({ repositoryRoot, environment: evaluationEnvironment });
 

@@ -4872,7 +4872,6 @@ name = "vidxp-desktop"
 version = "0.4.0"
 dependencies = [
  "atomic-write-file",
- "flate2",
  "hex",
  "log",
  "process-wrap",
@@ -4880,7 +4879,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -4891,7 +4889,6 @@ dependencies = [
  "tauri-plugin-store",
  "which",
  "windows 0.62.2",
- "zip",
 ]
 
 [[package]]

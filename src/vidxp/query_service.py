@@ -79,6 +79,11 @@ class GroundedQueryService:
     def __init__(self, model: QueryModelPort | None = None) -> None:
         self.model = model
 
+    def close(self) -> None:
+        close = getattr(self.model, "close", None)
+        if close is not None:
+            close()
+
     def plan(
         self,
         command: QueryVideoCommand,

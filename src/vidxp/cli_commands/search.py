@@ -8,10 +8,9 @@ from vidxp.application_models import SearchCommand, SearchJobResult
 from vidxp.application_models import FusedSearchResult
 from vidxp.cli_support import (
     CLIState,
+    LiveProgress,
     OutputFormat,
     effective_output_format,
-    emit_job_progress,
-    emit_progress,
     emit_search,
     state_from_context,
 )
@@ -28,20 +27,19 @@ def run_search(
 ) -> FusedSearchResult:
     output_format = effective_output_format(state, json_output)
     show_progress = not state.quiet and output_format == OutputFormat.rich
-    if show_progress:
-        emit_progress(f"Starting {capability} search...")
-    job = state.jobs.submit_search(
-        SearchCommand(
-            modalities=(capability,),
-            query=query,
-            media_id=media_id,
-            top_k=top_k,
+    with LiveProgress(show_progress) as live_progress:
+        job = state.jobs.submit_search(
+            SearchCommand(
+                modalities=(capability,),
+                query=query,
+                media_id=media_id,
+                top_k=top_k,
+            )
         )
-    )
-    completed = state.jobs.wait(
-        job.job_id,
-        progress=emit_job_progress if show_progress else None,
-    )
+        completed = state.jobs.wait(
+            job.job_id,
+            progress=live_progress.update_job if show_progress else None,
+        )
     if not isinstance(completed.result, SearchJobResult):
         raise RuntimeError("The completed search job has no search result.")
     result = completed.result.result

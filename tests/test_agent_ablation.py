@@ -321,6 +321,30 @@ def test_ablation_boundary_attests_successful_vidxp_evidence_job() -> None:
     assert result["pass"] is True
 
 
+def test_ablation_boundary_attests_ready_evidence_board_tile() -> None:
+    output, context, job = _ablation_fixture()
+    delivery = job["result"]["result"]["evidence_delivery"]
+    item = delivery["items"].pop()
+    delivery["board"] = {
+        "tiles": [
+            {
+                **item,
+                "start": item["range"]["source_start_seconds"],
+                "end": item["range"]["source_end_seconds"],
+                "range": None,
+            }
+        ]
+    }
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is True
+
+
 def test_ablation_boundary_attests_each_ranked_candidate() -> None:
     output, context, job = _ablation_fixture()
     result_data = json.loads(output)
@@ -510,21 +534,16 @@ def test_ablation_boundary_rejects_direct_vidxp_cli_bypass() -> None:
     assert "bypassed" in result["reason"]
 
 
-def test_baseline_rejects_prior_benchmark_state(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    evaluation_root = tmp_path / "evaluation"
-    workspace = evaluation_root / "workspace"
-    baseline = workspace / "vidxp-off"
-    monkeypatch.setenv("VIDXP_EVAL_WORKSPACE", str(workspace))
-    monkeypatch.setenv("VIDXP_EVAL_VIDXP_OFF_WORKSPACE", str(baseline))
+def test_isolated_condition_allows_attempted_unavailable_host_paths() -> None:
     trace = {
         "spans": [
             {
                 "name": "command",
                 "attributes": {
-                    "command": f"sed -n 1,20p {evaluation_root / 'localization' / 'prior.json'}"
+                    "command": (
+                        "command -v /opt/homebrew/bin/ffmpeg; "
+                        "rg expected_start /project/benchmarks"
+                    )
                 },
             }
         ]
@@ -533,72 +552,12 @@ def test_baseline_rejects_prior_benchmark_state(
     result = score_ablation_boundary(
         "{}",
         {
-            "vars": {"condition": "vidxp-off", "expected_vidxp": False},
+            "vars": {"condition": "clean-user", "expected_vidxp": False},
             "trace": trace,
         },
     )
 
-    assert result["pass"] is False
-    assert "outside its isolated workspace" in result["reason"]
-
-
-def test_baseline_rejects_repository_benchmark_state(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    evaluation_root = tmp_path / "evaluation"
-    workspace = evaluation_root / "workspace"
-    baseline = workspace / "vidxp-off"
-    project_root = tmp_path / "project"
-    monkeypatch.setenv("VIDXP_EVAL_WORKSPACE", str(workspace))
-    monkeypatch.setenv("VIDXP_EVAL_VIDXP_OFF_WORKSPACE", str(baseline))
-    monkeypatch.setenv("VIDXP_EVAL_PROJECT_ROOT", str(project_root))
-    trace = {
-        "spans": [
-            {
-                "name": "command",
-                "attributes": {
-                    "command": f"rg expected_start {project_root / 'benchmarks'}"
-                },
-            }
-        ]
-    }
-
-    result = score_ablation_boundary(
-        "{}",
-        {
-            "vars": {"condition": "vidxp-off", "expected_vidxp": False},
-            "trace": trace,
-        },
-    )
-
-    assert result["pass"] is False
-    assert "outside its isolated workspace" in result["reason"]
-
-
-def test_clean_user_rejects_host_developer_tool_paths() -> None:
-    output = json.dumps({"source_job_id": None, "evidence": []})
-    trace = {
-        "spans": [
-            {
-                "name": "command",
-                "attributes": {
-                    "codex.command": "/opt/homebrew/bin/ffmpeg -i media/video.mp4"
-                },
-            }
-        ]
-    }
-
-    result = score_ablation_boundary(
-        output,
-        {
-            "vars": {"expected_vidxp": False, "forbid_host_tools": True},
-            "trace": trace,
-        },
-    )
-
-    assert result["pass"] is False
-    assert "host developer-tool path" in result["reason"]
+    assert result["pass"] is True
 
 
 def test_generator_pairs_each_manifest_task_across_conditions(
@@ -647,11 +606,7 @@ def test_generator_pairs_each_manifest_task_across_conditions(
         True,
         True,
     ]
-    assert [test["vars"]["forbid_host_tools"] for test in tests] == [
-        False,
-        False,
-        True,
-    ]
+    assert all("forbid_host_tools" not in test["vars"] for test in tests)
     assert [test["vars"]["target_chunk_seconds"] for test in tests] == [10] * 3
     assert [test["vars"]["min_chunk_seconds"] for test in tests] == [8] * 3
     assert [test["vars"]["max_chunk_seconds"] for test in tests] == [12] * 3
@@ -755,3 +710,17 @@ def test_pilot_accepts_one_explicit_repetition_count(
 
     assert len(tests) == 135
     assert {test["metadata"]["repetition"] for test in tests} == {1, 2, 3, 4, 5}
+
+
+def test_generator_can_select_only_the_vidxp_condition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = Path(__file__).parents[1] / "benchmarks" / "codex-mcp"
+    monkeypatch.chdir(benchmark)
+    monkeypatch.setenv("VIDXP_EVAL_MODE", "pilot")
+    monkeypatch.setenv("VIDXP_EVAL_CONDITIONS", "vidxp-on")
+
+    tests = generate_tests({"manifest": "tasks/longvale-part9-pilot.json"})
+
+    assert len(tests) == 27
+    assert {test["metadata"]["condition"] for test in tests} == {"vidxp-on"}

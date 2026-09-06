@@ -145,6 +145,7 @@ class CliTests(unittest.TestCase):
             "artifacts",
             "desktop-probe",
             "init",
+            "local-answers",
             "doctor",
             "prepare",
             "mcp-config",
@@ -976,7 +977,7 @@ class CliTests(unittest.TestCase):
         command = self.service.check_dependencies.call_args.args[0]
         self.assertFalse(command.include_models)
 
-    def test_prepare_announces_start_and_writes_job_progress(self):
+    def test_prepare_renders_and_writes_job_progress(self):
         self.service.model_readiness.return_value = DependencyCheckResult(
             ok=False,
             modalities=("scene",),
@@ -1045,18 +1046,15 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("1.43 GiB", result.output)
-        self.assertRegex(
-            result.output,
-            r"\[\d{2}:\d{2}:\d{2}\] Downloading and validating models for "
-            r"scene\.",
-        )
+        self.assertIn("Preparing scene model.", result.output)
+        self.assertNotRegex(result.output, r"\[\d{2}:\d{2}:\d{2}\]")
         self.assertTrue(callable(self.jobs.wait.call_args.kwargs["progress"]))
         self.assertEqual(
             written_progress,
             expected_progress.model_dump(mode="json"),
         )
 
-    def test_prepare_distinguishes_cached_model_verification(self):
+    def test_prepare_without_job_updates_has_no_progress_noise(self):
         self.service.model_readiness.return_value = DependencyCheckResult(
             ok=True,
             modalities=("scene",),
@@ -1088,10 +1086,8 @@ class CliTests(unittest.TestCase):
         result = self.invoke(["prepare", "--modalities", "scene"])
 
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertRegex(
-            result.output,
-            r"\[\d{2}:\d{2}:\d{2}\] Validating cached models for scene\.",
-        )
+        self.assertNotRegex(result.output, r"\[\d{2}:\d{2}:\d{2}\]")
+        self.assertIn("Selected runtime models are prepared", result.output)
 
     def test_prepare_discloses_size_and_requires_confirmation(self):
         self.service.model_readiness.return_value = DependencyCheckResult(

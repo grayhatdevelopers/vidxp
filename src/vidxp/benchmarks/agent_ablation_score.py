@@ -40,10 +40,6 @@ _MEDIA_PATH = re.compile(
     r"/[^\s'\";&|]+\.(?:aac|flac|jpe?g|m4a|mkv|mov|mp3|mp4|ogg|png|wav|webm|webp)",
     re.IGNORECASE,
 )
-_HOST_DEVELOPER_PATH = re.compile(
-    r"(?:/opt/homebrew/|/usr/local/|[\\/]\.venv[\\/])",
-    re.IGNORECASE,
-)
 _SKILL_NAME = "vidxp-find-video-evidence"
 _SKILL_PATH = ".agents/skills/vidxp-find-video-evidence/SKILL.md"
 
@@ -260,7 +256,6 @@ def score_ablation_boundary(
     variables = context.get("vars", {})
     expected_vidxp = variables.get("expected_vidxp") is True
     allow_media_shell = variables.get("allow_media_shell") is True
-    forbid_host_tools = variables.get("forbid_host_tools") is True
     try:
         result = json.loads(output)
     except (TypeError, json.JSONDecodeError) as exc:
@@ -277,8 +272,6 @@ def score_ablation_boundary(
     invoked_vidxp_command = False
     media_shell_commands: list[str] = []
     skill_used = False
-    used_host_developer_path = False
-    used_external_benchmark_state = False
     media_filename = Path(str(variables.get("media_relpath", ""))).name
     for index, span in enumerate(spans):
         if not isinstance(span, Mapping):
@@ -299,16 +292,6 @@ def score_ablation_boundary(
             if "command" not in str(key).casefold():
                 continue
             text = value if isinstance(value, str) else json.dumps(value)
-            used_host_developer_path = used_host_developer_path or bool(
-                _HOST_DEVELOPER_PATH.search(text)
-            )
-            used_external_benchmark_state = (
-                used_external_benchmark_state
-                or _uses_external_benchmark_state(
-                    text,
-                    str(variables.get("condition", "")),
-                )
-            )
             invoked_vidxp_command = invoked_vidxp_command or bool(
                 _VIDXP_COMMAND.search(text)
             )
@@ -317,14 +300,6 @@ def score_ablation_boundary(
             ):
                 media_shell_commands.append(text)
 
-    if used_external_benchmark_state:
-        return _failed(
-            "The condition inspected benchmark state outside its isolated workspace."
-        )
-    if forbid_host_tools and used_host_developer_path:
-        return _failed(
-            "The clean-user condition reached into a host developer-tool path."
-    )
     if not expected_vidxp:
         if invoked_vidxp_command:
             return _failed(
@@ -450,9 +425,8 @@ def _attest_job(
     if payload.get(query_key) != submitted_query:
         return "The durable VidXP result does not match the submitted MCP query."
 
-    delivery = payload.get("evidence_delivery")
-    delivered = delivery.get("items") if isinstance(delivery, Mapping) else None
-    if not isinstance(delivered, list) or not delivered:
+    delivered = _delivery_evidence_items(payload)
+    if not delivered:
         return "The durable VidXP result contains no delivered evidence."
     ready = {
         item.get("evidence_id"): item
@@ -544,13 +518,34 @@ def _delivered_source_interval(
     item: Mapping[str, Any],
 ) -> tuple[float, float] | None:
     source_range = item.get("range")
-    if not isinstance(source_range, Mapping):
-        return None
-    start = _finite_number(source_range.get("source_start_seconds"))
-    end = _finite_number(source_range.get("source_end_seconds"))
+    if isinstance(source_range, Mapping):
+        start = _finite_number(source_range.get("source_start_seconds"))
+        end = _finite_number(source_range.get("source_end_seconds"))
+    else:
+        start = _finite_number(item.get("start"))
+        end = _finite_number(item.get("end"))
     if start is None or end is None or end <= start:
         return None
     return start, end
+
+
+def _delivery_evidence_items(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Return the evidence records exposed by get_job_evidence."""
+
+    delivery = payload.get("evidence_delivery")
+    if not isinstance(delivery, Mapping):
+        return []
+    items = delivery.get("items")
+    delivered = (
+        [item for item in items if isinstance(item, Mapping)]
+        if isinstance(items, list)
+        else []
+    )
+    board = delivery.get("board")
+    tiles = board.get("tiles") if isinstance(board, Mapping) else None
+    if isinstance(tiles, list):
+        delivered.extend(tile for tile in tiles if isinstance(tile, Mapping))
+    return delivered
 
 
 def _inspects_delivered_artifact(
@@ -564,14 +559,10 @@ def _inspects_delivered_artifact(
         return False
     wrapper = job.get("result")
     payload = wrapper.get("result") if isinstance(wrapper, Mapping) else None
-    delivery = payload.get("evidence_delivery") if isinstance(payload, Mapping) else None
-    items = delivery.get("items") if isinstance(delivery, Mapping) else None
-    if not isinstance(items, list):
+    if not isinstance(payload, Mapping):
         return False
     artifact_ids: set[str] = set()
-    for item in items:
-        if not isinstance(item, Mapping):
-            continue
+    for item in _delivery_evidence_items(payload):
         keyframe = item.get("keyframe")
         evidence_artifacts = (
             item.get("clip"),
@@ -594,37 +585,6 @@ def _inspects_delivered_artifact(
         and any(artifact_id in media_path for artifact_id in artifact_ids)
         for media_path in media_paths
     )
-
-
-def _uses_external_benchmark_state(command: str, condition: str) -> bool:
-    evaluation_workspace = os.environ.get("VIDXP_EVAL_WORKSPACE")
-    workspace_name = {
-        "vidxp-off": "VIDXP_EVAL_VIDXP_OFF_WORKSPACE",
-        "clean-user": "VIDXP_EVAL_CLEAN_USER_WORKSPACE",
-    }.get(condition)
-    isolated_workspace = os.environ.get(workspace_name or "")
-    if not evaluation_workspace or not isolated_workspace:
-        return False
-    protected_roots = [Path(evaluation_workspace).resolve().parent]
-    project_root = os.environ.get("VIDXP_EVAL_PROJECT_ROOT")
-    if not project_root:
-        promptfoo_python = os.environ.get("PROMPTFOO_PYTHON")
-        if promptfoo_python:
-            project_root = str(Path(promptfoo_python).resolve().parents[2])
-    if project_root:
-        protected_roots.append(Path(project_root).resolve())
-    allowed_root = Path(isolated_workspace).resolve()
-    for raw_path in re.findall(r"/[^\s'\";|]+", command.replace("\\", "/")):
-        candidate = Path(raw_path.rstrip(",:)")).resolve()
-        if candidate.is_relative_to(allowed_root):
-            continue
-        if any(
-            candidate.is_relative_to(protected_root)
-            or protected_root.is_relative_to(candidate)
-            for protected_root in protected_roots
-        ):
-            return True
-    return False
 
 
 def _load_durable_job(job_id: str) -> Mapping[str, Any]:

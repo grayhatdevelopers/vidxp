@@ -2,7 +2,7 @@
 
 Collection index: [Benchmarking research](README.md)
 
-Status: First held-out pilot retained but unscored; isolated rerun required
+Status: Isolated held-out pilot scored; product gate failed
 
 Last verified: 2026-09-06
 
@@ -23,7 +23,7 @@ Each repetition uses the same Codex model, reasoning effort, user prompt, task,
 source-video identity, output schema, and fresh thread. The direct-local and
 clean-user workspaces receive hard links to the same bytes. VidXP indexes those
 bytes before timing, then its agent workspace omits the relative source path so
-ordinary shell inspection fails and any detected host-path bypass is excluded.
+ordinary shell inspection fails.
 
 | Condition | VidXP access | Purpose |
 | --- | --- | --- |
@@ -52,8 +52,10 @@ The direct-local profile also reads the installation prefix containing FFmpeg
 and ffprobe. The clean-user and VidXP profiles cannot execute those host
 binaries, even by absolute path. On macOS, before any model call, preflight runs
 the pinned Codex sandbox and verifies the denied host read, allowed workspace
-read and write, and expected FFmpeg access for all three conditions. The scorer
-still invalidates detected bypasses as an audit layer.
+read and write, and expected FFmpeg access for all three conditions. A command
+that tries a blocked host path is not a breach. The scorer separately rejects
+actual VidXP use in non-VidXP conditions and direct source-media inspection in
+the VidXP condition.
 
 The scorer enforces capability boundaries, not an agent script. The direct-local
 baseline cannot call VidXP but may use system commands, FFmpeg, and ffprobe. The
@@ -263,6 +265,37 @@ additional time and Codex allowance. For example, five repetitions are one
 ```bash
 ./benchmarks/codex-mcp/run pilot 5
 ```
+
+After the matched pilot is frozen, a VidXP-only intervention may be run without
+spending another direct-local or clean-user control:
+
+```bash
+./benchmarks/codex-mcp/run vidxp
+```
+
+This runs the same nine held-out tasks and three repetitions, but only the
+`codex-vidxp` condition. It is intended for a declared follow-up intervention,
+not a replacement paired pilot. Compare it with the frozen controls by run ID
+and report that the condition was measured later rather than counterbalanced in
+the same evaluation.
+
+The separate local-agent lane gives the shipped VidXP skill and five required
+MCP tools to the approved self-hosted Ollama model:
+
+```bash
+./benchmarks/codex-mcp/run slm
+```
+
+It uses the same prompt, output schema, scorer, prepared index, and evidence
+attestation as VidXP-on, while sending model requests only to the loopback
+runtime. It runs three repetitions by default and writes a path-free result
+under `docs/benchmarking/runs/`. VidXP Desktop must first have **Local grounded
+answers** enabled and remain open so its managed Ollama service is available.
+The runner does not download or substitute a model. It reports bounded-chunk
+quality, local input/output tokens and model requests, MCP calls, and latency.
+External-agent calls and provider cost are zero; memory and energy are not
+measured. Each task is bounded at 12 local-model requests and 10 tool calls;
+limit failures remain failed runs rather than being retried outside the record.
 
 Both commands finish with a comparison of pass counts, temporal IoU, recall at
 each IoU threshold, boundary errors, elapsed time, average and total token usage
@@ -528,6 +561,13 @@ the authoritative result directly in VidXP's durable job store. It also matches
 each candidate's evidence IDs and modalities to ready evidence from that job,
 then verifies that its interval overlaps the delivered evidence range.
 
+The report also scores VidXP's visible evidence separately from the agent's
+answer. MCP surfaced-target Hit@1 and Hit@3 ask whether a ready evidence tile
+shown by `get_job_evidence` covers the same half-event threshold. These retrieval
+diagnostics do not require an 8–12-second final clip and do not enter the paired
+product gate. They distinguish “VidXP found and exposed it” from “the agent
+selected and returned it.”
+
 Attestation requires only the evidence IDs because the durable job already owns
 their intervals and metadata. The agent may use the initial board, metadata,
 keyframes, or clips and inspect an artifact only when that resolves a mismatch
@@ -537,6 +577,7 @@ calls.
 Report at least:
 
 - bounded-chunk Success@3, Success@1, reciprocal rank, and candidate count;
+- VidXP MCP surfaced-target Hit@1 and Hit@3;
 - top-one and best-of-three IoU plus R@1/R@3 at tIoU 0.3/0.5/0.7;
 - results by scene, action, sound, speech, and joint-modality task;
 - input/cached/uncached/output/reasoning token usage, Promptfoo-supplied
@@ -559,11 +600,23 @@ condition is supporting evidence. Latency, cost, calls, boundary quality, and
 all three raw summaries remain visible; the verdict does not replace them.
 
 Evaluation
-[`eval-0eL-2026-09-05T22:40:10`](runs/eval-0eL-2026-09-05T22-40-10.json)
-completed this corrected development smoke in all three conditions. Its
-assertions passed, but the product gate was not scored. See
-[Benchmark results](results.md#codex-mcp-development-smoke) for the measurements
-and interpretation.
+[`eval-7VR-2026-09-06T10:58:07`](runs/eval-7VR-2026-09-06T10-58-07.json)
+completed the isolated held-out pilot in all three conditions. The current
+deterministic scorer accepts all 81 saved runs. The agent-level gate failed,
+while VidXP's visible top three evidence tiles surfaced the target on 19/27
+VidXP runs. See [Benchmark results](results.md#current-codex-mcp-held-out-pilot)
+for the measurements and interpretation.
+
+The fixed prompt already asks for up to three grounded candidates and says not
+to reconfirm evidence that already supports one. The shipped skill now makes
+the handoff precise: for a requested shortlist, preserve each distinct ready
+candidate from the initial ranked evidence up to three, dropping only failures,
+duplicates, or evidence-confirmed mismatches. It does not require opening or
+parsing every artifact. In the saved run, five final misses had a qualifying
+visible top-three tile and seven did not. The `vidxp` command measures this
+declared handoff intervention against frozen controls without rerunning them.
+That comparison can support an intervention analysis, but it must not be called
+the original counterbalanced product gate.
 
 Selected earlier runs remain as diagnostics, not product-gate evidence. The
 exact-interval runs preserve the failure and later boundary behavior;

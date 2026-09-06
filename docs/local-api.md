@@ -92,51 +92,50 @@ to rewrite a question into searches and draft claims from citable textual
 evidence. VidXP falls back to deterministic evidence retrieval when Ollama is
 not configured or unavailable.
 
+The `local-worker` installation profile includes the required local-answer
+client. Custom package installations must include the `slm` extra. Prepare the
+approved runtime and model once:
+
+```bash
+vidxp local-answers prepare
+vidxp local-answers status
+```
+
+The command discloses any required downloads, asks for confirmation, reuses a
+healthy Ollama service or executable when available, and saves the selected
+endpoint and model in VidXP's per-user configuration. Later CLI, HTTP, and MCP
+processes read that configuration automatically:
+
+```bash
+vidxp query "When does the taxi arrive?"
+```
+
+For an existing self-hosted service, select its OpenAI-compatible endpoint
+during preparation:
+
+```bash
+vidxp local-answers prepare --base-url http://127.0.0.1:11434/v1
+```
+
+`VIDXP_SLM_BASE_URL` and `VIDXP_SLM_MODEL` remain explicit process-level
+overrides for custom deployments. They are not required after normal local
+preparation.
+
 For VidXP Desktop, open **Setup options** and enable **Local grounded
-answers**. Desktop first reuses a healthy Ollama service or existing executable.
-On supported Desktop platforms, it otherwise asks before downloading the
-pinned, checksum-verified headless runtime into VidXP's private data. It never
-installs the Ollama desktop app. Desktop downloads the approved model with
-visible progress and carries the non-secret local provider settings into every
-managed surface, including copied stdio MCP JSON and **Set up in Codex**. If
-Desktop starts `ollama serve`, it supervises and stops only that owned process.
-It never stops an Ollama app or service that was already running.
-
-The commands below are only for command-line installations and custom
-deployments.
-
-Install and start [Ollama](https://ollama.com/download), then explicitly
-download VidXP's recommended model:
-
-```bash
-ollama pull qwen3.5:4b-q4_K_M
-```
-
-Set the Ollama OpenAI-compatible address before starting `vidxp-mcp`,
-`vidxp-api`, or a CLI query. VidXP selects `qwen3.5:4b-q4_K_M` when the model
-setting is omitted:
-
-```bash
-export VIDXP_SLM_BASE_URL=http://127.0.0.1:11434/v1
-vidxp query "When does the taxi arrive?"
-```
-
-In PowerShell, set the same value with:
-
-```powershell
-$env:VIDXP_SLM_BASE_URL = "http://127.0.0.1:11434/v1"
-vidxp query "When does the taxi arrive?"
-```
+answers**. Desktop invokes the same preparation operation inside its managed
+VidXP runtime. It shows progress and carries the non-secret settings into every
+managed surface, including copied stdio MCP JSON and **Set up in Codex**. Tauri
+only supervises the `ollama serve` process owned by that Desktop instance; it
+never stops an Ollama app or service that was already running.
 
 The official Q4_K_M model download is approximately 3.4 GB. A Desktop-managed
 headless runtime can add up to approximately 1.36 GiB; an existing service or
 executable avoids that download. Local inference has no model API fee or
 numbered hosted-model run, but it still uses local storage, memory, compute time,
-and electricity. Desktop downloads the model only when the user selects the
-feature; CLI users pull it explicitly. VidXP never bundles the model with the
-Python or Desktop packages. A reused external Ollama service continues to own
-its model storage; VidXP does not claim those files are in its search-model
-cache.
+and electricity. VidXP downloads the model only during the explicit preparation
+operation and never bundles it with the Python or Desktop packages. A reused
+external Ollama service continues to own its model storage; VidXP does not claim
+those files are in its search-model cache.
 
 The current query adapter sends structured search evidence, not video or audio
 bytes, to Qwen. Speech transcripts can support generated factual claims.

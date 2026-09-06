@@ -47,9 +47,11 @@ description: Use VidXP to search indexed videos and surface inspectable evidence
 - After the evidence, add at most a brief accuracy note. State uncertainty or
   visible mismatches without launching another search. Accuracy feedback must
   not replace or precede the evidence.
-- When distinct returned moments remain plausible, provide up to three in ranked
-  order. Return fewer rather than padding the answer with weak or duplicate
-  matches.
+- When the user requests a shortlist, preserve each distinct ready candidate
+  from the initial ranked evidence up to the requested limit (maximum three),
+  in returned rank order. Drop only duplicates, failed candidates, or a result
+  whose returned evidence establishes a mismatch; do not discard a ready
+  lower-ranked candidate merely because the first appears sufficient.
 - Preserve the source job and evidence IDs. Describe scores as retrieval scores,
   and distinguish a visible appearance from a dialogue or caption mention.
 - An empty result means no matching indexed evidence was found, not that the

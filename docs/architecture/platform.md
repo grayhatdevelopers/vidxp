@@ -875,21 +875,20 @@ overrides it. VidXP sets temperature zero, disables reasoning output, and
 requires the native JSON schemas for both planning and synthesis. Model weights
 are never bundled. Desktop setup pulls the approved artifact only after the
 user selects local grounded answers and approves any required headless-runtime
-download; CLI and server operators pull it explicitly.
+download. CLI and server operators use `vidxp local-answers prepare`.
 
-Desktop treats the provider as an optional supervised runtime. It first probes
-the loopback `/api/version` and `/api/tags` contracts and reuses an existing
-healthy service without taking ownership. It next reuses an existing Ollama
-executable. If neither is available on a supported Desktop target, it downloads
-the pinned official headless archive declared in the embedded runtime manifest,
-verifies its expected byte count and SHA-256 digest, and atomically activates it
-under Desktop's private application data. Desktop never installs the Ollama
-desktop app. It starts a child `ollama serve` process that its existing
-process-tree supervisor owns, and the model pull uses Ollama's streaming
-`/api/pull` contract. Desktop persists only the feature selection, injects the
-private `/v1` endpoint and approved model into managed processes, and includes
-the same non-secret environment in stdio MCP configuration. It never stops an
-externally owned Ollama service.
+The Python local-answer service owns endpoint checks, runtime discovery and
+installation, checksum verification, model download, and saved CLI
+configuration. Its approved runtime and model are declared once in
+`src/vidxp/assets/local-answers.json`. CLI setup calls that service directly;
+Desktop invokes the same CLI operation inside its managed VidXP runtime.
+
+Desktop still owns process supervision. It starts `ollama serve` only when the
+shared setup selected a managed executable, injects the private `/v1` endpoint
+and approved model into managed processes, and includes the same non-secret
+environment in stdio MCP configuration. It never stops an externally owned
+Ollama service. A local CLI installation can start its saved managed runtime on
+demand and stops only the process it started.
 
 Published model results select the integration candidate; the repository gate
 does not attempt to reproduce general model leaderboards. Promotion still

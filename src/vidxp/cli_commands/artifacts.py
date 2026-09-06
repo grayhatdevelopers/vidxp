@@ -13,11 +13,10 @@ from vidxp.application_models import (
     SnippetProfile,
 )
 from vidxp.cli_support import (
+    LiveProgress,
     OutputFormat,
     effective_output_format,
-    emit_job_progress,
     emit_json,
-    emit_progress,
     require_media_runtime,
     state_from_context,
 )
@@ -72,21 +71,20 @@ def create_snippet(
         and not state.quiet
         and output_format == OutputFormat.rich
     )
-    if show_progress:
-        emit_progress("Starting snippet rendering...")
-    job = state.jobs.submit_snippet(
-        CreateSnippetCommand(
-            media_id=media_id,
-            start_seconds=start_seconds,
-            end_seconds=end_seconds,
-            profile=profile,
+    with LiveProgress(show_progress) as live_progress:
+        job = state.jobs.submit_snippet(
+            CreateSnippetCommand(
+                media_id=media_id,
+                start_seconds=start_seconds,
+                end_seconds=end_seconds,
+                profile=profile,
+            )
         )
-    )
-    if not detach:
-        job = state.jobs.wait(
-            job.job_id,
-            progress=emit_job_progress if show_progress else None,
-        )
+        if not detach:
+            job = state.jobs.wait(
+                job.job_id,
+                progress=live_progress.update_job if show_progress else None,
+            )
     payload = job.model_dump(mode="json")
     if output_format == OutputFormat.json:
         emit_json(payload)

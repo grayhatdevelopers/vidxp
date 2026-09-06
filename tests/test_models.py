@@ -843,6 +843,22 @@ class ModelTests(unittest.TestCase):
         ):
             VidXPSettings(_env_file=None)
 
+    def test_saved_local_answer_selection_supplies_cli_and_local_surfaces(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "vidxp.local_answers.configured_local_answer_values",
+                return_value={
+                    "slm_base_url": "http://127.0.0.1:11434/v1",
+                    "slm_model": "saved-model",
+                },
+            ),
+        ):
+            settings = VidXPSettings(_env_file=None)
+
+        self.assertEqual(settings.slm_base_url, "http://127.0.0.1:11434/v1")
+        self.assertEqual(settings.slm_model, "saved-model")
+
     def test_auto_runtime_remains_cpu_until_acceleration_parity_is_enabled(self):
         with patch(
             "vidxp.runtime._torch_accelerators",

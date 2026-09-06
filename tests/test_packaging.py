@@ -712,6 +712,17 @@ class PackagingTests(unittest.TestCase):
             manifest["media_runtime"]["strategy"],
             "system",
         )
+        self.assertNotIn("local_answers", manifest)
+        local_answers = json.loads(
+            (ROOT / "src" / "vidxp" / "assets" / "local-answers.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(local_answers["model"], "qwen3.5:4b-q4_K_M")
+        build_script = (
+            ROOT / "desktop" / "src-tauri" / "build.rs"
+        ).read_text(encoding="utf-8")
+        self.assertIn("../../src/vidxp/assets/local-answers.json", build_script)
 
     def test_combined_release_version_contract(self):
         expected_extra_files = {

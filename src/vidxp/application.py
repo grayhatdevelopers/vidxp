@@ -125,6 +125,9 @@ class VidXPApplication(ControlPlaneApplication):
             settings=settings,
         )
 
+    def close(self) -> None:
+        self.query.close()
+
     @contextmanager
     def _capability_dependencies(
         self,

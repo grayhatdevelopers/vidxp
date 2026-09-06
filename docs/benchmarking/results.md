@@ -23,16 +23,64 @@ behavior remain in the [adapter validation ledger](adapter_validation.md).
 | Current component gate | AEGBench frozen subset | 50 recordings; 149 annotated sound queries | PE-A/FineLAP top-point **76.5%/73.2%**; mean IoU **.523/.292** | Select PE-A-Frame Small for sound localization |
 | Current product smoke | PE-A bounded sections | One 75.81-second development video; two known sound queries | 1,896 unique frames; both target ten-second windows ranked first; **22.156 s** indexing after model load | Product decoder/runtime/storage/search integration works; long-audio quality is still unmeasured |
 | Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; neutral prompt and three isolated conditions | Every condition achieved bounded-chunk hit **1** and coverage **1**. Against direct local inspection, VidXP used **40.9%** fewer tokens and finished **22.1%** faster. | Corrected harness smoke only; one development task is not a product gate or held-out result. |
-| Agent held-out pilot | Codex MCP ablation | Nine LongVALE-derived tasks; three conditions; three repetitions; one final candidate | Only **17/27** VidXP/direct-local pairs were valid and scorable. | Product gate not scored because 10 pairs were excluded; filtered comparisons are diagnostic only. The next run uses up to three ranked candidates. |
+| Current agent held-out pilot | Codex MCP ablation | Nine LongVALE-derived tasks; three conditions; three repetitions; up to three final candidates | All **27/27** matched pairs were valid and scorable. VidXP/direct-local Success@3 was **15/27** versus **18/27**; VidXP used **20.6%** fewer tokens. | Product gate failed on quality. VidXP's visible MCP evidence reached Hit@3 **19/27**, exposing a ranking/agent-selection gap. |
+| First agent held-out pilot | Codex MCP ablation | Nine LongVALE-derived tasks; three conditions; three repetitions; one final candidate | Only **17/27** VidXP/direct-local pairs were valid and scorable. | Historical unscored run; filtered comparisons are diagnostic only. |
 | Global-only sound diagnostic | Codex MCP ablation | Same development task after filtering sound search to global clips | VidXP-on IoU **0.6000**; VidXP-off IoU **0.8811** | Same answer content with 16.5% fewer VidXP tokens and 11.3% lower latency, but the ten-second sound clip worsened the endpoint |
 
 The current-provider rows are deliberately tiny regression runs. Their
 percentages are not quality estimates and must not be compared with the full
 legacy rows. The two component gates make provider decisions only. A current
-full-corpus score has not been run. The first whole-product pilot completed but
-failed its condition-integrity requirement, so it has no gate verdict.
+full-corpus score has not been run. The current whole-product pilot failed its
+quality gate; the first pilot remains unscored because it failed its
+condition-integrity requirement.
 
-## Codex MCP held-out pilot
+## Current Codex MCP held-out pilot
+
+Evaluation
+[`eval-7VR-2026-09-06T10:58:07`](runs/eval-7VR-2026-09-06T10-58-07.json)
+completed all 81 agent runs in 3 h 13 min 41.136 s on `mac-m2-01`. The current
+deterministic scorer accepts all runs, so all 27 VidXP/direct-local pairs enter
+the product gate.
+
+| Condition | Success@3 | Success@1 | Average time | Average tokens | Promptfoo cost |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| VidXP | 15/27 | 15/27 | 81.423 s | 236,060 | $0.403497 |
+| Direct local | 18/27 | 18/27 | 99.669 s | 297,310 | $0.544540 |
+| Clean user | 16/27 | 16/27 | 247.446 s | 697,139 | $1.346239 |
+
+VidXP was 18.3% faster and used 20.6% fewer tokens than direct inspection, but
+its Success@3 was lower by 3/27, so the product gate **failed**. The agents
+returned 1.15 VidXP candidates on average; Success@3 therefore did not improve
+over Success@1.
+
+The MCP-level diagnostic scores the ready evidence tiles actually shown by
+`get_job_evidence`. VidXP surfaced a qualifying target region in 9/27 top tiles
+and 19/27 top-three sets, with mean best-of-three event coverage `.650`. This
+does not change the failed cross-condition verdict. It shows that the immediate
+gap is split: 14 runs both surfaced and returned a hit, five surfaced one that
+the agent did not return as a qualifying clip, one returned a hit outside the
+visible top-three metric, and seven did neither. Of the 12 final-answer misses,
+five expose an agent-selection opportunity and seven still require better
+retrieval or ranking.
+
+This run conclusively establishes only the result under this fixed nine-task
+pilot: pre-indexed VidXP reduced average agent tokens by 20.6%, latency by
+18.3%, and Promptfoo's comparison-cost estimate by 25.9%. It used fewer tokens
+in 20/27 matched pairs, was faster in 19/27, and had a lower comparison cost in
+19/27, but returned fewer successful final answers. It does not establish
+general 55.6% or 70.4% product accuracy, nor prove that forcing three answers
+would preserve the baseline's 66.7% score. Those require broader tasks and a
+matched rerun after any prompt, skill, or ranking change.
+
+The next evidence-handoff measurement is deliberately narrower. The neutral
+prompt and scorer stay fixed; only the shipped VidXP skill now preserves up to
+three distinct ready candidates from the initial ranked evidence. Running
+`./benchmarks/codex-mcp/run vidxp` measures that condition alone and reuses this
+run's direct-local and clean-user results as frozen controls. Its result is a
+later intervention comparison, not a rescore and not a new counterbalanced
+three-condition gate.
+
+## First Codex MCP held-out pilot
 
 Evaluation
 [`eval-dxR-2026-09-06T00:15:35`](runs/eval-dxR-2026-09-06T00-15-35.json)
@@ -47,8 +95,9 @@ excluded pairs may bias them. Separately, the saved VidXP jobs put a tIoU-0.5
 match at rank one for 6/26 jobs and within the top three for 14/26. That points
 to final ranking, not candidate absence alone, as the main product limitation.
 The saved agents were required to return one final clip, so this run cannot be
-rescored as agent Success@3. The next isolated run permits up to three ordered
-clips for every condition and reports both Success@1 and Success@3.
+rescored as agent Success@3. The current isolated pilot above permits up to
+three ordered clips for every condition and reports both Success@1 and
+Success@3.
 The [metric database](metric_database.md#first-held-out-pilot-audit) records the
 full condition totals, exclusion causes, and research boundary.
 

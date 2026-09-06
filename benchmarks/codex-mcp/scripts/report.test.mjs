@@ -3,10 +3,13 @@ import { test } from 'node:test';
 
 import { sanitizePromptfooExport } from './export-eval.mjs';
 import {
+  assertionReason,
   summarizePrimaryPairs,
   summarizeRecordedItems,
   summarizeResults,
   summarizeRetrieval,
+  summarizeSurfaceRecall,
+  summarizeSurfaceTransfer,
 } from './report.mjs';
 
 test('sanitizes a Promptfoo export without removing its audit data', () => {
@@ -149,6 +152,7 @@ test('uses only matched integrity-valid primary pairs for the product comparison
 
   assert.equal(paired.totalPairs, 2);
   assert.equal(paired.validPairs, 1);
+  assert.equal(paired.pairs.length, 1);
   assert.deepEqual(paired.results.map((result) => result.task), ['one', 'one']);
 });
 
@@ -170,8 +174,16 @@ test('counts Promptfoo recorded items without parsing command text', () => {
 
 test('reports fused and per-modality retrieval boundary quality', () => {
   const summary = summarizeRetrieval(
-    { task: 'opening', expectedStart: 0, expectedEnd: 6 },
     {
+      task: 'opening', expectedStart: 0, expectedEnd: 6,
+      testVars: { target_chunk_seconds: 10, min_event_coverage: 0.5 },
+    },
+    {
+      surface_candidates: [
+        { rank: 1, start: 20, end: 30, state: 'ready' },
+        { rank: 2, start: 0, end: 10, state: 'ready' },
+        { rank: 3, start: 40, end: 50, state: 'failed' },
+      ],
       moments: [
         {
           rank: 1,
@@ -195,4 +207,37 @@ test('reports fused and per-modality retrieval boundary quality', () => {
   assert.equal(summary.bestByModality.get('scene').fusedRank, 1);
   assert.equal(summary.bestByModality.get('scene').iou, 0.5);
   assert.deepEqual(summary.momentIous, [0.75, 0, 1]);
+  assert.deepEqual(summary.surfaceCoverages, [0, 1]);
+  assert.deepEqual(summarizeSurfaceRecall([summary], 1), {
+    hits: 0,
+    scored: 1,
+    rate: 0,
+    meanBestCoverage: 0,
+  });
+  assert.deepEqual(summarizeSurfaceRecall([summary], 3), {
+    hits: 1,
+    scored: 1,
+    rate: 1,
+    meanBestCoverage: 1,
+  });
+  assert.deepEqual(summarizeSurfaceTransfer([
+    { ...summary, finalChunkHit: 0 },
+  ], 3), {
+    surfacedAndReturned: 0,
+    surfacedOnly: 1,
+    returnedOnly: 0,
+    neither: 0,
+  });
+});
+
+test('extracts the reason for the requested Promptfoo assertion', () => {
+  const grading = {
+    reason: 'Combined failure summary',
+    componentResults: [
+      { reason: 'Temporal miss', assertion: { metric: 'temporal_grounding' } },
+      { reason: 'Isolation failure', assertion: { metric: 'ablation_boundary' } },
+    ],
+  };
+
+  assert.equal(assertionReason(grading, 'ablation_boundary'), 'Isolation failure');
 });

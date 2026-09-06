@@ -26,7 +26,7 @@ input, output, reasoning, time, cost, and calls alongside it. Temporal IoU and
 threshold recall remain secondary exact-boundary diagnostics and an explicit
 future research limitation.
 
-## Provider decision for the next agent run
+## Providers used in the current agent run
 
 | Lane | Selection | Evidence and limit |
 | --- | --- | --- |
@@ -35,12 +35,12 @@ future research limitation.
 | Action | Keep VideoPrism LvT | It classified all 50 videos in the frozen five-class Kinetics-mini gate correctly through VidXP's current 2 fps/16-frame records. This establishes basic recognition, not temporal localization. |
 | Sound localization | Use PE-A-Frame Small; keep FineLAP only as a benchmark control | On the identical 149-query AEGBench subset, PE-A improved frame AUROC from `.8401` to `.8614`, frame average precision from `.7484` to `.7616`, top-point accuracy from `.7315` to `.7651`, and default-threshold mean IoU from `.2924` to `.5226`. It was about 10.2 times slower, but still processed audio 3.35 times faster than playback on `mac-m2-01`. |
 
-This selects providers; it is not a full product score. The paid agent run
-must wait until the PE-A-Frame long-audio gate and the unchanged scene and
-speech lanes complete their gates. Replacing VideoPrism with another global
-clip-similarity model would not fix temporal localization. PE-AV has no interval
-head, uses a 3.39 GB checkpoint, and its one-video direct-forward smoke took
-13.36 seconds versus VideoPrism's 7.81-second mean over the 50-video gate.
+This selects providers; it is not a full product score. The isolated agent
+pilot has now run with this stack. Replacing VideoPrism with another global
+clip-similarity model alone would not fix temporal localization. PE-AV has no
+interval head, uses a 3.39 GB checkpoint, and its one-video direct-forward
+smoke took 13.36 seconds versus VideoPrism's 7.81-second mean over the 50-video
+gate.
 
 ## What the product can claim now
 
@@ -53,11 +53,15 @@ head, uses a 3.39 GB checkpoint, and its one-video direct-forward smoke took
 - VideoPrism remains the action provider. Its perfect result on five easy
   Kinetics classes shows that the model and VidXP preprocessing recognize broad
   actions; it does not show that long-video moments are ranked or trimmed well.
-- No measured 70–80% whole-product accuracy claim exists yet. The scene and
-  speech full gates, PE-A long-audio indexing, and the held-out multimodal run
-  are still required. Until then, describe VidXP as evidence retrieval that can
-  reduce how much media an agent inspects, with exact boundaries as a known
-  limitation.
+- On the selected nine-task pilot, the VidXP agent returned a qualifying clip
+  on `15/27` repeated runs (`55.6%`), while its visible MCP top three contained
+  one on `19/27` (`70.4%`). Direct local inspection scored `18/27` (`66.7%`).
+  These are pilot rates over nine repeated tasks, not general product accuracy.
+- The same pilot measured 20.6% fewer agent tokens, 18.3% lower latency, and a
+  25.9% lower Promptfoo comparison-cost estimate for VidXP than direct local
+  inspection. VidXP won 20/27 matched token comparisons and 19/27 latency and
+  cost comparisons. This establishes an average efficiency gain under the
+  fixed protocol, not an API bill or an accuracy win.
 
 On this CPU-only Mac, PE-A processed 613.43 seconds of audio in about 183
 seconds, so a linear inference-only estimate is roughly 18 minutes per hour of
@@ -86,10 +90,22 @@ the pinned Transformers port matches Google's official Flax checkpoint; the
 remaining action failure is therefore in the product's global-similarity
 ranking design, not the converted model weights.
 
-An optional small language model may plan searches or summarize retrieved
-evidence. That is a VidXP product option, not a paper-derived requirement. It
-must be compared with the deterministic path on answer quality, tokens,
-latency, cost, and fallback behavior before becoming a default.
+VidXP already has an optional local SLM path: `query_video` can use the
+self-hosted Ollama `qwen3.5:4b-q4_K_M` model for typed query planning and
+grounded answer synthesis, with deterministic evidence fallback. This is a
+VidXP product option, not a paper-derived requirement, and it has not been run
+through the agent-ablation tasks. Evaluate it as a separate local-answer lane,
+not as a retroactive replacement for the Codex MCP condition. Report the same
+quality and latency metrics plus model-stage calls and fallback use. The current
+adapter does not expose local model tokens, memory, or energy, so those remain
+unmeasured rather than being treated as zero. Local execution removes external
+agent calls and provider charges but does not make inference costless.
+
+The current paper-facing SLM run is narrower and distinct: the same managed
+model receives the shipped skill and required MCP tools in the benchmark
+harness, then returns the same three-candidate schema scored for Codex. This
+tests whether VidXP can serve a local agent without cloud-model exposure; it
+does not claim that the harness agent is already a shipped VidXP UI feature.
 
 ## Confirmed limits and decisions
 
