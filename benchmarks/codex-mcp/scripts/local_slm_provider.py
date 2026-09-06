@@ -358,6 +358,33 @@ def _metadata(
     }
 
 
+def _build_agent(
+    *,
+    base_url: str,
+    model_name: str,
+    toolset: StdioMCPToolset,
+    max_output_tokens: int,
+    model_timeout_seconds: float,
+) -> Agent[None, LocalAgentAnswer]:
+    model = OllamaModel(model_name, provider=OllamaProvider(base_url=base_url))
+    return Agent(
+        model,
+        output_type=LocalAgentAnswer,
+        instructions=(
+            "Follow the supplied VidXP skill. Use only its MCP tools, keep the "
+            "answer grounded in one fresh source job, and finish with the requested "
+            "structured result.\n\n" + _skill_instructions()
+        ),
+        toolsets=[toolset],
+        retries=1,
+        model_settings={
+            "temperature": 0,
+            "max_tokens": max_output_tokens,
+            "timeout": model_timeout_seconds,
+        },
+    )
+
+
 async def _run_agent(prompt: str, config: dict[str, Any]) -> dict[str, Any]:
     configured, base_url, model_name = _selected_model()
     cold_start = _ensure_runtime(
@@ -374,23 +401,15 @@ async def _run_agent(prompt: str, config: dict[str, Any]) -> dict[str, Any]:
     started_at = time.time()
     await toolset.open()
     try:
-        model = OllamaModel(model_name, provider=OllamaProvider(base_url=base_url))
-        agent = Agent(
-            model,
-            output_type=LocalAgentAnswer,
-            instructions=(
-                "Follow the supplied VidXP skill. Use only its MCP tools, keep the "
-                "answer grounded in one fresh source job, and finish with the requested "
-                "structured result.\n\n" + _skill_instructions()
+        agent = _build_agent(
+            base_url=base_url,
+            model_name=model_name,
+            toolset=toolset,
+            max_output_tokens=_positive_option(config, "maxOutputTokens"),
+            model_timeout_seconds=_positive_number_option(
+                config,
+                "modelTimeoutSeconds",
             ),
-            toolsets=[toolset],
-            retries=1,
-            model_settings={
-                "temperature": 0,
-                "max_tokens": _positive_option(config, "maxOutputTokens"),
-                "timeout": _positive_number_option(config, "modelTimeoutSeconds"),
-            },
-            instrument=True,
         )
         try:
             result = await agent.run(
@@ -481,6 +500,15 @@ def check_configuration() -> dict[str, Any]:
         "VIDXP_EVAL_MACHINE_ID",
     ):
         _required_environment(name)
+    # Construct the exact agent type without starting the runtime or inference.
+    # This catches installed Pydantic-AI API incompatibilities during preflight.
+    _build_agent(
+        base_url=base_url,
+        model_name=model_name,
+        toolset=StdioMCPToolset(_mcp_parameters()),
+        max_output_tokens=1,
+        model_timeout_seconds=1,
+    )
     return {
         "model": model_name,
         "base_url": base_url,
