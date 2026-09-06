@@ -51,6 +51,7 @@ DEFAULT_TARGET_CHUNK_SECONDS = 10.0
 DEFAULT_MIN_CHUNK_SECONDS = 8.0
 DEFAULT_MAX_CHUNK_SECONDS = 12.0
 DEFAULT_MIN_EVENT_COVERAGE = 0.5
+DEFAULT_MAX_CANDIDATES = 3
 
 
 def interval_iou(
@@ -110,20 +111,14 @@ def score_temporal_grounding(
     if result.get("video_id") != variables.get("video_id"):
         return _failed("The returned video_id does not match the task.")
 
-    start = _finite_number(result.get("start_seconds"))
-    end = _finite_number(result.get("end_seconds"))
     duration = _finite_number(variables.get("duration_seconds"))
     expected_start = _finite_number(variables.get("expected_start"))
     expected_end = _finite_number(variables.get("expected_end"))
-    if None in (start, end, duration, expected_start, expected_end):
-        return _failed("The result or task has a missing/non-numeric interval.")
-    assert start is not None
-    assert end is not None
+    if None in (duration, expected_start, expected_end):
+        return _failed("The task has a missing/non-numeric interval.")
     assert duration is not None
     assert expected_start is not None
     assert expected_end is not None
-    if start < 0 or end <= start or end > duration + 0.001:
-        return _failed("The predicted interval is outside the video bounds.")
 
     target_chunk = _positive_number(
         variables.get("target_chunk_seconds", DEFAULT_TARGET_CHUNK_SECONDS)
@@ -147,39 +142,108 @@ def score_temporal_grounding(
         return _failed("The task's chunk duration bounds are inconsistent.")
     if not 0 < min_coverage <= 1:
         return _failed("The task's event coverage threshold must be in (0, 1].")
+    max_candidates = variables.get("max_candidates", DEFAULT_MAX_CANDIDATES)
+    if (
+        isinstance(max_candidates, bool)
+        or not isinstance(max_candidates, int)
+        or max_candidates < 1
+    ):
+        return _failed("The task has an invalid candidate limit.")
 
-    predicted_duration = end - start
+    candidates = _candidate_items(result)
+    if not candidates:
+        return _failed("The output contains no candidate clips.")
+    if len(candidates) > max_candidates:
+        return _failed(f"The output exceeds the {max_candidates}-candidate limit.")
+
+    scored_candidates: list[dict[str, float | bool]] = []
+    seen_intervals: set[tuple[float, float]] = set()
     effective_min_chunk = min(min_chunk, duration)
-    duration_in_range = (
-        predicted_duration + 0.001 >= effective_min_chunk
-        and predicted_duration <= max_chunk + 0.001
-    )
-    coverage = event_coverage(
-        start,
-        end,
-        expected_start,
-        expected_end,
-        target_chunk_seconds=target_chunk,
-    )
-    bounded_chunk_hit = duration_in_range and coverage >= min_coverage
-    iou = interval_iou(start, end, expected_start, expected_end)
+    for rank, candidate in enumerate(candidates, start=1):
+        if not isinstance(candidate, Mapping):
+            return _failed(f"Candidate {rank} is not an object.")
+        start = _finite_number(candidate.get("start_seconds"))
+        end = _finite_number(candidate.get("end_seconds"))
+        if start is None or end is None:
+            return _failed(f"Candidate {rank} has a missing/non-numeric interval.")
+        if start < 0 or end <= start or end > duration + 0.001:
+            return _failed(f"Candidate {rank} is outside the video bounds.")
+        interval = (start, end)
+        if interval in seen_intervals:
+            return _failed("The output contains a duplicate candidate interval.")
+        seen_intervals.add(interval)
+        predicted_duration = end - start
+        duration_in_range = (
+            predicted_duration + 0.001 >= effective_min_chunk
+            and predicted_duration <= max_chunk + 0.001
+        )
+        coverage = event_coverage(
+            start,
+            end,
+            expected_start,
+            expected_end,
+            target_chunk_seconds=target_chunk,
+        )
+        iou = interval_iou(start, end, expected_start, expected_end)
+        scored_candidates.append(
+            {
+                "rank": float(rank),
+                "start": start,
+                "end": end,
+                "duration": predicted_duration,
+                "duration_in_range": duration_in_range,
+                "coverage": coverage,
+                "hit": duration_in_range and coverage >= min_coverage,
+                "iou": iou,
+            }
+        )
+
+    top = scored_candidates[0]
+    hits = [candidate for candidate in scored_candidates if candidate["hit"]]
+    first_hit_rank = int(hits[0]["rank"]) if hits else None
+    bounded_chunk_hit_at_1 = bool(top["hit"])
+    bounded_chunk_hit_at_3 = bool(hits)
+    best_coverage = max(float(candidate["coverage"]) for candidate in scored_candidates)
+    best_iou = max(float(candidate["iou"]) for candidate in scored_candidates)
+    duration_valid_rate = sum(
+        bool(candidate["duration_in_range"]) for candidate in scored_candidates
+    ) / len(scored_candidates)
     scores = {
         "valid_interval": 1.0,
-        "bounded_chunk_hit": float(bounded_chunk_hit),
-        "event_coverage": coverage,
-        "chunk_duration_in_range": float(duration_in_range),
-        "temporal_iou": iou,
-        "r1_tiou_0_3": float(iou >= 0.3),
-        "r1_tiou_0_5": float(iou >= 0.5),
-        "r1_tiou_0_7": float(iou >= 0.7),
+        "bounded_chunk_hit": float(bounded_chunk_hit_at_3),
+        "bounded_chunk_hit_at_1": float(bounded_chunk_hit_at_1),
+        "bounded_chunk_hit_at_3": float(bounded_chunk_hit_at_3),
+        "bounded_chunk_mrr": 0.0 if first_hit_rank is None else 1 / first_hit_rank,
+        "candidate_count": float(len(scored_candidates)),
+        "event_coverage": best_coverage,
+        "top1_event_coverage": float(top["coverage"]),
+        "chunk_duration_in_range": float(bool(top["duration_in_range"])),
+        "candidate_duration_in_range_rate": duration_valid_rate,
+        "temporal_iou": float(top["iou"]),
+        "best_temporal_iou": best_iou,
+        "r1_tiou_0_3": float(top["iou"] >= 0.3),
+        "r1_tiou_0_5": float(top["iou"] >= 0.5),
+        "r1_tiou_0_7": float(top["iou"] >= 0.7),
+        "r3_tiou_0_3": float(best_iou >= 0.3),
+        "r3_tiou_0_5": float(best_iou >= 0.5),
+        "r3_tiou_0_7": float(best_iou >= 0.7),
     }
     return {
-        "pass": bounded_chunk_hit,
-        "score": coverage if duration_in_range else 0.0,
+        "pass": bounded_chunk_hit_at_3,
+        "score": max(
+            (
+                float(candidate["coverage"])
+                for candidate in scored_candidates
+                if candidate["duration_in_range"]
+            ),
+            default=0.0,
+        ),
         "reason": (
-            f"Bounded chunk {'hit' if bounded_chunk_hit else 'miss'}: "
-            f"{predicted_duration:.3f}s duration, {coverage:.4f} event coverage; "
-            f"temporal IoU {iou:.4f}."
+            f"Bounded chunk {'hit' if bounded_chunk_hit_at_3 else 'miss'} in "
+            f"{len(scored_candidates)} candidate(s); top-1 "
+            f"{'hit' if bounded_chunk_hit_at_1 else 'miss'}, first hit rank "
+            f"{first_hit_rank if first_hit_rank is not None else 'none'}, "
+            f"best coverage {best_coverage:.4f}, best temporal IoU {best_iou:.4f}."
         ),
         "namedScores": scores,
     }
@@ -400,44 +464,66 @@ def _attest_job(
     }
     if not ready:
         return "The durable VidXP result has no ready evidence for the task media."
-    output_evidence = _evidence_items(result)
-    if not output_evidence:
-        return "VidXP-on returned no evidence entries to attest."
+    output_candidates = _candidate_items(result)
+    if not output_candidates:
+        return "VidXP-on returned no candidate clips to attest."
+    for candidate in output_candidates:
+        if not isinstance(candidate, Mapping):
+            return "A returned candidate is not an object."
+        verified_ranges: list[tuple[float, float]] = []
+        evidence_ids = candidate.get("evidence_ids")
+        if evidence_ids is not None:
+            if (
+                not isinstance(evidence_ids, list)
+                or not evidence_ids
+                or any(not isinstance(item, str) or not item for item in evidence_ids)
+            ):
+                return "A VidXP candidate has no usable evidence IDs to attest."
+            candidate_modalities = candidate.get("modalities")
+            if not isinstance(candidate_modalities, list):
+                return "A VidXP candidate has no modality list to attest."
+            for evidence_id in evidence_ids:
+                delivered_item = ready.get(evidence_id)
+                if delivered_item is None:
+                    return "A returned evidence_id is not ready evidence from the source job."
+                if not set(candidate_modalities).intersection(
+                    delivered_item.get("modalities", [])
+                ):
+                    return "A candidate modality is not supported by its evidence_id."
+                source_interval = _delivered_source_interval(delivered_item)
+                if source_interval is None:
+                    return "A returned evidence interval cannot be attested."
+                verified_ranges.append(source_interval)
+        else:
+            output_evidence = _evidence_items(candidate)
+            if not output_evidence:
+                return "A VidXP candidate has no evidence entries to attest."
+            for item in output_evidence:
+                if not isinstance(item, Mapping):
+                    return "A returned evidence entry is not an object."
+                evidence_id = item.get("evidence_id")
+                delivered_item = ready.get(evidence_id)
+                if delivered_item is None:
+                    return "A returned evidence_id is not ready evidence from the source job."
+                if item.get("modality") not in delivered_item.get("modalities", []):
+                    return "A returned evidence modality is not supported by its evidence_id."
+                source_interval = _delivered_source_interval(delivered_item)
+                item_start = _finite_number(item.get("start_seconds"))
+                item_end = _finite_number(item.get("end_seconds"))
+                if source_interval is None or item_start is None or item_end is None:
+                    return "A returned evidence interval cannot be attested."
+                source_start, source_end = source_interval
+                if interval_iou(item_start, item_end, source_start, source_end) <= 0:
+                    return "A returned evidence interval does not overlap its source evidence."
+                verified_ranges.append(source_interval)
 
-    verified_ranges: list[tuple[float, float]] = []
-    for item in output_evidence:
-        if not isinstance(item, Mapping):
-            return "A returned evidence entry is not an object."
-        evidence_id = item.get("evidence_id")
-        delivered_item = ready.get(evidence_id)
-        if delivered_item is None:
-            return "A returned evidence_id is not ready evidence from the source job."
-        if item.get("modality") not in delivered_item.get("modalities", []):
-            return "A returned evidence modality is not supported by its evidence_id."
-        source_range = delivered_item.get("range")
-        if not isinstance(source_range, Mapping):
-            return "A returned evidence_id has no source interval."
-        source_start = _finite_number(source_range.get("source_start_seconds"))
-        source_end = _finite_number(source_range.get("source_end_seconds"))
-        item_start = _finite_number(item.get("start_seconds"))
-        item_end = _finite_number(item.get("end_seconds"))
-        if None in (source_start, source_end, item_start, item_end):
-            return "A returned evidence interval cannot be attested."
-        assert source_start is not None
-        assert source_end is not None
-        assert item_start is not None
-        assert item_end is not None
-        if interval_iou(item_start, item_end, source_start, source_end) <= 0:
-            return "A returned evidence interval does not overlap its source evidence."
-        verified_ranges.append((source_start, source_end))
-
-    predicted_start = _finite_number(result.get("start_seconds"))
-    predicted_end = _finite_number(result.get("end_seconds"))
-    if predicted_start is None or predicted_end is None or not any(
-        interval_iou(predicted_start, predicted_end, start, end) > 0
-        for start, end in verified_ranges
-    ):
-        return "The predicted interval does not overlap its attested VidXP evidence."
+        predicted_start = _finite_number(candidate.get("start_seconds"))
+        predicted_end = _finite_number(candidate.get("end_seconds"))
+        if predicted_start is None or predicted_end is None or not any(
+            interval_iou(predicted_start, predicted_end, start, end) > 0
+            for start, end in verified_ranges
+        ):
+            return "A predicted interval does not overlap its attested VidXP evidence."
 
     moments = payload.get("moments")
     if not isinstance(moments, list) or not moments:
@@ -452,6 +538,19 @@ def _attest_job(
     if not hits or any(hit.get("media_id") != media_id for hit in hits):
         return "The durable VidXP moments do not belong to the task video."
     return None
+
+
+def _delivered_source_interval(
+    item: Mapping[str, Any],
+) -> tuple[float, float] | None:
+    source_range = item.get("range")
+    if not isinstance(source_range, Mapping):
+        return None
+    start = _finite_number(source_range.get("source_start_seconds"))
+    end = _finite_number(source_range.get("source_end_seconds"))
+    if start is None or end is None or end <= start:
+        return None
+    return start, end
 
 
 def _inspects_delivered_artifact(
@@ -651,6 +750,15 @@ def _timestamp_seconds(value: Any) -> float | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.timestamp()
+
+
+def _candidate_items(result: Mapping[str, Any]) -> list[Any]:
+    candidates = result.get("candidates")
+    if candidates is not None:
+        return candidates if isinstance(candidates, list) else []
+    if "start_seconds" in result or "end_seconds" in result:
+        return [result]
+    return []
 
 
 def _evidence_items(result: Mapping[str, Any]) -> list[Any]:

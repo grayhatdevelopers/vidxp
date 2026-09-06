@@ -3,7 +3,6 @@ import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import {
   copyFileSync,
-  cpSync,
   createReadStream,
   existsSync,
   linkSync,
@@ -26,6 +25,7 @@ import {
   serializeEnvironment,
   versionAtLeast,
 } from './setup-lib.mjs';
+import { prepareConditionState } from './condition-state.mjs';
 
 const benchmarkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(benchmarkRoot, '..', '..');
@@ -35,14 +35,6 @@ const archiveHash = 'c83d62557f102c6d41ea95c2c3b3581657481c8646cc70b1e12a85ead27
 const archiveRelativePath = join('raw_videos_test', 'LongVALE_test_1171_part_9.zip');
 const annotationFilename = 'longvale-annotations-eval.json';
 const modalities = ['scene', 'action', 'sound', 'speech'];
-const evidenceSkillSource = join(
-  repositoryRoot,
-  'plugins',
-  'vidxp',
-  'skills',
-  'vidxp-find-video-evidence',
-);
-
 function executableName(command) {
   return process.platform === 'win32' && command === 'npm' ? 'npm.cmd' : command;
 }
@@ -245,22 +237,10 @@ async function main() {
     join(setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE, 'media'),
     { recursive: true, force: true },
   );
+  prepareConditionState({ repositoryRoot, environment: commandEnvironment });
   if (!existsSync(setupEnvironment.VIDXP_MCP_COMMAND)) {
     throw new Error(`VidXP MCP executable was not created at ${setupEnvironment.VIDXP_MCP_COMMAND}.`);
   }
-  if (!existsSync(join(evidenceSkillSource, 'SKILL.md'))) {
-    throw new Error(`VidXP evidence skill was not found at ${evidenceSkillSource}.`);
-  }
-  cpSync(
-    evidenceSkillSource,
-    join(
-      setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE,
-      '.agents',
-      'skills',
-      'vidxp-find-video-evidence',
-    ),
-    { recursive: true, force: true },
-  );
   if (process.platform !== 'win32') {
     const cleanPathProfile = `export PATH=${JSON.stringify(
       setupEnvironment.VIDXP_EVAL_CLEAN_USER_PATH,

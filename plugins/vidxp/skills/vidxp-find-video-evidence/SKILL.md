@@ -22,8 +22,10 @@ description: Use VidXP to search indexed videos and surface inspectable evidence
   normal evidence delivery; fetch the full job record only when the user needs
   machine-readable job details. Carry the returned observation token between
   waits.
-- Prefer the initial ranked evidence. Do not start a verification loop or
-  materialize additional variants unless the user asks.
+- Ground the answer in the initial ranked evidence. Inspect its returned board,
+  keyframe, or clip when that can resolve a visible mismatch or uncertainty; do
+  not start another retrieval or materialize variants solely to reconfirm an
+  already supported result.
 
 ## Actor scope
 
@@ -45,6 +47,9 @@ description: Use VidXP to search indexed videos and surface inspectable evidence
 - After the evidence, add at most a brief accuracy note. State uncertainty or
   visible mismatches without launching another search. Accuracy feedback must
   not replace or precede the evidence.
+- When distinct returned moments remain plausible, provide up to three in ranked
+  order. Return fewer rather than padding the answer with weak or duplicate
+  matches.
 - Preserve the source job and evidence IDs. Describe scores as retrieval scores,
   and distinguish a visible appearance from a dialogue or caption mention.
 - An empty result means no matching indexed evidence was found, not that the

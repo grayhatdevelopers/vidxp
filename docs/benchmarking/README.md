@@ -82,13 +82,16 @@ does not decide whether the collective agent comparison can run.
 
 The first 81-run pilot completed, but condition bypasses and invalid VidXP
 outputs left only 17/27 primary pairs usable. It therefore has no product-gate
-verdict. The next formal run requires an outer container, VM, or separate
-machine/account because the current Codex SDK sandbox modes do not physically
-hide other host paths. The retained VidXP jobs found a tIoU-0.5 candidate
+verdict. The corrected harness uses Codex's root-denied permission profiles and
+tests each condition's filesystem boundary before making a model call. The
+retained VidXP jobs found a tIoU-0.5 candidate
 within the top three for 14/26 jobs but at rank one for only 6/26, making final
 ordering the clearest product weakness. A corrected pilot rerun is required;
-IoU and boundary errors
-remain diagnostics rather than the entire product decision.
+IoU and boundary errors remain diagnostics rather than the entire product
+decision.
+The corrected contract allows every condition to return up to three ordered
+10-second candidates. Success@3 becomes primary while Success@1, rank, exact
+boundaries, and the cost of returning more evidence remain visible.
 See [current model direction](model_selection.md) and the
 [research adoption record](research_adoption.md).
 

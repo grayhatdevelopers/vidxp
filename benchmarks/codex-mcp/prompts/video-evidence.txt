@@ -1,16 +1,21 @@
-Locate one event in the supplied video and return one practical evidence clip.
+Locate one event in the supplied video and return up to three practical candidate
+clips, ordered from most to least likely. Return fewer when the available evidence
+does not support distinct alternatives.
 
 Video ID: {{ video_id }}
 Local media path, when available: {{ media_relpath }}
 Video duration: {{ duration_seconds }} seconds
 Event to locate: {{ query }}
-Evidence clip: aim for {{ target_chunk_seconds }} seconds and keep it between
+Each clip: aim for {{ target_chunk_seconds }} seconds and keep it between
 {{ min_chunk_seconds }} and {{ max_chunk_seconds }} seconds. The clip must contain
 the event, but it does not need to trim the event's exact boundaries. For an
 event longer than the target, choose its most representative target-size part.
 Near the start or end of the video, shift the clip instead of shortening it.
 
-Base the result on evidence you inspect rather than the filename or query alone.
-Preserve source and evidence IDs when an evidence source returns them; otherwise
-set those fields to null. If the evidence cannot be inspected, return null start
-and end values and explain the limitation. Return only the requested JSON object.
+Ground each candidate in available evidence rather than the filename or query
+alone. Reuse evidence already returned by a tool; do not perform extra inspection
+solely to reconfirm an already supported candidate. Preserve the source job and
+candidate evidence IDs when an evidence source returns them; otherwise use an
+empty evidence-ID list and set the source job to null.
+If no candidate can be grounded, explain the limitation in the answer and return
+an empty candidate list. Return only the requested JSON object.

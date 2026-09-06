@@ -484,6 +484,14 @@ class JobContractTests(unittest.TestCase):
             service.get(JOB_ID)
         self.assertEqual(raised.exception.code, "job_backend_unavailable")
 
+        backend.stop_worker.side_effect = RuntimeError(
+            "worker 0.4.0+old (PID 123) did not stop in time"
+        )
+        with self.assertRaises(ApplicationError) as raised:
+            service.stop_worker()
+        self.assertEqual(raised.exception.code, "worker_stop_failed")
+        self.assertIn("PID 123", str(raised.exception))
+
     def test_failed_model_preparation_error_round_trips_through_job_service(self):
         error = ErrorDetail(
             code="model_download_failed",

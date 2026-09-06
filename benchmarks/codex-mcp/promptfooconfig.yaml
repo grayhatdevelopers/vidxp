@@ -18,9 +18,7 @@ providers:
       maxRetries: 0
       working_dir: "{{ env.VIDXP_EVAL_VIDXP_ON_WORKSPACE }}"
       skip_git_repo_check: true
-      sandbox_mode: read-only
       approval_policy: never
-      network_access_enabled: false
       web_search_mode: disabled
       persist_threads: false
       enable_streaming: true
@@ -30,68 +28,53 @@ providers:
         required:
           - video_id
           - answer
-          - start_seconds
-          - end_seconds
-          - modalities
           - source_job_id
-          - evidence
+          - candidates
         properties:
           video_id:
             type: string
           answer:
             type: string
-          start_seconds:
-            type:
-              - number
-              - "null"
-          end_seconds:
-            type:
-              - number
-              - "null"
-          modalities:
-            type: array
-            items:
-              type: string
-              enum:
-                - scene
-                - action
-                - sound
-                - speech
           source_job_id:
             type:
               - string
               - "null"
-          evidence:
+          candidates:
             type: array
+            minItems: 0
+            maxItems: 3
             items:
               type: object
               additionalProperties: false
               required:
-                - evidence_id
                 - start_seconds
                 - end_seconds
-                - modality
+                - modalities
                 - description
+                - evidence_ids
               properties:
-                evidence_id:
-                  type:
-                    - string
-                    - "null"
                 start_seconds:
                   type: number
                 end_seconds:
                   type: number
-                modality:
-                  type: string
-                  enum:
-                    - scene
-                    - action
-                    - sound
-                    - speech
+                modalities:
+                  type: array
+                  items:
+                    type: string
+                    enum:
+                      - scene
+                      - action
+                      - sound
+                      - speech
                 description:
                   type: string
+                evidence_ids:
+                  type: array
+                  items:
+                    type: string
       cli_env:
         CODEX_HOME: "{{ env.VIDXP_EVAL_VIDXP_ON_CODEX_HOME }}"
+        HOME: "{{ env.VIDXP_EVAL_VIDXP_ON_WORKSPACE }}"
         TMPDIR: "{{ env.VIDXP_EVAL_VIDXP_ON_WORKSPACE }}/tmp"
       cli_config:
         features:
@@ -119,6 +102,7 @@ providers:
       working_dir: "{{ env.VIDXP_EVAL_VIDXP_OFF_WORKSPACE }}"
       cli_env:
         CODEX_HOME: "{{ env.VIDXP_EVAL_VIDXP_OFF_CODEX_HOME }}"
+        HOME: "{{ env.VIDXP_EVAL_VIDXP_OFF_WORKSPACE }}"
         TMPDIR: "{{ env.VIDXP_EVAL_VIDXP_OFF_WORKSPACE }}/tmp"
       cli_config:
         features:
@@ -129,8 +113,6 @@ providers:
     config:
       <<: *vidxp_provider
       working_dir: "{{ env.VIDXP_EVAL_CLEAN_USER_WORKSPACE }}"
-      sandbox_mode: workspace-write
-      network_access_enabled: true
       cli_env:
         CODEX_HOME: "{{ env.VIDXP_EVAL_CLEAN_USER_CODEX_HOME }}"
         HOME: "{{ env.VIDXP_EVAL_CLEAN_USER_WORKSPACE }}"

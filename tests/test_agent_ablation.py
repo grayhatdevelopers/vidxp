@@ -54,6 +54,79 @@ def test_temporal_grounding_uses_bounded_chunk_hit_as_primary_score() -> None:
     assert result["namedScores"]["r1_tiou_0_5"] == 0
 
 
+def test_temporal_grounding_passes_when_second_ranked_candidate_hits() -> None:
+    output = json.dumps(
+        {
+            "video_id": "video-1",
+            "candidates": [
+                {"start_seconds": 0, "end_seconds": 10},
+                {"start_seconds": 10, "end_seconds": 20},
+            ],
+        }
+    )
+    result = score_temporal_grounding(
+        output,
+        {
+            "vars": {
+                "video_id": "video-1",
+                "duration_seconds": 30,
+                "expected_start": 15,
+                "expected_end": 17,
+                "max_candidates": 3,
+            }
+        },
+    )
+
+    assert result["pass"] is True
+    assert result["namedScores"]["bounded_chunk_hit_at_1"] == 0
+    assert result["namedScores"]["bounded_chunk_hit_at_3"] == 1
+    assert result["namedScores"]["bounded_chunk_mrr"] == 0.5
+    assert result["namedScores"]["candidate_count"] == 2
+    assert result["namedScores"]["r1_tiou_0_3"] == 0
+    assert result["namedScores"]["r3_tiou_0_3"] == 0
+
+
+def test_temporal_grounding_rejects_too_many_or_duplicate_candidates() -> None:
+    context = {
+        "vars": {
+            "video_id": "video-1",
+            "duration_seconds": 40,
+            "expected_start": 15,
+            "expected_end": 17,
+            "max_candidates": 3,
+        }
+    }
+    too_many = score_temporal_grounding(
+        json.dumps(
+            {
+                "video_id": "video-1",
+                "candidates": [
+                    {"start_seconds": start, "end_seconds": start + 10}
+                    for start in (0, 10, 20, 30)
+                ],
+            }
+        ),
+        context,
+    )
+    duplicate = score_temporal_grounding(
+        json.dumps(
+            {
+                "video_id": "video-1",
+                "candidates": [
+                    {"start_seconds": 10, "end_seconds": 20},
+                    {"start_seconds": 10, "end_seconds": 20},
+                ],
+            }
+        ),
+        context,
+    )
+
+    assert too_many["pass"] is False
+    assert "candidate limit" in too_many["reason"]
+    assert duplicate["pass"] is False
+    assert "duplicate" in duplicate["reason"]
+
+
 def test_event_coverage_is_normalized_to_one_practical_chunk() -> None:
     assert event_coverage(10, 20, 12, 14, target_chunk_seconds=10) == 1
     assert event_coverage(10, 20, 5, 25, target_chunk_seconds=10) == 1
@@ -122,17 +195,14 @@ def _ablation_fixture() -> tuple[str, dict, dict]:
         {
             "video_id": "video-1",
             "answer": "The event occurs.",
-            "start_seconds": 10,
-            "end_seconds": 20,
-            "modalities": ["sound"],
             "source_job_id": job_id,
-            "evidence": [
+            "candidates": [
                 {
-                    "evidence_id": evidence_id,
                     "start_seconds": 10,
                     "end_seconds": 20,
-                    "modality": "sound",
+                    "modalities": ["sound"],
                     "description": "The event is audible.",
+                    "evidence_ids": [evidence_id],
                 }
             ],
         }
@@ -249,6 +319,48 @@ def test_ablation_boundary_attests_successful_vidxp_evidence_job() -> None:
     )
 
     assert result["pass"] is True
+
+
+def test_ablation_boundary_attests_each_ranked_candidate() -> None:
+    output, context, job = _ablation_fixture()
+    result_data = json.loads(output)
+    result_data["candidates"].append(
+        {
+            "start_seconds": 30,
+            "end_seconds": 40,
+            "modalities": ["sound"],
+            "description": "Another plausible occurrence.",
+            "evidence_ids": ["evidence-2"],
+        }
+    )
+    job["result"]["result"]["evidence_delivery"]["items"].append(
+        {
+            "evidence_id": "evidence-2",
+            "media_id": "media-1",
+            "modalities": ["sound"],
+            "state": "ready",
+            "range": {
+                "source_start_seconds": 29,
+                "source_end_seconds": 41,
+            },
+        }
+    )
+
+    valid = score_ablation_boundary(
+        json.dumps(result_data),
+        context,
+        job_loader=lambda _job_id: job,
+    )
+    result_data["candidates"][1]["evidence_ids"] = ["evidence-1"]
+    mismatched = score_ablation_boundary(
+        json.dumps(result_data),
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert valid["pass"] is True
+    assert mismatched["pass"] is False
+    assert "does not overlap" in mismatched["reason"]
 
 
 def test_ablation_boundary_attests_agent_query_paraphrase() -> None:
@@ -544,6 +656,7 @@ def test_generator_pairs_each_manifest_task_across_conditions(
     assert [test["vars"]["min_chunk_seconds"] for test in tests] == [8] * 3
     assert [test["vars"]["max_chunk_seconds"] for test in tests] == [12] * 3
     assert [test["vars"]["min_event_coverage"] for test in tests] == [0.5] * 3
+    assert [test["vars"]["max_candidates"] for test in tests] == [3] * 3
     assert [test["vars"]["modalities"] for test in tests] == [
         '["sound"]',
         '["sound"]',

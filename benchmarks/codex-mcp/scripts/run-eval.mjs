@@ -3,8 +3,10 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadLatestEvaluation, renderReport } from './report.mjs';
+import { prepareConditionState } from './condition-state.mjs';
 
 const benchmarkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const repositoryRoot = resolve(benchmarkRoot, '..', '..');
 const mode = process.argv[2];
 if (!['smoke', 'pilot'].includes(mode)) {
   throw new Error('Evaluation mode must be smoke or pilot.');
@@ -13,6 +15,7 @@ const evaluationEnvironment = {
   ...process.env,
   VIDXP_EVAL_MODE: mode,
 };
+prepareConditionState({ repositoryRoot, environment: evaluationEnvironment });
 
 const preflight = spawnSync(
   process.execPath,

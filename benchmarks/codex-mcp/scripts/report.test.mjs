@@ -106,6 +106,27 @@ test('summarizes comparison metrics by benchmark condition', () => {
   assert.equal(summaries[2].mcpCalls, 5);
 });
 
+test('keeps top-one and top-three candidate quality separate', () => {
+  const [summary] = summarizeResults([
+    {
+      condition: 'vidxp-on', integrityPassed: true,
+      chunkHit: 1, top1ChunkHit: 0, chunkMrr: 0.5, candidateCount: 2,
+      eventCoverage: 1, durationInRange: 1,
+      iou: 0, bestIou: 0.6,
+      recall03: 0, recall05: 0, recall07: 0,
+      recallAt3_03: 1, recallAt3_05: 1, recallAt3_07: 0,
+    },
+  ]);
+
+  assert.equal(summary.chunkHitRate, 1);
+  assert.equal(summary.top1ChunkHitRate, 0);
+  assert.equal(summary.meanChunkMrr, 0.5);
+  assert.equal(summary.meanCandidateCount, 2);
+  assert.equal(summary.meanIou, 0);
+  assert.equal(summary.meanBestIou, 0.6);
+  assert.equal(summary.recallAt3_05, 1);
+});
+
 test('uses only matched integrity-valid primary pairs for the product comparison', () => {
   const paired = summarizePrimaryPairs([
     {

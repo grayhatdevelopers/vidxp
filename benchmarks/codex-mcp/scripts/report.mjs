@@ -186,6 +186,16 @@ function intervalIou(start, end, expectedStart, expectedEnd) {
   return union > 0 ? intersection / union : 0;
 }
 
+function outputCandidates(output) {
+  if (Array.isArray(output?.candidates)) {
+    return output.candidates;
+  }
+  if (output && ('start_seconds' in output || 'end_seconds' in output)) {
+    return [output];
+  }
+  return [];
+}
+
 function signed(value, digits = 3) {
   if (!Number.isFinite(value)) {
     return 'n/a';
@@ -221,16 +231,40 @@ export function summarizeResults(results) {
       passed: selected.filter((result) => result.success).length,
       integrityPassed: valid.length,
       chunkHits: scored.filter((result) => result.chunkHit === 1).length,
+      top1ChunkHits: scored.filter((result) => (
+        (Number.isFinite(result.top1ChunkHit) ? result.top1ChunkHit : result.chunkHit) === 1
+      )).length,
       chunkScored: scored.length,
       rawChunkHits: selected.filter((result) => result.chunkHit === 1).length,
       rawChunkScored: selected.filter((result) => Number.isFinite(result.chunkHit)).length,
       chunkHitRate: mean(scored.map((result) => result.chunkHit)),
+      top1ChunkHitRate: mean(scored.map((result) => (
+        Number.isFinite(result.top1ChunkHit) ? result.top1ChunkHit : result.chunkHit
+      ))),
+      meanChunkMrr: mean(scored.map((result) => (
+        Number.isFinite(result.chunkMrr) ? result.chunkMrr : result.chunkHit
+      ))),
+      meanCandidateCount: mean(scored.map((result) => (
+        Number.isFinite(result.candidateCount) ? result.candidateCount : 1
+      ))),
       meanEventCoverage: mean(scored.map((result) => result.eventCoverage)),
       durationInRangeRate: mean(scored.map((result) => result.durationInRange)),
       meanIou: mean(scored.map((result) => result.iou)),
+      meanBestIou: mean(scored.map((result) => (
+        Number.isFinite(result.bestIou) ? result.bestIou : result.iou
+      ))),
       recall03: mean(scored.map((result) => result.recall03)),
       recall05: mean(scored.map((result) => result.recall05)),
       recall07: mean(scored.map((result) => result.recall07)),
+      recallAt3_03: mean(scored.map((result) => (
+        Number.isFinite(result.recallAt3_03) ? result.recallAt3_03 : result.recall03
+      ))),
+      recallAt3_05: mean(scored.map((result) => (
+        Number.isFinite(result.recallAt3_05) ? result.recallAt3_05 : result.recall05
+      ))),
+      recallAt3_07: mean(scored.map((result) => (
+        Number.isFinite(result.recallAt3_07) ? result.recallAt3_07 : result.recall07
+      ))),
       meanStartError: mean(scored.map((result) => (
         absolute(boundaryError(result.predictedStart, result.expectedStart))
       ))),
@@ -335,14 +369,28 @@ function deterministicRescore(results, evaluationId) {
     result.qualityReason = audit.temporal?.reason || '';
     result.chunkHit = Number.isFinite(named.bounded_chunk_hit)
       ? named.bounded_chunk_hit : null;
+    result.top1ChunkHit = Number.isFinite(named.bounded_chunk_hit_at_1)
+      ? named.bounded_chunk_hit_at_1 : result.chunkHit;
+    result.chunkMrr = Number.isFinite(named.bounded_chunk_mrr)
+      ? named.bounded_chunk_mrr : result.chunkHit;
+    result.candidateCount = Number.isFinite(named.candidate_count)
+      ? named.candidate_count : result.candidateCount;
     result.eventCoverage = Number.isFinite(named.event_coverage)
       ? named.event_coverage : null;
     result.durationInRange = Number.isFinite(named.chunk_duration_in_range)
       ? named.chunk_duration_in_range : null;
     result.iou = Number.isFinite(named.temporal_iou) ? named.temporal_iou : null;
+    result.bestIou = Number.isFinite(named.best_temporal_iou)
+      ? named.best_temporal_iou : result.iou;
     result.recall03 = Number.isFinite(named.r1_tiou_0_3) ? named.r1_tiou_0_3 : null;
     result.recall05 = Number.isFinite(named.r1_tiou_0_5) ? named.r1_tiou_0_5 : null;
     result.recall07 = Number.isFinite(named.r1_tiou_0_7) ? named.r1_tiou_0_7 : null;
+    result.recallAt3_03 = Number.isFinite(named.r3_tiou_0_3)
+      ? named.r3_tiou_0_3 : result.recall03;
+    result.recallAt3_05 = Number.isFinite(named.r3_tiou_0_5)
+      ? named.r3_tiou_0_5 : result.recall05;
+    result.recallAt3_07 = Number.isFinite(named.r3_tiou_0_7)
+      ? named.r3_tiou_0_7 : result.recall07;
   }
 }
 
@@ -428,6 +476,8 @@ export function loadLatestEvaluation({ rescore = false } = {}) {
       const testCase = parseJson(row.test_case);
       const response = parseJson(row.response);
       const output = parseJson(response.output);
+      const candidates = outputCandidates(output);
+      const topCandidate = candidates[0] || {};
       const namedScores = parseJson(row.named_scores);
       const responseMetadata = response.metadata || {};
       const stats = traceStats.get(row.test_idx) || {};
@@ -460,15 +510,32 @@ export function loadLatestEvaluation({ rescore = false } = {}) {
           : (parseJson(row.grading_result).reason || row.error || ''),
         expectedStart: testCase.vars?.expected_start,
         expectedEnd: testCase.vars?.expected_end,
-        predictedStart: output.start_seconds,
-        predictedEnd: output.end_seconds,
+        predictedStart: topCandidate.start_seconds,
+        predictedEnd: topCandidate.end_seconds,
         answer: output.answer,
-        modalities: Array.isArray(output.modalities) ? output.modalities : [],
+        modalities: Array.isArray(topCandidate.modalities) ? topCandidate.modalities : [],
         sourceJobId: output.source_job_id,
-        evidenceCount: Array.isArray(output.evidence) ? output.evidence.length : 0,
+        evidenceCount: candidates.reduce(
+          (count, candidate) => count + (
+            Array.isArray(candidate?.evidence_ids)
+              ? candidate.evidence_ids.length
+              : (Array.isArray(candidate?.evidence) ? candidate.evidence.length : 0)
+          ),
+          0,
+        ),
+        candidateCount: candidates.length,
+        rankedCandidates: Array.isArray(output.candidates),
         chunkHit: Number.isFinite(namedScores.bounded_chunk_hit)
           ? namedScores.bounded_chunk_hit
           : null,
+        top1ChunkHit: Number.isFinite(namedScores.bounded_chunk_hit_at_1)
+          ? namedScores.bounded_chunk_hit_at_1
+          : (Number.isFinite(namedScores.bounded_chunk_hit)
+            ? namedScores.bounded_chunk_hit : null),
+        chunkMrr: Number.isFinite(namedScores.bounded_chunk_mrr)
+          ? namedScores.bounded_chunk_mrr
+          : (Number.isFinite(namedScores.bounded_chunk_hit)
+            ? namedScores.bounded_chunk_hit : null),
         eventCoverage: Number.isFinite(namedScores.event_coverage)
           ? namedScores.event_coverage
           : null,
@@ -476,6 +543,9 @@ export function loadLatestEvaluation({ rescore = false } = {}) {
           ? namedScores.chunk_duration_in_range
           : null,
         iou: Number.isFinite(namedScores.temporal_iou) ? namedScores.temporal_iou : null,
+        bestIou: Number.isFinite(namedScores.best_temporal_iou)
+          ? namedScores.best_temporal_iou
+          : (Number.isFinite(namedScores.temporal_iou) ? namedScores.temporal_iou : null),
         recall03: Number.isFinite(namedScores.r1_tiou_0_3)
           ? namedScores.r1_tiou_0_3
           : null,
@@ -485,6 +555,18 @@ export function loadLatestEvaluation({ rescore = false } = {}) {
         recall07: Number.isFinite(namedScores.r1_tiou_0_7)
           ? namedScores.r1_tiou_0_7
           : null,
+        recallAt3_03: Number.isFinite(namedScores.r3_tiou_0_3)
+          ? namedScores.r3_tiou_0_3
+          : (Number.isFinite(namedScores.r1_tiou_0_3)
+            ? namedScores.r1_tiou_0_3 : null),
+        recallAt3_05: Number.isFinite(namedScores.r3_tiou_0_5)
+          ? namedScores.r3_tiou_0_5
+          : (Number.isFinite(namedScores.r1_tiou_0_5)
+            ? namedScores.r1_tiou_0_5 : null),
+        recallAt3_07: Number.isFinite(namedScores.r3_tiou_0_7)
+          ? namedScores.r3_tiou_0_7
+          : (Number.isFinite(namedScores.r1_tiou_0_7)
+            ? namedScores.r1_tiou_0_7 : null),
         latencyMs: row.latency_ms,
         totalTokens: response.tokenUsage?.total,
         promptTokens: response.tokenUsage?.prompt,
@@ -616,6 +698,7 @@ export function renderReport(
   const isSmoke = evaluation.mode === 'smoke'
     || (evaluation.mode === 'unknown' && taskCount === 1);
   const runType = isSmoke ? 'development smoke' : evaluation.mode;
+  const rankedCandidates = evaluation.results.some((result) => result.rankedCandidates);
   const primaryPairs = summarizePrimaryPairs(evaluation.results);
   const pairedSummaries = summarizeResults(primaryPairs.results);
   console.log(`\nEvaluation comparison: ${evaluation.id}`);
@@ -640,30 +723,44 @@ export function renderReport(
     runs: summary.runs,
     integrity: `${summary.integrityPassed}/${summary.runs}`,
     scorable: `${summary.chunkScored}/${summary.runs}`,
-    'valid hits': summary.chunkScored
+    [rankedCandidates ? 'valid hit@3' : 'valid hits']: summary.chunkScored
       ? `${summary.chunkHits}/${summary.chunkScored}`
       : 'n/a',
+    ...(rankedCandidates ? {
+      'valid hit@1': summary.chunkScored
+        ? `${summary.top1ChunkHits}/${summary.chunkScored}`
+        : 'n/a',
+      MRR: fixed(summary.meanChunkMrr, 3),
+      candidates: fixed(summary.meanCandidateCount, 2),
+    } : {}),
     'all output hits': summary.rawChunkScored
       ? `${summary.rawChunkHits}/${summary.rawChunkScored}`
       : 'n/a',
-    'hit rate': fixed(summary.chunkHitRate, 3),
+    [rankedCandidates ? 'hit@3 rate' : 'hit rate']: fixed(summary.chunkHitRate, 3),
     coverage: fixed(summary.meanEventCoverage, 3),
     'duration valid': fixed(summary.durationInRangeRate, 3),
     'avg time': seconds(summary.meanLatencyMs),
     'total time': seconds(summary.totalLatencyMs),
   })));
   console.log(
-    '  Primary quality: an 8–12s clip covers at least half of the event available to a 10s clip. '
+    `  Primary quality: ${rankedCandidates ? 'at least one of up to three ordered ' : 'one '}`
+    + '8–12s clip covers at least half of the event available to a 10s clip. '
     + 'Quality rates exclude runs that violated their condition. Time, tokens, and activity include '
     + 'all runs. Boundary IoU and R@ thresholds remain secondary diagnostics.',
   );
   console.log('Boundary diagnostics (secondary):');
   console.table(summaries.map((summary) => ({
     condition: summary.condition,
-    'mean IoU': fixed(summary.meanIou, 4),
-    'R@.3': fixed(summary.recall03, 3),
-    'R@.5': fixed(summary.recall05, 3),
-    'R@.7': fixed(summary.recall07, 3),
+    'top-1 IoU': fixed(summary.meanIou, 4),
+    ...(rankedCandidates ? { 'best@3 IoU': fixed(summary.meanBestIou, 4) } : {}),
+    'R1@.3': fixed(summary.recall03, 3),
+    'R1@.5': fixed(summary.recall05, 3),
+    'R1@.7': fixed(summary.recall07, 3),
+    ...(rankedCandidates ? {
+      'R3@.3': fixed(summary.recallAt3_03, 3),
+      'R3@.5': fixed(summary.recallAt3_05, 3),
+      'R3@.7': fixed(summary.recallAt3_07, 3),
+    } : {}),
     'start MAE': secondsValue(summary.meanStartError),
     'end MAE': secondsValue(summary.meanEndError),
     'duration MAE': secondsValue(summary.meanDurationError),
@@ -732,8 +829,26 @@ export function renderReport(
       && Number.isFinite(pairedOff.chunkHitRate)
       ? pairedOn.chunkHitRate - pairedOff.chunkHitRate
       : null;
-    console.log(`  bounded chunk hit rate: ${signed(chunkHitDelta, 3)}`);
-    console.log(`  boundary mean IoU: ${signed(pairedOn.meanIou - pairedOff.meanIou, 4)}`);
+    console.log(
+      `  bounded chunk hit${rankedCandidates ? '@3' : ''} rate: `
+      + signed(chunkHitDelta, 3),
+    );
+    if (rankedCandidates) {
+      console.log(
+        `  bounded chunk hit@1 rate: `
+        + signed(pairedOn.top1ChunkHitRate - pairedOff.top1ChunkHitRate, 3),
+      );
+      console.log(
+        `  bounded chunk MRR: `
+        + signed(pairedOn.meanChunkMrr - pairedOff.meanChunkMrr, 3),
+      );
+    }
+    console.log(`  top-1 mean IoU: ${signed(pairedOn.meanIou - pairedOff.meanIou, 4)}`);
+    if (rankedCandidates) {
+      console.log(
+        `  best@3 mean IoU: ${signed(pairedOn.meanBestIou - pairedOff.meanBestIou, 4)}`,
+      );
+    }
     console.log(
       `  average latency: ${signed(latencyDelta / 1000, 3)}s`
       + (Number.isFinite(latencyPercent)
@@ -766,7 +881,8 @@ export function renderReport(
         `  product gate: ${productGateAvailable
           ? (productGatePassed ? 'PASS' : 'FAIL')
           : 'NOT SCORED (incomplete valid/scorable pairs)'}`
-        + ' (VidXP must match or improve bounded-chunk hit rate and use fewer total tokens)',
+        + ` (VidXP must match or improve bounded-chunk hit${rankedCandidates ? '@3' : ''} `
+        + 'rate and use fewer total tokens)',
       );
     } else {
       console.log('  product gate: NOT SCORED (development smoke)');
@@ -777,8 +893,9 @@ export function renderReport(
     console.log('Clean-user supporting comparisons:');
     console.table([off, on].filter(Boolean).map((reference) => ({
       comparison: `clean-user minus ${reference.condition}`,
-      'hit-rate Δ': signed(cleanUser.chunkHitRate - reference.chunkHitRate, 3),
-      'mean IoU Δ': signed(cleanUser.meanIou - reference.meanIou, 4),
+      [rankedCandidates ? 'hit@3 Δ' : 'hit-rate Δ']:
+        signed(cleanUser.chunkHitRate - reference.chunkHitRate, 3),
+      'top-1 IoU Δ': signed(cleanUser.meanIou - reference.meanIou, 4),
       'avg time Δ': signedSeconds((cleanUser.meanLatencyMs - reference.meanLatencyMs) / 1000),
       'avg tokens Δ': integer(cleanUser.meanTotalTokens - reference.meanTotalTokens),
       'avg cost Δ': signedMoney(cleanUser.meanCost - reference.meanCost),
@@ -797,11 +914,17 @@ export function renderReport(
       ...(repeated ? { repetition: result.repetition } : {}),
       condition: result.condition,
       integrity: result.integrityPassed ? 'yes' : 'NO',
-      'chunk hit': Number.isFinite(result.chunkHit)
+      [rankedCandidates ? 'hit@3' : 'chunk hit']: Number.isFinite(result.chunkHit)
         ? (result.chunkHit === 1 ? 'yes' : 'NO')
         : 'n/a',
+      ...(rankedCandidates ? {
+        'hit@1': Number.isFinite(result.top1ChunkHit)
+          ? (result.top1ChunkHit === 1 ? 'yes' : 'NO')
+          : 'n/a',
+        candidates: result.candidateCount,
+      } : {}),
       expected: interval(result.expectedStart, result.expectedEnd),
-      predicted: interval(result.predictedStart, result.predictedEnd),
+      'top candidate': interval(result.predictedStart, result.predictedEnd),
       coverage: fixed(result.eventCoverage, 3),
       'duration valid': Number.isFinite(result.durationInRange)
         ? (result.durationInRange === 1 ? 'yes' : 'NO')
@@ -815,7 +938,8 @@ export function renderReport(
       'start Δ': signedSeconds(boundaryError(result.predictedStart, result.expectedStart)),
       'end Δ': signedSeconds(boundaryError(result.predictedEnd, result.expectedEnd)),
       'duration Δ': signedSeconds(durationError(result)),
-      IoU: fixed(result.iou, 4),
+      'top-1 IoU': fixed(result.iou, 4),
+      ...(rankedCandidates ? { 'best@3 IoU': fixed(result.bestIou, 4) } : {}),
     })));
     console.log('Per-run usage and tools:');
     console.table(evaluation.results.map((result) => ({
@@ -929,8 +1053,8 @@ export function renderReport(
       }))
     )));
     console.log(
-      '  Saved jobs contain hits retained in final fused moments. The current result schema cannot '
-      + 'recover modality candidates outside candidate_top_k or the final fused output. Retrieval '
+      '  Saved jobs contain hits retained in final fused moments. The report cannot recover '
+      + 'modality candidates outside candidate_top_k or the final fused output. Retrieval '
       + 'R@K therefore covers only the fused moments saved by each agent-requested top_k.',
     );
   }

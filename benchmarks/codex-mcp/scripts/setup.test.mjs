@@ -21,6 +21,10 @@ import {
   serializeEnvironment,
   versionAtLeast,
 } from './setup-lib.mjs';
+import {
+  executableInstallRoots,
+  permissionProfile,
+} from './condition-state.mjs';
 import { resetEvaluationWorkspace } from './reset-workspace.mjs';
 
 test('checks the required Node version numerically', () => {
@@ -121,6 +125,25 @@ test('always records the model cache used by the isolated runtime', () => {
   });
 
   assert.equal(environment.VIDXP_MODEL_CACHE, '/eval/vidxp-data/models');
+});
+
+test('builds a root-denied Codex profile with explicit condition capabilities', () => {
+  assert.deepEqual(
+    executableInstallRoots(['/opt/homebrew/bin/ffmpeg', '/opt/homebrew/bin/ffprobe']),
+    ['/opt/homebrew'],
+  );
+  const directLocal = permissionProfile({
+    networkEnabled: false,
+    readableRoots: ['/opt/homebrew'],
+  });
+  const cleanUser = permissionProfile({ networkEnabled: true });
+
+  assert.match(directLocal, /":root" = "deny"/);
+  assert.match(directLocal, /":minimal" = "read"/);
+  assert.match(directLocal, /"\/opt\/homebrew" = "read"/);
+  assert.match(directLocal, /enabled = false/);
+  assert.doesNotMatch(cleanUser, /opt\/homebrew/);
+  assert.match(cleanUser, /enabled = true/);
 });
 
 test('requires and reloads a stable repository machine ID', () => {

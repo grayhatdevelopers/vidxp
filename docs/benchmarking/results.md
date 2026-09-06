@@ -23,7 +23,7 @@ behavior remain in the [adapter validation ledger](adapter_validation.md).
 | Current component gate | AEGBench frozen subset | 50 recordings; 149 annotated sound queries | PE-A/FineLAP top-point **76.5%/73.2%**; mean IoU **.523/.292** | Select PE-A-Frame Small for sound localization |
 | Current product smoke | PE-A bounded sections | One 75.81-second development video; two known sound queries | 1,896 unique frames; both target ten-second windows ranked first; **22.156 s** indexing after model load | Product decoder/runtime/storage/search integration works; long-audio quality is still unmeasured |
 | Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; neutral prompt and three isolated conditions | Every condition achieved bounded-chunk hit **1** and coverage **1**. Against direct local inspection, VidXP used **40.9%** fewer tokens and finished **22.1%** faster. | Corrected harness smoke only; one development task is not a product gate or held-out result. |
-| Agent held-out pilot | Codex MCP ablation | Nine LongVALE-derived tasks; three conditions; three repetitions | Only **17/27** VidXP/direct-local pairs were valid and scorable. | Product gate not scored because 10 pairs were excluded; filtered comparisons are diagnostic only. |
+| Agent held-out pilot | Codex MCP ablation | Nine LongVALE-derived tasks; three conditions; three repetitions; one final candidate | Only **17/27** VidXP/direct-local pairs were valid and scorable. | Product gate not scored because 10 pairs were excluded; filtered comparisons are diagnostic only. The next run uses up to three ranked candidates. |
 | Global-only sound diagnostic | Codex MCP ablation | Same development task after filtering sound search to global clips | VidXP-on IoU **0.6000**; VidXP-off IoU **0.8811** | Same answer content with 16.5% fewer VidXP tokens and 11.3% lower latency, but the ten-second sound clip worsened the endpoint |
 
 The current-provider rows are deliberately tiny regression runs. Their
@@ -46,6 +46,9 @@ VidXP averaged 194,499 tokens and 70.045 seconds, versus 263,239 tokens and
 excluded pairs may bias them. Separately, the saved VidXP jobs put a tIoU-0.5
 match at rank one for 6/26 jobs and within the top three for 14/26. That points
 to final ranking, not candidate absence alone, as the main product limitation.
+The saved agents were required to return one final clip, so this run cannot be
+rescored as agent Success@3. The next isolated run permits up to three ordered
+clips for every condition and reports both Success@1 and Success@3.
 The [metric database](metric_database.md#first-held-out-pilot-audit) records the
 full condition totals, exclusion causes, and research boundary.
 
@@ -73,8 +76,9 @@ strategy is agent behavior, not a prescribed harness path.
 All three assertions passed. The report correctly leaves the product gate
 unscored because a one-task development smoke cannot establish comparative
 quality. A per-run workspace reset was added afterward so repeated pilot cases
-cannot inherit files or installed tools; that isolation hook is unit- and
-configuration-validated but was not exercised by this saved smoke.
+cannot inherit files or installed tools. Root-denied Codex permission profiles
+and preflight filesystem probes were also added afterward, so this saved smoke
+does not validate the current isolation path.
 
 ### Historical development runs
 

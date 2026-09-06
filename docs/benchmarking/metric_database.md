@@ -21,15 +21,15 @@ event into a two-second deliverable.
 
 | Item | Fixed protocol |
 | --- | --- |
-| Evidence unit | Aim for one playable 10-second clip; accept 8–12 seconds. A bounded-chunk hit requires at least half of the annotated event that can fit in 10 seconds. |
+| Evidence unit | Return up to three distinct 8–12-second clips in ranked order. Success@3 requires at least one clip to cover half of the annotated event that can fit in 10 seconds. Returning fewer candidates is valid. |
 | Data | Ten selected, LongVALE-derived tasks over five videos, covering scene, action, sound, speech, and joint evidence. The development smoke uses the first task; the held-out pilot uses the remaining nine. This is not an official LongVALE score. |
 | Timed starting state | Direct-local and clean-user receive hard links to the same media bytes. VidXP-on receives the index built from those bytes but no source-media path in its workspace; detected host-path bypasses are excluded. All five videos start indexed for scene, action, sound, and speech. Dataset download, model preparation, media import, and indexing are outside agent time. |
-| Comparison | Same Codex model, reasoning effort, neutral user prompt, output schema, and fresh state. VidXP-on has the shipped skill and MCP; direct-local has ordinary local tools but no VidXP; clean-user starts with OS tools plus terminal and network. |
-| Decision | Across every matched, condition-valid pilot pair, VidXP must match or improve direct-local bounded-chunk hit rate and use fewer total agent tokens. Missing, contaminated, or unscorable primary pairs make the gate unscored. Latency, Promptfoo cost, calls, IoU, R@K, and boundary errors remain visible. |
+| Comparison | Same Codex model, reasoning effort, neutral user prompt, output schema, and fresh state. VidXP-on has the shipped skill and MCP; direct-local has system commands plus host FFmpeg and ffprobe but no VidXP; clean-user starts with OS tools plus terminal and network. |
+| Decision | Across every matched, condition-valid pilot pair, VidXP must match or improve direct-local bounded-chunk Success@3 and use fewer total agent tokens. Missing, contaminated, or unscorable primary pairs make the gate unscored. Success@1, rank, latency, Promptfoo cost, calls, IoU, R@K, and boundary errors remain visible. |
 | Repetition | The pilot defaults to three repetitions with rotated serial condition order. Per-run values, means, totals, and failures are retained. |
 | Machine identity | Every new test row and repository export carries a stable repository ID such as `mac-m2-01`. The table below defines that ID; no hardware serial number or host-generated UUID is stored. |
 | Offline cost | Indexing is measured separately on fresh isolated indexes. The agent benchmark must not hide that cost or add it to only the VidXP-on response time. |
-| Required isolation | Separate workspaces, homes, and PATH values prevent ordinary leakage, while the scorer rejects detected host reads. The current Codex SDK sandbox modes do not deny all other host reads, so the next formal pilot must run inside a container, VM, or separate machine/account that hides prior benchmark state and disallowed tools. |
+| Required isolation | Separate workspaces and homes prevent state reuse. A Codex permission profile denies filesystem-root access and reopens only minimal runtime paths, the current condition workspace, and—for direct-local—the FFmpeg installation prefix. On macOS, preflight tests those OS-enforced boundaries before model calls; the scorer separately rejects detected bypasses. |
 
 The task design comes from
 [LongVALE](https://openaccess.thecvf.com/content/CVPR2025/papers/Geng_LongVALE_Vision-Audio-Language-Event_Benchmark_Towards_Time-Aware_Omni-Modal_Perception_of_Long_Videos_CVPR_2025_paper.pdf);
@@ -65,13 +65,15 @@ states when an experiment replaces these normal representations.
 
 | Metric | Definition | Role and research boundary |
 | --- | --- | --- |
-| Bounded-chunk hit | One 8–12-second result covers at least `0.5` of `min(annotation duration, 10 seconds)` | Primary per-task product retrieval metric. The ten-second target is a VidXP serving policy, not a LongVALE metric. It rejects blink-length and whole-video answers. |
-| Paired product gate | VidXP-on bounded-chunk hit rate is at least VidXP-off, and VidXP-on uses fewer total agent tokens | Primary whole-system decision. Cost, latency, and calls remain reported separately. |
-| Temporal IoU and R@1 at tIoU 0.3/0.5/0.7 | Exact predicted interval against the LongVALE-derived annotation | Retained secondary boundary-quality diagnostics. Poor exact trimming remains a product shortcoming and future research target. |
+| Bounded-chunk Success@3 | At least one of up to three ordered 8–12-second results covers `0.5` of `min(annotation duration, 10 seconds)` | Primary per-task product retrieval metric. The ten-second target and three-result limit are VidXP serving choices, not LongVALE metrics. They reject blink-length, whole-video, and unbounded-list answers. |
+| Success@1 and reciprocal rank | Whether the first clip succeeds, and `1 / first successful rank` | Exposes ordering quality without making a top-one miss erase useful evidence returned immediately after it. |
+| Paired product gate | VidXP-on Success@3 is at least VidXP-off, and VidXP-on uses fewer total agent tokens | Primary whole-system decision. Candidate count, cost, latency, and calls remain reported separately, so returning more clips does not hide its overhead. |
+| Temporal IoU and R@1/R@3 at tIoU 0.3/0.5/0.7 | Exact predicted intervals against the LongVALE-derived annotation | Retained secondary boundary-quality diagnostics. Poor exact trimming and ordering remain product shortcomings and future research targets. |
 
 The two older September development runs used the earlier exact-interval prompt.
-The latest uses the bounded-clip contract. All remain development smokes and are
-not product-gate results.
+The later smoke and first pilot used one bounded clip. The next isolated run
+uses the ranked three-candidate contract above. Historical results are not
+rescored as if their agents had been allowed to return three clips.
 
 ## Input integrity checks
 
@@ -94,6 +96,8 @@ completed 81 runs: nine tasks, three conditions, and three repetitions on
 `mac-m2-01`. Wall time was 10,524.855 seconds, or 2 h 55 min 24.855 s. The raw
 Promptfoo artifact preserves the at-run scores; the table below is the current
 deterministic re-audit of its saved responses, traces, and VidXP jobs.
+This historical pilot required one final candidate, so its hits are Success@1;
+it cannot be rescored as though the agents returned three.
 
 | Condition | Validity and quality | All-run efficiency | Recorded activity |
 | --- | --- | --- | --- |
@@ -121,9 +125,9 @@ restored a 4 ms end-of-video answer. Future
 runs also omit the direct source path from VidXP-on instead of relying only on
 post-run exclusion.
 
-The next paid pilot is blocked on physical host-read isolation. Scorer-side
-exclusion is necessary for auditing, but it cannot turn a run that found prior
-answers or disallowed host tools into a valid comparison.
+The earlier pilot remains unscored. The replacement root-denied permission
+profile and preflight boundary probes were added afterward, so a new smoke must
+confirm all three model conditions before the paid pilot is repeated.
 
 Across 26 recoverable VidXP source jobs, fused retrieval at tIoU 0.5 was
 6/26 at R@1 and 14/26 at R@3 and R@5. Useful candidates therefore reached the
@@ -256,8 +260,8 @@ usage, traces, and tool items needed to audit selected agent runs.
 - Rebuild the sound index and run the PE-A-Frame long-audio product gate. The
   provider and bounded section path are implemented, but the one-video smoke
   does not validate hour-long or fused retrieval.
-- Add physical host-read isolation, then rerun the 81-run, three-condition Codex
-  pilot; the first pilot is retained but unscored.
+- Run the three-condition smoke under the root-denied permission profiles, then
+  rerun the 81-run pilot; the first pilot is retained but unscored.
 - Run the isolated three-repetition indexing benchmark and link its reviewed
   JSON artifact from the offline-indexing table above.
 - Produce full-corpus DiDeMo and HiREST results for the current providers.

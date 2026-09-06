@@ -1,11 +1,23 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import {
+  EVALUATION_PERMISSION_PROFILE,
+  evaluationPermissionConfigs,
+} from './condition-state.mjs';
 
 const benchmarkRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const repositoryRoot = resolve(benchmarkRoot, '..', '..');
 const manifestPath = join(benchmarkRoot, 'tasks', 'longvale-part9-pilot.json');
+const codexLauncher = join(
+  benchmarkRoot,
+  'node_modules',
+  '@openai',
+  'codex',
+  'bin',
+  'codex.js',
+);
 
 const requiredNode = [22, 22, 0];
 const currentNode = process.versions.node.split('.').map(Number);
@@ -50,6 +62,9 @@ requireDirectory('VIDXP_MODEL_CACHE');
 const uvCacheDirectory = requireDirectory('VIDXP_EVAL_UV_CACHE_DIR');
 requireFile('VIDXP_MCP_COMMAND');
 const promptfooPython = requireFile('PROMPTFOO_PYTHON');
+if (!existsSync(codexLauncher)) {
+  throw new Error(`The pinned Codex launcher is missing: ${codexLauncher}`);
+}
 const machineId = process.env.VIDXP_EVAL_MACHINE_ID;
 if (!machineId || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(machineId)) {
   throw new Error(
@@ -81,20 +96,21 @@ if (scorerRuntime.status !== 0) {
   );
 }
 
-for (const conditionHome of [
-  vidxpOnCodexHome,
-  vidxpOffCodexHome,
-  cleanUserCodexHome,
-]) {
+const permissionConfigs = evaluationPermissionConfigs(process.env);
+for (const [condition, conditionHome] of Object.entries({
+  vidxpOn: vidxpOnCodexHome,
+  vidxpOff: vidxpOffCodexHome,
+  cleanUser: cleanUserCodexHome,
+})) {
   if (!existsSync(join(conditionHome, 'auth.json'))) {
     throw new Error(`Condition Codex home has no auth.json: ${conditionHome}`);
   }
   const codexConfig = join(conditionHome, 'config.toml');
-  if (existsSync(codexConfig)) {
-    const content = readFileSync(codexConfig, 'utf8');
-    if (/^\s*\[mcp_servers(?:\.|\])/m.test(content)) {
-      throw new Error(`Condition Codex home contains ambient MCP servers: ${conditionHome}`);
-    }
+  if (
+    !existsSync(codexConfig)
+    || readFileSync(codexConfig, 'utf8') !== permissionConfigs.configs[condition]
+  ) {
+    throw new Error(`Condition Codex isolation is missing or stale: ${conditionHome}`);
   }
 }
 
@@ -180,11 +196,87 @@ if (existsSync(sharedSkillDirectory)) {
   throw new Error('The shared parent workspace must not contain the VidXP evidence skill.');
 }
 
-if (process.platform !== 'win32') {
-  const cleanPath = process.env.VIDXP_EVAL_CLEAN_USER_PATH;
-  if (!cleanPath) {
-    throw new Error('VIDXP_EVAL_CLEAN_USER_PATH is required.');
+const cleanPath = process.env.VIDXP_EVAL_CLEAN_USER_PATH;
+if (!cleanPath) {
+  throw new Error('VIDXP_EVAL_CLEAN_USER_PATH is required.');
+}
+
+if (process.platform === 'darwin') {
+  function verifySandbox({ home, conditionWorkspace, allowedPath, ffmpegAllowed, path }) {
+    const writeProbe = join(conditionWorkspace, 'tmp', '.vidxp-isolation-probe');
+    rmSync(writeProbe, { force: true });
+    const script = [
+      'set -eu',
+      'if /bin/cat "$VIDXP_PROBE_DENIED" >/dev/null 2>&1; then exit 41; fi',
+      '/bin/cat "$VIDXP_PROBE_ALLOWED" >/dev/null',
+      '/usr/bin/touch "$VIDXP_PROBE_WRITE"',
+      ffmpegAllowed
+        ? '"$VIDXP_PROBE_FFMPEG" -version >/dev/null 2>&1'
+        : 'if "$VIDXP_PROBE_FFMPEG" -version >/dev/null 2>&1; then exit 42; fi',
+    ].join('\n');
+    const result = spawnSync(
+      process.execPath,
+      [
+        codexLauncher,
+        'sandbox',
+        '--permission-profile',
+        EVALUATION_PERMISSION_PROFILE,
+        '--cd',
+        conditionWorkspace,
+        '/bin/zsh',
+        '-c',
+        script,
+      ],
+      {
+        cwd: conditionWorkspace,
+        env: {
+          CODEX_HOME: home,
+          HOME: conditionWorkspace,
+          PATH: path,
+          TMPDIR: join(conditionWorkspace, 'tmp'),
+          VIDXP_PROBE_ALLOWED: allowedPath,
+          VIDXP_PROBE_DENIED: join(repositoryRoot, 'README.md'),
+          VIDXP_PROBE_FFMPEG: permissionConfigs.ffmpeg,
+          VIDXP_PROBE_WRITE: writeProbe,
+        },
+        encoding: 'utf8',
+        stdio: 'pipe',
+      },
+    );
+    rmSync(writeProbe, { force: true });
+    if (result.status !== 0) {
+      throw new Error(
+        `Codex did not enforce the ${EVALUATION_PERMISSION_PROFILE} profile in ${conditionWorkspace}:\n`
+        + (result.stderr || result.stdout || result.error?.message),
+      );
+    }
   }
+
+  const firstMediaPath = join(vidxpOffWorkspace, tasks[0].media_relpath);
+  verifySandbox({
+    home: vidxpOnCodexHome,
+    conditionWorkspace: vidxpOnWorkspace,
+    allowedPath: join(onSkillDirectory, 'SKILL.md'),
+    ffmpegAllowed: false,
+    path: process.env.PATH,
+  });
+  verifySandbox({
+    home: vidxpOffCodexHome,
+    conditionWorkspace: vidxpOffWorkspace,
+    allowedPath: firstMediaPath,
+    ffmpegAllowed: true,
+    path: process.env.PATH,
+  });
+  verifySandbox({
+    home: cleanUserCodexHome,
+    conditionWorkspace: cleanUserWorkspace,
+    allowedPath: join(cleanUserWorkspace, tasks[0].media_relpath),
+    ffmpegAllowed: false,
+    path: cleanPath,
+  });
+}
+
+if (process.platform !== 'win32') {
   const cleanShell = spawnSync(
     '/bin/zsh',
     [

@@ -12,10 +12,10 @@ integration consists of the shipped video-evidence skill and the local stdio
 MCP server. It is a product-level ablation, not a replacement for published
 model benchmarks such as MAEB, MVEB, or AEGBench.
 
-The primary product question is whether the agent returns a practical clip that
-contains the event while using fewer tokens. Exact temporal IoU remains a
-secondary boundary-quality measurement; it is not discarded or presented as
-the serving objective.
+The primary product question is whether the agent returns the event within a
+small ranked set of practical clips while using fewer tokens. Exact temporal
+IoU and top-one ordering remain secondary measurements; neither is discarded
+or presented as the entire serving objective.
 
 ## What the comparison holds constant
 
@@ -28,7 +28,7 @@ ordinary shell inspection fails and any detected host-path bypass is excluded.
 | Condition | VidXP access | Purpose |
 | --- | --- | --- |
 | `codex-vidxp` | The committed `vidxp-find-video-evidence` skill and local `vidxp-mcp` server | Measure the complete installed agent-plus-VidXP workflow |
-| `codex-baseline` | No VidXP skill, MCP server, or direct VidXP CLI use; other local tools are unrestricted | Measure what the same Codex agent does without VidXP |
+| `codex-baseline` | No VidXP skill, MCP server, or direct VidXP CLI use; system commands plus the host FFmpeg and ffprobe installation are available | Measure what the same Codex agent does without VidXP |
 | `codex-clean-user` | Writable terminal and network, but an initial PATH containing only operating-system commands; no VidXP skill or MCP | Measure what a non-developer setup can bootstrap without inheriting the host's Homebrew or repository tools |
 
 Each condition has a separate `CODEX_HOME` and working directory. Setup copies
@@ -44,15 +44,19 @@ Preflight checks both hard links, rejects any VidXP-on source path, rejects
 ambient MCP configuration and leaked VidXP skills, and verifies that the
 clean-user login shell cannot initially resolve
 `ffmpeg`, `ffprobe`, `vidxp`, or `vidxp-mcp`.
-The scorer invalidates a run that reaches an absolute Homebrew, `/usr/local`,
-repository `.venv`, or another benchmark workspace. This is accepted-run
-isolation, not a VM boundary. The Codex SDK exposes `read-only`,
-`workspace-write`, and `danger-full-access` modes; the first two still permit
-host reads. A formal rerun therefore requires an outer container, VM, or
-separate machine/account that physically hides host paths.
+Each condition uses an
+[OpenAI-documented Codex permission profile](https://developers.openai.com/codex/permissions)
+that denies filesystem-root access, reopens only Codex's minimal runtime paths
+and its own writable workspace, and sets network access for that condition.
+The direct-local profile also reads the installation prefix containing FFmpeg
+and ffprobe. The clean-user and VidXP profiles cannot execute those host
+binaries, even by absolute path. On macOS, before any model call, preflight runs
+the pinned Codex sandbox and verifies the denied host read, allowed workspace
+read and write, and expected FFmpeg access for all three conditions. The scorer
+still invalidates detected bypasses as an audit layer.
 
 The scorer enforces capability boundaries, not an agent script. The direct-local
-baseline cannot call VidXP but may use any other available local tool. The
+baseline cannot call VidXP but may use system commands, FFmpeg, and ffprobe. The
 clean-user condition retains its terminal and network and may install tools into
 its own workspace; Homebrew and the repository environment are absent from its
 initial PATH. The VidXP condition
@@ -64,8 +68,9 @@ never names VidXP, FFmpeg, a condition, or a required call sequence. Skill use,
 polling choices, model turns, and Promptfoo-recorded items and tool calls remain
 reported.
 
-The VidXP and direct-local lanes disable network access. The clean-user lane
-enables it so the agent can bootstrap tools. Every lane disables persistent
+The VidXP and direct-local permission profiles disable network access. The
+clean-user profile enables unrestricted command-line network access so the
+agent can bootstrap tools. Every lane disables persistent
 threads, result caching, provider retries, parallel execution, and Codex
 subagents.
 
@@ -160,7 +165,7 @@ state and separate condition homes outside the checkout, installs the committed
 VidXP evidence skill only in the VidXP workspace, initializes the system media
 runtime, opens Codex login
 when authentication is absent, downloads and verifies the pinned LongVALE
-archive, links the same five pilot videos into all three condition workspaces,
+archive, links the same five pilot videos into the two non-VidXP workspaces,
 prepares the four required capabilities, indexes the media, saves the evaluation
 environment in the ignored `benchmarks/codex-mcp/.env` file, and runs preflight.
 Accept the LongVALE dataset terms before running it. Do not copy or commit the
@@ -184,13 +189,12 @@ including VidXP Desktop's existing model cache when it is present. Set
 stored in a directory named for the `INDEX_SCHEMA_VERSION` read from VidXP, so
 a schema change rebuilds derived benchmark data without deleting the preceding
 index. Indexing is skipped when all five videos and four modalities are already
-present. Setup stops only its isolated local worker before applying the
-configuration; durable jobs remain recoverable. The saved model-cache path is
-passed explicitly into
-the benchmark's MCP process with model downloads disabled, so the process uses
-the same prepared artifacts that setup verified. The benchmark pins the Codex
-SDK directly and omits Promptfoo's unrelated optional provider packages from
-the install.
+present. Setup stops every VidXP worker still using its isolated benchmark
+state before applying the configuration; durable jobs remain recoverable. The
+saved model-cache path is passed explicitly into the benchmark's MCP process
+with model downloads disabled, so the process uses the same prepared artifacts
+that setup verified. The benchmark pins the Codex SDK directly and omits
+Promptfoo's unrelated optional provider packages from the install.
 
 ### Measure indexing separately
 
@@ -502,25 +506,38 @@ diagnose the harness and current temporal behavior, not as held-out evidence.
 
 ## Scoring and interpretation
 
-Each task asks for one event and one evidence clip, so this harness measures
-evidence-backed retrieval rather than general video question answering. The
-prompt targets a 10-second clip and accepts 8–12 seconds. A bounded chunk hit
-requires the clip to cover at least half of the annotated event that can fit in
-10 seconds. This lets a normal fixed window containing a short event pass while
-rejecting both a two-second blink and a whole-video answer. The 10-second target
-is a VidXP product-evaluation policy, not a metric taken from LongVALE.
+Each task asks for one event and up to three distinct candidate clips, ordered
+most to least likely. Each clip targets 10 seconds and accepts 8–12 seconds.
+Success@3 requires at least one clip to cover half of the annotated event that
+can fit in 10 seconds. This lets a fixed window containing a short event pass
+while rejecting two-second blinks, whole-video answers, and unbounded result
+lists. Returning fewer than three candidates is valid. The window and result
+limit are VidXP product-evaluation policies, not LongVALE metrics.
+The scorer rejects exact duplicate intervals but does not impose an arbitrary
+overlap threshold because legitimate windows can overlap the same event.
+VidXP candidates share one retrieval job; the agent is not required to launch
+more searches or inspect every artifact to fill the list.
 
-The deterministic scorer also retains temporal IoU, R@1 at tIoU 0.3/0.5/0.7,
-start/end/duration error, interval validity, and whether the expected VidXP
-boundary was respected. Promptfoo traces supply skill use, MCP
+The deterministic scorer retains Success@1, reciprocal rank, candidate count,
+top-one and best-of-three temporal IoU, R@1 and R@3 at tIoU 0.3/0.5/0.7,
+start/end/duration error for the first candidate, interval validity, and whether
+the expected VidXP boundary was respected. Promptfoo traces supply skill use, MCP
 tool names, ordering, and inputs; because its Codex trace adapter does not
 retain MCP result bodies, the scorer uses the returned source job ID to verify
 the authoritative result directly in VidXP's durable job store. It also matches
-each returned evidence ID, modality, and interval to ready evidence delivered
-by that job. Report at least:
+each candidate's evidence IDs and modalities to ready evidence from that job,
+then verifies that its interval overlaps the delivered evidence range.
 
-- bounded-chunk hit rate and mean event coverage by condition;
-- mean IoU and R@1 at tIoU 0.3/0.5/0.7 as secondary boundary diagnostics;
+Attestation requires only the evidence IDs because the durable job already owns
+their intervals and metadata. The agent may use the initial board, metadata,
+keyframes, or clips and inspect an artifact only when that resolves a mismatch
+or uncertainty. Any extra inspection still counts toward time, tokens, and tool
+calls.
+
+Report at least:
+
+- bounded-chunk Success@3, Success@1, reciprocal rank, and candidate count;
+- top-one and best-of-three IoU plus R@1/R@3 at tIoU 0.3/0.5/0.7;
 - results by scene, action, sound, speech, and joint-modality task;
 - input/cached/uncached/output/reasoning token usage, Promptfoo-supplied
   comparison cost, latency, failures, agent runs, and model turns;
@@ -537,7 +554,7 @@ The report never applies the product gate to a development smoke. For the pilot,
 every matched VidXP/direct-local pair must first be condition-valid and
 scorable. Otherwise the gate is not scored and any valid-pair comparison is
 diagnostic only. With complete pairs, the gate passes only when VidXP matches
-or improves bounded-chunk hit rate and uses fewer total tokens. The clean-user
+or improves bounded-chunk Success@3 and uses fewer total tokens. The clean-user
 condition is supporting evidence. Latency, cost, calls, boundary quality, and
 all three raw summaries remain visible; the verdict does not replace them.
 
