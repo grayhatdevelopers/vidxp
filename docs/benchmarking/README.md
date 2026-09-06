@@ -20,6 +20,7 @@ installation and product usage, start with the main
 | Environmental-sound retrieval | PE-A-Frame Small integrated; long-audio gate pending | An identical 149-query AEGBench comparison selected PE-A-Frame over FineLAP. The product now indexes its 40 ms frames through bounded overlapping sections and returns distinct ten-second evidence windows. |
 | LongVALE combined evaluation | First pilot unscored | All 81 runs completed, but only 17/27 primary pairs were isolated and scorable. This selected set is not an official LongVALE result. |
 | Codex MCP ablation | Scorer corrected; pilot rerun required | The first pilot exposed condition bypasses and top-result ranking weakness. Its filtered comparisons are diagnostic because 10 primary pairs were excluded. |
+| Local SLM routing | Smoke passed; held-out run not yet recorded | One local model request selected modalities, then the harness returned VidXP's ranked evidence without model reranking or synthesis. |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
 
 Read [current results](results.md) for the scores, plain-language metric

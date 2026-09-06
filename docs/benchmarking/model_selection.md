@@ -97,13 +97,14 @@ VidXP product option, not a retroactive replacement for the Codex MCP
 condition. Evaluate it as a separate local-answer lane.
 
 The paper-facing SLM condition is narrower and distinct: Promptfoo gives the
-same managed model a concise retrieval system instruction and the four needed
-MCP tools, then applies the same three-candidate schema and deterministic
-scorers used for Codex. This is deliberately a targeted local-agent test, not a
-skill- or tool-discovery test. The general Codex skill stays out of this lane
-unless a separate measured intervention establishes that its extra context
-helps the 4B model. The provider reports Ollama input/output tokens, model
-requests, and MCP calls.
+same managed model the event text and a concise definition of the four indexed
+modalities. The model makes one typed routing decision. The harness then runs
+the fixed MCP retrieval lifecycle and copies VidXP's top three ready evidence
+tiles without model inspection or reranking. The same output schema and
+deterministic scorers used for Codex apply. This is a router-assisted retrieval
+test, not a skill-, tool-discovery, evidence-synthesis, or general-agent test.
+The general Codex skill stays out of this lane. The provider reports the routing
+tokens, one model request, selected modalities, MCP calls, and total latency.
 Memory, energy, and local compute cost remain unmeasured rather than being
 treated as zero. This tests whether VidXP can serve a local agent without
 external model exposure; it does not claim that the harness agent is already a
@@ -124,12 +125,12 @@ product and 2,048-token benchmark ceilings had no cited model basis and are
 removed.
 
 For the Promptfoo lane, Pydantic AI's
-[tool-output mode](https://ai.pydantic.dev/output/#tool-output) and
-`ToolOrOutput` policy keep MCP actions and the typed result in one tool
-protocol. The instruction resolves the dataset filename through `list_media`,
-then searches the returned stable media ID. The final-output validator accepts
-only a source job passed to a successful `get_job_evidence` call. The model
-still chooses the query, tool sequence, and final candidates.
+[native structured-output mode](https://ai.pydantic.dev/output/#native-output)
+constrains the one model response to a non-empty, unique subset of `scene`,
+`action`, `sound`, and `speech`. The harness—not the model—resolves the dataset
+filename through `list_media`, submits the unchanged query, waits for the job,
+and retrieves its evidence board. This avoids spending local-model time and
+tokens copying data that VidXP already returned in a typed form.
 
 ## Confirmed limits and decisions
 

@@ -281,8 +281,8 @@ not a replacement paired pilot. Compare it with the frozen controls by run ID
 and report that the condition was measured later rather than counterbalanced in
 the same evaluation.
 
-The separate local-agent lane gives the approved self-hosted Ollama model a
-targeted retrieval instruction and the four MCP tools needed to execute it:
+The separate local-agent lane uses the approved self-hosted Ollama model only
+to route the event to relevant VidXP modalities:
 
 ```bash
 ./benchmarks/codex-mcp/run slm-smoke
@@ -291,42 +291,43 @@ targeted retrieval instruction and the four MCP tools needed to execute it:
 
 Run `slm-smoke` first. It exercises one development task once; it is a runtime
 gate, not a research result. `slm` then runs the nine held-out tasks three times
-by default. Both use the same prompt, output schema, scorer, prepared index, and
-evidence attestation as VidXP-on, while sending model requests only to the
-loopback runtime. Promptfoo stores the detailed runs in its normal local
-database and includes them in `run results`, `run view`, and `run export`.
-Before Promptfoo creates an evaluation, preflight builds the exact
-structured-output agent, discovers its four allowed MCP tools, and closes the
-MCP session. That wiring check uses Pydantic AI's test model, so it makes neither
-a local-model request nor an MCP tool call. The separate MCP preflight verifies
-the prepared models and five indexed videos. First run
+by default. Both use the same task generator, output schema, scorer, prepared
+index, and evidence attestation as VidXP-on. Promptfoo passes only the event
+text to the router; it does not expose reference bounds or the task's expected
+modalities. The router makes one structured local-model request and returns a
+subset of `scene`, `action`, `sound`, and `speech`. The harness then resolves
+the media, submits the unchanged event query with those modalities, waits for
+VidXP, reads the evidence board, and copies up to three ready tiles in VidXP
+rank order into the shared output schema. The local model does not inspect,
+rerank, summarize, or serialize the returned evidence.
+
+Promptfoo stores the detailed runs in its normal local database and includes
+them in `run results`, `run view`, and `run export`. Before Promptfoo creates an
+evaluation, preflight validates the structured router and discovers the four
+harness-owned MCP tools. That wiring check uses Pydantic AI's test model, so it
+makes neither a local-model request nor an MCP tool call. The separate MCP
+preflight verifies the prepared models and five indexed videos. First run
 `uv run --no-sync vidxp local-answers prepare --yes`. The benchmark starts the
 saved local runtime when needed and stops only the process it started. It does
 not download or substitute a model. The first provider call includes a managed
 runtime cold start when Ollama was not already running; later calls in that
-Promptfoo worker reuse it. The agent has no terminal or file access; its
-callable surface is `list_media`, `search_moments`, `wait_job`,
-`get_job_evidence`, and the typed final-output tool. The neutral prompt's
-media-path field remains present for parity but cannot be opened by this
-provider. LongVALE's video ID is a dataset filename stem, not VidXP's stable
-media ID, so the instruction resolves `<video ID>.mp4` through `list_media`
-before searching. This keeps identity resolution on the public MCP contract
-instead of hiding a benchmark-only ID map.
+Promptfoo worker reuse it. Neither the router nor the harness has terminal or
+source-media access. LongVALE's video ID is a dataset filename stem, not VidXP's
+stable media ID, so the harness resolves the manifest filename through
+`list_media` before searching. This keeps identity resolution on the public MCP
+contract instead of hiding a benchmark-only ID map.
 
-This is a targeted local-agent test, not a tool-discovery test. Its concise
-system instruction states that the video is already indexed, supplies the
-filename-resolution/search/wait/evidence sequence, searches all indexed
-modalities, and asks for up to three returned evidence items. It leaves
-`evidence_delivery` unset so the MCP default returns the bounded evidence board
-without materializing clips that the scoring contract does not consume. It does
-not load the general-purpose Codex skill. That skill is a separate intervention
-only if a measured run shows it improves this model enough to justify its added
-context.
+This is a targeted router-assisted retrieval test, not a tool-discovery or
+general agent test. Its concise system instruction defines the four modalities
+and asks only for the relevant subset. It does not load the general-purpose
+Codex skill. The harness leaves `candidate_top_k` and `evidence_delivery`
+unset, so VidXP uses its public defaults, and fixes final `top_k` to the shared
+three-candidate evaluation contract.
 
 All benchmark MCP processes explicitly disable VidXP's optional internal query
 model. This prevents `query_video` from making hidden model calls after a local
 runtime has been installed. In the local-SLM condition, the metered local model
-is the agent; VidXP remains the evidence backend.
+is the modality router; VidXP remains the evidence backend and ranking system.
 
 The provider records Ollama input/output tokens, local model requests, MCP calls,
 and latency in Promptfoo's response. Provider charge and external-agent calls
@@ -343,25 +344,17 @@ Promptfoo records both requested and actually loaded context; a smaller loaded
 context invalidates the run instead of silently recreating the earlier 4K
 failure.
 
-The local-agent adapter uses Pydantic AI's
-[default tool-output mode](https://ai.pydantic.dev/output/#tool-output) and
-`ToolOrOutput` policy so each response can call an allowlisted VidXP tool or
-the typed final-output tool. The output validator rejects any source job the
-agent did not pass to a successful `get_job_evidence` call. This grounding
-guard prevents an answer copied from the task description without choosing a
-query, result, or rank for the model.
-
-The remaining values in `promptfooconfig.yaml` are harness safety guards, not
-model recommendations: at most 12 model requests, 10 tool calls, a 180-second
-model-call timeout, and a 900-second Promptfoo per-task timeout. The aggregate
-limit permits five maximum-length model responses: resolve media, submit
-search, observe completion, inspect evidence, and return typed output. The old
-300-second aggregate limit could expire even when every individual response
-remained within its declared ceiling. Neither value is a video-duration limit.
-Limit failures remain failed Promptfoo cases rather than being retried by a
-separate runner. Provider-returned failures retain model usage, MCP activity,
-and bounded MCP error text; an outer Promptfoo timeout necessarily kills the
-provider before it can return those fields.
+The local adapter uses Pydantic AI's
+[native structured-output mode](https://ai.pydantic.dev/output/#native-output)
+for the modality list. The protocol permits exactly one model request and no
+output retry; this defines the measured router role rather than imposing a
+generation-size guess. The remaining safety guards are a 180-second limit on
+that model request and a 900-second Promptfoo limit on the whole case. VidXP's
+durable search is observed through repeated, maximum-30-second `wait_job`
+calls until it reaches a terminal state. Neither timeout limits video duration.
+Provider-returned failures retain model usage, selected modalities, MCP
+activity, and bounded MCP error text; an outer Promptfoo timeout necessarily
+kills the provider before it can return those fields.
 
 Both commands finish with a comparison of pass counts, temporal IoU, recall at
 each IoU threshold, boundary errors, elapsed time, average and total token usage

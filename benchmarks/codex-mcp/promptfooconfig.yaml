@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
-description: VidXP agent-ablation and local-agent temporal evidence evaluation
+description: VidXP agent ablation and local-router temporal evidence evaluation
 
 extensions:
   - file://scripts/reset-workspace.mjs:beforeEach
@@ -130,8 +130,6 @@ providers:
       pythonExecutable: "{{ env.PROMPTFOO_PYTHON }}"
       workers: 1
       timeout: 900000
-      maxModelRequests: 12
-      maxToolCalls: 10
       contextTokens: 64000
       maxOutputTokens: 32768
       modelTimeoutSeconds: 180

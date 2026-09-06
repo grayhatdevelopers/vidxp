@@ -518,6 +518,9 @@ export function loadLatestEvaluation({ rescore = false } = {}) {
         testIdx: row.test_idx,
         testVars: testCase.vars || {},
         providerMetadata: responseMetadata,
+        routedModalities: Array.isArray(responseMetadata.selectedModalities)
+          ? responseMetadata.selectedModalities
+          : [],
         outputText: typeof response.output === 'string' ? response.output : '',
         traceSpans: stats.spans || [],
         success: row.success === 1,
@@ -804,7 +807,7 @@ export function renderReport(
       (result) => result.providerMetadata?.coldStart === true,
     ).length;
     console.log(
-      `Local agent: ${models.size === 1 ? [...models][0] : 'unknown'} | `
+      `Local router: ${models.size === 1 ? [...models][0] : 'unknown'} | `
       + `managed runtime cold starts: ${coldStarts}/${localResults.length}`,
     );
   }
@@ -1035,6 +1038,11 @@ export function renderReport(
       ...(tasks.size === 1 ? {} : { task: result.task }),
       ...(repeated ? { repetition: result.repetition } : {}),
       condition: result.condition,
+      ...(localResults.length > 0 ? {
+        route: result.routedModalities.length > 0
+          ? result.routedModalities.join(',')
+          : 'n/a',
+      } : {}),
       integrity: result.integrityPassed ? 'yes' : 'NO',
       [rankedCandidates ? 'hit@3' : 'chunk hit']: Number.isFinite(result.chunkHit)
         ? (result.chunkHit === 1 ? 'yes' : 'NO')

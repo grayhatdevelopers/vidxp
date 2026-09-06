@@ -98,7 +98,7 @@ states when an experiment replaces these normal representations.
 | MCP surfaced-target Hit@1/Hit@3 | Whether a ready evidence tile exposed by `get_job_evidence` covers `0.5` of `min(annotation duration, 10 seconds)` within the first one or three tiles | VidXP-only retrieval diagnostic. It separates evidence availability from the agent's final selection and does not replace the cross-condition bounded-clip gate. |
 | Paired product gate | VidXP-on Success@3 is at least VidXP-off, and VidXP-on uses fewer total agent tokens | Primary whole-system decision. Candidate count, cost, latency, and calls remain reported separately, so returning more clips does not hide its overhead. |
 | Temporal IoU and R@1/R@3 at tIoU 0.3/0.5/0.7 | Exact predicted intervals against the LongVALE-derived annotation | Retained secondary boundary-quality diagnostics. Poor exact trimming and ordering remain product shortcomings and future research targets. |
-| Local-SLM bounded-chunk Success@3 | The same Promptfoo task generator, output contract, and deterministic scorer used by the Codex arms | Separate targeted Promptfoo local-agent condition. It tests whether the approved local model can follow an explicit VidXP retrieval contract and return comparable grounded chunks without an external agent; it is not a Codex run, skill-discovery test, or paired product-gate arm. |
+| Local-SLM routed Success@3 | One local structured-output request selects relevant modalities; the harness submits the unchanged query and scores VidXP's returned top three with the shared Promptfoo contract | Separate router-assisted condition. It tests local query routing plus VidXP retrieval without an external model. It does not test general MCP use, evidence interpretation, answer synthesis, or a paired Codex product gate. |
 
 The two older September development runs used the earlier exact-interval prompt.
 The later smoke and first pilot used one bounded clip. The current isolated run
@@ -215,14 +215,18 @@ the paired Codex comparison:
 
 | Evaluation | Machine and model | Result | Usage | Valid conclusion |
 | --- | --- | --- | --- | --- |
-| `eval-pBj-2026-09-06T20:27:51` | `mac-m2-01`; Ollama `qwen3.5:4b-q4_K_M`; 64,000 loaded context | Integrity and scoring valid; three candidates; Success@3 `0`; best IoU `0`; top result `30–40.006` s | 396.854 s; 25,918 tokens; 7 model requests; 4 MCP calls; no shell or skill; $0 external-provider charge | The targeted agent resolved the filename, submitted one full-query search, waited, read the evidence, and copied the three surfaced ranges and IDs in rank order. VidXP's surfaced top three were the same `30–40.006`, `20–32.032`, and `40–50` s misses, so this is a retrieval-ranking miss rather than an agent-selection miss. It validates the lane mechanics and accounting, not local-agent accuracy. |
+| `eval-Ux0-2026-09-06T21:09:45` | `mac-m2-01`; Ollama `qwen3.5:4b-q4_K_M`; 64,000 loaded context | PASS; route `scene,action`; three candidates; Success@1/Success@3 `1`; top result `0–8.008` s; IoU `.7493` | 36.958 s provider time; 38.185 s run wall time; 155 tokens; one model request; six MCP calls; $0 external-provider charge | Valid router-assisted development smoke. It confirms one-request modality routing, unchanged-query retrieval, deterministic top-three transfer, scoring, and accounting. One task does not establish local equivalence. |
+| `eval-pBj-2026-09-06T20:27:51` | `mac-m2-01`; Ollama `qwen3.5:4b-q4_K_M`; 64,000 loaded context | Integrity and scoring valid; three candidates; Success@3 `0`; best IoU `0`; top result `30–40.006` s | 396.854 s; 25,918 tokens; 7 model requests; 4 MCP calls; no shell or skill; $0 external-provider charge | Superseded protocol diagnostic. The model spent seven turns executing and copying the MCP lifecycle and forced an all-modality search. Synchronous MCP calls used 3.678 s; the durable search took 60.616 s and overlapped model work. This exposed avoidable local-model overhead and a retrieval-policy mismatch; it is not evidence for the router-assisted condition. |
 
 That search used all indexed modalities, final `top_k=3`, and the public
-`candidate_top_k=100` default. The earlier Codex development smoke selected
-three modalities and `candidate_top_k=20`, so their one-task quality results do
-not isolate model choice and must not be presented as a controlled SLM/Codex
-accuracy comparison. The held-out local lane is required before making the
-paper's local-equivalence claim.
+`candidate_top_k=100` default. A saved control using `scene`, `action`, and
+`sound` returned the correct `0–8.0075`-second result first at candidate depths
+20 and 100. Candidate depth therefore did not explain this task's difference;
+forcing every modality remained the meaningful retrieval-policy mismatch. The
+revised lane lets the local model select relevant modalities once and leaves
+VidXP's ranking and evidence output untouched. The smoke above validates that
+lane; the held-out run is still required before making the paper's
+local-equivalence claim.
 
 ### Historical agent runs
 
@@ -337,11 +341,11 @@ MCP items; Codex raw response bodies remain omitted.
   change when a new matched, counterbalanced gate is required. The current
   evidence-handoff intervention can instead use the selective `vidxp` run and
   the completed controls, with that later-run limitation disclosed.
-- Pass `./benchmarks/codex-mcp/run slm-smoke`, then run the local Ollama agent
-  with `./benchmarks/codex-mcp/run slm`. Record
-  bounded-chunk quality, latency, local tokens and model requests, MCP calls,
-  model identity, and condition validity. Provider cost and external-agent
-  tokens are zero; memory, energy, and local compute cost remain unmeasured.
+- Run the local router with `./benchmarks/codex-mcp/run slm`; its smoke has
+  passed. Record bounded-chunk quality, total latency, routing tokens, the
+  single model request, selected modalities, MCP calls, model identity, and
+  condition validity. Provider cost and external-agent tokens are zero; memory,
+  energy, and local compute cost remain unmeasured.
 - Run the isolated three-repetition indexing benchmark and link its reviewed
   JSON artifact from the offline-indexing table above.
 - Produce full-corpus DiDeMo and HiREST results for the current providers.

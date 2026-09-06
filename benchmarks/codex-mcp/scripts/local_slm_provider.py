@@ -6,21 +6,19 @@ import os
 import sys
 import time
 from contextlib import AsyncExitStack
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
 import httpx
-import pydantic_core
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent, ModelProfile, ToolOrOutput, ToolOutput
-from pydantic_ai.exceptions import ModelRetry
+from pydantic import BaseModel, Field, field_validator
+from pydantic_ai import Agent, ModelProfile, NativeOutput
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.usage import RunUsage, UsageLimits
 
+from vidxp.application_models import Job, JobState, JobWaitResult, MediaPage
 from vidxp.benchmarks.agent_ablation_score import DEFAULT_MAX_CANDIDATES
 from vidxp.infrastructure.ollama_query import (
     create_local_answer_model,
@@ -47,34 +45,18 @@ ALLOWED_TOOLS = frozenset(
         "get_job_evidence",
     }
 )
-LOCAL_AGENT_INSTRUCTIONS = """
-You are a VidXP temporal-evidence retrieval agent. The user gives an already
-indexed VidXP Video ID and an event to locate. Do not answer from the event text
-or filename.
+ROUTING_INSTRUCTIONS = """
+Choose which indexed VidXP evidence types are relevant to locating the supplied
+event. Return every relevant type and no unrelated type.
 
-1. The supplied Video ID is the dataset filename stem, not VidXP's media ID.
-Call list_media once with filename set to "<Video ID>.mp4". Use the exact
-media_id from that result; do not copy the dataset ID into command.media_id.
-2. Call search_moments once. Set command.media_id to that returned media_id,
-command.query to the event text, and command.top_k to 3. Omit modalities so
-every indexed modality is searched. Omit evidence_delivery so the MCP default
-returns a bounded evidence board without creating unnecessary clip files. Use
-a fresh idempotency key.
-3. If the job is not finished, call wait_job with its job ID and observation
-token until it succeeds.
-4. Call get_job_evidence once with that job ID.
-5. Return at most three distinct ready evidence candidates in their returned
-rank order. Use each evidence item's source time range, modalities, and exact
-evidence ID. Set source_job_id to the inspected job ID. Do not invent evidence,
-IDs, timestamps, or claims. If the completed job has no ready evidence, return
-no candidates and explain that limitation.
+- scene: visible objects, setting, appearance, or visual state
+- action: visible movement, activity, or change over time
+- sound: non-speech audio, including environmental and mechanical sounds
+- speech: spoken words or dialogue
+
+Do not locate the event, predict timestamps, rewrite the query, or summarize
+results. Your only task is modality selection.
 """.strip()
-TOOL_ARGUMENTS = pydantic_core.SchemaValidator(
-    pydantic_core.core_schema.dict_schema(
-        pydantic_core.core_schema.str_schema(),
-        pydantic_core.core_schema.any_schema(),
-    )
-)
 
 _runtime: ManagedOllamaSession | None = None
 
@@ -94,23 +76,34 @@ class LocalAgentAnswer(BaseModel):
     candidates: list[Candidate] = Field(max_length=DEFAULT_MAX_CANDIDATES)
 
 
+class ModalityRoute(BaseModel):
+    modalities: list[Literal["scene", "action", "sound", "speech"]] = Field(
+        min_length=1,
+        max_length=4,
+    )
+
+    @field_validator("modalities")
+    @classmethod
+    def _unique_modalities(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("Routing modalities must be unique.")
+        return values
+
+
 # Promptfoo imports providers without registering the module in sys.modules.
 # Resolve postponed field annotations while this module namespace is available.
 LocalAgentAnswer.model_rebuild(_types_namespace=globals())
+ModalityRoute.model_rebuild(_types_namespace=globals())
 
 
-class StdioMCPToolset(AbstractToolset[None]):
-    """Expose one explicitly-owned MCP session as Pydantic-AI tools."""
+class StdioMCPClient:
+    """Call the fixed VidXP retrieval workflow and retain an auditable trace."""
 
     def __init__(self, parameters: StdioServerParameters) -> None:
         self.parameters = parameters
         self.session: ClientSession | None = None
         self._transport: AsyncExitStack | None = None
         self.calls: list[dict[str, Any]] = []
-
-    @property
-    def id(self) -> str:
-        return "vidxp"
 
     async def open(self) -> None:
         if self._transport is not None:
@@ -137,53 +130,20 @@ class StdioMCPToolset(AbstractToolset[None]):
         if transport is not None:
             await transport.aclose()
 
-    async def __aenter__(self):
-        # Pydantic-AI may enter and exit toolsets in helper tasks. The MCP SDK's
-        # AnyIO transport must instead be opened and closed by the same task.
-        return self
-
-    async def __aexit__(self, *args: Any) -> None:
-        del args
-
-    async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
-        if self.session is None:
-            raise RuntimeError("The VidXP MCP session is not initialized.")
-        response = await self.session.list_tools()
-        return {
-            tool.name: ToolsetTool(
-                toolset=self,
-                tool_def=ToolDefinition(
-                    name=tool.name,
-                    description=tool.description,
-                    parameters_json_schema=tool.input_schema,
-                    return_schema=tool.output_schema,
-                ),
-                max_retries=ctx.max_retries,
-                args_validator=TOOL_ARGUMENTS,
-            )
-            for tool in response.tools
-            if tool.name in ALLOWED_TOOLS
-        }
-
-    async def call_tool(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[None],
-        tool: ToolsetTool[None],
-    ) -> Any:
-        del ctx, tool
+    async def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name not in ALLOWED_TOOLS:
+            raise RuntimeError(f"The local-SLM harness cannot call MCP tool {name}.")
         if self.session is None:
             raise RuntimeError("The VidXP MCP session is not initialized.")
         started_at = time.time()
         started = time.perf_counter()
         call = {
             "name": name,
-            "arguments": tool_args,
+            "arguments": arguments,
             "started_at": started_at,
         }
         try:
-            result = await self.session.call_tool(name, arguments=tool_args)
+            result = await self.session.call_tool(name, arguments=arguments)
         except Exception as error:
             self.calls.append(
                 {
@@ -211,10 +171,10 @@ class StdioMCPToolset(AbstractToolset[None]):
             )[:1000]
         self.calls.append(recorded_call)
         if result.is_error:
-            raise ModelRetry("; ".join(messages) or f"VidXP tool {name} failed.")
-        if result.structured_content is not None:
-            return result.structured_content
-        return [item.model_dump(mode="json", by_alias=True) for item in result.content]
+            raise RuntimeError("; ".join(messages) or f"VidXP tool {name} failed.")
+        if not isinstance(result.structured_content, dict):
+            raise RuntimeError(f"VidXP tool {name} returned no structured result.")
+        return result.structured_content
 
 
 def _positive_option(config: dict[str, Any], name: str) -> int:
@@ -374,15 +334,18 @@ def _metadata(
     model_identity: dict[str, str],
     model_settings: dict[str, Any],
     cold_start: bool,
+    selected_modalities: list[str] | None = None,
     model_turns: int | None = None,
 ) -> dict[str, Any]:
     return {
         "agentRuntime": "local-slm",
+        "agentRole": "modality-router",
         "model": model_identity,
         "modelSettings": model_settings,
         "modelTurns": model_turns,
         "coldStart": cold_start,
-        "instructionProfile": "targeted-vidxp-retrieval-v1",
+        "instructionProfile": "targeted-modality-router-v1",
+        "selectedModalities": selected_modalities,
         "trace": _trace(calls, started_at),
         "skillCalls": [],
     }
@@ -451,14 +414,13 @@ async def _record_actual_context(
     return recorded
 
 
-def _build_agent(
+def _build_router(
     *,
     base_url: str,
     model_name: str,
-    toolset: StdioMCPToolset,
     max_output_tokens: int,
     model_timeout_seconds: float,
-) -> Agent[None, LocalAgentAnswer]:
+) -> Agent[None, ModalityRoute]:
     model = create_local_answer_model(
         base_url=base_url,
         model_name=model_name,
@@ -470,39 +432,159 @@ def _build_agent(
             timeout_seconds=model_timeout_seconds,
         )
     )
-    settings["tool_choice"] = ToolOrOutput(function_tools=sorted(ALLOWED_TOOLS))
-    agent = Agent(
+    return Agent(
         model,
-        output_type=ToolOutput(
-            LocalAgentAnswer,
-            name="return_video_evidence",
-            description="Return the final answer after inspecting VidXP evidence.",
-        ),
-        instructions=LOCAL_AGENT_INSTRUCTIONS,
-        toolsets=[toolset],
-        retries=1,
+        output_type=NativeOutput(ModalityRoute),
+        instructions=ROUTING_INSTRUCTIONS,
+        retries=0,
         model_settings=settings,
     )
 
-    @agent.output_validator
-    def require_inspected_source(answer: LocalAgentAnswer) -> LocalAgentAnswer:
-        inspected_jobs = {
-            call["arguments"].get("job_id")
-            for call in toolset.calls
-            if call["name"] == "get_job_evidence" and not call["is_error"]
+
+def _benchmark_inputs(context: dict[str, Any] | None) -> tuple[str, str, str]:
+    variables = (context or {}).get("vars")
+    if not isinstance(variables, dict):
+        raise ValueError("Promptfoo did not provide structured benchmark variables.")
+    video_id = variables.get("video_id")
+    query = variables.get("query")
+    media_relpath = variables.get("media_relpath")
+    if not isinstance(video_id, str) or not video_id.strip():
+        raise ValueError("The local-SLM case requires a video_id variable.")
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("The local-SLM case requires a query variable.")
+    if not isinstance(media_relpath, str) or not media_relpath.strip():
+        raise ValueError("The local-SLM case requires a media_relpath variable.")
+    filename = media_relpath.replace("\\", "/").rsplit("/", 1)[-1]
+    if not filename:
+        raise ValueError("The local-SLM media_relpath has no filename.")
+    return video_id.strip(), query.strip(), filename
+
+
+async def _retrieve_evidence(
+    *,
+    client: StdioMCPClient,
+    video_id: str,
+    filename: str,
+    query: str,
+    modalities: list[str],
+) -> LocalAgentAnswer:
+    media_page = MediaPage.model_validate(
+        await client.call("list_media", {"filename": filename})
+    )
+    exact_matches = [
+        item
+        for item in media_page.items
+        if item.original_filename == filename
+    ]
+    if len(exact_matches) != 1:
+        raise RuntimeError(
+            f"Expected one registered VidXP video named {filename}, found "
+            f"{len(exact_matches)}."
+        )
+    media_id = exact_matches[0].media_id
+
+    submitted = Job.model_validate(
+        await client.call(
+            "search_moments",
+            {
+                "command": {
+                    "media_id": media_id,
+                    "query": query,
+                    "modalities": modalities,
+                    "top_k": DEFAULT_MAX_CANDIDATES,
+                },
+                "idempotency_key": f"local-slm-{uuid4().hex}",
+            },
+        )
+    )
+    job_id = submitted.job_id
+    terminal = submitted.terminal
+    state = submitted.state
+    error = submitted.error
+
+    observation_token: str | None = None
+    while not terminal:
+        wait_arguments: dict[str, Any] = {
+            "job_id": job_id,
+            "timeout_seconds": 30,
         }
-        if answer.source_job_id not in inspected_jobs:
-            raise ModelRetry(
-                "Before returning the final answer, use VidXP to retrieve the "
-                "video evidence and set source_job_id to the job passed to the "
-                "successful get_job_evidence call."
+        if observation_token is not None:
+            wait_arguments["after_observation_token"] = observation_token
+        waited = JobWaitResult.model_validate(
+            await client.call("wait_job", wait_arguments)
+        )
+        terminal = waited.job.terminal
+        state = waited.job.state
+        error = waited.job.error
+        observation_token = waited.job.observation_token
+
+    if state != JobState.succeeded:
+        raise RuntimeError(
+            f"VidXP search job {job_id} ended in state {state.value}: "
+            f"{error.message if error is not None else 'no error detail'}"
+        )
+
+    evidence = await client.call("get_job_evidence", {"job_id": job_id})
+    board = evidence.get("board")
+    if not isinstance(board, dict):
+        raise RuntimeError("VidXP returned an invalid evidence board result.")
+    tiles = board.get("tiles")
+    if not isinstance(tiles, list):
+        raise RuntimeError("VidXP evidence board returned an invalid tile collection.")
+
+    candidates: list[Candidate] = []
+    seen_evidence: set[str] = set()
+    ready_tiles = sorted(
+        (tile for tile in tiles if isinstance(tile, dict) and tile.get("state") == "ready"),
+        key=lambda tile: tile.get("rank", 10**9),
+    )
+    for tile in ready_tiles:
+        evidence_id = tile.get("evidence_id")
+        if not isinstance(evidence_id, str) or evidence_id in seen_evidence:
+            continue
+        tile_modalities = tile.get("modalities")
+        if not isinstance(tile_modalities, list) or not all(
+            isinstance(modality, str) for modality in tile_modalities
+        ):
+            raise RuntimeError("VidXP evidence tile returned invalid modalities.")
+        description = tile.get("display_text")
+        rank = tile.get("rank")
+        candidates.append(
+            Candidate(
+                start_seconds=tile.get("start"),
+                end_seconds=tile.get("end"),
+                modalities=tile_modalities,
+                description=(
+                    description
+                    if isinstance(description, str) and description
+                    else f"VidXP ranked evidence candidate {rank}."
+                ),
+                evidence_ids=[evidence_id],
             )
-        return answer
+        )
+        seen_evidence.add(evidence_id)
+        if len(candidates) == DEFAULT_MAX_CANDIDATES:
+            break
 
-    return agent
+    return LocalAgentAnswer(
+        video_id=video_id,
+        answer=(
+            f"VidXP returned {len(candidates)} ranked evidence candidate"
+            f"{'s' if len(candidates) != 1 else ''}."
+            if candidates
+            else "VidXP returned no ready evidence candidates."
+        ),
+        source_job_id=job_id,
+        candidates=candidates,
+    )
 
 
-async def _run_agent(prompt: str, config: dict[str, Any]) -> dict[str, Any]:
+async def _run_provider(
+    *,
+    config: dict[str, Any],
+    context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    video_id, query, filename = _benchmark_inputs(context)
     configured, base_url, model_name = _selected_model()
     context_tokens = _positive_option(config, "contextTokens")
     max_output_tokens = _positive_option(config, "maxOutputTokens")
@@ -514,7 +596,7 @@ async def _run_agent(prompt: str, config: dict[str, Any]) -> dict[str, Any]:
         "temperature": defaults.temperature,
         "topP": defaults.top_p,
         "presencePenalty": defaults.presence_penalty,
-        "toolChoice": "vidxp-tools-or-grounded-output",
+        "role": "modality-selection-only",
     }
     cold_start = _ensure_runtime(
         configured,
@@ -527,59 +609,64 @@ async def _run_agent(prompt: str, config: dict[str, Any]) -> dict[str, Any]:
         base_url=base_url,
         model_name=model_name,
     )
-    toolset = StdioMCPToolset(_mcp_parameters())
     started_at = time.time()
-    await toolset.open()
+    usage = RunUsage()
+    selected_modalities: list[str] | None = None
+    client = StdioMCPClient(_mcp_parameters())
     try:
-        agent = _build_agent(
+        router = _build_router(
             base_url=base_url,
             model_name=model_name,
-            toolset=toolset,
             max_output_tokens=max_output_tokens,
             model_timeout_seconds=_positive_number_option(
                 config,
                 "modelTimeoutSeconds",
             ),
         )
-        usage = RunUsage()
-        try:
-            result = await agent.run(
-                prompt,
-                usage_limits=UsageLimits(
-                    request_limit=_positive_option(config, "maxModelRequests"),
-                    tool_calls_limit=_positive_option(config, "maxToolCalls"),
-                ),
-                usage=usage,
-            )
-        except Exception as error:
-            recorded_model_settings = await _record_actual_context(
-                base_url=base_url,
-                model_name=model_name,
-                requested_context_tokens=context_tokens,
+        routed = await router.run(
+            query,
+            usage_limits=UsageLimits(request_limit=1),
+            usage=usage,
+        )
+        selected_modalities = list(routed.output.modalities)
+        await client.open()
+        answer = await _retrieve_evidence(
+            client=client,
+            video_id=video_id,
+            filename=filename,
+            query=query,
+            modalities=selected_modalities,
+        )
+    except Exception as error:
+        recorded_model_settings = await _record_actual_context(
+            base_url=base_url,
+            model_name=model_name,
+            requested_context_tokens=context_tokens,
+            model_settings=recorded_model_settings,
+        )
+        return {
+            "error": f"{type(error).__name__}: {error}",
+            "cost": 0,
+            "tokenUsage": _token_usage(usage),
+            "metadata": _metadata(
+                calls=client.calls,
+                started_at=started_at,
+                model_identity=model_identity,
                 model_settings=recorded_model_settings,
-            )
-            return {
-                "error": f"{type(error).__name__}: {error}",
-                "cost": 0,
-                "tokenUsage": _token_usage(usage),
-                "metadata": _metadata(
-                    calls=toolset.calls,
-                    started_at=started_at,
-                    model_identity=model_identity,
-                    model_settings=recorded_model_settings,
-                    cold_start=cold_start,
-                    model_turns=usage.requests,
-                ),
-                "raw": {
-                    **_activity(toolset.calls),
-                    "usage": {
-                        "requests": usage.requests,
-                        "tool_calls": usage.tool_calls,
-                    },
+                cold_start=cold_start,
+                selected_modalities=selected_modalities,
+                model_turns=usage.requests,
+            ),
+            "raw": {
+                **_activity(client.calls),
+                "usage": {
+                    "requests": usage.requests,
+                    "tool_calls": len(client.calls),
                 },
-            }
+            },
+        }
     finally:
-        await toolset.close()
+        await client.close()
 
     recorded_model_settings = await _record_actual_context(
         base_url=base_url,
@@ -587,10 +674,9 @@ async def _run_agent(prompt: str, config: dict[str, Any]) -> dict[str, Any]:
         requested_context_tokens=context_tokens,
         model_settings=recorded_model_settings,
     )
-    usage = result.usage
-    calls = toolset.calls
+    calls = client.calls
     return {
-        "output": result.output.model_dump_json(),
+        "output": answer.model_dump_json(),
         "format": "json",
         "cost": 0,
         "tokenUsage": _token_usage(usage),
@@ -600,13 +686,14 @@ async def _run_agent(prompt: str, config: dict[str, Any]) -> dict[str, Any]:
             model_identity=model_identity,
             model_settings=recorded_model_settings,
             cold_start=cold_start,
+            selected_modalities=selected_modalities,
             model_turns=usage.requests,
         ),
         "raw": {
             **_activity(calls),
             "usage": {
                 "requests": usage.requests,
-                "tool_calls": usage.tool_calls,
+                "tool_calls": len(calls),
             },
         },
     }
@@ -617,81 +704,60 @@ def call_api(
     options: dict[str, Any] | None = None,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run one local agent case and return Promptfoo's provider response contract."""
+    """Run one router-assisted VidXP case through Promptfoo."""
 
-    del context
+    del prompt
     _load_environment()
     config = (options or {}).get("config", {})
     try:
-        return asyncio.run(_run_agent(prompt, config))
+        return asyncio.run(_run_provider(config=config, context=context))
     except (LocalAnswerError, RuntimeError, ValueError) as error:
         return {"error": str(error)}
 
 
-async def _check_agent_wiring(*, base_url: str, model_name: str) -> int:
-    """Exercise agent schemas and MCP discovery without model inference or tool calls."""
+async def _check_provider_wiring(*, base_url: str, model_name: str) -> int:
+    """Exercise router schemas and MCP discovery without real model inference."""
 
-    toolset = StdioMCPToolset(_mcp_parameters())
-    await toolset.open()
+    client = StdioMCPClient(_mcp_parameters())
+    await client.open()
     try:
-        agent = _build_agent(
+        if client.session is None:
+            raise RuntimeError("The VidXP MCP session is not initialized.")
+        response = await client.session.list_tools()
+        tools = {tool.name for tool in response.tools}
+        missing = ALLOWED_TOOLS.difference(tools)
+        if missing:
+            raise RuntimeError(
+                "The local-SLM harness is missing VidXP MCP tools: "
+                f"{', '.join(sorted(missing))}."
+            )
+        router = _build_router(
             base_url=base_url,
             model_name=model_name,
-            toolset=toolset,
             max_output_tokens=1,
             model_timeout_seconds=1,
         )
-        tool_choice = (agent.model_settings or {}).get("tool_choice")
-        if not isinstance(tool_choice, ToolOrOutput) or set(
-            tool_choice.function_tools
-        ) != ALLOWED_TOOLS:
-            raise RuntimeError(
-                "The local-SLM agent is not enforcing evidence retrieval before output."
-            )
-        if agent.model.profile.get("openai_chat_supports_max_completion_tokens"):
+        if router.model.profile.get("openai_chat_supports_max_completion_tokens"):
             raise RuntimeError(
                 "The local-SLM agent is not using Ollama's max_tokens request field."
             )
         test_model = TestModel(
-            call_tools=[],
-            custom_output_args=LocalAgentAnswer(
-                video_id="preflight",
-                answer="preflight",
-                source_job_id="preflight-job",
-                candidates=[],
-            ).model_dump(),
-            profile=ModelProfile(),
+            custom_output_text=ModalityRoute(
+                modalities=["scene"]
+            ).model_dump_json(),
+            profile=ModelProfile(supports_json_schema_output=True),
         )
-        toolset.calls.append(
-            {
-                "name": "get_job_evidence",
-                "arguments": {"job_id": "preflight-job"},
-                "started_at": 0,
-                "elapsed_seconds": 0,
-                "is_error": False,
-            }
-        )
-        try:
-            result = await agent.run("Provider wiring preflight.", model=test_model)
-        finally:
-            toolset.calls.clear()
+        result = await router.run("A visible landscape.", model=test_model)
         if result.usage.requests != 1:
             raise RuntimeError("The local-SLM usage contract is unavailable.")
         parameters = test_model.last_model_request_parameters
-        tools = {tool.name for tool in parameters.function_tools} if parameters else set()
-        if tools != ALLOWED_TOOLS:
-            raise RuntimeError(
-                "The local-SLM agent exposed an unexpected MCP tool set: "
-                f"{', '.join(sorted(tools)) or 'none'}."
-            )
-        output_tools = parameters.output_tools if parameters else []
-        if [tool.name for tool in output_tools] != ["return_video_evidence"]:
-            raise RuntimeError("The local-SLM structured output tool is unavailable.")
-        if result.output.video_id != "preflight" or toolset.calls:
+        if parameters is None or parameters.function_tools:
+            raise RuntimeError("The local-SLM router unexpectedly exposes tools.")
+        if result.output.modalities != ["scene"] or client.calls:
             raise RuntimeError("The local-SLM no-inference wiring check was not isolated.")
-        return len(tools)
+        return len(ALLOWED_TOOLS)
     finally:
-        await toolset.close()
+        await client.close()
 
 
 def check_configuration() -> dict[str, Any]:
@@ -711,9 +777,10 @@ def check_configuration() -> dict[str, Any]:
         "VIDXP_EVAL_MACHINE_ID",
     ):
         _required_environment(name)
+    ModalityRoute.model_json_schema()
     LocalAgentAnswer.model_json_schema()
     tool_count = asyncio.run(
-        _check_agent_wiring(base_url=base_url, model_name=model_name)
+        _check_provider_wiring(base_url=base_url, model_name=model_name)
     )
     return {
         "model": model_name,
@@ -730,9 +797,10 @@ if __name__ == "__main__":
     try:
         checked = check_configuration()
         print(
-            "Local SLM provider ready without inference: "
-            f"{checked['model']}, {checked['mcp_tools']} MCP tools, and structured "
-            "output verified."
+            "Local SLM router ready without inference: "
+            f"{checked['model']}, one structured routing decision, "
+            f"{checked['mcp_tools']} harness-owned MCP tools, and deterministic "
+            "evidence output verified."
         )
     except (RuntimeError, ValueError) as error:
         raise SystemExit(str(error)) from error
