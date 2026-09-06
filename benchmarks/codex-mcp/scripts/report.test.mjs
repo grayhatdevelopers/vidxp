@@ -17,10 +17,20 @@ test('sanitizes a Promptfoo export without removing its audit data', () => {
     metadata: { promptfooVersion: '0.122.2' },
     config: { apiKey: 'secret', workingDir: '/Users/test/repo/workspace' },
     results: {
-      results: [{
-        prompt: { raw: 'Find the event.' },
-        response: { raw: 'large command output', sessionId: 'session-1', output: '{}' },
-      }],
+      results: [
+        {
+          prompt: { raw: 'Find the event.' },
+          response: { raw: 'large command output', sessionId: 'session-1', output: '{}' },
+        },
+        {
+          prompt: { raw: 'Find another event.' },
+          response: {
+            output: '{}',
+            metadata: { agentRuntime: 'local-slm' },
+            raw: { items: [{ type: 'mcp_tool_call', server: 'vidxp' }] },
+          },
+        },
+      ],
     },
     traces: [{
       spans: [{
@@ -41,6 +51,7 @@ test('sanitizes a Promptfoo export without removing its audit data', () => {
   assert.equal(sanitized.results.results[0].response.output, '{}');
   assert.equal('raw' in sanitized.results.results[0].response, false);
   assert.equal('sessionId' in sanitized.results.results[0].response, false);
+  assert.equal(sanitized.results.results[1].response.raw.items.length, 1);
   assert.equal(
     sanitized.traces[0].spans[0].attributes.command,
     '<HOME>/tool --version; inspect <HOME>/truncated',

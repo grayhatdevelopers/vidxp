@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
-description: VidXP, direct-local, and clean-user temporal evidence evaluation
+description: VidXP agent-ablation and local-agent temporal evidence evaluation
 
 extensions:
   - file://scripts/reset-workspace.mjs:beforeEach
@@ -85,6 +85,8 @@ providers:
             env:
               VIDXP_MODEL_CACHE: "{{ env.VIDXP_MODEL_CACHE }}"
               VIDXP_ALLOW_MODEL_DOWNLOADS: "false"
+              VIDXP_SLM_BASE_URL: ""
+              VIDXP_SLM_MODEL: ""
             args:
               - --repository
               - "{{ env.VIDXP_EVAL_REPOSITORY | default('default') }}"
@@ -122,6 +124,17 @@ providers:
         features:
           multi_agent: false
 
+  - id: file://scripts/local_slm_provider.py:call_api
+    label: local-slm
+    config:
+      pythonExecutable: "{{ env.PROMPTFOO_PYTHON }}"
+      workers: 1
+      timeout: 300000
+      maxModelRequests: 12
+      maxToolCalls: 10
+      maxOutputTokens: 2048
+      modelTimeoutSeconds: 180
+
 tests:
   - path: file://../../src/vidxp/benchmarks/agent_ablation_tests.py:generate_tests
     config:
@@ -131,6 +144,7 @@ tests:
         vidxp_on: codex-vidxp
         vidxp_off: codex-baseline
         clean_user: codex-clean-user
+        local_slm: local-slm
 
 evaluateOptions:
   cache: false

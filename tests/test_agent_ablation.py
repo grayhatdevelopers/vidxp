@@ -321,6 +321,19 @@ def test_ablation_boundary_attests_successful_vidxp_evidence_job() -> None:
     assert result["pass"] is True
 
 
+def test_ablation_boundary_accepts_provider_recorded_mcp_trace() -> None:
+    output, context, job = _ablation_fixture()
+    context["metadata"] = {"trace": context.pop("trace")}
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is True
+
+
 def test_ablation_boundary_attests_ready_evidence_board_tile() -> None:
     output, context, job = _ablation_fixture()
     delivery = job["result"]["result"]["evidence_delivery"]
@@ -724,3 +737,25 @@ def test_generator_can_select_only_the_vidxp_condition(
 
     assert len(tests) == 27
     assert {test["metadata"]["condition"] for test in tests} == {"vidxp-on"}
+
+
+def test_generator_can_select_only_the_local_slm_condition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = Path(__file__).parents[1] / "benchmarks" / "codex-mcp"
+    monkeypatch.chdir(benchmark)
+    monkeypatch.setenv("VIDXP_EVAL_MODE", "pilot")
+    monkeypatch.setenv("VIDXP_EVAL_CONDITIONS", "local-slm")
+
+    tests = generate_tests(
+        {
+            "manifest": "tasks/longvale-part9-pilot.json",
+            "providers": {"local_slm": "local"},
+        }
+    )
+
+    assert len(tests) == 27
+    assert {test["providers"][0] for test in tests} == {"local"}
+    assert {test["metadata"]["condition"] for test in tests} == {"local-slm"}
+    assert all(test["vars"]["expected_vidxp"] is True for test in tests)
+    assert all(test["vars"]["allow_media_shell"] is False for test in tests)

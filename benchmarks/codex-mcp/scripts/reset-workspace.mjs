@@ -30,6 +30,9 @@ function requireIsolatedWorkspace(condition, environment) {
 }
 
 export function resetEvaluationWorkspace(condition, environment = process.env) {
+  if (condition === 'local-slm') {
+    return;
+  }
   if (!(condition in CONDITION_ENV)) {
     throw new Error(`Unknown evaluation condition: ${condition}`);
   }

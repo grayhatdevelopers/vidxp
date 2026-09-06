@@ -18,12 +18,13 @@ from vidxp.benchmarks.agent_ablation_score import (
 _SCORER = "file://../../src/vidxp/benchmarks/agent_ablation_score.py"
 _MODALITIES = frozenset({"scene", "action", "sound", "speech"})
 _RUN_MODES = frozenset({"all", "smoke", "pilot"})
-_CONDITIONS = frozenset({"vidxp-on", "vidxp-off", "clean-user"})
+_DEFAULT_CONDITIONS = frozenset({"vidxp-on", "vidxp-off", "clean-user"})
+_CONDITIONS = _DEFAULT_CONDITIONS | {"local-slm"}
 _DEFAULT_PILOT_REPETITIONS = 3
 
 
 def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Expand one task manifest into matched three-condition cases."""
+    """Expand one task manifest into selected agent-condition cases."""
 
     options = config or {}
     manifest = Path(options.get("manifest", ""))
@@ -53,6 +54,12 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
             providers.get("clean_user", "codex-clean-user"),
             False,
             True,
+        ),
+        (
+            "local-slm",
+            providers.get("local_slm", "local-slm"),
+            True,
+            False,
         ),
     )
     requested_conditions = _requested_conditions()
@@ -163,7 +170,7 @@ def _repetitions(mode: str) -> int:
 def _requested_conditions() -> frozenset[str]:
     raw = os.environ.get("VIDXP_EVAL_CONDITIONS")
     if raw is None:
-        return _CONDITIONS
+        return _DEFAULT_CONDITIONS
     requested = frozenset(
         condition.strip() for condition in raw.split(",") if condition.strip()
     )

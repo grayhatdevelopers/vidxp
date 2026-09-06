@@ -101,7 +101,9 @@ case "$command" in
             echo "Usage: ./benchmarks/codex-mcp/run slm [repetitions]" >&2
             exit 2
         fi
-        exec "$benchmark_dir/../../.venv/bin/python" scripts/local_slm_benchmark.py "$repetitions"
+        VIDXP_EVAL_REPETITIONS=$repetitions
+        export VIDXP_EVAL_REPETITIONS
+        exec npm run eval:slm
         ;;
     results)
         exec npm run report -- "$@"

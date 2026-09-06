@@ -35,10 +35,15 @@ Two declared follow-ups reuse the frozen controls rather than repeating them.
 `./benchmarks/codex-mcp/run vidxp` measures a VidXP-only evidence-handoff
 intervention; it is not counterbalanced with the earlier controls. The separate
 `./benchmarks/codex-mcp/run slm` lane gives the same shipped skill and required
-VidXP MCP tools to the managed loopback model. It reports local tokens, model
-requests, MCP calls, latency, and quality with zero external-agent calls and
-provider cost; memory and energy remain unmeasured. Each task is capped at 12
-model requests and 10 tool calls.
+VidXP MCP tools to the managed loopback model. Promptfoo runs the same held-out
+tasks, repetitions, output contract, scorer, database, report, and export path.
+It reports local tokens, model requests, MCP calls, latency, and quality with
+zero external-agent calls and provider charge; memory, energy, and local compute
+cost remain unmeasured. Each task is capped at 12 model requests, 10 tool calls,
+2,048 output tokens per request, and a 180-second model-call timeout. Promptfoo's
+300-second provider timeout is a per-task guard, not a video-duration limit.
+Every benchmark MCP process disables VidXP's optional internal query model, so
+the reported agent usage cannot omit nested SLM requests.
 
 The task design comes from
 [LongVALE](https://openaccess.thecvf.com/content/CVPR2025/papers/Geng_LongVALE_Vision-Audio-Language-Event_Benchmark_Towards_Time-Aware_Omni-Modal_Perception_of_Long_Videos_CVPR_2025_paper.pdf);
@@ -79,7 +84,7 @@ states when an experiment replaces these normal representations.
 | MCP surfaced-target Hit@1/Hit@3 | Whether a ready evidence tile exposed by `get_job_evidence` covers `0.5` of `min(annotation duration, 10 seconds)` within the first one or three tiles | VidXP-only retrieval diagnostic. It separates evidence availability from the agent's final selection and does not replace the cross-condition bounded-clip gate. |
 | Paired product gate | VidXP-on Success@3 is at least VidXP-off, and VidXP-on uses fewer total agent tokens | Primary whole-system decision. Candidate count, cost, latency, and calls remain reported separately, so returning more clips does not hide its overhead. |
 | Temporal IoU and R@1/R@3 at tIoU 0.3/0.5/0.7 | Exact predicted intervals against the LongVALE-derived annotation | Retained secondary boundary-quality diagnostics. Poor exact trimming and ordering remain product shortcomings and future research targets. |
-| Local-SLM bounded-chunk Success@3 | The same output contract and deterministic scorer used by the Codex arms | Separate local-agent result. It tests whether the approved local model can use the shipped skill and VidXP MCP to return comparable grounded chunks without an external agent; it is not a Promptfoo/Codex run. |
+| Local-SLM bounded-chunk Success@3 | The same Promptfoo task generator, output contract, and deterministic scorer used by the Codex arms | Separate Promptfoo local-agent condition. It tests whether the approved local model can use the shipped skill and VidXP MCP to return comparable grounded chunks without an external agent; it is not a Codex run or a paired product-gate arm. |
 
 The two older September development runs used the earlier exact-interval prompt.
 The later smoke and first pilot used one bounded clip. The current isolated run
@@ -292,7 +297,8 @@ inputs and code needed to understand or reproduce them:
 Generated databases, media, indexes, model weights, raw Codex response bodies,
 session IDs, secrets, and personal paths are not committed. The retained
 Promptfoo exports preserve the remaining configuration, responses, scores,
-usage, traces, and tool items needed to audit selected agent runs.
+usage, and traces. Local-SLM exports also retain their compact provider-recorded
+MCP items; Codex raw response bodies remain omitted.
 
 ## Measurements still required
 

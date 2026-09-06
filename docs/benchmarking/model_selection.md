@@ -95,17 +95,16 @@ self-hosted Ollama `qwen3.5:4b-q4_K_M` model for typed query planning and
 grounded answer synthesis, with deterministic evidence fallback. This is a
 VidXP product option, not a paper-derived requirement, and it has not been run
 through the agent-ablation tasks. Evaluate it as a separate local-answer lane,
-not as a retroactive replacement for the Codex MCP condition. Report the same
-quality and latency metrics plus model-stage calls and fallback use. The current
-adapter does not expose local model tokens, memory, or energy, so those remain
-unmeasured rather than being treated as zero. Local execution removes external
-agent calls and provider charges but does not make inference costless.
+not as a retroactive replacement for the Codex MCP condition.
 
-The current paper-facing SLM run is narrower and distinct: the same managed
-model receives the shipped skill and required MCP tools in the benchmark
-harness, then returns the same three-candidate schema scored for Codex. This
-tests whether VidXP can serve a local agent without cloud-model exposure; it
-does not claim that the harness agent is already a shipped VidXP UI feature.
+The paper-facing SLM condition is narrower and distinct: Promptfoo gives the
+same managed model the shipped skill and five required MCP tools, then applies
+the same three-candidate schema and deterministic scorers used for Codex. The
+provider reports Ollama input/output tokens, model requests, and MCP calls.
+Memory, energy, and local compute cost remain unmeasured rather than being
+treated as zero. This tests whether VidXP can serve a local agent without
+external model exposure; it does not claim that the harness agent is already a
+shipped VidXP UI feature or that local inference is costless.
 
 ## Confirmed limits and decisions
 

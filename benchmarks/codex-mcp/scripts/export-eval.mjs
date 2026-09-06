@@ -83,7 +83,11 @@ export function sanitizePromptfooExport(
   }
   const copy = structuredClone(document);
   for (const result of copy?.results?.results || []) {
-    if (result?.response && typeof result.response === 'object') {
+    if (
+      result?.response
+      && typeof result.response === 'object'
+      && result.response.metadata?.agentRuntime !== 'local-slm'
+    ) {
       delete result.response.raw;
     }
   }

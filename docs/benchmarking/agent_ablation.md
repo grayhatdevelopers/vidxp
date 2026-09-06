@@ -84,11 +84,13 @@ separately below.
 ## Why Promptfoo owns orchestration
 
 [Promptfoo](https://www.promptfoo.dev/docs/providers/openai-codex-sdk/) runs the
-three-condition provider matrix, repetitions, structured output, traces, usage
-collection, and local reports. VidXP's Python benchmark code owns task expansion
-and deterministic scoring. This division avoids rebuilding a general evaluation
-runner while keeping official temporal metrics and dataset logic reviewable in
-the repository. This follows OpenAI's documented
+three-condition Codex matrix and the separate local-SLM condition. It owns task
+execution, repetitions, saved results, usage, assertions, and reports. VidXP's
+Python benchmark code expands the frozen tasks, scores them deterministically,
+and adapts the local Pydantic-AI/Ollama agent through Promptfoo's documented
+[Python provider contract](https://www.promptfoo.dev/docs/providers/python/).
+The adapter does not select tasks, repeat runs, score results, aggregate metrics,
+or write a separate result format. This follows OpenAI's documented
 [Codex evaluation workflow](https://learn.chatgpt.com/use-cases/ai-app-evals).
 
 Promptfoo is not needed to choose a component model from published leaderboards.
@@ -288,15 +290,29 @@ MCP tools to the approved self-hosted Ollama model:
 
 It uses the same prompt, output schema, scorer, prepared index, and evidence
 attestation as VidXP-on, while sending model requests only to the loopback
-runtime. It runs three repetitions by default and writes a path-free result
-under `docs/benchmarking/runs/`. First run
+runtime. Promptfoo runs the nine held-out tasks three times by default, stores
+the detailed run in its normal local database, and includes it in `run results`,
+`run view`, and `run export`. First run
 `uv run --no-sync vidxp local-answers prepare --yes`. The benchmark starts the
 saved local runtime when needed and stops only the process it started. It does
-not download or substitute a model. It reports bounded-chunk quality, local
-input/output tokens and model requests, MCP calls, and latency.
-External-agent calls and provider cost are zero; memory and energy are not
-measured. Each task is bounded at 12 local-model requests and 10 tool calls;
-limit failures remain failed runs rather than being retried outside the record.
+not download or substitute a model. The first provider call includes a managed
+runtime cold start when Ollama was not already running; later calls in that
+Promptfoo worker reuse it. The agent has no terminal or file access; its callable
+surface is the five allowlisted VidXP MCP tools. The neutral prompt's media-path
+field remains present for parity but cannot be opened by this provider.
+
+All benchmark MCP processes explicitly disable VidXP's optional internal query
+model. This prevents `query_video` from making hidden model calls after a local
+runtime has been installed. In the local-SLM condition, the metered local model
+is the agent; VidXP remains the evidence backend.
+
+The provider records Ollama input/output tokens, local model requests, MCP calls,
+and latency in Promptfoo's response. Provider charge and external-agent calls
+are zero; memory, energy, and local compute cost are unmeasured. The limits live
+in `promptfooconfig.yaml`: 12 model requests, 10 tool calls, 2,048 output tokens
+per request, a 180-second model-call timeout, and a 300-second Promptfoo
+per-task timeout. The last value is not a video-duration limit. Limit failures
+remain failed Promptfoo cases rather than being retried by a separate runner.
 
 Both commands finish with a comparison of pass counts, temporal IoU, recall at
 each IoU threshold, boundary errors, elapsed time, average and total token usage
@@ -323,9 +339,11 @@ Print the latest saved comparison again, without inference, with:
 Add `--all` to include every per-run interval in a full pilot report. Add
 `--responses` to print each final answer, returned modalities, source job, and
 evidence count. The report also shows agent runs, model turns, total recorded
-items, all tool calls, VidXP MCP calls, and shell calls. Counts come from the
-items Promptfoo saved for each Codex run; the report does not infer tool use from
-command text. For VidXP runs, it
+items, model requests, all tool calls, VidXP MCP calls, and shell calls. Counts
+come from the items saved in each Promptfoo provider response; the report does
+not infer tool use from command text. Codex supplies its recorded items, and the
+local provider records its actual MCP calls and local request count. For VidXP
+runs, it
 also reads each saved job and reports fused retrieval R@1, R@3, and R@5, the top
 fused interval, its constituent hits, and the best retained hit per modality.
 This exposes what fusion actually used and which fused rank retained each hit;
@@ -507,7 +525,8 @@ Pass one or more evaluation IDs after `export` to preserve older runs. The
 command uses Promptfoo's native JSON export, removes Codex raw response bodies,
 session IDs, secrets, and personal paths, and writes an importable artifact to
 `docs/benchmarking/runs/`. It retains the prompt and provider configuration,
-final responses, scores, usage, traces, and recorded tool items. Import one into
+final responses, scores, usage, and traces; the compact local-SLM MCP item list
+is retained because it is that provider's auditable tool record. Import one into
 a separate Promptfoo database with
 `npm --prefix benchmarks/codex-mcp run promptfoo -- import <artifact> --new-id`
 when the full UI is needed.

@@ -167,11 +167,8 @@ class ControlPlaneContext:
             try:
                 self.jobs.close()
             finally:
-                try:
-                    if self.catalog is not None:
-                        self.catalog.close()
-                finally:
-                    self.application.close()
+                if self.catalog is not None:
+                    self.catalog.close()
         object.__setattr__(self, "_closed", True)
 
 

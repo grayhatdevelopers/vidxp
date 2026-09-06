@@ -264,7 +264,13 @@ def score_ablation_boundary(
         return _failed("Output must be a JSON object.")
 
     trace = context.get("trace")
-    spans = trace.get("spans", []) if isinstance(trace, Mapping) else []
+    spans = list(trace.get("spans", [])) if isinstance(trace, Mapping) else []
+    metadata = context.get("metadata")
+    provider_trace = metadata.get("trace") if isinstance(metadata, Mapping) else None
+    if isinstance(provider_trace, Mapping):
+        provider_spans = provider_trace.get("spans")
+        if isinstance(provider_spans, list):
+            spans.extend(provider_spans)
     if not spans:
         return _failed("No trace spans were captured; isolation is unproven.")
 

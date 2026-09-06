@@ -12,20 +12,45 @@ if (!['smoke', 'pilot'].includes(mode)) {
   throw new Error('Evaluation mode must be smoke or pilot.');
 }
 const conditions = process.argv[3];
+const localSlmOnly = conditions === 'local-slm';
 const evaluationEnvironment = {
   ...process.env,
   VIDXP_EVAL_MODE: mode,
   ...(conditions ? { VIDXP_EVAL_CONDITIONS: conditions } : {}),
 };
-prepareConditionState({ repositoryRoot, environment: evaluationEnvironment });
+if (!localSlmOnly) {
+  prepareConditionState({ repositoryRoot, environment: evaluationEnvironment });
+}
 
-const preflight = spawnSync(
-  process.execPath,
-  [join(benchmarkRoot, 'scripts', 'preflight.mjs')],
-  { cwd: benchmarkRoot, env: evaluationEnvironment, stdio: 'inherit' },
-);
-if (preflight.status !== 0) {
-  process.exitCode = preflight.status ?? 1;
+const preflightCommands = localSlmOnly
+  ? [
+    [
+      evaluationEnvironment.PROMPTFOO_PYTHON,
+      [join(benchmarkRoot, 'scripts', 'local_slm_provider.py'), '--check'],
+    ],
+    [
+      evaluationEnvironment.PROMPTFOO_PYTHON,
+      [join(benchmarkRoot, 'scripts', 'mcp_preflight.py')],
+    ],
+  ]
+  : [[process.execPath, [join(benchmarkRoot, 'scripts', 'preflight.mjs')]]];
+let preflightStatus = 0;
+for (const [command, args] of preflightCommands) {
+  const preflight = spawnSync(command, args, {
+    cwd: repositoryRoot,
+    env: evaluationEnvironment,
+    stdio: 'inherit',
+  });
+  if (preflight.status !== 0) {
+    if (preflight.error) {
+      console.error(`Preflight could not start ${command}: ${preflight.error.message}`);
+    }
+    preflightStatus = preflight.status ?? 1;
+    break;
+  }
+}
+if (preflightStatus !== 0) {
+  process.exitCode = preflightStatus;
 } else {
   let previousEvaluationId = null;
   try {

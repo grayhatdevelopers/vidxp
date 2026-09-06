@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { spawnSync } from 'node:child_process';
 
-const CONDITION_ORDER = ['vidxp-on', 'vidxp-off', 'clean-user'];
+const CONDITION_ORDER = ['vidxp-on', 'vidxp-off', 'clean-user', 'local-slm'];
 
 function parseJson(value, fallback = {}) {
   if (typeof value !== 'string') {
@@ -361,7 +361,7 @@ function deterministicRescore(results, evaluationId) {
       ...result.testVars,
       duration_seconds: durationByTask.get(result.task) ?? result.testVars.duration_seconds,
     },
-    metadata: { evaluationId },
+    metadata: { evaluationId, ...result.providerMetadata },
     spans: result.traceSpans,
   }));
   const completed = spawnSync(python, [script], {
@@ -499,10 +499,13 @@ export function loadLatestEvaluation({ rescore = false } = {}) {
       const responseMetadata = response.metadata || {};
       const stats = traceStats.get(row.test_idx) || {};
       const recordedItems = summarizeRecordedItems(response.raw) || stats;
-      const modelTurns = rolloutModelTurns(
+      const rolloutTurns = rolloutModelTurns(
         testCase.vars?.condition || 'unknown',
         response.sessionId,
       );
+      const modelTurns = Number.isFinite(rolloutTurns)
+        ? rolloutTurns
+        : (Number.isFinite(responseMetadata.modelTurns) ? responseMetadata.modelTurns : 0);
       return {
         task: testCase.metadata?.task_id || testCase.vars?.id || String(row.test_idx),
         machineId: testCase.metadata?.machine_id || process.env.VIDXP_EVAL_MACHINE_ID,
@@ -514,6 +517,7 @@ export function loadLatestEvaluation({ rescore = false } = {}) {
         repetition: testCase.vars?.repetition || testCase.metadata?.repetition || 1,
         testIdx: row.test_idx,
         testVars: testCase.vars || {},
+        providerMetadata: responseMetadata,
         outputText: typeof response.output === 'string' ? response.output : '',
         traceSpans: stats.spans || [],
         success: row.success === 1,
@@ -591,7 +595,7 @@ export function loadLatestEvaluation({ rescore = false } = {}) {
         reasoningTokens: response.tokenUsage?.completionDetails?.reasoning,
         requests: response.tokenUsage?.numRequests,
         cost: row.cost,
-        modelTurns: modelTurns || 0,
+        modelTurns,
         agentItems: recordedItems.agentItems || 0,
         toolCalls: recordedItems.toolCalls || 0,
         mcpCalls: recordedItems.mcpCalls || 0,
@@ -790,6 +794,20 @@ export function renderReport(
     `Run type: ${runType} | machine: ${evaluation.machineId || 'unknown'} `
     + `| created: ${created} | wall time: ${seconds(evaluation.wallTimeMs)}`,
   );
+  const localResults = evaluation.results.filter((result) => result.condition === 'local-slm');
+  if (localResults.length > 0) {
+    const models = new Set(localResults.map((result) => {
+      const model = result.providerMetadata?.model;
+      return model?.provider && model?.model ? `${model.provider}/${model.model}` : null;
+    }).filter(Boolean));
+    const coldStarts = localResults.filter(
+      (result) => result.providerMetadata?.coldStart === true,
+    ).length;
+    console.log(
+      `Local agent: ${models.size === 1 ? [...models][0] : 'unknown'} | `
+      + `managed runtime cold starts: ${coldStarts}/${localResults.length}`,
+    );
+  }
   const passedAssertions = evaluation.results.filter((result) => result.success).length;
   console.log(
     `${evaluation.rescored ? 'Original at-run Promptfoo assertions' : 'Stored Promptfoo assertions'}: `
@@ -867,12 +885,13 @@ export function renderReport(
   console.log(
     '  Reasoning tokens are included in output tokens. Cost is Promptfoo\'s supplied provider '
     + 'estimate, kept unchanged as a consistent comparison metric; it is not an end-user bill or '
-    + 'a verified Codex-plan charge.',
+    + 'a verified Codex-plan charge. The local provider reports zero external provider charge; '
+    + 'local compute is not priced.',
   );
   console.log('Agent activity:');
   console.table(summaries.map((summary) => ({
     condition: summary.condition,
-    runs: summary.requests,
+    'model requests': summary.requests,
     turns: summary.modelTurns,
     items: summary.agentItems,
     'tool calls': summary.toolCalls,
@@ -881,8 +900,8 @@ export function renderReport(
     skill: summary.skillLoads,
   })));
   console.log(
-    '  Items and tool-type counts come from Promptfoo\'s saved Codex items. Model turns come '
-    + 'from Codex rollout token events.',
+    '  Items and tool-type counts come from Promptfoo\'s saved provider response. Model turns '
+    + 'come from Codex rollout events or the local provider\'s reported request count.',
   );
 
   const on = summaries.find((summary) => summary.condition === 'vidxp-on');
@@ -1054,6 +1073,7 @@ export function renderReport(
       uncached: integer(tokenDifference(result.promptTokens, result.cachedTokens)),
       output: integer(result.completionTokens),
       reasoning: integer(result.reasoningTokens),
+      requests: integer(result.requests),
       turns: result.modelTurns,
       items: result.agentItems,
       tools: result.toolCalls,
