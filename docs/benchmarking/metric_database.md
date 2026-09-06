@@ -43,7 +43,9 @@ cost remain unmeasured. Each task is capped at 12 model requests, 10 tool calls,
 2,048 output tokens per request, and a 180-second model-call timeout. Promptfoo's
 300-second provider timeout is a per-task guard, not a video-duration limit.
 Every benchmark MCP process disables VidXP's optional internal query model, so
-the reported agent usage cannot omit nested SLM requests.
+the reported agent usage cannot omit nested SLM requests. Run
+`./benchmarks/codex-mcp/run slm-smoke` as a one-task runtime gate before this
+lane; do not include that development smoke in the research comparison.
 
 The task design comes from
 [LongVALE](https://openaccess.thecvf.com/content/CVPR2025/papers/Geng_LongVALE_Vision-Audio-Language-Event_Benchmark_Towards_Time-Aware_Omni-Modal_Perception_of_Long_Videos_CVPR_2025_paper.pdf);
@@ -309,7 +311,8 @@ MCP items; Codex raw response bodies remain omitted.
   change when a new matched, counterbalanced gate is required. The current
   evidence-handoff intervention can instead use the selective `vidxp` run and
   the completed controls, with that later-run limitation disclosed.
-- Run the local Ollama agent with `./benchmarks/codex-mcp/run slm`. Record
+- Pass `./benchmarks/codex-mcp/run slm-smoke`, then run the local Ollama agent
+  with `./benchmarks/codex-mcp/run slm`. Record
   bounded-chunk quality, latency, local tokens and model requests, MCP calls,
   model identity, and condition validity. Provider cost and external-agent
   tokens are zero; memory, energy, and local compute cost remain unmeasured.

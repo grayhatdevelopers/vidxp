@@ -7,6 +7,7 @@ from pydantic_ai import Agent, NativeOutput
 from pydantic_ai.exceptions import AgentRunError
 from pydantic_ai.models.ollama import OllamaModel
 from pydantic_ai.models.openai import OpenAIChatModelSettings
+from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.ollama import OllamaProvider
 
 from vidxp.application_models import (
@@ -50,6 +51,26 @@ def local_answer_model_settings(
     }
 
 
+def create_local_answer_model(
+    *,
+    base_url: str,
+    model_name: str,
+    http_client: httpx.AsyncClient | None = None,
+) -> OllamaModel:
+    """Create the managed Ollama model with its compatible request profile."""
+
+    return OllamaModel(
+        model_name,
+        provider=OllamaProvider(
+            base_url=base_url,
+            http_client=http_client,
+        ),
+        profile=OpenAIModelProfile(
+            openai_chat_supports_max_completion_tokens=False,
+        ),
+    )
+
+
 class OllamaQueryModel:
     """Structured-output adapter for a configured self-hosted Ollama server."""
 
@@ -63,12 +84,10 @@ class OllamaQueryModel:
         http_client: httpx.AsyncClient | None = None,
         runtime: ManagedOllamaSession | None = None,
     ) -> None:
-        model = OllamaModel(
-            model_name,
-            provider=OllamaProvider(
-                base_url=base_url,
-                http_client=http_client,
-            ),
+        model = create_local_answer_model(
+            base_url=base_url,
+            model_name=model_name,
+            http_client=http_client,
         )
         retries = {"output": output_retries}
         self._identity = QueryModelIdentity(

@@ -285,18 +285,21 @@ The separate local-agent lane gives the shipped VidXP skill and five required
 MCP tools to the approved self-hosted Ollama model:
 
 ```bash
+./benchmarks/codex-mcp/run slm-smoke
 ./benchmarks/codex-mcp/run slm
 ```
 
-It uses the same prompt, output schema, scorer, prepared index, and evidence
-attestation as VidXP-on, while sending model requests only to the loopback
-runtime. Promptfoo runs the nine held-out tasks three times by default, stores
-the detailed run in its normal local database, and includes it in `run results`,
-`run view`, and `run export`. Before Promptfoo creates an evaluation, preflight
-builds the exact structured-output agent, discovers its five allowed MCP tools,
-and closes the MCP session. That wiring check uses Pydantic AI's test model, so
-it makes neither a local-model request nor an MCP tool call. The separate MCP
-preflight verifies the prepared models and five indexed videos. First run
+Run `slm-smoke` first. It exercises one development task once; it is a runtime
+gate, not a research result. `slm` then runs the nine held-out tasks three times
+by default. Both use the same prompt, output schema, scorer, prepared index, and
+evidence attestation as VidXP-on, while sending model requests only to the
+loopback runtime. Promptfoo stores the detailed runs in its normal local
+database and includes them in `run results`, `run view`, and `run export`.
+Before Promptfoo creates an evaluation, preflight builds the exact
+structured-output agent, discovers its five allowed MCP tools, and closes the
+MCP session. That wiring check uses Pydantic AI's test model, so it makes neither
+a local-model request nor an MCP tool call. The separate MCP preflight verifies
+the prepared models and five indexed videos. First run
 `uv run --no-sync vidxp local-answers prepare --yes`. The benchmark starts the
 saved local runtime when needed and stops only the process it started. It does
 not download or substitute a model. The first provider call includes a managed
@@ -312,14 +315,15 @@ is the agent; VidXP remains the evidence backend.
 
 The provider records Ollama input/output tokens, local model requests, MCP calls,
 and latency in Promptfoo's response. Provider charge and external-agent calls
-are zero; memory, energy, and local compute cost are unmeasured. The agent reuses
-VidXP's product request settings, including `reasoning_effort: none`; this uses
-Qwen 3.5's direct-response mode instead of spending the output allowance on an
-unreturned reasoning trace. The limits live in `promptfooconfig.yaml`: 12 model
-requests, 10 tool calls, 2,048 output tokens per request, a 180-second model-call
-timeout, and a 300-second Promptfoo per-task timeout. The last value is not a
-video-duration limit. Limit failures remain failed Promptfoo cases rather than
-being retried by a separate runner.
+are zero; memory, energy, and local compute cost are unmeasured. The benchmark
+and product share one Ollama model factory and request settings. They disable
+reasoning, use native JSON-schema output, and send the response allowance through
+Ollama's supported
+[`max_tokens` field](https://docs.ollama.com/api/openai-compatibility). The limits live in
+`promptfooconfig.yaml`: 12 model requests, 10 tool calls, 2,048 output tokens per
+request, a 180-second model-call timeout, and a 300-second Promptfoo per-task
+timeout. The last value is not a video-duration limit. Limit failures remain
+failed Promptfoo cases rather than being retried by a separate runner.
 
 Both commands finish with a comparison of pass counts, temporal IoU, recall at
 each IoU threshold, boundary errors, elapsed time, average and total token usage

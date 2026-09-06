@@ -13,17 +13,18 @@ import pydantic_core
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelProfile, NativeOutput
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.models.ollama import OllamaModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.providers.ollama import OllamaProvider
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.usage import UsageLimits
 
 from vidxp.benchmarks.agent_ablation_score import DEFAULT_MAX_CANDIDATES
-from vidxp.infrastructure.ollama_query import local_answer_model_settings
+from vidxp.infrastructure.ollama_query import (
+    create_local_answer_model,
+    local_answer_model_settings,
+)
 from vidxp.local_answers import (
     LocalAnswerConfiguration,
     LocalAnswerError,
@@ -372,10 +373,13 @@ def _build_agent(
     max_output_tokens: int,
     model_timeout_seconds: float,
 ) -> Agent[None, LocalAgentAnswer]:
-    model = OllamaModel(model_name, provider=OllamaProvider(base_url=base_url))
+    model = create_local_answer_model(
+        base_url=base_url,
+        model_name=model_name,
+    )
     return Agent(
         model,
-        output_type=LocalAgentAnswer,
+        output_type=NativeOutput(LocalAgentAnswer),
         instructions=(
             "Follow the supplied VidXP skill. Use only its MCP tools, keep the "
             "answer grounded in one fresh source job, and finish with the requested "
@@ -505,17 +509,22 @@ async def _check_agent_wiring(*, base_url: str, model_name: str) -> int:
             raise RuntimeError(
                 "The local-SLM agent is not using VidXP's direct-response model settings."
             )
-        model = TestModel(
+        if agent.model.profile.get("openai_chat_supports_max_completion_tokens"):
+            raise RuntimeError(
+                "The local-SLM agent is not using Ollama's max_tokens request field."
+            )
+        test_model = TestModel(
             call_tools=[],
-            custom_output_args={
-                "video_id": "preflight",
-                "answer": "preflight",
-                "source_job_id": None,
-                "candidates": [],
-            },
+            custom_output_text=LocalAgentAnswer(
+                video_id="preflight",
+                answer="preflight",
+                source_job_id=None,
+                candidates=[],
+            ).model_dump_json(),
+            profile=ModelProfile(supports_json_schema_output=True),
         )
-        result = await agent.run("Provider wiring preflight.", model=model)
-        parameters = model.last_model_request_parameters
+        result = await agent.run("Provider wiring preflight.", model=test_model)
+        parameters = test_model.last_model_request_parameters
         tools = {tool.name for tool in parameters.function_tools} if parameters else set()
         if tools != ALLOWED_TOOLS:
             raise RuntimeError(

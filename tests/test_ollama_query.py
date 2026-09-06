@@ -124,13 +124,15 @@ class OllamaQueryModelTests(unittest.TestCase):
         self.assertIsInstance(answer, DraftAnswer)
         self.assertEqual(answer.claims[0].evidence_ids, (EVIDENCE_ID,))
         self.assertEqual(len(requests), 2)
-        for request in requests:
+        for request, max_tokens in zip(requests, (1024, 2048), strict=True):
             self.assertEqual(
                 request["response_format"]["type"],
                 "json_schema",
             )
             self.assertEqual(request["model"], "contract-model")
             self.assertEqual(request["reasoning_effort"], "none")
+            self.assertEqual(request["max_tokens"], max_tokens)
+            self.assertNotIn("max_completion_tokens", request)
 
 
 if __name__ == "__main__":

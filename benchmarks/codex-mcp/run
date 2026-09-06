@@ -105,6 +105,13 @@ case "$command" in
         export VIDXP_EVAL_REPETITIONS
         exec npm run eval:slm
         ;;
+    slm-smoke)
+        if [ "$#" -gt 0 ]; then
+            echo "Usage: ./benchmarks/codex-mcp/run slm-smoke" >&2
+            exit 2
+        fi
+        exec npm run eval:slm:smoke
+        ;;
     results)
         exec npm run report -- "$@"
         ;;
@@ -139,7 +146,7 @@ case "$command" in
         exec npm run promptfoo -- view --yes "$@"
         ;;
     *)
-        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot [repetitions]|vidxp [repetitions]|slm [repetitions]|indexing [repetitions]|results|export|trace|probe|depth|compare|representation|shots|queries|sound|view}" >&2
+        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot [repetitions]|vidxp [repetitions]|slm-smoke|slm [repetitions]|indexing [repetitions]|results|export|trace|probe|depth|compare|representation|shots|queries|sound|view}" >&2
         exit 2
         ;;
 esac
