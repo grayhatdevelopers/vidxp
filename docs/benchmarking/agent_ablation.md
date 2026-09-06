@@ -312,11 +312,14 @@ is the agent; VidXP remains the evidence backend.
 
 The provider records Ollama input/output tokens, local model requests, MCP calls,
 and latency in Promptfoo's response. Provider charge and external-agent calls
-are zero; memory, energy, and local compute cost are unmeasured. The limits live
-in `promptfooconfig.yaml`: 12 model requests, 10 tool calls, 2,048 output tokens
-per request, a 180-second model-call timeout, and a 300-second Promptfoo
-per-task timeout. The last value is not a video-duration limit. Limit failures
-remain failed Promptfoo cases rather than being retried by a separate runner.
+are zero; memory, energy, and local compute cost are unmeasured. The agent reuses
+VidXP's product request settings, including `reasoning_effort: none`; this uses
+Qwen 3.5's direct-response mode instead of spending the output allowance on an
+unreturned reasoning trace. The limits live in `promptfooconfig.yaml`: 12 model
+requests, 10 tool calls, 2,048 output tokens per request, a 180-second model-call
+timeout, and a 300-second Promptfoo per-task timeout. The last value is not a
+video-duration limit. Limit failures remain failed Promptfoo cases rather than
+being retried by a separate runner.
 
 Both commands finish with a comparison of pass counts, temporal IoU, recall at
 each IoU threshold, boundary errors, elapsed time, average and total token usage

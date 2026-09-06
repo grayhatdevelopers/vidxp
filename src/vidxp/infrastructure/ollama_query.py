@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from pydantic_ai import Agent, NativeOutput
 from pydantic_ai.exceptions import AgentRunError
 from pydantic_ai.models.ollama import OllamaModel
+from pydantic_ai.models.openai import OpenAIChatModelSettings
 from pydantic_ai.providers.ollama import OllamaProvider
 
 from vidxp.application_models import (
@@ -32,6 +33,21 @@ claim must cite one or more evidence_id values exactly as supplied. Do not
 infer visual facts from similarity scores, introduce outside knowledge, or
 mention evidence that was not supplied.
 """.strip()
+
+
+def local_answer_model_settings(
+    *,
+    max_tokens: int,
+    timeout_seconds: float,
+) -> OpenAIChatModelSettings:
+    """Return the shared request settings for VidXP's managed local model."""
+
+    return {
+        "temperature": 0,
+        "openai_reasoning_effort": "none",
+        "max_tokens": max_tokens,
+        "timeout": timeout_seconds,
+    }
 
 
 class OllamaQueryModel:
@@ -65,24 +81,20 @@ class OllamaQueryModel:
             output_type=NativeOutput(QueryPlan),
             instructions=_PLANNING_INSTRUCTIONS,
             retries=retries,
-            model_settings={
-                "temperature": 0,
-                "openai_reasoning_effort": "none",
-                "max_tokens": 1024,
-                "timeout": timeout_seconds,
-            },
+            model_settings=local_answer_model_settings(
+                max_tokens=1024,
+                timeout_seconds=timeout_seconds,
+            ),
         )
         self._synthesizer = Agent(
             model,
             output_type=NativeOutput(DraftAnswer),
             instructions=_SYNTHESIS_INSTRUCTIONS,
             retries=retries,
-            model_settings={
-                "temperature": 0,
-                "openai_reasoning_effort": "none",
-                "max_tokens": 2048,
-                "timeout": timeout_seconds,
-            },
+            model_settings=local_answer_model_settings(
+                max_tokens=2048,
+                timeout_seconds=timeout_seconds,
+            ),
         )
 
     @property

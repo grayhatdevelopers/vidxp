@@ -23,6 +23,7 @@ from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.usage import UsageLimits
 
 from vidxp.benchmarks.agent_ablation_score import DEFAULT_MAX_CANDIDATES
+from vidxp.infrastructure.ollama_query import local_answer_model_settings
 from vidxp.local_answers import (
     LocalAnswerConfiguration,
     LocalAnswerError,
@@ -382,11 +383,10 @@ def _build_agent(
         ),
         toolsets=[toolset],
         retries=1,
-        model_settings={
-            "temperature": 0,
-            "max_tokens": max_output_tokens,
-            "timeout": model_timeout_seconds,
-        },
+        model_settings=local_answer_model_settings(
+            max_tokens=max_output_tokens,
+            timeout_seconds=model_timeout_seconds,
+        ),
     )
 
 
@@ -501,6 +501,10 @@ async def _check_agent_wiring(*, base_url: str, model_name: str) -> int:
             max_output_tokens=1,
             model_timeout_seconds=1,
         )
+        if (agent.model_settings or {}).get("openai_reasoning_effort") != "none":
+            raise RuntimeError(
+                "The local-SLM agent is not using VidXP's direct-response model settings."
+            )
         model = TestModel(
             call_tools=[],
             custom_output_args={
