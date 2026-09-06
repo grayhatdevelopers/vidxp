@@ -8,7 +8,7 @@ import zipfile
 from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from typer.testing import CliRunner
 
@@ -18,6 +18,7 @@ from vidxp.local_answers import (
     LocalAnswerConfiguration,
     LocalAnswerError,
     LocalAnswerStatus,
+    ManagedOllamaSession,
     _extract_archive,
     load_local_answer_configuration,
     local_answer_spec,
@@ -31,6 +32,8 @@ class LocalAnswerTests(unittest.TestCase):
         spec = local_answer_spec()
         self.assertEqual(spec.model, "qwen3.5:4b-q4_K_M")
         self.assertIn("macos-aarch64", spec.managed_runtime.artifacts)
+        self.assertEqual(spec.defaults.context_tokens, 64_000)
+        self.assertEqual(spec.defaults.max_output_tokens, 32_768)
 
         with TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -49,6 +52,47 @@ class LocalAnswerTests(unittest.TestCase):
                 load_local_answer_configuration(directory),
                 configuration,
             )
+
+    def test_managed_runtime_uses_the_declared_agent_context(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            configuration = LocalAnswerConfiguration(
+                base_url=DEFAULT_OLLAMA_BASE_URL,
+                model="qwen3.5:4b-q4_K_M",
+                executable=root / "runtime/ollama",
+                model_directory=root / "models/ollama",
+            )
+            unavailable = LocalAnswerStatus(
+                ready=False,
+                service_ready=False,
+                model_ready=True,
+                configured=True,
+                base_url=configuration.base_url,
+                model=configuration.model,
+            )
+            available = unavailable.model_copy(update={"service_ready": True})
+            process = Mock()
+            process.poll.return_value = None
+
+            with (
+                patch(
+                    "vidxp.local_answers.inspect_local_answers",
+                    side_effect=(unavailable, available),
+                ),
+                patch(
+                    "vidxp.local_answers.subprocess.Popen",
+                    return_value=process,
+                ) as popen,
+            ):
+                session = ManagedOllamaSession(configuration)
+                session.ensure_started()
+                session.close()
+
+        environment = popen.call_args.kwargs["env"]
+        self.assertEqual(environment["OLLAMA_CONTEXT_LENGTH"], "64000")
+        self.assertEqual(environment["OLLAMA_FLASH_ATTENTION"], "1")
+        self.assertEqual(environment["OLLAMA_KV_CACHE_TYPE"], "q8_0")
+        self.assertEqual(environment["OLLAMA_NUM_PARALLEL"], "1")
 
     def test_managed_archive_rejects_parent_traversal(self):
         with TemporaryDirectory() as temporary:

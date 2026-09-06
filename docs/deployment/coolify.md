@@ -244,7 +244,10 @@ VIDXP_SLM_BASE_URL=http://ollama:11434/v1
 ```
 
 VidXP uses the official `qwen3.5:4b-q4_K_M` Ollama build by default. Set
-`VIDXP_SLM_MODEL` only to make an intentional operator override.
+`VIDXP_SLM_MODEL` only to make an intentional operator override. The shared
+defaults are a 64,000-token context and 32,768-token response ceiling. Set
+`VIDXP_SLM_CONTEXT_TOKENS` or `VIDXP_SLM_MAX_OUTPUT_TOKENS` only after measuring
+the deployment's memory and task requirements.
 
 Start Ollama, then use VidXP's shared preparation command to download and check
 the approved model:

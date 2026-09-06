@@ -118,8 +118,11 @@ vidxp local-answers prepare --base-url http://127.0.0.1:11434/v1
 ```
 
 `VIDXP_SLM_BASE_URL` and `VIDXP_SLM_MODEL` remain explicit process-level
-overrides for custom deployments. They are not required after normal local
-preparation.
+overrides for custom deployments. `VIDXP_SLM_CONTEXT_TOKENS` and
+`VIDXP_SLM_MAX_OUTPUT_TOKENS` override the shared 64,000-token context and
+32,768-token response ceiling. They are not required after normal local
+preparation. VidXP applies the context setting when it starts its saved managed
+runtime; configure an already-running Ollama service separately.
 
 For VidXP Desktop, open **Setup options** and enable **Local grounded
 answers**. Desktop invokes the same preparation operation inside its managed

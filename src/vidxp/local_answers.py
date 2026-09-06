@@ -55,12 +55,21 @@ class ManagedRuntimeSpec(LocalAnswerModel):
     artifacts: dict[str, ManagedRuntimeArtifact]
 
 
+class LocalAnswerDefaults(LocalAnswerModel):
+    context_tokens: int = Field(gt=0)
+    max_output_tokens: int = Field(gt=0)
+    temperature: float = Field(ge=0)
+    top_p: float = Field(gt=0, le=1)
+    presence_penalty: float = Field(ge=-2, le=2)
+
+
 class LocalAnswerSpec(LocalAnswerModel):
     schema_version: Literal[1] = 1
     engine: Literal["ollama"]
     model: str = Field(min_length=1)
     download_size_bytes: int = Field(gt=0)
     managed_runtime: ManagedRuntimeSpec
+    defaults: LocalAnswerDefaults
     label: str = Field(min_length=1)
     description: str = Field(min_length=1)
 
@@ -93,8 +102,14 @@ ProgressCallback = Callable[[dict[str, object]], None]
 class ManagedOllamaSession:
     """Start a saved Ollama executable only while a VidXP process needs it."""
 
-    def __init__(self, configuration: LocalAnswerConfiguration) -> None:
+    def __init__(
+        self,
+        configuration: LocalAnswerConfiguration,
+        *,
+        context_tokens: int | None = None,
+    ) -> None:
         self.configuration = configuration
+        self.context_tokens = context_tokens or local_answer_spec().defaults.context_tokens
         self._process: subprocess.Popen | None = None
         self._lock = threading.Lock()
 
@@ -119,6 +134,10 @@ class ManagedOllamaSession:
                 {
                     "OLLAMA_HOST": OLLAMA_HOST,
                     "OLLAMA_MODELS": str(model_directory),
+                    "OLLAMA_CONTEXT_LENGTH": str(self.context_tokens),
+                    "OLLAMA_FLASH_ATTENTION": "1",
+                    "OLLAMA_KV_CACHE_TYPE": "q8_0",
+                    "OLLAMA_NUM_PARALLEL": "1",
                 }
             )
             process = subprocess.Popen(

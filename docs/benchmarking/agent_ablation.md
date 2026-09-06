@@ -281,8 +281,8 @@ not a replacement paired pilot. Compare it with the frozen controls by run ID
 and report that the condition was measured later rather than counterbalanced in
 the same evaluation.
 
-The separate local-agent lane gives the shipped VidXP skill and five required
-MCP tools to the approved self-hosted Ollama model:
+The separate local-agent lane gives the approved self-hosted Ollama model a
+targeted retrieval instruction and the four MCP tools needed to execute it:
 
 ```bash
 ./benchmarks/codex-mcp/run slm-smoke
@@ -296,7 +296,7 @@ evidence attestation as VidXP-on, while sending model requests only to the
 loopback runtime. Promptfoo stores the detailed runs in its normal local
 database and includes them in `run results`, `run view`, and `run export`.
 Before Promptfoo creates an evaluation, preflight builds the exact
-structured-output agent, discovers its five allowed MCP tools, and closes the
+structured-output agent, discovers its four allowed MCP tools, and closes the
 MCP session. That wiring check uses Pydantic AI's test model, so it makes neither
 a local-model request nor an MCP tool call. The separate MCP preflight verifies
 the prepared models and five indexed videos. First run
@@ -304,9 +304,24 @@ the prepared models and five indexed videos. First run
 saved local runtime when needed and stops only the process it started. It does
 not download or substitute a model. The first provider call includes a managed
 runtime cold start when Ollama was not already running; later calls in that
-Promptfoo worker reuse it. The agent has no terminal or file access; its callable
-surface is the five allowlisted VidXP MCP tools. The neutral prompt's media-path
-field remains present for parity but cannot be opened by this provider.
+Promptfoo worker reuse it. The agent has no terminal or file access; its
+callable surface is `list_media`, `search_moments`, `wait_job`,
+`get_job_evidence`, and the typed final-output tool. The neutral prompt's
+media-path field remains present for parity but cannot be opened by this
+provider. LongVALE's video ID is a dataset filename stem, not VidXP's stable
+media ID, so the instruction resolves `<video ID>.mp4` through `list_media`
+before searching. This keeps identity resolution on the public MCP contract
+instead of hiding a benchmark-only ID map.
+
+This is a targeted local-agent test, not a tool-discovery test. Its concise
+system instruction states that the video is already indexed, supplies the
+filename-resolution/search/wait/evidence sequence, searches all indexed
+modalities, and asks for up to three returned evidence items. It leaves
+`evidence_delivery` unset so the MCP default returns the bounded evidence board
+without materializing clips that the scoring contract does not consume. It does
+not load the general-purpose Codex skill. That skill is a separate intervention
+only if a measured run shows it improves this model enough to justify its added
+context.
 
 All benchmark MCP processes explicitly disable VidXP's optional internal query
 model. This prevents `query_video` from making hidden model calls after a local
@@ -317,13 +332,36 @@ The provider records Ollama input/output tokens, local model requests, MCP calls
 and latency in Promptfoo's response. Provider charge and external-agent calls
 are zero; memory, energy, and local compute cost are unmeasured. The benchmark
 and product share one Ollama model factory and request settings. They disable
-reasoning, use native JSON-schema output, and send the response allowance through
-Ollama's supported
-[`max_tokens` field](https://docs.ollama.com/api/openai-compatibility). The limits live in
-`promptfooconfig.yaml`: 12 model requests, 10 tool calls, 2,048 output tokens per
-request, a 180-second model-call timeout, and a 300-second Promptfoo per-task
-timeout. The last value is not a video-duration limit. Limit failures remain
-failed Promptfoo cases rather than being retried by a separate runner.
+reasoning, use typed JSON-schema output, and send the response allowance
+through Ollama's supported
+[`max_tokens` field](https://docs.ollama.com/api/openai-compatibility). The
+model-derived request settings are the Qwen non-thinking recommendations:
+32,768 maximum output tokens, temperature `0.7`, top-p `0.8`, and presence
+penalty `1.5`. Ollama starts the managed runtime with its recommended 64,000
+agent context, Flash Attention, an 8-bit KV cache, and one parallel request.
+Promptfoo records both requested and actually loaded context; a smaller loaded
+context invalidates the run instead of silently recreating the earlier 4K
+failure.
+
+The local-agent adapter uses Pydantic AI's
+[default tool-output mode](https://ai.pydantic.dev/output/#tool-output) and
+`ToolOrOutput` policy so each response can call an allowlisted VidXP tool or
+the typed final-output tool. The output validator rejects any source job the
+agent did not pass to a successful `get_job_evidence` call. This grounding
+guard prevents an answer copied from the task description without choosing a
+query, result, or rank for the model.
+
+The remaining values in `promptfooconfig.yaml` are harness safety guards, not
+model recommendations: at most 12 model requests, 10 tool calls, a 180-second
+model-call timeout, and a 900-second Promptfoo per-task timeout. The aggregate
+limit permits five maximum-length model responses: resolve media, submit
+search, observe completion, inspect evidence, and return typed output. The old
+300-second aggregate limit could expire even when every individual response
+remained within its declared ceiling. Neither value is a video-duration limit.
+Limit failures remain failed Promptfoo cases rather than being retried by a
+separate runner. Provider-returned failures retain model usage, MCP activity,
+and bounded MCP error text; an outer Promptfoo timeout necessarily kills the
+provider before it can return those fields.
 
 Both commands finish with a comparison of pass counts, temporal IoU, recall at
 each IoU threshold, boundary errors, elapsed time, average and total token usage

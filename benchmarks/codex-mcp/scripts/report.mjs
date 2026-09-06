@@ -752,10 +752,10 @@ function retrievalRecallAt(retrievals, depth, threshold) {
   }));
 }
 
-function loadRetrievalTraces(results) {
+export function loadRetrievalTraces(results) {
   const jobIds = [...new Set(
     results
-      .filter((result) => result.expectedVidxp)
+      .filter((result) => result.expectedVidxp && result.integrityPassed)
       .map((result) => result.sourceJobId)
       .filter((jobId) => typeof jobId === 'string' && jobId.length > 0),
   )];

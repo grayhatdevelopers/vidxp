@@ -28,7 +28,8 @@ from vidxp.repository_layout import RepositoryLayout
 
 
 DEFAULT_HTTP_PORT = 32191
-DEFAULT_LOCAL_QUERY_MODEL = local_answer_spec().model
+_LOCAL_ANSWER_SPEC = local_answer_spec()
+DEFAULT_LOCAL_QUERY_MODEL = _LOCAL_ANSWER_SPEC.model
 _TUSD_EXACT_ORIGIN = re.compile(
     r"(?P<scheme>https|http)://(?P<host>"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
@@ -321,6 +322,16 @@ class VidXPSettings(BaseSettings):
     )
     slm_timeout_seconds: float = Field(default=60, gt=0, le=600)
     slm_output_retries: int = Field(default=1, ge=0, le=3)
+    slm_context_tokens: int = Field(
+        default=_LOCAL_ANSWER_SPEC.defaults.context_tokens,
+        gt=0,
+        le=262_144,
+    )
+    slm_max_output_tokens: int = Field(
+        default=_LOCAL_ANSWER_SPEC.defaults.max_output_tokens,
+        gt=0,
+        le=262_144,
+    )
     trusted_local_import_roots: tuple[Path, ...] = ()
     ffprobe_executable: str = Field(
         default_factory=lambda: default_media_executable("ffprobe"),
@@ -897,6 +908,8 @@ class LocalExecutionSettings(BaseModel):
     slm_model: str | None
     slm_timeout_seconds: float
     slm_output_retries: int
+    slm_context_tokens: int
+    slm_max_output_tokens: int
 
     @classmethod
     def from_settings(

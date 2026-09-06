@@ -17,7 +17,11 @@ from vidxp.application_models import (
     QueryPlanningRequest,
     QuerySynthesisRequest,
 )
-from vidxp.local_answers import LocalAnswerError, ManagedOllamaSession
+from vidxp.local_answers import (
+    LocalAnswerError,
+    ManagedOllamaSession,
+    local_answer_spec,
+)
 from vidxp.ports import QueryProviderError
 
 
@@ -43,8 +47,11 @@ def local_answer_model_settings(
 ) -> OpenAIChatModelSettings:
     """Return the shared request settings for VidXP's managed local model."""
 
+    defaults = local_answer_spec().defaults
     return {
-        "temperature": 0,
+        "temperature": defaults.temperature,
+        "top_p": defaults.top_p,
+        "presence_penalty": defaults.presence_penalty,
         "openai_reasoning_effort": "none",
         "max_tokens": max_tokens,
         "timeout": timeout_seconds,
@@ -81,6 +88,7 @@ class OllamaQueryModel:
         model_name: str,
         timeout_seconds: float,
         output_retries: int,
+        max_output_tokens: int | None = None,
         http_client: httpx.AsyncClient | None = None,
         runtime: ManagedOllamaSession | None = None,
     ) -> None:
@@ -90,6 +98,9 @@ class OllamaQueryModel:
             http_client=http_client,
         )
         retries = {"output": output_retries}
+        output_tokens = (
+            max_output_tokens or local_answer_spec().defaults.max_output_tokens
+        )
         self._identity = QueryModelIdentity(
             provider="ollama",
             model=model_name,
@@ -101,7 +112,7 @@ class OllamaQueryModel:
             instructions=_PLANNING_INSTRUCTIONS,
             retries=retries,
             model_settings=local_answer_model_settings(
-                max_tokens=1024,
+                max_tokens=output_tokens,
                 timeout_seconds=timeout_seconds,
             ),
         )
@@ -111,7 +122,7 @@ class OllamaQueryModel:
             instructions=_SYNTHESIS_INSTRUCTIONS,
             retries=retries,
             model_settings=local_answer_model_settings(
-                max_tokens=2048,
+                max_tokens=output_tokens,
                 timeout_seconds=timeout_seconds,
             ),
         )

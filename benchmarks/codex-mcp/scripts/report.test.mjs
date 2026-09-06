@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { sanitizePromptfooExport } from './export-eval.mjs';
 import {
   assertionReason,
+  loadRetrievalTraces,
   summarizePrimaryPairs,
   summarizeRecordedItems,
   summarizeResults,
@@ -11,6 +12,16 @@ import {
   summarizeSurfaceRecall,
   summarizeSurfaceTransfer,
 } from './report.mjs';
+
+test('does not load untrusted job IDs from integrity-failed results', () => {
+  assert.deepEqual(loadRetrievalTraces([
+    {
+      expectedVidxp: true,
+      integrityPassed: false,
+      sourceJobId: 'invented-job-id',
+    },
+  ]), {});
+});
 
 test('sanitizes a Promptfoo export without removing its audit data', () => {
   const sanitized = sanitizePromptfooExport({

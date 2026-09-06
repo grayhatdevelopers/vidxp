@@ -871,11 +871,30 @@ reproducibility.
 The default local query model is the official Ollama
 `qwen3.5:4b-q4_K_M` artifact: Qwen3.5 4B with Q4_K_M quantization. Enabling a
 self-hosted Ollama base URL selects that model unless an operator explicitly
-overrides it. VidXP sets temperature zero, disables reasoning output, and
-requires the native JSON schemas for both planning and synthesis. Model weights
-are never bundled. Desktop setup pulls the approved artifact only after the
-user selects local grounded answers and approves any required headless-runtime
-download. CLI and server operators use `vidxp local-answers prepare`.
+overrides it. VidXP disables reasoning output and requires native JSON schemas
+for both planning and synthesis. For non-thinking requests it follows the
+[Qwen3.5-4B model guidance](https://huggingface.co/Qwen/Qwen3.5-4B): a 32,768
+token response ceiling, temperature `0.7`, top-p `0.8`, and presence penalty
+`1.5`. The ceiling prevents an unsupported truncation policy; it is not a
+target response length, and generation normally stops earlier. The pinned
+Ollama OpenAI-compatible interface does not expose Qwen's recommended top-k,
+min-p, or repetition-penalty controls through this adapter, so VidXP does not
+pretend to apply them.
+
+Managed runtimes start with 64,000 context tokens, the minimum recommended by
+[Ollama for agents and tool use](https://docs.ollama.com/context-length).
+They enable Flash Attention and an 8-bit KV cache and run one request at a time;
+Ollama documents that combination as reducing context memory with little
+quality loss. These are runtime recommendations, not results from a VidXP
+retrieval paper. Operators can override the context and output ceilings with
+`VIDXP_SLM_CONTEXT_TOKENS` and `VIDXP_SLM_MAX_OUTPUT_TOKENS`. An externally
+owned Ollama service must be configured at service start because VidXP never
+restarts it.
+
+Model weights are never bundled. Desktop setup pulls the approved artifact only
+after the user selects local grounded answers and approves any required
+headless-runtime download. CLI and server operators use
+`vidxp local-answers prepare`.
 
 The Python local-answer service owns endpoint checks, runtime discovery and
 installation, checksum verification, model download, and saved CLI

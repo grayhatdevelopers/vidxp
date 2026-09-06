@@ -373,13 +373,17 @@ def create_application(
             and candidate.executable is not None
             and candidate.model_directory is not None
         ):
-            configuration = ManagedOllamaSession(candidate)
+            configuration = ManagedOllamaSession(
+                candidate,
+                context_tokens=active_settings.slm_context_tokens,
+            )
 
         query_model = OllamaQueryModel(
             base_url=active_settings.slm_base_url,
             model_name=active_settings.slm_model,
             timeout_seconds=active_settings.slm_timeout_seconds,
             output_retries=active_settings.slm_output_retries,
+            max_output_tokens=active_settings.slm_max_output_tokens,
             runtime=configuration,
         )
     return VidXPApplication(

@@ -4,7 +4,7 @@ Collection index: [Benchmarking research](README.md)
 
 Status: Current product and evaluation decision
 
-Last verified: 2026-09-06
+Last verified: 2026-09-07
 
 The [research adoption record](research_adoption.md) is the source of truth for
 paper-derived product behavior. The [paper inventory](research_papers.md)
@@ -93,18 +93,43 @@ ranking design, not the converted model weights.
 VidXP already has an optional local SLM path: `query_video` can use the
 self-hosted Ollama `qwen3.5:4b-q4_K_M` model for typed query planning and
 grounded answer synthesis, with deterministic evidence fallback. This is a
-VidXP product option, not a paper-derived requirement, and it has not been run
-through the agent-ablation tasks. Evaluate it as a separate local-answer lane,
-not as a retroactive replacement for the Codex MCP condition.
+VidXP product option, not a retroactive replacement for the Codex MCP
+condition. Evaluate it as a separate local-answer lane.
 
 The paper-facing SLM condition is narrower and distinct: Promptfoo gives the
-same managed model the shipped skill and five required MCP tools, then applies
-the same three-candidate schema and deterministic scorers used for Codex. The
-provider reports Ollama input/output tokens, model requests, and MCP calls.
+same managed model a concise retrieval system instruction and the four needed
+MCP tools, then applies the same three-candidate schema and deterministic
+scorers used for Codex. This is deliberately a targeted local-agent test, not a
+skill- or tool-discovery test. The general Codex skill stays out of this lane
+unless a separate measured intervention establishes that its extra context
+helps the 4B model. The provider reports Ollama input/output tokens, model
+requests, and MCP calls.
 Memory, energy, and local compute cost remain unmeasured rather than being
 treated as zero. This tests whether VidXP can serve a local agent without
 external model exposure; it does not claim that the harness agent is already a
 shipped VidXP UI feature or that local inference is costless.
+
+The generation settings come from two declared sources. The Qwen Team's
+[“Qwen3.5: Towards Native Multimodal Agents” model card](https://huggingface.co/Qwen/Qwen3.5-4B)
+recommends a 32,768-token output allowance and temperature `0.7`, top-p `0.8`,
+and presence penalty `1.5` for ordinary non-thinking requests. Ollama's
+[context guidance](https://docs.ollama.com/context-length) recommends at least
+64,000 tokens for agents and tool use. VidXP adopts those values for the
+managed runtime and disables thinking. The 64,000 value is an Ollama runtime
+recommendation, not a Qwen research result; Qwen reports a 262,144 native
+context but also warns that memory may require a smaller allocation. On this
+8 GB evaluation Mac, VidXP combines the 64,000 allocation with Ollama's
+documented Flash Attention and 8-bit KV-cache settings. The old 1,024-token
+product and 2,048-token benchmark ceilings had no cited model basis and are
+removed.
+
+For the Promptfoo lane, Pydantic AI's
+[tool-output mode](https://ai.pydantic.dev/output/#tool-output) and
+`ToolOrOutput` policy keep MCP actions and the typed result in one tool
+protocol. The instruction resolves the dataset filename through `list_media`,
+then searches the returned stable media ID. The final-output validator accepts
+only a source job passed to a successful `get_job_evidence` call. The model
+still chooses the query, tool sequence, and final candidates.
 
 ## Confirmed limits and decisions
 

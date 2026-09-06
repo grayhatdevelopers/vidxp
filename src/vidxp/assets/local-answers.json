@@ -23,6 +23,13 @@
       }
     }
   },
+  "defaults": {
+    "context_tokens": 64000,
+    "max_output_tokens": 32768,
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "presence_penalty": 1.5
+  },
   "label": "Local grounded answers",
   "description": "Turn VidXP search evidence into cited answers on this computer. Setup reuses Ollama when available or downloads a private headless runtime and the approved Qwen 3.5 4B model."
 }

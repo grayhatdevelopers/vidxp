@@ -1,6 +1,6 @@
 # VidXP metric database
 
-Last verified: 2026-09-06
+Last verified: 2026-09-07
 
 This is the public index of VidXP's measured results. Each result identifies the
 research protocol or method it tests, VidXP's deviation from that work, the
@@ -34,14 +34,26 @@ event into a two-second deliverable.
 Two declared follow-ups reuse the frozen controls rather than repeating them.
 `./benchmarks/codex-mcp/run vidxp` measures a VidXP-only evidence-handoff
 intervention; it is not counterbalanced with the earlier controls. The separate
-`./benchmarks/codex-mcp/run slm` lane gives the same shipped skill and required
-VidXP MCP tools to the managed loopback model. Promptfoo runs the same held-out
+`./benchmarks/codex-mcp/run slm` lane gives a targeted VidXP retrieval system
+instruction and four required MCP tools to the managed loopback model. It uses
+`list_media` to resolve the dataset filename to VidXP's stable media ID before
+search, so no benchmark-only identity map is hidden from the agent.
+Promptfoo runs the same held-out
 tasks, repetitions, output contract, scorer, database, report, and export path.
 It reports local tokens, model requests, MCP calls, latency, and quality with
 zero external-agent calls and provider charge; memory, energy, and local compute
-cost remain unmeasured. Each task is capped at 12 model requests, 10 tool calls,
-2,048 output tokens per request, and a 180-second model-call timeout. Promptfoo's
-300-second provider timeout is a per-task guard, not a video-duration limit.
+cost remain unmeasured. It uses the Qwen non-thinking request guidance
+(32,768 maximum output tokens, temperature `0.7`, top-p `0.8`, presence penalty
+`1.5`) and Ollama's 64,000-token agent-context recommendation. Requested and
+loaded context are saved with each provider result. The 12-request, 10-tool,
+180-second model-call, and 900-second provider limits are benchmark safety
+guards, not model-derived defaults or video-duration limits. The provider cap
+covers the five-response targeted chain at the individual response ceiling;
+the discarded 300-second cap did not.
+Pydantic AI's `ToolOrOutput` policy exposes only the allowlisted VidXP tools and
+the typed output tool. The output validator accepts only a source job the agent
+passed to a successful evidence call; the model still chooses retrieval and
+final ranking.
 Every benchmark MCP process disables VidXP's optional internal query model, so
 the reported agent usage cannot omit nested SLM requests. Run
 `./benchmarks/codex-mcp/run slm-smoke` as a one-task runtime gate before this
@@ -86,7 +98,7 @@ states when an experiment replaces these normal representations.
 | MCP surfaced-target Hit@1/Hit@3 | Whether a ready evidence tile exposed by `get_job_evidence` covers `0.5` of `min(annotation duration, 10 seconds)` within the first one or three tiles | VidXP-only retrieval diagnostic. It separates evidence availability from the agent's final selection and does not replace the cross-condition bounded-clip gate. |
 | Paired product gate | VidXP-on Success@3 is at least VidXP-off, and VidXP-on uses fewer total agent tokens | Primary whole-system decision. Candidate count, cost, latency, and calls remain reported separately, so returning more clips does not hide its overhead. |
 | Temporal IoU and R@1/R@3 at tIoU 0.3/0.5/0.7 | Exact predicted intervals against the LongVALE-derived annotation | Retained secondary boundary-quality diagnostics. Poor exact trimming and ordering remain product shortcomings and future research targets. |
-| Local-SLM bounded-chunk Success@3 | The same Promptfoo task generator, output contract, and deterministic scorer used by the Codex arms | Separate Promptfoo local-agent condition. It tests whether the approved local model can use the shipped skill and VidXP MCP to return comparable grounded chunks without an external agent; it is not a Codex run or a paired product-gate arm. |
+| Local-SLM bounded-chunk Success@3 | The same Promptfoo task generator, output contract, and deterministic scorer used by the Codex arms | Separate targeted Promptfoo local-agent condition. It tests whether the approved local model can follow an explicit VidXP retrieval contract and return comparable grounded chunks without an external agent; it is not a Codex run, skill-discovery test, or paired product-gate arm. |
 
 The two older September development runs used the earlier exact-interval prompt.
 The later smoke and first pilot used one bounded clip. The current isolated run
@@ -197,6 +209,20 @@ The VidXP job ranked `0–10` seconds first with action, scene, and sound suppor
 The agent expanded its answer to `0–12`, which accounts for the lower answer
 IoU. Promptfoo supplies time, tokens, cost, recorded items, and tool types. The
 report reads Codex rollout token events only for the internal model-turn count.
+
+The local-agent lane has its own one-task runtime gate because it is not part of
+the paired Codex comparison:
+
+| Evaluation | Machine and model | Result | Usage | Valid conclusion |
+| --- | --- | --- | --- | --- |
+| `eval-pBj-2026-09-06T20:27:51` | `mac-m2-01`; Ollama `qwen3.5:4b-q4_K_M`; 64,000 loaded context | Integrity and scoring valid; three candidates; Success@3 `0`; best IoU `0`; top result `30–40.006` s | 396.854 s; 25,918 tokens; 7 model requests; 4 MCP calls; no shell or skill; $0 external-provider charge | The targeted agent resolved the filename, submitted one full-query search, waited, read the evidence, and copied the three surfaced ranges and IDs in rank order. VidXP's surfaced top three were the same `30–40.006`, `20–32.032`, and `40–50` s misses, so this is a retrieval-ranking miss rather than an agent-selection miss. It validates the lane mechanics and accounting, not local-agent accuracy. |
+
+That search used all indexed modalities, final `top_k=3`, and the public
+`candidate_top_k=100` default. The earlier Codex development smoke selected
+three modalities and `candidate_top_k=20`, so their one-task quality results do
+not isolate model choice and must not be presented as a controlled SLM/Codex
+accuracy comparison. The held-out local lane is required before making the
+paper's local-equivalence claim.
 
 ### Historical agent runs
 

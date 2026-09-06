@@ -7,18 +7,19 @@ import sys
 import time
 from contextlib import AsyncExitStack
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
+import httpx
 import pydantic_core
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, ModelProfile, NativeOutput
+from pydantic_ai import Agent, ModelProfile, ToolOrOutput, ToolOutput
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from vidxp.benchmarks.agent_ablation_score import DEFAULT_MAX_CANDIDATES
 from vidxp.infrastructure.ollama_query import (
@@ -31,24 +32,43 @@ from vidxp.local_answers import (
     ManagedOllamaSession,
     inspect_local_answers,
     load_local_answer_configuration,
+    local_answer_spec,
 )
 
 from modality_probe import BENCHMARK_ROOT, _load_environment, _required_environment
 
 
 REPOSITORY_ROOT = BENCHMARK_ROOT.parent.parent
-SKILL_PATH = REPOSITORY_ROOT / "plugins" / "vidxp" / "skills" / (
-    "vidxp-find-video-evidence"
-) / "SKILL.md"
 ALLOWED_TOOLS = frozenset(
     {
-        "get_workspace",
+        "list_media",
         "search_moments",
-        "query_video",
         "wait_job",
         "get_job_evidence",
     }
 )
+LOCAL_AGENT_INSTRUCTIONS = """
+You are a VidXP temporal-evidence retrieval agent. The user gives an already
+indexed VidXP Video ID and an event to locate. Do not answer from the event text
+or filename.
+
+1. The supplied Video ID is the dataset filename stem, not VidXP's media ID.
+Call list_media once with filename set to "<Video ID>.mp4". Use the exact
+media_id from that result; do not copy the dataset ID into command.media_id.
+2. Call search_moments once. Set command.media_id to that returned media_id,
+command.query to the event text, and command.top_k to 3. Omit modalities so
+every indexed modality is searched. Omit evidence_delivery so the MCP default
+returns a bounded evidence board without creating unnecessary clip files. Use
+a fresh idempotency key.
+3. If the job is not finished, call wait_job with its job ID and observation
+token until it succeeds.
+4. Call get_job_evidence once with that job ID.
+5. Return at most three distinct ready evidence candidates in their returned
+rank order. Use each evidence item's source time range, modalities, and exact
+evidence ID. Set source_job_id to the inspected job ID. Do not invent evidence,
+IDs, timestamps, or claims. If the completed job has no ready evidence, return
+no candidates and explain that limitation.
+""".strip()
 TOOL_ARGUMENTS = pydantic_core.SchemaValidator(
     pydantic_core.core_schema.dict_schema(
         pydantic_core.core_schema.str_schema(),
@@ -171,22 +191,26 @@ class StdioMCPToolset(AbstractToolset[None]):
                     "elapsed_seconds": time.perf_counter() - started,
                     "is_error": True,
                     "error_type": type(error).__name__,
+                    "error_message": str(error)[:1000],
                 }
             )
             raise
-        self.calls.append(
-            {
-                **call,
-                "elapsed_seconds": time.perf_counter() - started,
-                "is_error": result.is_error,
-            }
-        )
+        messages = [
+            item.text
+            for item in result.content
+            if getattr(item, "type", None) == "text"
+        ]
+        recorded_call = {
+            **call,
+            "elapsed_seconds": time.perf_counter() - started,
+            "is_error": result.is_error,
+        }
         if result.is_error:
-            messages = [
-                item.text
-                for item in result.content
-                if getattr(item, "type", None) == "text"
-            ]
+            recorded_call["error_message"] = (
+                "; ".join(messages) or f"VidXP tool {name} failed."
+            )[:1000]
+        self.calls.append(recorded_call)
+        if result.is_error:
             raise ModelRetry("; ".join(messages) or f"VidXP tool {name} failed.")
         if result.structured_content is not None:
             return result.structured_content
@@ -205,12 +229,6 @@ def _positive_number_option(config: dict[str, Any], name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         raise ValueError(f"The local-SLM provider requires a positive {name} value.")
     return float(value)
-
-
-def _skill_instructions() -> str:
-    contents = SKILL_PATH.read_text(encoding="utf-8")
-    sections = contents.split("---", 2)
-    return sections[2].strip() if len(sections) == 3 else contents.strip()
 
 
 def _selected_model() -> tuple[LocalAnswerConfiguration, str, str]:
@@ -239,11 +257,13 @@ def _ensure_runtime(
     *,
     base_url: str,
     model_name: str,
+    context_tokens: int,
 ) -> bool:
     global _runtime
     if _runtime is None:
         _runtime = ManagedOllamaSession(
-            configured.model_copy(update={"base_url": base_url, "model": model_name})
+            configured.model_copy(update={"base_url": base_url, "model": model_name}),
+            context_tokens=context_tokens,
         )
         _runtime.ensure_started()
         return True
@@ -336,6 +356,11 @@ def _activity(calls: list[dict[str, Any]]) -> dict[str, Any]:
                     if "error_type" in call
                     else {}
                 ),
+                **(
+                    {"error_message": call["error_message"]}
+                    if "error_message" in call
+                    else {}
+                ),
             }
             for call in calls
         ]
@@ -347,22 +372,83 @@ def _metadata(
     calls: list[dict[str, Any]],
     started_at: float,
     model_identity: dict[str, str],
+    model_settings: dict[str, Any],
     cold_start: bool,
     model_turns: int | None = None,
 ) -> dict[str, Any]:
     return {
         "agentRuntime": "local-slm",
         "model": model_identity,
+        "modelSettings": model_settings,
         "modelTurns": model_turns,
         "coldStart": cold_start,
+        "instructionProfile": "targeted-vidxp-retrieval-v1",
         "trace": _trace(calls, started_at),
-        "skillCalls": [
-            {
-                "name": "vidxp-find-video-evidence",
-                "path": str(SKILL_PATH.relative_to(REPOSITORY_ROOT)),
-            }
-        ],
+        "skillCalls": [],
     }
+
+
+def _token_usage(usage: RunUsage) -> dict[str, Any]:
+    token_usage: dict[str, Any] = {
+        "prompt": usage.input_tokens,
+        "completion": usage.output_tokens,
+        "total": usage.input_tokens + usage.output_tokens,
+        "cached": usage.cache_read_tokens,
+        "numRequests": usage.requests,
+    }
+    reasoning_tokens = usage.details.get("reasoning_tokens")
+    if isinstance(reasoning_tokens, int):
+        token_usage["completionDetails"] = {"reasoning": reasoning_tokens}
+    return token_usage
+
+
+async def _loaded_context_tokens(*, base_url: str, model_name: str) -> int | None:
+    """Read the context Ollama actually allocated to the loaded benchmark model."""
+
+    parsed = urlsplit(base_url)
+    management_root = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.get(f"{management_root}/api/ps")
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    models = payload.get("models", [])
+    if not isinstance(models, list):
+        return None
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        if model.get("name") not in {model_name, f"{model_name}:latest"} and model.get(
+            "model"
+        ) not in {model_name, f"{model_name}:latest"}:
+            continue
+        context_length = model.get("context_length")
+        if isinstance(context_length, int) and context_length > 0:
+            return context_length
+    return None
+
+
+async def _record_actual_context(
+    *,
+    base_url: str,
+    model_name: str,
+    requested_context_tokens: int,
+    model_settings: dict[str, Any],
+) -> dict[str, Any]:
+    actual = await _loaded_context_tokens(base_url=base_url, model_name=model_name)
+    recorded = {**model_settings, "loadedContextTokens": actual}
+    if actual is not None and actual < requested_context_tokens:
+        raise RuntimeError(
+            "Ollama loaded the benchmark model with "
+            f"{actual} context tokens, below the required "
+            f"{requested_context_tokens}. Stop the existing Ollama service so the "
+            "saved VidXP runtime can start with the benchmark configuration."
+        )
+    return recorded
 
 
 def _build_agent(
@@ -377,29 +463,64 @@ def _build_agent(
         base_url=base_url,
         model_name=model_name,
     )
-    return Agent(
-        model,
-        output_type=NativeOutput(LocalAgentAnswer),
-        instructions=(
-            "Follow the supplied VidXP skill. Use only its MCP tools, keep the "
-            "answer grounded in one fresh source job, and finish with the requested "
-            "structured result.\n\n" + _skill_instructions()
-        ),
-        toolsets=[toolset],
-        retries=1,
-        model_settings=local_answer_model_settings(
+
+    settings = dict(
+        local_answer_model_settings(
             max_tokens=max_output_tokens,
             timeout_seconds=model_timeout_seconds,
-        ),
+        )
     )
+    settings["tool_choice"] = ToolOrOutput(function_tools=sorted(ALLOWED_TOOLS))
+    agent = Agent(
+        model,
+        output_type=ToolOutput(
+            LocalAgentAnswer,
+            name="return_video_evidence",
+            description="Return the final answer after inspecting VidXP evidence.",
+        ),
+        instructions=LOCAL_AGENT_INSTRUCTIONS,
+        toolsets=[toolset],
+        retries=1,
+        model_settings=settings,
+    )
+
+    @agent.output_validator
+    def require_inspected_source(answer: LocalAgentAnswer) -> LocalAgentAnswer:
+        inspected_jobs = {
+            call["arguments"].get("job_id")
+            for call in toolset.calls
+            if call["name"] == "get_job_evidence" and not call["is_error"]
+        }
+        if answer.source_job_id not in inspected_jobs:
+            raise ModelRetry(
+                "Before returning the final answer, use VidXP to retrieve the "
+                "video evidence and set source_job_id to the job passed to the "
+                "successful get_job_evidence call."
+            )
+        return answer
+
+    return agent
 
 
 async def _run_agent(prompt: str, config: dict[str, Any]) -> dict[str, Any]:
     configured, base_url, model_name = _selected_model()
+    context_tokens = _positive_option(config, "contextTokens")
+    max_output_tokens = _positive_option(config, "maxOutputTokens")
+    defaults = local_answer_spec().defaults
+    recorded_model_settings = {
+        "contextTokens": context_tokens,
+        "maxOutputTokens": max_output_tokens,
+        "reasoningEffort": "none",
+        "temperature": defaults.temperature,
+        "topP": defaults.top_p,
+        "presencePenalty": defaults.presence_penalty,
+        "toolChoice": "vidxp-tools-or-grounded-output",
+    }
     cold_start = _ensure_runtime(
         configured,
         base_url=base_url,
         model_name=model_name,
+        context_tokens=context_tokens,
     )
     model_identity = _require_local_model(
         configured,
@@ -414,12 +535,13 @@ async def _run_agent(prompt: str, config: dict[str, Any]) -> dict[str, Any]:
             base_url=base_url,
             model_name=model_name,
             toolset=toolset,
-            max_output_tokens=_positive_option(config, "maxOutputTokens"),
+            max_output_tokens=max_output_tokens,
             model_timeout_seconds=_positive_number_option(
                 config,
                 "modelTimeoutSeconds",
             ),
         )
+        usage = RunUsage()
         try:
             result = await agent.run(
                 prompt,
@@ -427,42 +549,56 @@ async def _run_agent(prompt: str, config: dict[str, Any]) -> dict[str, Any]:
                     request_limit=_positive_option(config, "maxModelRequests"),
                     tool_calls_limit=_positive_option(config, "maxToolCalls"),
                 ),
+                usage=usage,
             )
         except Exception as error:
+            recorded_model_settings = await _record_actual_context(
+                base_url=base_url,
+                model_name=model_name,
+                requested_context_tokens=context_tokens,
+                model_settings=recorded_model_settings,
+            )
             return {
                 "error": f"{type(error).__name__}: {error}",
+                "cost": 0,
+                "tokenUsage": _token_usage(usage),
                 "metadata": _metadata(
                     calls=toolset.calls,
                     started_at=started_at,
                     model_identity=model_identity,
+                    model_settings=recorded_model_settings,
                     cold_start=cold_start,
+                    model_turns=usage.requests,
                 ),
-                "raw": _activity(toolset.calls),
+                "raw": {
+                    **_activity(toolset.calls),
+                    "usage": {
+                        "requests": usage.requests,
+                        "tool_calls": usage.tool_calls,
+                    },
+                },
             }
     finally:
         await toolset.close()
 
-    usage = result.usage()
-    token_usage: dict[str, Any] = {
-        "prompt": usage.input_tokens,
-        "completion": usage.output_tokens,
-        "total": usage.input_tokens + usage.output_tokens,
-        "cached": usage.cache_read_tokens,
-        "numRequests": usage.requests,
-    }
-    reasoning_tokens = usage.details.get("reasoning_tokens")
-    if isinstance(reasoning_tokens, int):
-        token_usage["completionDetails"] = {"reasoning": reasoning_tokens}
+    recorded_model_settings = await _record_actual_context(
+        base_url=base_url,
+        model_name=model_name,
+        requested_context_tokens=context_tokens,
+        model_settings=recorded_model_settings,
+    )
+    usage = result.usage
     calls = toolset.calls
     return {
         "output": result.output.model_dump_json(),
         "format": "json",
         "cost": 0,
-        "tokenUsage": token_usage,
+        "tokenUsage": _token_usage(usage),
         "metadata": _metadata(
             calls=calls,
             started_at=started_at,
             model_identity=model_identity,
+            model_settings=recorded_model_settings,
             cold_start=cold_start,
             model_turns=usage.requests,
         ),
@@ -505,9 +641,12 @@ async def _check_agent_wiring(*, base_url: str, model_name: str) -> int:
             max_output_tokens=1,
             model_timeout_seconds=1,
         )
-        if (agent.model_settings or {}).get("openai_reasoning_effort") != "none":
+        tool_choice = (agent.model_settings or {}).get("tool_choice")
+        if not isinstance(tool_choice, ToolOrOutput) or set(
+            tool_choice.function_tools
+        ) != ALLOWED_TOOLS:
             raise RuntimeError(
-                "The local-SLM agent is not using VidXP's direct-response model settings."
+                "The local-SLM agent is not enforcing evidence retrieval before output."
             )
         if agent.model.profile.get("openai_chat_supports_max_completion_tokens"):
             raise RuntimeError(
@@ -515,15 +654,29 @@ async def _check_agent_wiring(*, base_url: str, model_name: str) -> int:
             )
         test_model = TestModel(
             call_tools=[],
-            custom_output_text=LocalAgentAnswer(
+            custom_output_args=LocalAgentAnswer(
                 video_id="preflight",
                 answer="preflight",
-                source_job_id=None,
+                source_job_id="preflight-job",
                 candidates=[],
-            ).model_dump_json(),
-            profile=ModelProfile(supports_json_schema_output=True),
+            ).model_dump(),
+            profile=ModelProfile(),
         )
-        result = await agent.run("Provider wiring preflight.", model=test_model)
+        toolset.calls.append(
+            {
+                "name": "get_job_evidence",
+                "arguments": {"job_id": "preflight-job"},
+                "started_at": 0,
+                "elapsed_seconds": 0,
+                "is_error": False,
+            }
+        )
+        try:
+            result = await agent.run("Provider wiring preflight.", model=test_model)
+        finally:
+            toolset.calls.clear()
+        if result.usage.requests != 1:
+            raise RuntimeError("The local-SLM usage contract is unavailable.")
         parameters = test_model.last_model_request_parameters
         tools = {tool.name for tool in parameters.function_tools} if parameters else set()
         if tools != ALLOWED_TOOLS:
@@ -531,6 +684,9 @@ async def _check_agent_wiring(*, base_url: str, model_name: str) -> int:
                 "The local-SLM agent exposed an unexpected MCP tool set: "
                 f"{', '.join(sorted(tools)) or 'none'}."
             )
+        output_tools = parameters.output_tools if parameters else []
+        if [tool.name for tool in output_tools] != ["return_video_evidence"]:
+            raise RuntimeError("The local-SLM structured output tool is unavailable.")
         if result.output.video_id != "preflight" or toolset.calls:
             raise RuntimeError("The local-SLM no-inference wiring check was not isolated.")
         return len(tools)

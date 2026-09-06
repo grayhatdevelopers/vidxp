@@ -129,10 +129,11 @@ providers:
     config:
       pythonExecutable: "{{ env.PROMPTFOO_PYTHON }}"
       workers: 1
-      timeout: 300000
+      timeout: 900000
       maxModelRequests: 12
       maxToolCalls: 10
-      maxOutputTokens: 2048
+      contextTokens: 64000
+      maxOutputTokens: 32768
       modelTimeoutSeconds: 180
 
 tests:
