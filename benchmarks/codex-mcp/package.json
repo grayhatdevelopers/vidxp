@@ -15,8 +15,8 @@
     "eval:smoke": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs smoke",
     "eval:pilot": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs pilot",
     "eval:vidxp": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs pilot vidxp-on",
-    "eval:slm:smoke": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs smoke local-slm",
-    "eval:slm": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs pilot local-slm",
+    "eval:slm:smoke": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs smoke local-slm,local-slm-planner",
+    "eval:slm": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs pilot local-slm,local-slm-planner",
     "export": "node --env-file=.env --no-warnings scripts/export-eval.mjs",
     "report": "node --env-file-if-exists=.env --no-warnings scripts/report.mjs",
     "view": "npm run promptfoo -- view"

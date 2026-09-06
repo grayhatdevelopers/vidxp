@@ -12,7 +12,10 @@ if (!['smoke', 'pilot'].includes(mode)) {
   throw new Error('Evaluation mode must be smoke or pilot.');
 }
 const conditions = process.argv[3];
-const localSlmOnly = conditions === 'local-slm';
+const requestedConditions = conditions?.split(',').filter(Boolean) || [];
+const localSlmOnly = requestedConditions.length > 0 && requestedConditions.every(
+  (condition) => condition === 'local-slm' || condition === 'local-slm-planner',
+);
 const evaluationEnvironment = {
   ...process.env,
   VIDXP_EVAL_MODE: mode,

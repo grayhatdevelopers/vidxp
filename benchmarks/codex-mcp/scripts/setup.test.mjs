@@ -182,8 +182,9 @@ test('resets clean-user state before every condition run', () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test('does not reset a workspace for the tool-only local agent', () => {
+test('does not reset a workspace for either tool-only local agent', () => {
   assert.doesNotThrow(() => resetEvaluationWorkspace('local-slm', {}));
+  assert.doesNotThrow(() => resetEvaluationWorkspace('local-slm-planner', {}));
 });
 
 test('removes source media while retaining the VidXP-on skill', () => {

@@ -18,9 +18,9 @@ installation and product usage, start with the main
 | Action/video retrieval | VideoPrism retained by a small candidate gate; canonical runs pending | VideoPrism scored 50/50 on a five-class Kinetics-mini gate. MSR-VTT 1K-A and Charades-STA remain the required corpus-ranking and temporal tests. |
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
 | Environmental-sound retrieval | PE-A-Frame Small integrated; long-audio gate pending | An identical 149-query AEGBench comparison selected PE-A-Frame over FineLAP. The product now indexes its 40 ms frames through bounded overlapping sections and returns distinct ten-second evidence windows. |
-| LongVALE combined evaluation | First pilot unscored | All 81 runs completed, but only 17/27 primary pairs were isolated and scorable. This selected set is not an official LongVALE result. |
-| Codex MCP ablation | Scorer corrected; pilot rerun required | The first pilot exposed condition bypasses and top-result ranking weakness. Its filtered comparisons are diagnostic because 10 primary pairs were excluded. |
-| Local SLM routing | Smoke passed; held-out run not yet recorded | One local model request selected modalities, then the harness returned VidXP's ranked evidence without model reranking or synthesis. |
+| LongVALE combined evaluation | Selected pilot complete | The current 81-run Codex pilot and 54-case local-SLM comparison use nine held-out tasks. This selected set is not an official LongVALE result. |
+| Codex MCP ablation | Isolated pilot scored; quality gate failed | VidXP used fewer tokens and less time than direct inspection, but Success@3 was 15/27 versus 18/27. Its visible evidence reached 19/27. |
+| Local SLM routing | Router and planner scored | One-request router/planner Success@3 was 15/27 and 19/27. The planner averaged 270 local tokens and 25.544 seconds with no external-provider call. |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
 
 Read [current results](results.md) for the scores, plain-language metric
@@ -81,18 +81,20 @@ query has several valid occurrences but only one accepted interval. That result
 is an auxiliary diagnosis; it neither validates nor rejects the selector and it
 does not decide whether the collective agent comparison can run.
 
-The first 81-run pilot completed, but condition bypasses and invalid VidXP
-outputs left only 17/27 primary pairs usable. It therefore has no product-gate
-verdict. The corrected harness uses Codex's root-denied permission profiles and
-tests each condition's filesystem boundary before making a model call. The
-retained VidXP jobs found a tIoU-0.5 candidate
-within the top three for 14/26 jobs but at rank one for only 6/26, making final
-ordering the clearest product weakness. A corrected pilot rerun is required;
-IoU and boundary errors remain diagnostics rather than the entire product
-decision.
-The corrected contract allows every condition to return up to three ordered
-10-second candidates. Success@3 becomes primary while Success@1, rank, exact
-boundaries, and the cost of returning more evidence remain visible.
+The current isolated Codex pilot completed 81 runs with all 27 primary pairs
+valid and scorable. VidXP was 18.3% faster and used 20.6% fewer tokens than
+direct inspection, but Success@3 was 15/27 versus 18/27, so the paired quality
+gate failed. VidXP's visible MCP evidence reached 19/27 within its top three;
+the agent did not consistently return all of it.
+
+The separate 54-case local-SLM comparison makes one planning request and then
+returns exactly three bounded VidXP windows without model reranking. The basic
+router scored 15/27; allowing the planner to vary query, modalities, and
+candidate depth scored 19/27 at 25.544 seconds and 270 local tokens per case.
+This supports a selected-pilot local-routing result, not general accuracy or an
+official LongVALE score. Success@1, rank, exact boundaries, and raw evidence-tile
+recall remain visible rather than being replaced by Success@3.
+
 See [current model direction](model_selection.md) and the
 [research adoption record](research_adoption.md).
 

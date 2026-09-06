@@ -30,7 +30,7 @@ function requireIsolatedWorkspace(condition, environment) {
 }
 
 export function resetEvaluationWorkspace(condition, environment = process.env) {
-  if (condition === 'local-slm') {
+  if (condition === 'local-slm' || condition === 'local-slm-planner') {
     return;
   }
   if (!(condition in CONDITION_ENV)) {

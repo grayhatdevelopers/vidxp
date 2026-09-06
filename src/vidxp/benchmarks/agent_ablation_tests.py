@@ -19,7 +19,7 @@ _SCORER = "file://../../src/vidxp/benchmarks/agent_ablation_score.py"
 _MODALITIES = frozenset({"scene", "action", "sound", "speech"})
 _RUN_MODES = frozenset({"all", "smoke", "pilot"})
 _DEFAULT_CONDITIONS = frozenset({"vidxp-on", "vidxp-off", "clean-user"})
-_CONDITIONS = _DEFAULT_CONDITIONS | {"local-slm"}
+_CONDITIONS = _DEFAULT_CONDITIONS | {"local-slm", "local-slm-planner"}
 _DEFAULT_PILOT_REPETITIONS = 3
 
 
@@ -58,6 +58,12 @@ def generate_tests(config: dict[str, Any] | None = None) -> list[dict[str, Any]]
         (
             "local-slm",
             providers.get("local_slm", "local-slm"),
+            True,
+            False,
+        ),
+        (
+            "local-slm-planner",
+            providers.get("local_slm_planner", "local-slm-planner"),
             True,
             False,
         ),

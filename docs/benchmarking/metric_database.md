@@ -33,31 +33,32 @@ event into a two-second deliverable.
 
 Two declared follow-ups reuse the frozen controls rather than repeating them.
 `./benchmarks/codex-mcp/run vidxp` measures a VidXP-only evidence-handoff
-intervention; it is not counterbalanced with the earlier controls. The separate
-`./benchmarks/codex-mcp/run slm` lane gives a targeted VidXP retrieval system
-instruction and four required MCP tools to the managed loopback model. It uses
-`list_media` to resolve the dataset filename to VidXP's stable media ID before
-search, so no benchmark-only identity map is hidden from the agent.
-Promptfoo runs the same held-out
-tasks, repetitions, output contract, scorer, database, report, and export path.
-It reports local tokens, model requests, MCP calls, latency, and quality with
-zero external-agent calls and provider charge; memory, energy, and local compute
-cost remain unmeasured. It uses the Qwen non-thinking request guidance
-(32,768 maximum output tokens, temperature `0.7`, top-p `0.8`, presence penalty
-`1.5`) and Ollama's 64,000-token agent-context recommendation. Requested and
-loaded context are saved with each provider result. The 12-request, 10-tool,
-180-second model-call, and 900-second provider limits are benchmark safety
-guards, not model-derived defaults or video-duration limits. The provider cap
-covers the five-response targeted chain at the individual response ceiling;
-the discarded 300-second cap did not.
-Pydantic AI's `ToolOrOutput` policy exposes only the allowlisted VidXP tools and
-the typed output tool. The output validator accepts only a source job the agent
-passed to a successful evidence call; the model still chooses retrieval and
-final ranking.
-Every benchmark MCP process disables VidXP's optional internal query model, so
-the reported agent usage cannot omit nested SLM requests. Run
-`./benchmarks/codex-mcp/run slm-smoke` as a one-task runtime gate before this
-lane; do not include that development smoke in the research comparison.
+intervention; it is not counterbalanced with the earlier controls.
+`./benchmarks/codex-mcp/run slm` compares two targeted, one-request local
+policies over the same held-out tasks and scorer:
+
+| Local condition | Model chooses | Harness fixes |
+| --- | --- | --- |
+| Router | Modalities | Original query, product-default candidate depth of 100, and three final results |
+| Planner | Search query, modalities, and candidate depth from 3 through 100 | Three final results; the range spans the output count to the product default |
+
+Both use the managed loopback model and separate
+[router](../../benchmarks/codex-mcp/prompts/local-slm-router.txt) and
+[planner](../../benchmarks/codex-mcp/prompts/local-slm-planner.txt) system
+prompts, then follow the same
+deterministic MCP lifecycle. `list_media` resolves the public dataset filename
+to VidXP's stable media ID; no benchmark-only identity map is hidden from the
+model. The harness expands returned evidence points or spans into the shared
+ten-second serving window, but it does not use labels, inspect media, or rerank
+VidXP output.
+
+Promptfoo owns tasks, repetitions, assertions, saved results, reports, and
+exports. It records local tokens, one model request per case, MCP calls, latency,
+and quality with zero external-agent calls and provider charge. Memory, energy,
+and local compute cost remain unmeasured. Every benchmark MCP process disables
+VidXP's optional internal query model, so reported usage cannot omit nested SLM
+requests. Run `./benchmarks/codex-mcp/run slm-smoke` as a one-task runtime gate
+before the held-out comparison; do not include that smoke in quality claims.
 
 The task design comes from
 [LongVALE](https://openaccess.thecvf.com/content/CVPR2025/papers/Geng_LongVALE_Vision-Audio-Language-Event_Benchmark_Towards_Time-Aware_Omni-Modal_Perception_of_Long_Videos_CVPR_2025_paper.pdf);
@@ -98,7 +99,8 @@ states when an experiment replaces these normal representations.
 | MCP surfaced-target Hit@1/Hit@3 | Whether a ready evidence tile exposed by `get_job_evidence` covers `0.5` of `min(annotation duration, 10 seconds)` within the first one or three tiles | VidXP-only retrieval diagnostic. It separates evidence availability from the agent's final selection and does not replace the cross-condition bounded-clip gate. |
 | Paired product gate | VidXP-on Success@3 is at least VidXP-off, and VidXP-on uses fewer total agent tokens | Primary whole-system decision. Candidate count, cost, latency, and calls remain reported separately, so returning more clips does not hide its overhead. |
 | Temporal IoU and R@1/R@3 at tIoU 0.3/0.5/0.7 | Exact predicted intervals against the LongVALE-derived annotation | Retained secondary boundary-quality diagnostics. Poor exact trimming and ordering remain product shortcomings and future research targets. |
-| Local-SLM routed Success@3 | One local structured-output request selects relevant modalities; the harness submits the unchanged query and scores VidXP's returned top three with the shared Promptfoo contract | Separate router-assisted condition. It tests local query routing plus VidXP retrieval without an external model. It does not test general MCP use, evidence interpretation, answer synthesis, or a paired Codex product gate. |
+| Local-SLM router Success@3 | One local structured-output request selects modalities; the harness submits the unchanged query with default candidate depth and delivers VidXP's top three as bounded windows | Tests minimal local routing plus VidXP retrieval without an external model. |
+| Local-SLM planner Success@3 | One local structured-output request selects the search query, modalities, and candidate depth; the harness delivers VidXP's top three as bounded windows | Tests whether limited local planning improves retrieval. Neither local condition tests general MCP use, evidence interpretation, answer synthesis, or a paired Codex product gate. |
 
 The two older September development runs used the earlier exact-interval prompt.
 The later smoke and first pilot used one bounded clip. The current isolated run
@@ -145,6 +147,66 @@ returning a qualifying final clip, one returned a hit outside the visible
 top-three metric, and seven did neither. Thus 5/12 final-answer misses expose an
 agent-selection opportunity, while 7/12 still require better retrieval or
 ranking. This does not convert the failed paired gate into a pass.
+
+### Local-SLM held-out comparison
+
+Evaluation
+[`eval-BSO-2026-09-06T22:02:53`](runs/eval-BSO-2026-09-06T22-02-53.json)
+completed 54 cases on `mac-m2-01`: nine tasks, two policies, and three
+repetitions. Wall time was 1,343.293 seconds, or 22 min 23.293 s. All cases were
+condition-valid and scorable, returned exactly three candidates, made one local
+model request, and incurred no external-provider charge.
+
+| Policy | Success@3 | Success@1 | MRR | Best@3 IoU | Average time | Average tokens | MCP calls |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Router | 15/27 (`55.6%`) | 10/27 | `.432` | `.2143` | 21.765 s | 155 | 149 |
+| Planner | 19/27 (`70.4%`) | 11/27 | `.537` | `.2498` | 25.544 s | 270 | 164 |
+
+The planner gained four successful runs while adding 3.779 seconds and 115
+tokens per case. It rewrote all 27 queries and selected candidate depths of 10
+(8 runs), 20 (9), 30 (1), 35 (1), or 50 (8). The router preserved all queries
+and used the product default. Its modalities exactly matched the manifest's
+annotation channels in 23/27 runs; the planner did so in 17/27. Exact channel
+agreement is diagnostic, not a target: the planner still produced more useful
+ranked windows.
+
+| Held-out task | Codex + VidXP final | Router | Planner |
+| --- | ---: | ---: | ---: |
+| Bell plus title | 3/3 | 3/3 | 3/3 |
+| Car plus siren | 0/3 | 0/3 | 0/3 |
+| Engine rev | 0/3 | 0/3 | 2/3 |
+| Sketching | 3/3 | 3/3 | 3/3 |
+| Office speech | 2/3 | 0/3 | 2/3 |
+| Signing | 1/3 | 3/3 | 2/3 |
+| Phone ring | 1/3 | 3/3 | 3/3 |
+| Stir and cover | 3/3 | 3/3 | 3/3 |
+| Casserole drumbeat | 2/3 | 0/3 | 1/3 |
+| **Total** | **15/27** | **15/27** | **19/27** |
+
+The planner produced at least one success for every task on which the Codex +
+VidXP agent succeeded, but it did not improve every repetition: drumbeat fell
+from 2/3 to 1/3. Its 19/27 final-window score equals the earlier agent run's
+19/27 visible-evidence count numerically, but these are different measurements.
+The local run's original evidence tiles reached the raw-boundary threshold in
+15/27 cases; expanding points and short spans into the fixed ten-second serving
+window produced four additional final-window successes. The retained artifact
+contains every route, rewritten query, depth, result, token count, MCP call, and
+score needed to audit that distinction.
+
+The full export predates a label-only provider fix: planner responses say
+`agentRole=modality-router`, while their condition and
+`instructionProfile=targeted-search-planner-v1` identify the executed planner.
+The corrected smoke records `search-planner`. This metadata correction does not
+change prompts, retrieval, usage, or scores, so the held-out run was not repeated.
+
+On this selected pilot, the planner's 70.4% final-window score is comparable to
+direct local inspection's 66.7% and exceeds the Codex + VidXP agent's 55.6%.
+Its average was 25.544 seconds and 270 local tokens versus 81.423 seconds and
+236,060 Codex tokens for the VidXP agent. This supports the narrower claim that
+one loopback planning request can preserve pilot retrieval quality while
+removing external-agent token cost. It does not establish general accuracy,
+measure local compute cost, test evidence interpretation, or repair the car and
+remaining ranking misses.
 
 ### First held-out pilot audit
 
@@ -213,20 +275,15 @@ report reads Codex rollout token events only for the internal model-turn count.
 The local-agent lane has its own one-task runtime gate because it is not part of
 the paired Codex comparison:
 
-| Evaluation | Machine and model | Result | Usage | Valid conclusion |
+| Evaluation and policy | Machine and model | Result | Usage | Valid conclusion |
 | --- | --- | --- | --- | --- |
-| [`eval-Ux0-2026-09-06T21:09:45`](runs/eval-Ux0-2026-09-06T21-09-45.json) | `mac-m2-01`; Ollama `qwen3.5:4b-q4_K_M`; 64,000 loaded context | PASS; route `scene,action`; three candidates; Success@1/Success@3 `1`; top result `0–8.008` s; IoU `.7493` | 36.958 s provider time; 38.185 s run wall time; 155 tokens; one model request; six MCP calls; $0 external-provider charge | Valid router-assisted development smoke. It confirms one-request modality routing, unchanged-query retrieval, deterministic top-three transfer, scoring, and accounting. One task does not establish local equivalence. |
-| [`eval-pBj-2026-09-06T20:27:51`](runs/eval-pBj-2026-09-06T20-27-51.json) | `mac-m2-01`; Ollama `qwen3.5:4b-q4_K_M`; 64,000 loaded context | Integrity and scoring valid; three candidates; Success@3 `0`; best IoU `0`; top result `30–40.006` s | 396.854 s; 25,918 tokens; 7 model requests; 4 MCP calls; no shell or skill; $0 external-provider charge | Superseded protocol diagnostic. The model spent seven turns executing and copying the MCP lifecycle and forced an all-modality search. Synchronous MCP calls used 3.678 s; the durable search took 60.616 s and overlapped model work. This exposed avoidable local-model overhead and a retrieval-policy mismatch; it is not evidence for the router-assisted condition. |
+| [`eval-Com-2026-09-06T22:35:55`](runs/eval-Com-2026-09-06T22-35-55.json), router | `mac-m2-01`; Ollama `qwen3.5:4b-q4_K_M`; 64,000 loaded context | PASS; `scene,sound`; three candidates; Success@1/Success@3 `1`; top result `0–10` s | 36.798 s; 155 tokens; one model request; five MCP calls; $0 external-provider charge | Validates the fixed router, bounded-window output, scoring, and accounting. |
+| Same evaluation, planner | Same machine, model, and context | PASS; `scene,sound`; candidate depth 50; three candidates; Success@1/Success@3 `1`; top result `0–10` s | 43.789 s; 292 tokens; one model request; six MCP calls; $0 external-provider charge | Validates the separate planner prompt and variable query/modality/depth path. |
+| [`eval-pBj-2026-09-06T20:27:51`](runs/eval-pBj-2026-09-06T20-27-51.json) | `mac-m2-01`; same model and context | Three candidates; Success@3 `0`; top result `30–40.006` s | 396.854 s; 25,918 tokens; seven model requests; four MCP calls | Superseded multi-turn diagnostic. It showed why the model should plan once instead of executing and copying the MCP lifecycle. |
 
-That search used all indexed modalities, final `top_k=3`, and the public
-`candidate_top_k=100` default. A saved control using `scene`, `action`, and
-`sound` returned the correct `0–8.0075`-second result first at candidate depths
-20 and 100. Candidate depth therefore did not explain this task's difference;
-forcing every modality remained the meaningful retrieval-policy mismatch. The
-revised lane lets the local model select relevant modalities once and leaves
-VidXP's ranking and evidence output untouched. The smoke above validates that
-lane; the held-out run is still required before making the paper's
-local-equivalence claim.
+The combined smoke took 82.914 seconds wall time. Both policies passed without
+reference data in their prompts. Its development task is excluded from the
+held-out quality comparison above.
 
 ### Historical agent runs
 
@@ -317,6 +374,8 @@ inputs and code needed to understand or reproduce them:
 
 - the [LongVALE-derived task manifest](../../benchmarks/codex-mcp/tasks/longvale-part9-pilot.json),
   [fixed agent prompt](../../benchmarks/codex-mcp/prompts/video-evidence.txt),
+  [local router prompt](../../benchmarks/codex-mcp/prompts/local-slm-router.txt),
+  [local planner prompt](../../benchmarks/codex-mcp/prompts/local-slm-planner.txt),
   [Promptfoo configuration](../../benchmarks/codex-mcp/promptfooconfig.yaml),
   and [reporter](../../benchmarks/codex-mcp/scripts/report.mjs);
 - the action, proposal, query, sound, candidate-depth, and Point-to-Span controls under
@@ -341,11 +400,9 @@ MCP items; Codex raw response bodies remain omitted.
   change when a new matched, counterbalanced gate is required. The current
   evidence-handoff intervention can instead use the selective `vidxp` run and
   the completed controls, with that later-run limitation disclosed.
-- Run the local router with `./benchmarks/codex-mcp/run slm`; its smoke has
-  passed. Record bounded-chunk quality, total latency, routing tokens, the
-  single model request, selected modalities, MCP calls, model identity, and
-  condition validity. Provider cost and external-agent tokens are zero; memory,
-  energy, and local compute cost remain unmeasured.
+- Expand the completed local router/planner comparison beyond the selected
+  nine-task pilot before making a general local-equivalence claim. Memory,
+  energy, and local compute cost also remain unmeasured.
 - Run the isolated three-repetition indexing benchmark and link its reviewed
   JSON artifact from the offline-indexing table above.
 - Produce full-corpus DiDeMo and HiREST results for the current providers.

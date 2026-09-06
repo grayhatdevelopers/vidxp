@@ -5,7 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { spawnSync } from 'node:child_process';
 
-const CONDITION_ORDER = ['vidxp-on', 'vidxp-off', 'clean-user', 'local-slm'];
+const CONDITION_ORDER = [
+  'vidxp-on',
+  'vidxp-off',
+  'clean-user',
+  'local-slm',
+  'local-slm-planner',
+];
 
 function parseJson(value, fallback = {}) {
   if (typeof value !== 'string') {
@@ -521,6 +527,13 @@ export function loadLatestEvaluation({ rescore = false } = {}) {
         routedModalities: Array.isArray(responseMetadata.selectedModalities)
           ? responseMetadata.selectedModalities
           : [],
+        searchQuery: typeof responseMetadata.searchQuery === 'string'
+          ? responseMetadata.searchQuery
+          : null,
+        candidateTopK: Number.isFinite(responseMetadata.candidateTopK)
+          ? responseMetadata.candidateTopK
+          : null,
+        instructionProfile: responseMetadata.instructionProfile || null,
         outputText: typeof response.output === 'string' ? response.output : '',
         traceSpans: stats.spans || [],
         success: row.success === 1,
@@ -797,7 +810,10 @@ export function renderReport(
     `Run type: ${runType} | machine: ${evaluation.machineId || 'unknown'} `
     + `| created: ${created} | wall time: ${seconds(evaluation.wallTimeMs)}`,
   );
-  const localResults = evaluation.results.filter((result) => result.condition === 'local-slm');
+  const localResults = evaluation.results.filter(
+    (result) => result.condition === 'local-slm'
+      || result.condition === 'local-slm-planner',
+  );
   if (localResults.length > 0) {
     const models = new Set(localResults.map((result) => {
       const model = result.providerMetadata?.model;
@@ -807,7 +823,7 @@ export function renderReport(
       (result) => result.providerMetadata?.coldStart === true,
     ).length;
     console.log(
-      `Local router: ${models.size === 1 ? [...models][0] : 'unknown'} | `
+      `Local SLM: ${models.size === 1 ? [...models][0] : 'unknown'} | `
       + `managed runtime cold starts: ${coldStarts}/${localResults.length}`,
     );
   }
@@ -1042,6 +1058,9 @@ export function renderReport(
         route: result.routedModalities.length > 0
           ? result.routedModalities.join(',')
           : 'n/a',
+        'candidate depth': Number.isFinite(result.candidateTopK)
+          ? result.candidateTopK
+          : 'default',
       } : {}),
       integrity: result.integrityPassed ? 'yes' : 'NO',
       [rankedCandidates ? 'hit@3' : 'chunk hit']: Number.isFinite(result.chunkHit)
@@ -1071,6 +1090,22 @@ export function renderReport(
       'top-1 IoU': fixed(result.iou, 4),
       ...(rankedCandidates ? { 'best@3 IoU': fixed(result.bestIou, 4) } : {}),
     })));
+    if (localResults.length > 0) {
+      console.log('Local SLM search decisions:');
+      console.table(localResults.map((result) => ({
+        ...(tasks.size === 1 ? {} : { task: result.task }),
+        ...(repeated ? { repetition: result.repetition } : {}),
+        condition: result.condition,
+        prompt: result.instructionProfile || 'n/a',
+        modalities: result.routedModalities.length > 0
+          ? result.routedModalities.join(',')
+          : 'n/a',
+        'candidate depth': Number.isFinite(result.candidateTopK)
+          ? result.candidateTopK
+          : 'product default',
+        query: result.searchQuery || 'n/a',
+      })));
+    }
     console.log('Per-run usage and tools:');
     console.table(evaluation.results.map((result) => ({
       ...(tasks.size === 1 ? {} : { task: result.task }),
@@ -1137,7 +1172,7 @@ export function renderReport(
       ))
       .map((result) => summarizeRetrieval(result, traces[result.sourceJobId]));
     if (retrievals.length > 0) {
-      console.log('VidXP MCP surfaced-target recall:');
+      console.log('VidXP raw evidence-tile recall:');
       console.table(CONDITION_ORDER.filter((condition) => (
         retrievals.some((retrieval) => retrieval.condition === condition)
       )).map((condition) => {
@@ -1156,15 +1191,15 @@ export function renderReport(
       }));
       const transfer = summarizeSurfaceTransfer(retrievals, 3);
       console.log(
-        `  Top-three evidence to final answer: ${transfer.surfacedAndReturned} surfaced and returned; `
-        + `${transfer.surfacedOnly} surfaced but not returned; ${transfer.returnedOnly} returned `
-        + `without a top-three surfaced hit; ${transfer.neither} neither.`,
+        `  Raw top-three evidence to final answer: ${transfer.surfacedAndReturned} raw-tile hit `
+        + `and returned hit; ${transfer.surfacedOnly} raw-tile hit only; ${transfer.returnedOnly} `
+        + `returned-window hit only; ${transfer.neither} neither.`,
       );
       console.log(
-        '  This VidXP-only diagnostic scores the ready evidence tiles actually exposed by '
-        + 'get_job_evidence. A hit covers at least half of the event available to a 10s window; '
-        + 'it measures retrieval availability and does not replace the cross-condition 8–12s '
-        + 'final-answer gate.',
+        '  This VidXP-only diagnostic scores the original ready tile boundaries exposed by '
+        + 'get_job_evidence. The final-answer gate scores delivered 8–12s windows, so expanding '
+        + 'a point or short span into its 10s serving window can produce a returned-window hit '
+        + 'when the original tile is below the raw-boundary coverage threshold.',
       );
     }
     console.log('VidXP retrieval boundaries:');

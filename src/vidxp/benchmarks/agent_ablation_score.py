@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from collections.abc import Callable, Mapping
@@ -48,6 +49,31 @@ DEFAULT_MIN_CHUNK_SECONDS = 8.0
 DEFAULT_MAX_CHUNK_SECONDS = 12.0
 DEFAULT_MIN_EVENT_COVERAGE = 0.5
 DEFAULT_MAX_CANDIDATES = 3
+
+
+def bounded_chunk_window(
+    source_start: float,
+    source_end: float,
+    *,
+    media_duration: float,
+    target_chunk_seconds: float = DEFAULT_TARGET_CHUNK_SECONDS,
+) -> tuple[float, float]:
+    """Center one target-size clip on an evidence interval and keep it in bounds."""
+
+    values = (source_start, source_end, media_duration, target_chunk_seconds)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("Evidence-window values must be finite.")
+    if media_duration <= 0 or target_chunk_seconds <= 0:
+        raise ValueError("Media and target chunk durations must be positive.")
+    if source_end <= source_start:
+        raise ValueError("The evidence interval must have positive duration.")
+
+    bounded_start = min(max(source_start, 0.0), media_duration)
+    bounded_end = min(max(source_end, bounded_start), media_duration)
+    center = (bounded_start + bounded_end) / 2
+    width = min(target_chunk_seconds, media_duration)
+    start = min(max(center - width / 2, 0.0), media_duration - width)
+    return start, start + width
 
 
 def interval_iou(

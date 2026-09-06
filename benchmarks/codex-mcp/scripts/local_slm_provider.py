@@ -6,6 +6,7 @@ import os
 import sys
 import time
 from contextlib import AsyncExitStack
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
@@ -19,7 +20,11 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from vidxp.application_models import Job, JobState, JobWaitResult, MediaPage
-from vidxp.benchmarks.agent_ablation_score import DEFAULT_MAX_CANDIDATES
+from vidxp.benchmarks.agent_ablation_score import (
+    DEFAULT_MAX_CANDIDATES,
+    DEFAULT_TARGET_CHUNK_SECONDS,
+    bounded_chunk_window,
+)
 from vidxp.infrastructure.ollama_query import (
     create_local_answer_model,
     local_answer_model_settings,
@@ -45,18 +50,8 @@ ALLOWED_TOOLS = frozenset(
         "get_job_evidence",
     }
 )
-ROUTING_INSTRUCTIONS = """
-Choose which indexed VidXP evidence types are relevant to locating the supplied
-event. Return every relevant type and no unrelated type.
-
-- scene: visible objects, setting, appearance, or visual state
-- action: visible movement, activity, or change over time
-- sound: non-speech audio, including environmental and mechanical sounds
-- speech: spoken words or dialogue
-
-Do not locate the event, predict timestamps, rewrite the query, or summarize
-results. Your only task is modality selection.
-""".strip()
+ROUTER_PROMPT = BENCHMARK_ROOT / "prompts" / "local-slm-router.txt"
+PLANNER_PROMPT = BENCHMARK_ROOT / "prompts" / "local-slm-planner.txt"
 
 _runtime: ManagedOllamaSession | None = None
 
@@ -90,10 +85,31 @@ class ModalityRoute(BaseModel):
         return values
 
 
+class SearchPlan(ModalityRoute):
+    query: str
+    candidate_top_k: int
+
+    @field_validator("query")
+    @classmethod
+    def _valid_query(cls, value: str) -> str:
+        query = value.strip()
+        if not query or len(query) > 4096:
+            raise ValueError("The planned search query must contain 1–4096 characters.")
+        return query
+
+    @field_validator("candidate_top_k")
+    @classmethod
+    def _valid_candidate_depth(cls, value: int) -> int:
+        if isinstance(value, bool) or not DEFAULT_MAX_CANDIDATES <= value <= 100:
+            raise ValueError("The planned candidate depth must be from 3 through 100.")
+        return value
+
+
 # Promptfoo imports providers without registering the module in sys.modules.
 # Resolve postponed field annotations while this module namespace is available.
 LocalAgentAnswer.model_rebuild(_types_namespace=globals())
 ModalityRoute.model_rebuild(_types_namespace=globals())
+SearchPlan.model_rebuild(_types_namespace=globals())
 
 
 class StdioMCPClient:
@@ -189,6 +205,23 @@ def _positive_number_option(config: dict[str, Any], name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         raise ValueError(f"The local-SLM provider requires a positive {name} value.")
     return float(value)
+
+
+def _strategy(config: dict[str, Any]) -> Literal["router", "planner"]:
+    value = config.get("strategy")
+    if value not in {"router", "planner"}:
+        raise ValueError("The local-SLM provider strategy must be router or planner.")
+    return value
+
+
+def _instructions(path: Path) -> str:
+    try:
+        instructions = path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise RuntimeError(f"The local-SLM prompt is unavailable: {path.name}.") from error
+    if not instructions:
+        raise RuntimeError(f"The local-SLM prompt is empty: {path.name}.")
+    return instructions
 
 
 def _selected_model() -> tuple[LocalAnswerConfiguration, str, str]:
@@ -333,19 +366,25 @@ def _metadata(
     started_at: float,
     model_identity: dict[str, str],
     model_settings: dict[str, Any],
+    agent_role: str,
     cold_start: bool,
     selected_modalities: list[str] | None = None,
+    search_query: str | None = None,
+    candidate_top_k: int | None = None,
+    instruction_profile: str,
     model_turns: int | None = None,
 ) -> dict[str, Any]:
     return {
         "agentRuntime": "local-slm",
-        "agentRole": "modality-router",
+        "agentRole": agent_role,
         "model": model_identity,
         "modelSettings": model_settings,
         "modelTurns": model_turns,
         "coldStart": cold_start,
-        "instructionProfile": "targeted-modality-router-v1",
+        "instructionProfile": instruction_profile,
         "selectedModalities": selected_modalities,
+        "searchQuery": search_query,
+        "candidateTopK": candidate_top_k,
         "trace": _trace(calls, started_at),
         "skillCalls": [],
     }
@@ -435,29 +474,67 @@ def _build_router(
     return Agent(
         model,
         output_type=NativeOutput(ModalityRoute),
-        instructions=ROUTING_INSTRUCTIONS,
+        instructions=_instructions(ROUTER_PROMPT),
         retries=0,
         model_settings=settings,
     )
 
 
-def _benchmark_inputs(context: dict[str, Any] | None) -> tuple[str, str, str]:
+def _build_planner(
+    *,
+    base_url: str,
+    model_name: str,
+    max_output_tokens: int,
+    model_timeout_seconds: float,
+) -> Agent[None, SearchPlan]:
+    model = create_local_answer_model(
+        base_url=base_url,
+        model_name=model_name,
+    )
+    settings = dict(
+        local_answer_model_settings(
+            max_tokens=max_output_tokens,
+            timeout_seconds=model_timeout_seconds,
+        )
+    )
+    return Agent(
+        model,
+        output_type=NativeOutput(SearchPlan),
+        instructions=_instructions(PLANNER_PROMPT),
+        retries=0,
+        model_settings=settings,
+    )
+
+
+def _benchmark_inputs(
+    context: dict[str, Any] | None,
+) -> tuple[str, str, str, float]:
     variables = (context or {}).get("vars")
     if not isinstance(variables, dict):
         raise ValueError("Promptfoo did not provide structured benchmark variables.")
     video_id = variables.get("video_id")
     query = variables.get("query")
     media_relpath = variables.get("media_relpath")
+    target_chunk_seconds = variables.get(
+        "target_chunk_seconds",
+        DEFAULT_TARGET_CHUNK_SECONDS,
+    )
     if not isinstance(video_id, str) or not video_id.strip():
         raise ValueError("The local-SLM case requires a video_id variable.")
     if not isinstance(query, str) or not query.strip():
         raise ValueError("The local-SLM case requires a query variable.")
     if not isinstance(media_relpath, str) or not media_relpath.strip():
         raise ValueError("The local-SLM case requires a media_relpath variable.")
+    if (
+        isinstance(target_chunk_seconds, bool)
+        or not isinstance(target_chunk_seconds, (int, float))
+        or target_chunk_seconds <= 0
+    ):
+        raise ValueError("The local-SLM case requires a positive target chunk size.")
     filename = media_relpath.replace("\\", "/").rsplit("/", 1)[-1]
     if not filename:
         raise ValueError("The local-SLM media_relpath has no filename.")
-    return video_id.strip(), query.strip(), filename
+    return video_id.strip(), query.strip(), filename, float(target_chunk_seconds)
 
 
 async def _retrieve_evidence(
@@ -467,6 +544,8 @@ async def _retrieve_evidence(
     filename: str,
     query: str,
     modalities: list[str],
+    target_chunk_seconds: float,
+    candidate_top_k: int | None,
 ) -> LocalAgentAnswer:
     media_page = MediaPage.model_validate(
         await client.call("list_media", {"filename": filename})
@@ -482,17 +561,23 @@ async def _retrieve_evidence(
             f"{len(exact_matches)}."
         )
     media_id = exact_matches[0].media_id
+    media_duration = exact_matches[0].duration_seconds
+    if media_duration is None:
+        raise RuntimeError(f"Registered video {filename} has no probed duration.")
 
+    search_command: dict[str, Any] = {
+        "media_id": media_id,
+        "query": query,
+        "modalities": modalities,
+        "top_k": DEFAULT_MAX_CANDIDATES,
+    }
+    if candidate_top_k is not None:
+        search_command["candidate_top_k"] = candidate_top_k
     submitted = Job.model_validate(
         await client.call(
             "search_moments",
             {
-                "command": {
-                    "media_id": media_id,
-                    "query": query,
-                    "modalities": modalities,
-                    "top_k": DEFAULT_MAX_CANDIDATES,
-                },
+                "command": search_command,
                 "idempotency_key": f"local-slm-{uuid4().hex}",
             },
         )
@@ -534,6 +619,7 @@ async def _retrieve_evidence(
 
     candidates: list[Candidate] = []
     seen_evidence: set[str] = set()
+    seen_intervals: set[tuple[float, float]] = set()
     ready_tiles = sorted(
         (tile for tile in tiles if isinstance(tile, dict) and tile.get("state") == "ready"),
         key=lambda tile: tile.get("rank", 10**9),
@@ -549,10 +635,19 @@ async def _retrieve_evidence(
             raise RuntimeError("VidXP evidence tile returned invalid modalities.")
         description = tile.get("display_text")
         rank = tile.get("rank")
+        clip_start, clip_end = bounded_chunk_window(
+            tile.get("start"),
+            tile.get("end"),
+            media_duration=media_duration,
+            target_chunk_seconds=target_chunk_seconds,
+        )
+        interval = (clip_start, clip_end)
+        if interval in seen_intervals:
+            continue
         candidates.append(
             Candidate(
-                start_seconds=tile.get("start"),
-                end_seconds=tile.get("end"),
+                start_seconds=clip_start,
+                end_seconds=clip_end,
                 modalities=tile_modalities,
                 description=(
                     description
@@ -563,6 +658,7 @@ async def _retrieve_evidence(
             )
         )
         seen_evidence.add(evidence_id)
+        seen_intervals.add(interval)
         if len(candidates) == DEFAULT_MAX_CANDIDATES:
             break
 
@@ -584,10 +680,17 @@ async def _run_provider(
     config: dict[str, Any],
     context: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    video_id, query, filename = _benchmark_inputs(context)
+    video_id, query, filename, target_chunk_seconds = _benchmark_inputs(context)
     configured, base_url, model_name = _selected_model()
     context_tokens = _positive_option(config, "contextTokens")
     max_output_tokens = _positive_option(config, "maxOutputTokens")
+    strategy = _strategy(config)
+    instruction_profile = (
+        "targeted-modality-router-v1"
+        if strategy == "router"
+        else "targeted-search-planner-v1"
+    )
+    agent_role = "modality-router" if strategy == "router" else "search-planner"
     defaults = local_answer_spec().defaults
     recorded_model_settings = {
         "contextTokens": context_tokens,
@@ -596,7 +699,11 @@ async def _run_provider(
         "temperature": defaults.temperature,
         "topP": defaults.top_p,
         "presencePenalty": defaults.presence_penalty,
-        "role": "modality-selection-only",
+        "role": (
+            "modality-selection-only"
+            if strategy == "router"
+            else "search-planning-only"
+        ),
     }
     cold_start = _ensure_runtime(
         configured,
@@ -612,9 +719,12 @@ async def _run_provider(
     started_at = time.time()
     usage = RunUsage()
     selected_modalities: list[str] | None = None
+    search_query: str | None = None
+    candidate_top_k: int | None = None
     client = StdioMCPClient(_mcp_parameters())
     try:
-        router = _build_router(
+        builder = _build_router if strategy == "router" else _build_planner
+        agent = builder(
             base_url=base_url,
             model_name=model_name,
             max_output_tokens=max_output_tokens,
@@ -623,19 +733,25 @@ async def _run_provider(
                 "modelTimeoutSeconds",
             ),
         )
-        routed = await router.run(
+        planned = await agent.run(
             query,
             usage_limits=UsageLimits(request_limit=1),
             usage=usage,
         )
-        selected_modalities = list(routed.output.modalities)
+        selected_modalities = list(planned.output.modalities)
+        search_query = query
+        if isinstance(planned.output, SearchPlan):
+            search_query = planned.output.query
+            candidate_top_k = planned.output.candidate_top_k
         await client.open()
         answer = await _retrieve_evidence(
             client=client,
             video_id=video_id,
             filename=filename,
-            query=query,
+            query=search_query,
             modalities=selected_modalities,
+            target_chunk_seconds=target_chunk_seconds,
+            candidate_top_k=candidate_top_k,
         )
     except Exception as error:
         recorded_model_settings = await _record_actual_context(
@@ -653,8 +769,12 @@ async def _run_provider(
                 started_at=started_at,
                 model_identity=model_identity,
                 model_settings=recorded_model_settings,
+                agent_role=agent_role,
                 cold_start=cold_start,
                 selected_modalities=selected_modalities,
+                search_query=search_query,
+                candidate_top_k=candidate_top_k,
+                instruction_profile=instruction_profile,
                 model_turns=usage.requests,
             ),
             "raw": {
@@ -685,8 +805,12 @@ async def _run_provider(
             started_at=started_at,
             model_identity=model_identity,
             model_settings=recorded_model_settings,
+            agent_role=agent_role,
             cold_start=cold_start,
             selected_modalities=selected_modalities,
+            search_query=search_query,
+            candidate_top_k=candidate_top_k,
+            instruction_profile=instruction_profile,
             model_turns=usage.requests,
         ),
         "raw": {
@@ -704,7 +828,7 @@ def call_api(
     options: dict[str, Any] | None = None,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run one router-assisted VidXP case through Promptfoo."""
+    """Run one local-SLM VidXP case through Promptfoo."""
 
     del prompt
     _load_environment()
@@ -755,6 +879,30 @@ async def _check_provider_wiring(*, base_url: str, model_name: str) -> int:
             raise RuntimeError("The local-SLM router unexpectedly exposes tools.")
         if result.output.modalities != ["scene"] or client.calls:
             raise RuntimeError("The local-SLM no-inference wiring check was not isolated.")
+        planner = _build_planner(
+            base_url=base_url,
+            model_name=model_name,
+            max_output_tokens=1,
+            model_timeout_seconds=1,
+        )
+        planned = await planner.run(
+            "A visible landscape.",
+            model=TestModel(
+                custom_output_text=SearchPlan(
+                    query="visible landscape",
+                    modalities=["scene"],
+                    candidate_top_k=20,
+                ).model_dump_json(),
+                profile=ModelProfile(supports_json_schema_output=True),
+            ),
+        )
+        if (
+            planned.output.query != "visible landscape"
+            or planned.output.modalities != ["scene"]
+            or planned.output.candidate_top_k != 20
+            or client.calls
+        ):
+            raise RuntimeError("The local-SLM planner wiring check was not isolated.")
         return len(ALLOWED_TOOLS)
     finally:
         await client.close()
@@ -778,6 +926,7 @@ def check_configuration() -> dict[str, Any]:
     ):
         _required_environment(name)
     ModalityRoute.model_json_schema()
+    SearchPlan.model_json_schema()
     LocalAgentAnswer.model_json_schema()
     tool_count = asyncio.run(
         _check_provider_wiring(base_url=base_url, model_name=model_name)
@@ -797,8 +946,9 @@ if __name__ == "__main__":
     try:
         checked = check_configuration()
         print(
-            "Local SLM router ready without inference: "
-            f"{checked['model']}, one structured routing decision, "
+            "Local SLM planning ready without inference: "
+            f"{checked['model']}, separate router and planner prompts, "
+            "one structured decision per condition, "
             f"{checked['mcp_tools']} harness-owned MCP tools, and deterministic "
             "evidence output verified."
         )

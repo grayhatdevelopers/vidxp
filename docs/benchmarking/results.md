@@ -23,7 +23,8 @@ behavior remain in the [adapter validation ledger](adapter_validation.md).
 | Current component gate | AEGBench frozen subset | 50 recordings; 149 annotated sound queries | PE-A/FineLAP top-point **76.5%/73.2%**; mean IoU **.523/.292** | Select PE-A-Frame Small for sound localization |
 | Current product smoke | PE-A bounded sections | One 75.81-second development video; two known sound queries | 1,896 unique frames; both target ten-second windows ranked first; **22.156 s** indexing after model load | Product decoder/runtime/storage/search integration works; long-audio quality is still unmeasured |
 | Agent development smoke | Codex MCP ablation | LongVALE-derived task `ZYT-rain-wind-engine`; neutral prompt and three isolated conditions | Every condition achieved bounded-chunk hit **1** and coverage **1**. Against direct local inspection, VidXP used **40.9%** fewer tokens and finished **22.1%** faster. | Corrected harness smoke only; one development task is not a product gate or held-out result. |
-| Local-router smoke | Local SLM with VidXP | LongVALE-derived task `ZYT-rain-wind-engine`; one routing request followed by deterministic MCP retrieval | Success@1 and Success@3 **1**; top result `0–8.008` seconds; IoU **.7493**; **155** tokens; **36.958 s** | Validates the router-assisted lane and accounting only; one development task is not a local-equivalence result. |
+| Local-SLM smoke | Local SLM with VidXP | LongVALE-derived task `ZYT-rain-wind-engine`; separate router and planner prompts | Both policies passed Success@1 and Success@3 with three results and one model request | Runtime gate only; the held-out row carries the quality evidence. |
+| Local-SLM held-out pilot | Local SLM with VidXP | Nine LongVALE-derived tasks; router and planner; three repetitions | Router/planner Success@3 **15/27 / 19/27**; **155 / 270** average local tokens; **21.765 / 25.544 s** | Limited planning improves the selected pilot and matches direct inspection's quality range without an external-agent call. |
 | Current agent held-out pilot | Codex MCP ablation | Nine LongVALE-derived tasks; three conditions; three repetitions; up to three final candidates | All **27/27** matched pairs were valid and scorable. VidXP/direct-local Success@3 was **15/27** versus **18/27**; VidXP used **20.6%** fewer tokens. | Product gate failed on quality. VidXP's visible MCP evidence reached Hit@3 **19/27**, exposing a ranking/agent-selection gap. |
 | First agent held-out pilot | Codex MCP ablation | Nine LongVALE-derived tasks; three conditions; three repetitions; one final candidate | Only **17/27** VidXP/direct-local pairs were valid and scorable. | Historical unscored run; filtered comparisons are diagnostic only. |
 | Global-only sound diagnostic | Codex MCP ablation | Same development task after filtering sound search to global clips | VidXP-on IoU **0.6000**; VidXP-off IoU **0.8811** | Same answer content with 16.5% fewer VidXP tokens and 11.3% lower latency, but the ten-second sound clip worsened the endpoint |
@@ -80,6 +81,47 @@ three distinct ready candidates from the initial ranked evidence. Running
 run's direct-local and clean-user results as frozen controls. Its result is a
 later intervention comparison, not a rescore and not a new counterbalanced
 three-condition gate.
+
+## Local-SLM held-out comparison
+
+Evaluation
+[`eval-BSO-2026-09-06T22:02:53`](runs/eval-BSO-2026-09-06T22-02-53.json)
+ran the same nine held-out tasks three times under two separate prompts. Both
+policies made one local Ollama request, then a deterministic harness returned
+three bounded VidXP evidence windows. All 54 cases were valid and scorable.
+
+| Policy | Success@3 | Success@1 | MRR | Average time | Average local tokens | External-provider cost |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Modality router | 15/27 (`55.6%`) | 10/27 | `.432` | 21.765 s | 155 | $0 |
+| Search planner | 19/27 (`70.4%`) | 11/27 | `.537` | 25.544 s | 270 | $0 |
+
+The router chose modalities while preserving the full query and VidXP's default
+candidate depth. The planner could also rewrite the query and choose a depth
+from 3 through 100; it used 10, 20, 30, 35, or 50. Final result count remained
+three in both conditions.
+
+The planner improved Success@3 by four runs for 3.779 seconds and 115 local
+tokens per case. It returned at least one success for every task type the
+Codex-with-VidXP agent had solved, though its drumbeat result was 1/3 rather than the
+agent's 2/3. On this selected pilot its 70.4% score is comparable to direct
+local inspection's 66.7%, while its 25.544-second average is below the Codex +
+VidXP agent's 81.423 seconds. This is a cross-run descriptive comparison, not a
+new paired gate.
+
+Original evidence-tile boundaries reached the coverage threshold in 15/27
+planner cases. Four more cases passed after the harness expanded returned
+points or short spans into the fixed ten-second serving window. That expansion
+is the declared product output contract; it is not exact-boundary improvement.
+The planner does not interpret evidence or repair VidXP ranking, and car plus
+siren still missed in all three repetitions. The
+[metric database](metric_database.md#local-slm-held-out-comparison) gives the
+task-level breakdown and the limits on the paper claim.
+
+The preceding one-task runtime gate is retained as
+[`eval-Com-2026-09-06T22:35:55`](runs/eval-Com-2026-09-06T22-35-55.json).
+Router and planner both passed; they used 155 and 292 tokens and completed in
+36.798 and 43.789 seconds respectively. This smoke is not part of the held-out
+score.
 
 ## First Codex MCP held-out pilot
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from vidxp.benchmarks.agent_ablation_score import (
+    bounded_chunk_window,
     event_coverage,
     interval_iou,
     score_ablation_boundary,
@@ -22,6 +23,28 @@ def _repository_machine_id(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_interval_iou_matches_temporal_overlap() -> None:
     assert interval_iou(10, 20, 15, 25) == pytest.approx(1 / 3)
     assert interval_iou(0, 5, 6, 10) == 0
+
+
+@pytest.mark.parametrize(
+    ("source_start", "source_end", "media_duration", "expected"),
+    [
+        (20, 22, 100, (16, 26)),
+        (70, 80, 75.813152, (65.813152, 75.813152)),
+        (0, 1, 6, (0, 6)),
+    ],
+)
+def test_bounded_chunk_window_centers_and_shifts_at_media_edges(
+    source_start: float,
+    source_end: float,
+    media_duration: float,
+    expected: tuple[float, float],
+) -> None:
+    assert bounded_chunk_window(
+        source_start,
+        source_end,
+        media_duration=media_duration,
+        target_chunk_seconds=10,
+    ) == pytest.approx(expected)
 
 
 def test_temporal_grounding_uses_bounded_chunk_hit_as_primary_score() -> None:
@@ -739,23 +762,32 @@ def test_generator_can_select_only_the_vidxp_condition(
     assert {test["metadata"]["condition"] for test in tests} == {"vidxp-on"}
 
 
-def test_generator_can_select_only_the_local_slm_condition(
+def test_generator_can_select_the_local_slm_conditions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     benchmark = Path(__file__).parents[1] / "benchmarks" / "codex-mcp"
     monkeypatch.chdir(benchmark)
     monkeypatch.setenv("VIDXP_EVAL_MODE", "pilot")
-    monkeypatch.setenv("VIDXP_EVAL_CONDITIONS", "local-slm")
+    monkeypatch.setenv(
+        "VIDXP_EVAL_CONDITIONS",
+        "local-slm,local-slm-planner",
+    )
 
     tests = generate_tests(
         {
             "manifest": "tasks/longvale-part9-pilot.json",
-            "providers": {"local_slm": "local"},
+            "providers": {
+                "local_slm": "router",
+                "local_slm_planner": "planner",
+            },
         }
     )
 
-    assert len(tests) == 27
-    assert {test["providers"][0] for test in tests} == {"local"}
-    assert {test["metadata"]["condition"] for test in tests} == {"local-slm"}
+    assert len(tests) == 54
+    assert {test["providers"][0] for test in tests} == {"router", "planner"}
+    assert {test["metadata"]["condition"] for test in tests} == {
+        "local-slm",
+        "local-slm-planner",
+    }
     assert all(test["vars"]["expected_vidxp"] is True for test in tests)
     assert all(test["vars"]["allow_media_shell"] is False for test in tests)

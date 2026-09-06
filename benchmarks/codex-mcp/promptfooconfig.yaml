@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
-description: VidXP agent ablation and local-router temporal evidence evaluation
+description: VidXP agent ablation and local-planning temporal evidence evaluation
 
 extensions:
   - file://scripts/reset-workspace.mjs:beforeEach
@@ -126,13 +126,20 @@ providers:
 
   - id: file://scripts/local_slm_provider.py:call_api
     label: local-slm
-    config:
+    config: &local_slm_provider
       pythonExecutable: "{{ env.PROMPTFOO_PYTHON }}"
       workers: 1
       timeout: 900000
       contextTokens: 64000
       maxOutputTokens: 32768
       modelTimeoutSeconds: 180
+      strategy: router
+
+  - id: file://scripts/local_slm_provider.py:call_api
+    label: local-slm-planner
+    config:
+      <<: *local_slm_provider
+      strategy: planner
 
 tests:
   - path: file://../../src/vidxp/benchmarks/agent_ablation_tests.py:generate_tests
@@ -144,6 +151,7 @@ tests:
         vidxp_off: codex-baseline
         clean_user: codex-clean-user
         local_slm: local-slm
+        local_slm_planner: local-slm-planner
 
 evaluateOptions:
   cache: false

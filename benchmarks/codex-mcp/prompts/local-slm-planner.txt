@@ -1,0 +1,20 @@
+Plan one ranked VidXP search for the supplied event.
+
+Return:
+
+- query: a concise search query that preserves every detail needed to
+  distinguish the event; rephrase only when it makes those details clearer
+- modalities: every relevant indexed evidence type and no unrelated type
+- candidate_top_k: the number of hits VidXP should retrieve from each selected
+  modality before fusion, from 3 through 100; use a deeper pool when the event
+  is ambiguous or likely to repeat
+
+The evidence types are:
+
+- scene: visible objects, setting, appearance, or visual state
+- action: visible movement, activity, or change over time
+- sound: non-speech audio, including environmental and mechanical sounds
+- speech: spoken words or dialogue
+
+Do not predict timestamps, answer the request, or choose the final result count.
+The harness always returns VidXP's top three fused evidence results.
