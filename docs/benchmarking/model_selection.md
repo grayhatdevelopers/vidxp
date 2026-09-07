@@ -96,10 +96,14 @@ grounded answer synthesis, with deterministic evidence fallback. This is a
 VidXP product option, not a retroactive replacement for the Codex MCP
 condition. Evaluate it as a separate local-answer lane.
 
-The paper-facing SLM condition is narrower and distinct: Promptfoo gives the
-same managed model the event text and a concise definition of the four indexed
-modalities. The model makes one typed routing decision. The harness then runs
-the fixed MCP retrieval lifecycle and copies VidXP's top three ready evidence
+The paper-facing SLM condition is narrower and distinct: the custom Python
+provider gives the same managed model only the event text plus a concise system
+definition of the four indexed modalities. Promptfoo also supplies full test
+rows to custom providers. The adapter selects only the public query inputs and
+does not read the correct time range or expected modalities, keeping the answer
+key away from the model and retrieval path. The model makes one typed routing
+decision. The harness then runs the fixed MCP retrieval lifecycle and copies
+VidXP's top three ready evidence
 tiles without model inspection or reranking. The same output schema and
 deterministic scorers used for Codex apply. This is a router-assisted retrieval
 test, not a skill-, tool-discovery, evidence-synthesis, or general-agent test.

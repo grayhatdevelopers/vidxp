@@ -50,6 +50,12 @@ the product gate.
 | Direct local | 18/27 | 18/27 | 99.669 s | 297,310 | $0.544540 |
 | Clean user | 16/27 | 16/27 | 247.446 s | 697,139 | $1.346239 |
 
+The cost column is Promptfoo's pinned same-model estimate, not the Codex plan's
+actual charge. Cached tokens are already part of input and reasoning tokens are
+already part of output; neither is added again. The exact rate switch and
+known cache-write limitation are documented in the
+[agent-ablation method](agent_ablation.md#why-promptfoo-is-the-execution-harness).
+
 VidXP was 18.3% faster and used 20.6% fewer tokens than direct inspection, but
 its Success@3 was lower by 3/27, so the product gate **failed**. The agents
 returned 1.15 VidXP candidates on average; Success@3 therefore did not improve

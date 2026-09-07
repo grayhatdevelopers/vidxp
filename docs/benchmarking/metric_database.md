@@ -12,6 +12,20 @@ reported scores and [research adoption](research_adoption.md) for the smaller
 list of ideas accepted into VidXP. Scores below use proportions from `0` to `1`
 unless a percent sign is shown.
 
+## Find the evidence you need
+
+| Need | Section |
+| --- | --- |
+| Read the result summary first | [Evidence at a glance](results.md#evidence-at-a-glance) |
+| Understand the benchmark question, controls, and pass rule | [Research question and protocol](#research-question-and-protocol) |
+| Identify the evaluation machine and software | [Machines used](#machines-used) |
+| Review Codex, VidXP, direct-local, clean-user, and local-SLM results | [Whole-system agent measurements](#whole-system-agent-measurements) |
+| Check indexing cost excluded from agent time | [Offline indexing measurements](#offline-indexing-measurements) |
+| Review model, modality, fusion, and ranking experiments | [Component and ranking measurements](#component-and-ranking-measurements) |
+| Find official adapter results | [Official adapter measurements](#official-adapter-measurements) |
+| Open retained run artifacts and reproduction inputs | [Evidence retained in the repository](#evidence-retained-in-the-repository) |
+| See which measurements are still missing | [Measurements still required](#measurements-still-required) |
+
 ## Research question and protocol
 
 The whole-system benchmark asks whether giving the same Codex agent VidXP's
@@ -52,13 +66,23 @@ model. The harness expands returned evidence points or spans into the shared
 ten-second serving window, but it does not use labels, inspect media, or rerank
 VidXP output.
 
-Promptfoo owns tasks, repetitions, assertions, saved results, reports, and
-exports. It records local tokens, one model request per case, MCP calls, latency,
-and quality with zero external-agent calls and provider charge. Memory, energy,
+VidXP's generator owns task selection, conditions, repetition rows and their
+rotated order; its scorer and reporter own deterministic metrics, pairing, and
+aggregation. Promptfoo executes those rows, invokes the assertions, measures
+provider-call latency, and stores results and traces. The local provider returns
+its tokens, one model request per case, and MCP items for Promptfoo to retain;
+its declared provider charge and external-agent calls are zero. Memory, energy,
 and local compute cost remain unmeasured. Every benchmark MCP process disables
 VidXP's optional internal query model, so reported usage cannot omit nested SLM
 requests. Run `./benchmarks/codex-mcp/run slm-smoke` as a one-task runtime gate
 before the held-out comparison; do not include that smoke in quality claims.
+
+For Codex rows, Promptfoo's cost is a pinned estimator over SDK-reported tokens,
+not a measured plan charge. Cached input is a subset of input, reasoning is a
+subset of output, and missing cache-write counts can understate cost. Every eval
+disables Promptfoo result sharing; its separate basic usage telemetry excludes
+benchmark prompts and outputs. The exact rates, limits, and opt-out are in the
+[agent-ablation method](agent_ablation.md#why-promptfoo-is-the-execution-harness).
 
 The task design comes from
 [LongVALE](https://openaccess.thecvf.com/content/CVPR2025/papers/Geng_LongVALE_Vision-Audio-Language-Event_Benchmark_Towards_Time-Aware_Omni-Modal_Perception_of_Long_Videos_CVPR_2025_paper.pdf);
@@ -269,8 +293,9 @@ estimate.
 
 The VidXP job ranked `0–10` seconds first with action, scene, and sound support.
 The agent expanded its answer to `0–12`, which accounts for the lower answer
-IoU. Promptfoo supplies time, tokens, cost, recorded items, and tool types. The
-report reads Codex rollout token events only for the internal model-turn count.
+IoU. Promptfoo's Codex provider supplies time, tokens, cost, recorded items, and
+tool types. The report reads Codex rollout token events only for the internal
+model-turn count.
 
 The local-agent lane has its own one-task runtime gate because it is not part of
 the paired Codex comparison:

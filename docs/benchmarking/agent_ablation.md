@@ -81,16 +81,19 @@ for scene, action, sound, and speech in VidXP. Download, model preparation,
 media import, and indexing are excluded from all three agent times and measured
 separately below.
 
-## Why Promptfoo owns orchestration
+## Why Promptfoo is the execution harness
 
 [Promptfoo](https://www.promptfoo.dev/docs/providers/openai-codex-sdk/) runs the
-three-condition Codex matrix and the two local-SLM conditions. It owns task
-execution, repetitions, saved results, usage, assertions, and reports. VidXP's
-Python benchmark code expands the frozen tasks, scores them deterministically,
-and adapts the local Pydantic-AI/Ollama agent through Promptfoo's documented
+three-condition Codex matrix and the two local-SLM conditions. It executes each
+generated row, invokes its assertions, and stores provider responses, usage,
+latency, cost, and traces in one local evaluation database. VidXP's Python test
+generator selects the frozen tasks and conditions, creates and rotates the
+repetitions, and attaches the assertions. VidXP's deterministic scorer computes
+the per-case retrieval metrics; the repository reporter pairs and aggregates
+them, and the export wrapper sanitizes Promptfoo's native export. The local
+Pydantic-AI/Ollama adapter follows Promptfoo's documented
 [Python provider contract](https://www.promptfoo.dev/docs/providers/python/).
-The adapter does not select tasks, repeat runs, score results, aggregate metrics,
-or write a separate result format. This follows OpenAI's documented
+This follows OpenAI's documented
 [Codex evaluation workflow](https://learn.chatgpt.com/use-cases/ai-app-evals).
 
 Promptfoo is not needed to choose a component model from published leaderboards.
@@ -104,8 +107,8 @@ constraint, not just against generic eval feature lists:
 
 | Harness | Decision for this experiment |
 | --- | --- |
-| Promptfoo Codex SDK | Selected: directly reuses Codex login, forwards each condition's Codex/MCP configuration, repeats cases, and captures usage and tool traces |
-| Native Codex SDK/CLI | Capable, but would require custom pairing, retry, aggregation, and report plumbing that Promptfoo already provides |
+| Promptfoo Codex SDK | Selected: directly reuses Codex login, forwards each condition's Codex/MCP configuration, executes the generated cases, invokes assertions, and stores usage and tool traces |
+| Native Codex SDK/CLI | Capable, but would require direct SDK execution, assertion integration, result persistence, and trace storage that Promptfoo already provides |
 | [Inspect AI](https://inspect.aisi.org.uk/) | Stronger for portable research evals, but subscription-authenticated Codex requires a custom bridge rather than its standard model path |
 | [EvalBench](https://github.com/GoogleCloudPlatform/evalbench) | Supports MCP scenarios, but its documented Codex path is API-key oriented and its simulated-user turns would add runs not needed here |
 | [Harbor](https://github.com/harbor-framework/harbor) | Strong containerized agent benchmark infrastructure, but heavyweight and credential/API oriented for this local pilot |
@@ -293,8 +296,13 @@ Run `slm-smoke` first. It exercises both policies on one development task; it
 is a runtime gate, not a research result. `slm` then runs each policy over the
 nine held-out tasks three times by default, for 54 cases total. Both use the
 same task generator, output schema, scorer, prepared index, and evidence
-attestation as VidXP-on. Promptfoo passes only the event text; it does not expose
-reference bounds or expected modalities.
+attestation as VidXP-on. Promptfoo's Python-provider API passes the adapter the
+whole test row, including fields used later for scoring. The adapter ignores the
+rendered benchmark prompt and selects only four public inputs: video ID, event
+query, media filename, and target chunk size. It never reads the correct time
+range or expected modalities. Only the event query and the condition's separate
+system prompt reach the local model. This small, auditable input selection—not
+Promptfoo itself—prevents the answer key from affecting retrieval.
 
 | Condition | Separate system prompt | One model request chooses | Fixed harness behavior |
 | --- | --- | --- | --- |
@@ -309,8 +317,10 @@ VidXP rank order. It does not use labels, inspect media, rerank evidence, or ask
 the model to interpret the result. The fixed result count prevents a top-one
 default from hiding useful lower-ranked evidence.
 
-Promptfoo stores the detailed runs in its normal local database and includes
-them in `run results`, `run view`, and `run export`. Before Promptfoo creates an
+Promptfoo stores each detailed evaluation in its normal local database.
+`run view` opens Promptfoo's UI, `run results` invokes VidXP's database-backed
+reporter, and `run export` invokes VidXP's sanitizing wrapper around Promptfoo's
+native JSON export. Before Promptfoo creates an
 evaluation, preflight validates both structured prompts and discovers the four
 harness-owned MCP tools. That wiring check uses Pydantic AI's test model, so it
 makes neither a local-model request nor an MCP tool call. The separate MCP
@@ -337,9 +347,10 @@ runtime has been installed. In both local-SLM conditions, the metered local
 model makes only the planning decision; VidXP remains the evidence backend and
 ranking system.
 
-The provider records Ollama input/output tokens, local model requests, MCP calls,
-and latency in Promptfoo's response. Provider charge and external-agent calls
-are zero; memory, energy, and local compute cost are unmeasured. The benchmark
+The provider returns Ollama input/output tokens, local model-request count, and
+its MCP item list; Promptfoo stores those fields and measures the complete
+provider-call latency. Provider charge and external-agent calls are zero;
+memory, energy, and local compute cost are unmeasured. The benchmark
 and product share one Ollama model factory and request settings. They disable
 reasoning, use typed JSON-schema output, and send the response allowance
 through Ollama's supported
@@ -347,10 +358,10 @@ through Ollama's supported
 model-derived request settings are the Qwen non-thinking recommendations:
 32,768 maximum output tokens, temperature `0.7`, top-p `0.8`, and presence
 penalty `1.5`. Ollama starts the managed runtime with its recommended 64,000
-agent context, Flash Attention, an 8-bit KV cache, and one parallel request.
-Promptfoo records both requested and actually loaded context; a smaller loaded
-context invalidates the run instead of silently recreating the earlier 4K
-failure.
+agent context, Flash Attention, an 8-bit KV cache, and one parallel request. The
+local provider records both requested and actually loaded context in the
+Promptfoo response; a smaller loaded context invalidates the run instead of
+silently recreating the earlier 4K failure.
 
 The local adapter uses Pydantic AI's
 [native structured-output mode](https://ai.pydantic.dev/output/#native-output).
@@ -359,8 +370,9 @@ and candidate-depth bounds are enforced by Pydantic after generation instead of
 being compiled into the grammar; this avoids the documented llama.cpp
 [`maxLength` grammar failure](https://github.com/ggml-org/llama.cpp/issues/26596)
 without weakening validation. The remaining safety guards are a 180-second
-limit on that model request and a 900-second Promptfoo limit on the whole case. VidXP's
-durable search is observed through repeated, maximum-30-second `wait_job`
+limit on that model request and a 900-second Promptfoo Python-provider timeout
+on the whole case. VidXP's durable search is observed through repeated,
+maximum-30-second `wait_job`
 calls until it reaches a terminal state. Neither timeout limits video duration.
 Provider-returned failures retain model usage, selected modalities, MCP
 activity, and bounded MCP error text; an outer Promptfoo timeout necessarily
@@ -375,12 +387,24 @@ total input, cached input, uncached input, output, and reasoning tokens. Reasoni
 is included in output. The report preserves Promptfoo's supplied cost unchanged.
 The harness pins Promptfoo
 [0.122.2](https://www.npmjs.com/package/promptfoo?activeTab=versions), the npm
-`latest` release when rechecked on September 6, 2026. Its embedded
-`gpt-5.6-sol` rates are $5 per million uncached input tokens, $0.50 per million
-cached input tokens, and $30 per million output tokens. Promptfoo applies its
-own long-context rule to the aggregate usage returned by the Codex SDK. This
-dollar value is a consistent benchmark metric, not an end-user price, API
-invoice, or measured Codex-plan charge.
+`latest` release when rechecked on September 7, 2026. Promptfoo records Codex
+input as reported by the SDK, with cached input as a subset rather than an
+additional token count; total tokens are input plus output, and reasoning is a
+subset of output. This is the corrected behavior after
+[issue #7546](https://github.com/promptfoo/promptfoo/issues/7546), which affected
+0.120.23.
+
+For configured `gpt-5.6-sol`, the pinned standard estimator uses $5 per million
+uncached input tokens, $0.50 per million cached input tokens, and $30 per million
+output tokens while total input is at most 272,000 tokens. Above that threshold,
+the whole row uses $10, $1, and $45 respectively. The requested model is explicit,
+so Promptfoo does not have to infer it. The Codex SDK does not expose cache-write
+token counts; as Promptfoo's
+[provider documentation](https://www.promptfoo.dev/docs/providers/openai-codex-sdk/)
+warns, that can understate the estimate. The dollar value is therefore a
+same-version, same-estimator comparison metric, not an end-user price, API
+invoice, or measured Codex-plan charge. The 81 current-pilot rows reproduce
+their stored costs from these saved token fields and rates.
 
 Print the latest saved comparison again, without inference, with:
 
@@ -566,7 +590,14 @@ The viewer opens `http://localhost:15500` and continues running until you press
 ### Preserve a reviewed run
 
 Promptfoo's local database contains the full interactive run, but it is not
-portable or committed. After reviewing a run, preserve its latest evaluation
+portable or committed. Every evaluation command passes `--no-share`, so it does
+not upload the evaluation snapshot or media through Promptfoo sharing. This is
+separate from Promptfoo's default basic usage telemetry, which its
+[telemetry documentation](https://www.promptfoo.dev/docs/configuration/telemetry/)
+says excludes prompts, outputs, test cases, provider keys, and full configuration.
+Set `PROMPTFOO_DISABLE_TELEMETRY=1` when that basic telemetry must also be
+disabled; do not describe `--no-share` alone as an air-gap. After reviewing a
+run, preserve its latest evaluation
 with:
 
 ```bash
@@ -593,8 +624,9 @@ open-source software. The local MCP server and local VidXP processing create no
 OpenAI or Anthropic inference charge, but downloading and indexing consume local
 bandwidth, disk, electricity, and any paid infrastructure the operator chooses;
 the dataset and model licenses still apply. Codex inference authenticated
-through the dedicated ChatGPT login consumes the account's Codex plan allowance
-or credits; the dollar column is Promptfoo's provider estimate for comparison,
+through the dedicated ChatGPT login consumes the account's
+[Codex plan allowance or credits](https://developers.openai.com/codex/pricing);
+the dollar column is Promptfoo's provider estimate for comparison,
 not a measured plan charge or invoice. If a run uses API-key authentication,
 actual charges must come from the provider's billing records. No
 LLM-as-judge assertion is enabled, so this scaffold does not add grader calls.
@@ -626,10 +658,14 @@ more searches or inspect every artifact to fill the list.
 The deterministic scorer retains Success@1, reciprocal rank, candidate count,
 top-one and best-of-three temporal IoU, R@1 and R@3 at tIoU 0.3/0.5/0.7,
 start/end/duration error for the first candidate, interval validity, and whether
-the expected VidXP boundary was respected. Promptfoo traces supply skill use, MCP
-tool names, ordering, and inputs; because its Codex trace adapter does not
-retain MCP result bodies, the scorer uses the returned source job ID to verify
-the authoritative result directly in VidXP's durable job store. It also matches
+the expected VidXP boundary was respected. Promptfoo's Codex provider saves the
+SDK item trajectory and emits trace spans for shell and MCP operations. Skill
+loading is only its documented heuristic for direct `SKILL.md` reads, not a
+first-class Codex skill event. The report counts tools from saved provider items,
+falling back to trace spans, and retains tool names, order, and inputs. Because
+the provider does not retain MCP result bodies, the scorer uses the returned
+source job ID to verify the authoritative result directly in VidXP's durable job
+store. It also matches
 each candidate's evidence IDs and modalities to ready evidence from that job,
 then verifies that its interval overlaps the delivered evidence range.
 
