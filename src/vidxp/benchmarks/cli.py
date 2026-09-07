@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import typer
 from rich import print as rich_print
@@ -16,25 +16,7 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
-from vidxp.benchmarks.aegbench import run_aegbench_sound
-from vidxp.benchmarks.didemo import run_didemo
-from vidxp.benchmarks.hirest import (
-    HIREST_DEFAULT_WINDOW_FRACTION,
-    run_hirest,
-)
-from vidxp.benchmarks.modality_gates import (
-    run_charades_action,
-    run_finelap_audio_moment,
-    run_finelap_grounding,
-    run_finelap_retrieval,
-    run_msrvtt_action,
-)
-from vidxp.benchmarks.prepare import (
-    PreparationPlan,
-    execute_preparation,
-    plan_didemo,
-    plan_hirest,
-)
+from vidxp.benchmarks.config import HIREST_DEFAULT_WINDOW_FRACTION
 from vidxp.app_paths import available_storage_bytes
 from vidxp.capabilities.registry import create_capability_registry
 from vidxp.cli_support import (
@@ -49,6 +31,9 @@ from vidxp.dependencies import (
     inspect_requirement,
     packaged_requirements,
 )
+
+if TYPE_CHECKING:
+    from vidxp.benchmarks.prepare import PreparationPlan
 
 
 app = typer.Typer(help="Prepare and run official benchmark adapters.")
@@ -110,6 +95,8 @@ def _execute_preparation_plan(
     yes: bool,
     json_output: bool,
 ) -> None:
+    from vidxp.benchmarks.prepare import execute_preparation
+
     output_format = effective_output_format(state, json_output)
     if output_format == OutputFormat.rich:
         _show_preparation_plan(plan)
@@ -333,6 +320,8 @@ def prepare_didemo_command(
 ) -> None:
     """Prepare verified DiDeMo artifacts and selected official videos."""
 
+    from vidxp.benchmarks.prepare import plan_didemo
+
     state = state_from_context(ctx)
     root = (
         output_directory
@@ -403,6 +392,8 @@ def prepare_hirest_command(
     ] = False,
 ) -> None:
     """Prepare verified HiREST artifacts and released transcripts."""
+
+    from vidxp.benchmarks.prepare import plan_hirest
 
     state = state_from_context(ctx)
     root = (
@@ -487,6 +478,8 @@ def didemo_command(
 ) -> None:
     """Run DiDeMo scene retrieval and its official evaluator."""
 
+    from vidxp.benchmarks.didemo import run_didemo
+
     _require_benchmark_dependencies("scene")
     state = state_from_context(ctx)
     metrics = run_didemo(
@@ -553,6 +546,8 @@ def hirest_command(
 ) -> None:
     """Run HiREST released-ASR retrieval; score validation predictions."""
 
+    from vidxp.benchmarks.hirest import run_hirest
+
     if not 0 < temporal_window_fraction < 1:
         raise typer.BadParameter(
             "The temporal window fraction must be greater than zero and "
@@ -617,6 +612,8 @@ def msrvtt_action_command(
 ) -> None:
     """Run current VideoPrism on MSR-VTT 1K-A text-video retrieval."""
 
+    from vidxp.benchmarks.modality_gates import run_msrvtt_action
+
     _require_benchmark_dependencies("action")
     state = state_from_context(ctx)
     metrics = run_msrvtt_action(
@@ -656,6 +653,8 @@ def charades_action_command(
 ) -> None:
     """Run current VideoPrism windows on Charades-STA localization."""
 
+    from vidxp.benchmarks.modality_gates import run_charades_action
+
     _require_benchmark_dependencies("action")
     state = state_from_context(ctx)
     metrics = run_charades_action(
@@ -689,6 +688,8 @@ def finelap_retrieval_command(
     ] = False,
 ) -> None:
     """Run FineLAP global embeddings on official-format clip retrieval."""
+
+    from vidxp.benchmarks.modality_gates import run_finelap_retrieval
 
     _require_benchmark_dependencies("sound")
     state = state_from_context(ctx)
@@ -726,6 +727,8 @@ def finelap_grounding_command(
     ] = False,
 ) -> None:
     """Run FineLAP dense rankings on TAG-format phrase grounding."""
+
+    from vidxp.benchmarks.modality_gates import run_finelap_grounding
 
     _require_benchmark_dependencies("sound")
     state = state_from_context(ctx)
@@ -768,6 +771,8 @@ def finelap_audio_moment_command(
     ] = False,
 ) -> None:
     """Measure current FineLAP search on a true audio-moment task."""
+
+    from vidxp.benchmarks.modality_gates import run_finelap_audio_moment
 
     _require_benchmark_dependencies("sound")
     state = state_from_context(ctx)
@@ -812,6 +817,8 @@ def aegbench_sound_command(
     ] = False,
 ) -> None:
     """Compare sound event ranking and localization on AEGBench."""
+
+    from vidxp.benchmarks.aegbench import run_aegbench_sound
 
     _require_benchmark_dependencies("sound")
     state = state_from_context(ctx)
