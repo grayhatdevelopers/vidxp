@@ -55,8 +55,7 @@ The main Desktop files are:
 | `desktop/runtime-manifest.json` | Pinned Python and VidXP runtime versions |
 | `src/vidxp/assets/local-answers.json` | Shared local-answer model and managed-runtime specification |
 | `desktop/sidecars.json` | Pinned `uv` sidecar versions and archive checksums |
-| `desktop/capability-catalog.json` | Generated capability labels, installation extras, and model download plans |
-| `desktop/model-cache-catalog.json` | Generated model-cache recognition catalog |
+| `desktop/generated/` | Ignored build-time capability and model-cache catalogs derived from Python specifications |
 | `desktop/scripts/` | Sidecar, model-catalog, notice, branding, and package scripts |
 | `desktop/THIRD_PARTY_NOTICES.txt` | Generated notices shipped with the installers |
 
@@ -108,15 +107,15 @@ locked Rust dependency information used by notice generation:
 
 ```bash
 npm --prefix desktop ci
+npm --prefix desktop run model-catalog:generate
 cargo install cargo-about --version 0.9.1 --locked --features cli
 cargo fetch --manifest-path desktop/src-tauri/Cargo.toml --locked
 ```
 
-Run the generated-file checks, frontend suite, Python package build, sidecar
-check, and Rust tests:
+Run the legal-notice check, frontend suite, Python package build, sidecar check,
+and Rust tests:
 
 ```bash
-npm --prefix desktop run model-catalog:check
 npm --prefix desktop run notices:check
 npm --prefix desktop run check
 python -m build
@@ -128,13 +127,16 @@ Use `npm --prefix desktop run sidecar:windows` instead of `sidecar:unix` on
 Windows. Report the exact commands you ran and any platform package you could
 not build or inspect.
 
-Three checked-in files must stay synchronized with their source contracts:
+Desktop model catalogs are ignored build outputs. Supported Desktop development
+and package commands generate them from the canonical Python capability registry
+before Cargo runs. Generate them explicitly before invoking Cargo directly:
 
-- After changing capability labels, descriptions, extras, or model contracts,
-  run
-  `npm --prefix desktop run model-catalog:write`, review the diff, and run the
-  corresponding `:check` command. This updates both Desktop catalogs from the
-  canonical capability registry.
+```bash
+npm --prefix desktop run model-catalog:generate
+```
+
+The checked-in legal notice must stay synchronized with its source contracts:
+
 - After changing a production dependency or license, run
   `npm --prefix desktop run notices:write`, review the inventory, and run the
   corresponding `:check` command.

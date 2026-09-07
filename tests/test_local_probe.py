@@ -10,6 +10,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from vidxp import cli
+from vidxp.capabilities.registry import create_capability_registry
 from vidxp.local_probe import (
     DESKTOP_LAUNCH_PROTOCOL_VERSION,
     PRODUCT_ID,
@@ -18,6 +19,7 @@ from vidxp.local_probe import (
     desktop_model_cache_catalog,
     _resolved_launcher_path,
 )
+from vidxp.model_contracts import model_artifact_path
 
 
 class LocalProbeTests(unittest.TestCase):
@@ -108,14 +110,30 @@ class LocalProbeTests(unittest.TestCase):
         )
 
     def test_desktop_capability_catalog_comes_from_model_contracts(self):
+        registry = create_capability_registry()
         catalog = desktop_capability_catalog()
 
-        sound = catalog["capabilities"]["sound"]
-        self.assertEqual(sound["label"], "Sound event search")
-        self.assertEqual(sound["extra"], "sound")
         self.assertEqual(
-            sum(model["download_size_bytes"] for model in sound["models"]),
-            1_762_352_391,
+            catalog["capabilities"],
+            {
+                name: {
+                    "extra": definition.extra,
+                    "modality": definition.name,
+                    "label": definition.display_label,
+                    "description": definition.description,
+                    "models": sorted(
+                        [
+                            {
+                                "cache_key": model_artifact_path(Path(), spec).as_posix(),
+                                "download_size_bytes": spec.download_size_bytes,
+                            }
+                            for spec in registry.model_specs((name,))
+                        ],
+                        key=lambda item: item["cache_key"],
+                    ),
+                }
+                for name, definition in registry.definitions.items()
+            },
         )
 
     def test_missing_optional_frontend_does_not_make_product_incompatible(self):
@@ -263,20 +281,22 @@ class LocalProbeTests(unittest.TestCase):
         self.assertEqual(resolved, str(launcher.resolve(strict=False)))
 
     def test_desktop_model_catalog_is_derived_from_canonical_specs(self):
+        registry = create_capability_registry()
         catalog = desktop_model_cache_catalog()
 
-        self.assertEqual(len(catalog), 7)
         self.assertEqual(
-            {item["id"] for item in catalog},
-            {
-                "google/siglip2-base-patch16-224",
-                "google/videoprism-lvt-base-f16r288",
-                "Qwen/Qwen3-Embedding-0.6B",
-                "dropbox-dash/faster-whisper-large-v3-turbo",
-                "facebook/pe-a-frame-small",
-                "yunet",
-                "sface",
-            },
+            catalog,
+            sorted(
+                [
+                    {
+                        "id": spec.model_id,
+                        "label": spec.model_id,
+                        "relative_artifact": model_artifact_path(Path(), spec).as_posix(),
+                    }
+                    for spec in registry.model_specs()
+                ],
+                key=lambda item: item["id"].casefold(),
+            ),
         )
 
 

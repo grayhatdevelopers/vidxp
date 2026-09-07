@@ -14,6 +14,7 @@ from packaging.requirements import Requirement
 from packaging.version import Version
 
 from vidxp.capabilities.registry import create_capability_registry
+from vidxp.local_probe import desktop_capability_catalog
 from vidxp.settings import VidXPSettings
 
 
@@ -359,7 +360,11 @@ class PackagingTests(unittest.TestCase):
         )
         self.assertEqual(
             package["scripts"]["predesktop:dev"],
-            "npm run sync:branding",
+            "npm run sync:generated",
+        )
+        self.assertEqual(
+            package["scripts"]["sync:generated"],
+            "npm run sync:branding && npm run model-catalog:generate",
         )
         self.assertEqual(
             package["scripts"]["predesktop:build"],
@@ -699,11 +704,7 @@ class PackagingTests(unittest.TestCase):
         self.assertFalse(manifest["surfaces"]["server"]["default"])
         for surface in manifest["surfaces"].values():
             self.assertIn(surface["extra"], dynamic_extras)
-        capability_catalog = json.loads(
-            (ROOT / "desktop" / "capability-catalog.json").read_text(
-                encoding="utf-8"
-            )
-        )
+        capability_catalog = desktop_capability_catalog()
         self.assertEqual(capability_catalog["schema_version"], 1)
         self.assertNotIn("capabilities", manifest)
         for capability in capability_catalog["capabilities"].values():
@@ -723,6 +724,11 @@ class PackagingTests(unittest.TestCase):
             ROOT / "desktop" / "src-tauri" / "build.rs"
         ).read_text(encoding="utf-8")
         self.assertIn("../../src/vidxp/assets/local-answers.json", build_script)
+        self.assertIn("../generated/capability-catalog.json", build_script)
+        desktop_source = (
+            ROOT / "desktop" / "src-tauri" / "src" / "lib.rs"
+        ).read_text(encoding="utf-8")
+        self.assertIn("../../generated/model-cache-catalog.json", desktop_source)
 
     def test_combined_release_version_contract(self):
         expected_extra_files = {

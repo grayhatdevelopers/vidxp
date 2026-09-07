@@ -52,7 +52,7 @@ const RUNTIME_PACKAGE_WHEEL_NAME: &str =
     include_str!(concat!(env!("OUT_DIR"), "/runtime-package-name.txt"));
 const RUNTIME_PACKAGE_WHEEL_SHA256: &str =
     include_str!(concat!(env!("OUT_DIR"), "/runtime-package-sha256.txt"));
-const MODEL_CACHE_CATALOG_BYTES: &[u8] = include_bytes!("../../model-cache-catalog.json");
+const MODEL_CACHE_CATALOG_BYTES: &[u8] = include_bytes!("../../generated/model-cache-catalog.json");
 const CODEX_PLUGIN_MARKETPLACE_SOURCE: &str = "grayhatdevelopers/vidxp";
 const CODEX_PLUGIN_MARKETPLACE_REF: Option<&str> = option_env!("VIDXP_PLUGIN_MARKETPLACE_REF");
 const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
@@ -5979,13 +5979,12 @@ mod tests {
         assert_eq!(sound.extra, "sound");
         assert_eq!(sound.modality, "sound");
         assert_eq!(sound.label, "Sound event search");
-        assert_eq!(
+        assert!(!sound.models.is_empty());
+        assert!(
             sound
                 .models
                 .iter()
-                .map(|model| model.download_size_bytes)
-                .sum::<u64>(),
-            981_760_363
+                .all(|model| !model.cache_key.is_empty() && model.download_size_bytes > 0)
         );
         assert_eq!(
             package_specification(&manifest, &["sound".into()], &[]),

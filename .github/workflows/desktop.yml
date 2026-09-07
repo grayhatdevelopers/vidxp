@@ -183,10 +183,10 @@ jobs:
         run: npm run check
         working-directory: desktop
 
-      - name: Verify generated desktop contracts and notices
+      - name: Verify generated desktop inputs and notices
         run: |
+          npm run model-catalog:generate
           cargo fetch --manifest-path src-tauri/Cargo.toml --locked
-          npm run model-catalog:check
           npm run notices:check
         working-directory: desktop
 

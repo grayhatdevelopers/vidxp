@@ -42,6 +42,7 @@ pnpm-debug.log*
 /target
 /desktop/node_modules/
 /desktop/dist/
+/desktop/generated/
 /premiere/dist/
 /premiere/ccx/
 /premiere/coverage/
