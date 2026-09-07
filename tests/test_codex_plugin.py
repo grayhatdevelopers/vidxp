@@ -52,7 +52,7 @@ def test_export_codex_plugin_materializes_the_canonical_skill_bundle() -> None:
             "installation": "AVAILABLE",
             "authentication": "ON_INSTALL",
         }
-        assert exported.marketplace_path == str(marketplace_path)
+        assert Path(exported.marketplace_path) == marketplace_path.resolve()
         assert not (root / "marketplace.json").exists()
 
 
