@@ -57,8 +57,8 @@ class SearchFusionTests(unittest.TestCase):
         moment = result.moments[0]
         self.assertAlmostEqual(moment.score, 2 / (RRF_RANK_CONSTANT + 1))
         self.assertEqual(len(moment.hits), 3)
-        self.assertEqual(moment.start, 1)
-        self.assertEqual(moment.end, 4)
+        self.assertEqual(moment.start, 2.5)
+        self.assertEqual(moment.end, 3.0)
 
     def test_result_order_does_not_change_fusion_identity_or_output(self):
         scene = SearchResult(
@@ -133,7 +133,8 @@ class SearchFusionTests(unittest.TestCase):
 
         self.assertEqual(len(result.moments), 2)
         moment_1, moment_2 = result.moments
-        self.assertEqual(moment_1.start, 10.0)
+        self.assertEqual(moment_1.start, 11.0)
+        self.assertEqual(moment_1.end, 12.0)
         self.assertIn("scene:a", [h.source_id for h in moment_1.hits])
         self.assertEqual(moment_2.start, 24.0)
         self.assertEqual(moment_2.end, 26.0)
@@ -166,8 +167,8 @@ class SearchFusionTests(unittest.TestCase):
 
         self.assertEqual(len(result.moments), 1)
         self.assertEqual(len(result.moments[0].hits), 3)
-        self.assertEqual(result.moments[0].start, 1.0)
-        self.assertEqual(result.moments[0].end, 3.5)
+        self.assertEqual(result.moments[0].start, 2.2)
+        self.assertEqual(result.moments[0].end, 2.8)
 
 
 if __name__ == "__main__":

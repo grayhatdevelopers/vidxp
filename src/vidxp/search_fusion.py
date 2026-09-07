@@ -33,7 +33,7 @@ def _query_id(
     return "fused:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
-def _connected_components(
+def _shared_overlap_components(
     hits: tuple[SearchHit, ...],
 ) -> list[list[SearchHit]]:
     ordered = sorted(
@@ -141,7 +141,7 @@ def fuse_search_results(
     ordered_results = tuple(by_modality[modality] for modality in searched_modalities)
     flattened = tuple(hit for result in ordered_results for hit in result.hits)
     candidates = []
-    for hits in _connected_components(flattened):
+    for hits in _shared_overlap_components(flattened):
         ordered_hits = tuple(
             sorted(
                 hits,
@@ -156,8 +156,8 @@ def fuse_search_results(
             {
                 "score": _score(hits),
                 "media_id": hits[0].media_id,
-                "start": min(hit.start for hit in hits),
-                "end": max(hit.end for hit in hits),
+                "start": max(hit.start for hit in hits),
+                "end": min(hit.end for hit in hits),
                 "modalities": tuple(sorted({hit.modality for hit in hits})),
                 "hits": ordered_hits,
             }
