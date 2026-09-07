@@ -24,20 +24,8 @@
       "description": "Index and search music, environmental sounds, and audio events.",
       "models": [
         {
-          "cache_key": "finelap-tokenizer/config.json",
-          "download_size_bytes": 481
-        },
-        {
-          "cache_key": "finelap-tokenizer/merges.txt",
-          "download_size_bytes": 456318
-        },
-        {
-          "cache_key": "finelap-tokenizer/vocab.json",
-          "download_size_bytes": 898823
-        },
-        {
-          "cache_key": "models--AndreasXi--FineLAP/snapshots/b419aa22947d29907a5567f21b81bf3b39a40449/model.safetensors",
-          "download_size_bytes": 980404741
+          "cache_key": "models--facebook--pe-a-frame-small/snapshots/e5fc71c1f0be50279f52f292390b589780079e13/model.safetensors",
+          "download_size_bytes": 1762352391
         }
       ]
     },
