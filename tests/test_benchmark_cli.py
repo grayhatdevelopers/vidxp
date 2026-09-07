@@ -84,7 +84,7 @@ assert cli.benchmark_app is not None
                     ),
                 ),
                 patch(
-                    "vidxp.benchmarks.cli.run_didemo",
+                    "vidxp.benchmarks.didemo.run_didemo",
                     return_value={"rank_at_1": 0.5},
                 ) as run,
             ):
