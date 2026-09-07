@@ -62,8 +62,12 @@ Initialize and verify the local media runtime:
 uv run --no-sync vidxp init
 uv run --no-sync vidxp --version
 uv run --no-sync vidxp doctor
-uv run --no-sync pytest -q
+uv run --no-sync python -m pytest -q
 ```
+
+Run the test suite as `python -m pytest`. That form puts the repository root
+on the import path, which the root-level tooling tests require. Calling
+`pytest` directly fails to collect them.
 
 `vidxp init` verifies FFmpeg, ffprobe, `libx264`, and `aac`. A fresh checkout
 may report that model files have not been prepared; that is expected. Prepare
@@ -143,7 +147,7 @@ Common checks are:
 
 ```bash
 uv run --no-sync ruff check .
-uv run --no-sync pytest -q
+uv run --no-sync python -m pytest -q
 npm --prefix desktop run check
 docker compose config --quiet
 ```
