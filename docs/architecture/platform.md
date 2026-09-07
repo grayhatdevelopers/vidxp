@@ -503,6 +503,9 @@ by that immutable snapshot. Indexing and search therefore coexist safely.
 The Chroma adapter stores generation identity with every record and implements
 snapshot-scoped search and garbage collection. Chroma remains replaceable behind the
 `IndexRepository` port; snapshot semantics do not depend on Chroma collection layout.
+Index schema 8 defaults collections to inner-product distance so PE-A retains its
+released dot-product frame ordering. Scene, action, and default speech vectors are
+unit-normalized, so their ordering is unchanged from squared L2 distance.
 For the embedded adapter, `indexes/store/` is the shared physical Chroma database;
 generation directories own manifests and checkpoints, while exact generation record
 counts in those manifests are revalidated before committed reads. A missing database,
@@ -773,18 +776,17 @@ composition root and is sorted deterministically.
   `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`; its published multilingual MTEB
   retrieval results materially exceed the older multilingual E5 baseline and its
   Apache-2.0 license permits the intended deployment.
-- Sound: use FineLAP at immutable Hugging Face revision
-  `b419aa22947d29907a5567f21b81bf3b39a40449`. Each video audio stream is decoded
-  once into ten-second windows. The sound collection stores one normalized global
-  embedding per window and the model's normalized dense embeddings as timestamped
-  activation records. Both use the shared text/audio space, and search results
-  retain `representation`, window, and activation provenance. FineLAP requires
-  repository-supplied Transformers code; VidXP loads only the pinned snapshot,
-  keeps runtime loading offline, and prepares the two small pinned RoBERTa
-  tokenizer artifacts explicitly instead of allowing a constructor-time model
-  download. The Hugging Face model card declares MIT; the upstream GitHub source
-  repository does not contain a separate license file, so redistribution review
-  must preserve that qualification.
+- Sound: use PE-A-Frame Small at immutable Hugging Face revision
+  `e5fc71c1f0be50279f52f292390b589780079e13`. Its released audio and text heads
+  produce one comparable embedding every 40 ms; the sound collection ranks those
+  embeddings with inner product, matching the checkpoint's scoring rule. VidXP
+  decodes at 48 kHz and defaults to ten-second inference sections with two seconds
+  of overlap. Each overlap is split at its midpoint so a global timestamp is stored
+  once. Search keeps the best frame score per fixed ten-second evidence window;
+  the exact frame timestamp remains in metadata. The section length, overlap,
+  evidence window, and batch size of one are configurable VidXP deployment
+  defaults, not methods claimed from the PE-A paper. FineLAP remains benchmark-only
+  to reproduce the recorded provider comparison.
 - Actor: replace `face_recognition`/dlib with OpenCV Zoo YuNet plus SFace through
   OpenCV's maintained DNN APIs. Model files are retrieved with `pooch`, pinned to
   OpenCV Zoo commit `47534e27c9851bb1128ccc0102f1145e27f23f98`, and verified
@@ -838,7 +840,9 @@ Flow:
 2. Ask an injected local SLM planner for a strictly typed `QueryPlan`.
 3. Validate that the plan uses registered operations and safe parameters only.
 4. Execute retrieval through application search/capability operations.
-5. Fuse overlapping intervals with deterministic reciprocal-rank fusion.
+5. Build bounded candidates from rank-anchored, directly overlapping evidence,
+   then order them with deterministic reciprocal-rank fusion. Indirect overlap
+   cannot join separate moments.
 6. Ask the answer synthesizer for a grounded answer.
 7. Return `QueryAnswer` with timestamped citations and supporting hits.
 
@@ -867,25 +871,43 @@ reproducibility.
 The default local query model is the official Ollama
 `qwen3.5:4b-q4_K_M` artifact: Qwen3.5 4B with Q4_K_M quantization. Enabling a
 self-hosted Ollama base URL selects that model unless an operator explicitly
-overrides it. VidXP sets temperature zero, disables reasoning output, and
-requires the native JSON schemas for both planning and synthesis. Model weights
-are never bundled. Desktop setup pulls the approved artifact only after the
-user selects local grounded answers and approves any required headless-runtime
-download; CLI and server operators pull it explicitly.
+overrides it. VidXP disables reasoning output and requires native JSON schemas
+for both planning and synthesis. For non-thinking requests it follows the
+[Qwen3.5-4B model guidance](https://huggingface.co/Qwen/Qwen3.5-4B): a 32,768
+token response ceiling, temperature `0.7`, top-p `0.8`, and presence penalty
+`1.5`. The ceiling prevents an unsupported truncation policy; it is not a
+target response length, and generation normally stops earlier. The pinned
+Ollama OpenAI-compatible interface does not expose Qwen's recommended top-k,
+min-p, or repetition-penalty controls through this adapter, so VidXP does not
+pretend to apply them.
 
-Desktop treats the provider as an optional supervised runtime. It first probes
-the loopback `/api/version` and `/api/tags` contracts and reuses an existing
-healthy service without taking ownership. It next reuses an existing Ollama
-executable. If neither is available on a supported Desktop target, it downloads
-the pinned official headless archive declared in the embedded runtime manifest,
-verifies its expected byte count and SHA-256 digest, and atomically activates it
-under Desktop's private application data. Desktop never installs the Ollama
-desktop app. It starts a child `ollama serve` process that its existing
-process-tree supervisor owns, and the model pull uses Ollama's streaming
-`/api/pull` contract. Desktop persists only the feature selection, injects the
-private `/v1` endpoint and approved model into managed processes, and includes
-the same non-secret environment in stdio MCP configuration. It never stops an
-externally owned Ollama service.
+Managed runtimes start with 64,000 context tokens, the minimum recommended by
+[Ollama for agents and tool use](https://docs.ollama.com/context-length).
+They enable Flash Attention and an 8-bit KV cache and run one request at a time;
+Ollama documents that combination as reducing context memory with little
+quality loss. These are runtime recommendations, not results from a VidXP
+retrieval paper. Operators can override the context and output ceilings with
+`VIDXP_SLM_CONTEXT_TOKENS` and `VIDXP_SLM_MAX_OUTPUT_TOKENS`. An externally
+owned Ollama service must be configured at service start because VidXP never
+restarts it.
+
+Model weights are never bundled. Desktop setup pulls the approved artifact only
+after the user selects local grounded answers and approves any required
+headless-runtime download. CLI and server operators use
+`vidxp local-answers prepare`.
+
+The Python local-answer service owns endpoint checks, runtime discovery and
+installation, checksum verification, model download, and saved CLI
+configuration. Its approved runtime and model are declared once in
+`src/vidxp/assets/local-answers.json`. CLI setup calls that service directly;
+Desktop invokes the same CLI operation inside its managed VidXP runtime.
+
+Desktop still owns process supervision. It starts `ollama serve` only when the
+shared setup selected a managed executable, injects the private `/v1` endpoint
+and approved model into managed processes, and includes the same non-secret
+environment in stdio MCP configuration. It never stops an externally owned
+Ollama service. A local CLI installation can start its saved managed runtime on
+demand and stops only the process it started.
 
 Published model results select the integration candidate; the repository gate
 does not attempt to reproduce general model leaderboards. Promotion still

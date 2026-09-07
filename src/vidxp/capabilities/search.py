@@ -25,6 +25,9 @@ PUBLIC_SEARCH_METADATA = frozenset(
         "representation",
         "window_index",
         "activation_index",
+        "section_index",
+        "evidence_index",
+        "frame_end",
     }
 )
 

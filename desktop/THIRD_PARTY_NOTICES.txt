@@ -4925,7 +4925,6 @@ Used by:
 - event-listener-strategy 0.5.4 | https://github.com/smol-rs/event-listener-strategy | registry+https://github.com/rust-lang/crates.io-index
 - event-listener 5.4.2 | https://github.com/smol-rs/event-listener | registry+https://github.com/rust-lang/crates.io-index
 - fastrand 2.5.0 | https://github.com/smol-rs/fastrand | registry+https://github.com/rust-lang/crates.io-index
-- filetime 0.2.29 | https://github.com/alexcrichton/filetime | registry+https://github.com/rust-lang/crates.io-index
 - flate2 1.1.10 | https://github.com/rust-lang/flate2-rs | registry+https://github.com/rust-lang/crates.io-index
 - fnv 1.0.7 | https://github.com/servo/rust-fnv | registry+https://github.com/rust-lang/crates.io-index
 - form_urlencoded 1.2.2 | https://github.com/servo/rust-url | registry+https://github.com/rust-lang/crates.io-index
@@ -4984,7 +4983,6 @@ Used by:
 - system-configuration-sys 0.6.0 | https://github.com/mullvad/system-configuration-rs | registry+https://github.com/rust-lang/crates.io-index
 - system-configuration 0.7.0 | https://github.com/mullvad/system-configuration-rs | registry+https://github.com/rust-lang/crates.io-index
 - tao-macros 0.1.4 | https://github.com/tauri-apps/tao | registry+https://github.com/rust-lang/crates.io-index
-- tar 0.4.46 | https://github.com/composefs/tar-rs | registry+https://github.com/rust-lang/crates.io-index
 - tempfile 3.27.0 | https://github.com/Stebalien/tempfile | registry+https://github.com/rust-lang/crates.io-index
 - tendril 0.5.1 | https://github.com/servo/html5ever | registry+https://github.com/rust-lang/crates.io-index
 - toml_datetime 0.6.3 | https://github.com/toml-rs/toml | registry+https://github.com/rust-lang/crates.io-index
@@ -5003,7 +5001,6 @@ Used by:
 - window-vibrancy 0.6.0 | https://github.com/tauri-apps/tauri-plugin-vibrancy | registry+https://github.com/rust-lang/crates.io-index
 - wit-bindgen 0.46.0 | https://github.com/bytecodealliance/wit-bindgen | registry+https://github.com/rust-lang/crates.io-index
 - wry 0.55.1 | https://github.com/tauri-apps/wry | registry+https://github.com/rust-lang/crates.io-index
-- xattr 1.6.1 | https://github.com/Stebalien/xattr | registry+https://github.com/rust-lang/crates.io-index
 
                               Apache License
                         Version 2.0, January 2004
@@ -8001,7 +7998,6 @@ Used by:
 - time-core 0.1.8 | https://github.com/time-rs/time | registry+https://github.com/rust-lang/crates.io-index
 - time-macros 0.2.27 | https://github.com/time-rs/time | registry+https://github.com/rust-lang/crates.io-index
 - time 0.3.47 | https://github.com/time-rs/time | registry+https://github.com/rust-lang/crates.io-index
-- typed-path 0.12.3 | https://github.com/chipsenkbeil/typed-path | registry+https://github.com/rust-lang/crates.io-index
 - typeid 1.0.3 | https://github.com/dtolnay/typeid | registry+https://github.com/rust-lang/crates.io-index
 - unic-char-property 0.9.0 | https://github.com/open-i18n/rust-unic/ | registry+https://github.com/rust-lang/crates.io-index
 - unic-char-range 0.9.0 | https://github.com/open-i18n/rust-unic/ | registry+https://github.com/rust-lang/crates.io-index
@@ -9581,35 +9577,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
--------------------------------------------------------------------------------
-License: MIT License (MIT)
-Used by:
-- zip 7.2.0 | https://github.com/zip-rs/zip2.git | registry+https://github.com/rust-lang/crates.io-index
-
-The MIT License (MIT)
-
-Copyright (c) 2014 Mathijs van de Nes
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-Some files in the "tests/data" subdirectory of this repository are under other
-licences; see files named LICENSE.*.txt for details.
 -------------------------------------------------------------------------------
 License: MIT License (MIT)
 Used by:
@@ -11230,31 +11197,6 @@ SPDX-License-Identifier: Unicode-3.0
 
 Portions of ICU4X may have been adapted from ICU4C and/or ICU4J.
 ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation and others.
-
--------------------------------------------------------------------------------
-License: zlib License (Zlib)
-Used by:
-- zlib-rs 0.6.7 | https://github.com/trifectatechfoundation/zlib-rs | registry+https://github.com/rust-lang/crates.io-index
-
-(C) 2024 Trifecta Tech Foundation
-
-This software is provided 'as-is', without any express or implied
-warranty. In no event will the authors be held liable for any damages
-arising from the use of this software.
-
-Permission is granted to anyone to use this software for any purpose,
-including commercial applications, and to alter it and redistribute it
-freely, subject to the following restrictions:
-
-1. The origin of this software must not be misrepresented; you must not
-   claim that you wrote the original software. If you use this software
-   in a product, an acknowledgment in the product documentation would be
-   appreciated but is not required.
-
-2. Altered source versions must be plainly marked as such, and must not be
-   misrepresented as being the original software.
-
-3. This notice may not be removed or altered from any source distribution.
 
 -------------------------------------------------------------------------------
 License: zlib License (Zlib)

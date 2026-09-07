@@ -13,6 +13,7 @@ from vidxp.application_models import ApplicationError
 from vidxp.benchmarks.cli import app as benchmark_app
 from vidxp.cli_commands.actors import app as actor_app
 from vidxp.cli_commands.index import app as index_app
+from vidxp.cli_commands.local_answers import app as local_answers_app
 from vidxp.cli_commands.jobs import app as jobs_app
 from vidxp.cli_commands.mcp import mcp_config
 from vidxp.cli_commands.media import app as media_app
@@ -31,6 +32,7 @@ app = typer.Typer(
     help="Index and search video with installable capabilities.",
 )
 app.add_typer(index_app, name="index")
+app.add_typer(local_answers_app, name="local-answers")
 app.add_typer(jobs_app, name="jobs")
 app.add_typer(media_app, name="media")
 app.add_typer(artifacts_app, name="artifacts")
@@ -123,7 +125,12 @@ def app_options(
         typer.Option("--quiet", "-q", help="Suppress progress output."),
     ] = False,
 ) -> None:
-    if ctx.invoked_subcommand in {"desktop-probe", "init", "mcp-config"}:
+    if ctx.invoked_subcommand in {
+        "desktop-probe",
+        "init",
+        "local-answers",
+        "mcp-config",
+    }:
         return
     local = create_local_application(
         registry_path=config_file,

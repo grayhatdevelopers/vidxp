@@ -114,8 +114,13 @@ class LocalApplicationContext:
 
     def close(self) -> None:
         jobs = self.__dict__.get("jobs")
-        if jobs is not None:
-            jobs.close()
+        try:
+            if jobs is not None:
+                jobs.close()
+        finally:
+            application = self.__dict__.get("application")
+            if application is not None:
+                application.close()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -351,12 +356,35 @@ def create_application(
         and active_settings.slm_model is not None
     ):
         from vidxp.infrastructure.ollama_query import OllamaQueryModel
+        from vidxp.local_answers import (
+            ManagedOllamaSession,
+            load_local_answer_configuration,
+        )
+
+        configuration = None
+        try:
+            candidate = load_local_answer_configuration()
+        except (OSError, ValueError):
+            candidate = None
+        if (
+            candidate is not None
+            and candidate.base_url == active_settings.slm_base_url
+            and candidate.model == active_settings.slm_model
+            and candidate.executable is not None
+            and candidate.model_directory is not None
+        ):
+            configuration = ManagedOllamaSession(
+                candidate,
+                context_tokens=active_settings.slm_context_tokens,
+            )
 
         query_model = OllamaQueryModel(
             base_url=active_settings.slm_base_url,
             model_name=active_settings.slm_model,
             timeout_seconds=active_settings.slm_timeout_seconds,
             output_retries=active_settings.slm_output_retries,
+            max_output_tokens=active_settings.slm_max_output_tokens,
+            runtime=configuration,
         )
     return VidXPApplication(
         settings=active_settings,

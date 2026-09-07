@@ -139,15 +139,12 @@ meaning may make existing indexes invalid. When it does, require a rebuild and
 keep the previous index active until the replacement passes validation. State
 the rebuild requirement in both the release note and user documentation.
 
-Regenerate the checked-in Desktop catalogs after changing a capability label,
-description, package extra, or model contract:
+Desktop development and package commands generate ignored catalog files from
+these specifications. Before invoking Cargo directly, generate them with:
 
 ```bash
-npm --prefix desktop run model-catalog:write
-npm --prefix desktop run model-catalog:check
+npm --prefix desktop run model-catalog:generate
 ```
-
-Review the generated diff rather than editing the catalog by hand.
 
 ## 6. Register the capability
 

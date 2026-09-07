@@ -173,7 +173,7 @@ class StorageTests(unittest.TestCase):
         )
         self.assertEqual(
             storage.client.collection_options["metadata"],
-            {"hnsw:space": "l2"},
+            {"hnsw:space": "ip"},
         )
 
         storage.upsert(

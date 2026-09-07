@@ -20,6 +20,7 @@ from vidxp.benchmarks.common import (
     run_logged_evaluator,
     verify_artifact,
 )
+from vidxp.benchmarks.config import HIREST_DEFAULT_WINDOW_FRACTION
 from vidxp.capabilities.speech.config import speech_config
 from vidxp.capabilities.speech.operations import search_speech
 from vidxp.capabilities.schemas import SearchHit
@@ -58,7 +59,6 @@ HIREST_EVALUATOR_SHA256 = (
 HIREST_EVALUATOR_CRLF_SHA256 = (
     "c4b8ba9b572ae4088e90ddc3eec2b2cc4f5b4c1a0153ff6e0843817da89a5ca0"
 )
-HIREST_DEFAULT_WINDOW_FRACTION = 0.8
 
 
 def load_ground_truth(path: str | Path) -> dict[str, dict[str, Any]]:

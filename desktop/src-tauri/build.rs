@@ -7,8 +7,11 @@ fn main() {
         serde_json::from_slice(include_bytes!("../runtime-manifest.json"))
             .expect("desktop/runtime-manifest.json must be valid JSON");
     let capability_catalog: serde_json::Value =
-        serde_json::from_slice(include_bytes!("../capability-catalog.json"))
-            .expect("desktop/capability-catalog.json must be valid JSON");
+        serde_json::from_slice(include_bytes!("../generated/capability-catalog.json"))
+            .expect("the generated desktop capability catalog must be valid JSON");
+    let local_answers: serde_json::Value =
+        serde_json::from_slice(include_bytes!("../../src/vidxp/assets/local-answers.json"))
+            .expect("src/vidxp/assets/local-answers.json must be valid JSON");
     assert_eq!(
         capability_catalog["schema_version"].as_u64(),
         Some(1),
@@ -20,6 +23,7 @@ fn main() {
         .expect("desktop capability catalog must contain capabilities")
         .clone();
     manifest["capabilities"] = serde_json::Value::Object(capabilities);
+    manifest["local_answers"] = local_answers;
     let expected = manifest["uv_version"]
         .as_str()
         .expect("runtime manifest must contain uv_version");
@@ -166,7 +170,8 @@ fn main() {
     println!("cargo:rerun-if-changed=../../uv.lock");
     println!("cargo:rerun-if-changed=../../dist");
     println!("cargo:rerun-if-changed=../runtime-manifest.json");
-    println!("cargo:rerun-if-changed=../capability-catalog.json");
+    println!("cargo:rerun-if-changed=../generated/capability-catalog.json");
+    println!("cargo:rerun-if-changed=../../src/vidxp/assets/local-answers.json");
 
     let attributes = tauri_build::Attributes::new();
     #[cfg(windows)]

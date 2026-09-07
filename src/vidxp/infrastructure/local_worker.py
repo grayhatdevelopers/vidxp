@@ -193,51 +193,88 @@ class LocalWorkerSupervisor:
             raise RuntimeError("The local background worker is not running.")
 
     def stop(self) -> bool:
-        version = workflow_application_version()
-        worker_lock = FileLock(
-            self.layout.local_workflows / f"worker-{version}.lock"
-        )
-        ready_path = (
-            self.layout.local_workflows / f"worker-{version}.ready"
-        )
-        stop_path = (
-            self.layout.local_workflows / f"worker-{version}.stop"
-        )
-        try:
-            worker_lock.acquire(timeout=0)
-        except Timeout:
+        self.layout.ensure_local_directories()
+        versions = {workflow_application_version()}
+        for ready_path in self.layout.local_workflows.glob("worker-*.ready"):
             ready = self._load_ready(ready_path)
-            if ready.application_version != version:
-                raise RuntimeError(
-                    "The running local worker has an invalid version identity."
-                )
-            write_json_atomic(
-                stop_path,
-                LocalWorkerStopRequest(
-                    pid=ready.pid,
-                    application_version=version,
-                ).model_dump(mode="json"),
+            expected_path = (
+                self.layout.local_workflows
+                / f"worker-{ready.application_version}.ready"
             )
-            deadline = monotonic() + 35
-            while monotonic() < deadline:
+            if ready_path != expected_path:
+                raise RuntimeError(
+                    "A local background worker has an invalid version identity."
+                )
+            versions.add(ready.application_version)
+
+        stopping: list[
+            tuple[str, int, FileLock, Path, Path]
+        ] = []
+        for version in sorted(versions):
+            worker_lock = FileLock(
+                self.layout.local_workflows / f"worker-{version}.lock"
+            )
+            ready_path = (
+                self.layout.local_workflows / f"worker-{version}.ready"
+            )
+            stop_path = (
+                self.layout.local_workflows / f"worker-{version}.stop"
+            )
+            try:
+                worker_lock.acquire(timeout=0)
+            except Timeout:
+                ready = self._load_ready(ready_path)
+                if ready.application_version != version:
+                    raise RuntimeError(
+                        "A running local worker has an invalid version identity."
+                    )
+                write_json_atomic(
+                    stop_path,
+                    LocalWorkerStopRequest(
+                        pid=ready.pid,
+                        application_version=version,
+                    ).model_dump(mode="json"),
+                )
+                stopping.append(
+                    (version, ready.pid, worker_lock, ready_path, stop_path)
+                )
+            else:
+                worker_lock.release()
+                durable_unlink(ready_path, missing_ok=True)
+                durable_unlink(stop_path, missing_ok=True)
+
+        if not stopping:
+            return False
+
+        deadline = monotonic() + 35
+        pending = stopping
+        while pending and monotonic() < deadline:
+            remaining = []
+            for version, pid, worker_lock, ready_path, stop_path in pending:
                 try:
                     worker_lock.acquire(timeout=0)
                 except Timeout:
-                    sleep(0.05)
+                    remaining.append(
+                        (version, pid, worker_lock, ready_path, stop_path)
+                    )
                     continue
-                else:
-                    worker_lock.release()
-                    durable_unlink(ready_path, missing_ok=True)
-                    durable_unlink(stop_path, missing_ok=True)
-                    return True
-            raise RuntimeError(
-                "The local background worker did not stop in time."
+                worker_lock.release()
+                durable_unlink(ready_path, missing_ok=True)
+                durable_unlink(stop_path, missing_ok=True)
+            pending = remaining
+            if pending:
+                sleep(0.05)
+
+        if pending:
+            identities = ", ".join(
+                f"{version} (PID {pid})"
+                for version, pid, *_paths in pending
             )
-        else:
-            worker_lock.release()
-            durable_unlink(ready_path, missing_ok=True)
-            durable_unlink(stop_path, missing_ok=True)
-            return False
+            raise RuntimeError(
+                "Local background workers did not stop in time: "
+                f"{identities}."
+            )
+        return True
 
     @staticmethod
     def _wait_for_existing_worker(

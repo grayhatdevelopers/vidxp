@@ -114,28 +114,6 @@ def emit_progress(
     )
 
 
-def emit_job_progress(job: Any) -> None:
-    if job.progress is not None:
-        message = job.progress.message
-        if (
-            job.progress.stage == "downloading_model"
-            and job.progress.current is not None
-            and job.progress.total
-        ):
-            gib = 1024**3
-            mib = 1024**2
-            unit = gib if job.progress.total >= gib else mib
-            suffix = "GiB" if unit == gib else "MiB"
-            message += (
-                f" {job.progress.current / unit:.1f} of "
-                f"{job.progress.total / unit:.1f} {suffix}"
-            )
-        emit_progress(
-            message,
-            updated_at=job.progress.updated_at,
-        )
-
-
 def emit_search(
     result: FusedSearchResult,
     *,
@@ -212,7 +190,7 @@ def emit_status(
     Console().print(table)
 
 
-class IndexProgress:
+class LiveProgress:
     def __init__(self, enabled: bool) -> None:
         self.enabled = enabled
         self.progress = Progress(
@@ -225,7 +203,7 @@ class IndexProgress:
         self.task_id: int | None = None
         self.stage: str | None = None
 
-    def __enter__(self) -> "IndexProgress":
+    def __enter__(self) -> "LiveProgress":
         if self.enabled:
             self.progress.start()
         return self
@@ -254,6 +232,10 @@ class IndexProgress:
             total=float(total) if total else None,
             completed=float(current) if current is not None else None,
         )
+
+    def update_job(self, job: Any) -> None:
+        if job.progress is not None:
+            self.update(job.progress.model_dump(mode="python"))
 
 
 def selected_modalities(

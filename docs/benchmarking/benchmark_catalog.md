@@ -47,9 +47,10 @@ The selected suite remains component-based:
 
 LongVALE is the strongest peer-reviewed combined vision–audio–speech temporal
 benchmark found. It still omits actor clustering and expects genuinely fused
-multi-modal interval predictions. FineLAP now supplies separate global-window and
-dense timestamped sound evidence, but the LongVALE adapter and fusion rule remain
-unimplemented and no quality score is claimed. FLARE is a smaller downloadable
+multi-modal interval predictions. PE-A-Frame supplies timestamped sound-frame
+evidence through bounded overlapping sections, but the complete LongVALE
+adapter and quality run remain pending. No LongVALE quality score is claimed.
+FLARE is a smaller downloadable
 audio-visual stress test, but it is a 2026 preprint benchmark with generated,
 filtered queries. It belongs in a secondary experiment or watchlist until peer
 review and benchmark stability improve.
@@ -159,7 +160,7 @@ their published numbers alone do not answer a VidXP capability question:
 | 5 | Dialogue | TVR, `t` subset | A, medium adapter | Gated | Lawful TV clips with original audio |
 | 6 | Actor | BCL on BBT/Buffy | A, medium clustering adapter | Gated | Released inference script cannot score VidXP clusters; lawful raw episodes needed |
 | 7 | Visual | Charades-STA | A, medium adapter | Gated | Dataset agreement and narrow staged domain |
-| 8 | Whole system | LongVALE | A/medium fusion adapter | Artifacts reachable; compliance/runtime gates | Evaluation-only raw archives are 40.523 GiB; full 254 GB repository is not required; FineLAP sound records are available, while the evaluation adapter remains |
+| 8 | Whole system | LongVALE | A/medium fusion adapter | Artifacts reachable; compliance/runtime gates | Evaluation-only raw archives are 40.523 GiB; full 254 GB repository is not required; PE-A-Frame sound indexing is integrated, while its long-audio gate and the evaluation adapter remain |
 | 9 | Whole system | FLARE | A/medium adapter | Ready artifacts; runtime gate/watchlist | 66.267 GiB release; preprint; generated rank-filtered queries; visual/audio/joint coverage now needs adapter validation |
 | 10 | Actor | Hannah | A, medium evaluator adapter | Gated | Research agreement and separately obtained movie |
 | 11 | Actor/system | MovieNet | A for component slices | Gated | Registration; movies excluded; actor labels are keyframe-oriented |
@@ -542,8 +543,8 @@ The active provider conclusions and exact published selection scores are in
   speech, and generic audio but not actors. VidXP must freeze a point-to-interval
   or interval-proposal rule and emit one top-ranked interval, then combine its
   visual, environmental-sound, and speech evidence with a frozen,
-  provenance-preserving fusion rule. The FineLAP provider now exists, but that
-  fusion adapter does not.
+  provenance-preserving fusion rule. The PE-A-Frame provider exists, but that
+  complete evaluation adapter does not.
   Returning top three alone does not satisfy the protocol. Generic-audio evidence
   within official event queries is unsupported by the current implementation;
   keep all 13,867 queries in the denominator unless a separately justified
@@ -734,8 +735,8 @@ Completed:
 
 Next:
 
-1. Complete a bounded real-media FineLAP integration smoke, retaining LAION-CLAP
-   as the mature comparison.
+1. Run the PE-A-Frame long-audio product gate with the documented section and
+   evidence defaults.
 2. Implement the fixed LongVALE visual/sound/speech adapter and validate one
    evaluation archive before committing to the full 1,171-video run.
 3. Add fixed hardware-aware indexing and query measurements to each subsequent

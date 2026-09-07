@@ -1,5 +1,8 @@
 # yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
-description: VidXP Codex MCP-on versus MCP-off temporal evidence evaluation
+description: VidXP agent ablation and local-planning temporal evidence evaluation
+
+extensions:
+  - file://scripts/reset-workspace.mjs:beforeEach
 
 prompts:
   - id: video-evidence-task
@@ -8,16 +11,14 @@ prompts:
 
 providers:
   - id: openai:codex-sdk
-    label: codex-vidxp-mcp
-    config:
+    label: codex-vidxp
+    config: &vidxp_provider
       model: "{{ env.VIDXP_EVAL_MODEL | default('gpt-5.6-sol') }}"
       model_reasoning_effort: "{{ env.VIDXP_EVAL_REASONING | default('medium') }}"
       maxRetries: 0
-      working_dir: "{{ env.VIDXP_EVAL_WORKSPACE }}"
+      working_dir: "{{ env.VIDXP_EVAL_VIDXP_ON_WORKSPACE }}"
       skip_git_repo_check: true
-      sandbox_mode: read-only
       approval_policy: never
-      network_access_enabled: false
       web_search_mode: disabled
       persist_threads: false
       enable_streaming: true
@@ -27,65 +28,65 @@ providers:
         required:
           - video_id
           - answer
-          - start_seconds
-          - end_seconds
-          - modalities
-          - evidence
+          - source_job_id
+          - candidates
         properties:
           video_id:
             type: string
           answer:
             type: string
-          start_seconds:
+          source_job_id:
             type:
-              - number
+              - string
               - "null"
-          end_seconds:
-            type:
-              - number
-              - "null"
-          modalities:
+          candidates:
             type: array
-            uniqueItems: true
-            items:
-              type: string
-              enum:
-                - scene
-                - action
-                - sound
-                - speech
-          evidence:
-            type: array
+            minItems: 0
+            maxItems: 3
             items:
               type: object
               additionalProperties: false
               required:
                 - start_seconds
                 - end_seconds
-                - modality
+                - modalities
                 - description
+                - evidence_ids
               properties:
                 start_seconds:
                   type: number
                 end_seconds:
                   type: number
-                modality:
-                  type: string
-                  enum:
-                    - scene
-                    - action
-                    - sound
-                    - speech
+                modalities:
+                  type: array
+                  items:
+                    type: string
+                    enum:
+                      - scene
+                      - action
+                      - sound
+                      - speech
                 description:
                   type: string
+                evidence_ids:
+                  type: array
+                  items:
+                    type: string
       cli_env:
-        CODEX_HOME: "{{ env.VIDXP_EVAL_CODEX_HOME }}"
+        CODEX_HOME: "{{ env.VIDXP_EVAL_VIDXP_ON_CODEX_HOME }}"
+        HOME: "{{ env.VIDXP_EVAL_VIDXP_ON_WORKSPACE }}"
+        TMPDIR: "{{ env.VIDXP_EVAL_VIDXP_ON_WORKSPACE }}/tmp"
       cli_config:
         features:
           multi_agent: false
         mcp_servers:
           vidxp:
             command: "{{ env.VIDXP_MCP_COMMAND }}"
+            env:
+              VIDXP_MODEL_CACHE: "{{ env.VIDXP_MODEL_CACHE }}"
+              VIDXP_ALLOW_MODEL_DOWNLOADS: "false"
+              VIDXP_SLM_BASE_URL: ""
+              VIDXP_SLM_MODEL: ""
             args:
               - --repository
               - "{{ env.VIDXP_EVAL_REPOSITORY | default('default') }}"
@@ -97,33 +98,60 @@ providers:
               - "{{ env.VIDXP_EVAL_DEVICE | default('cpu') }}"
 
   - id: openai:codex-sdk
-    label: codex-no-mcp
+    label: codex-baseline
     config:
-      model: "{{ env.VIDXP_EVAL_MODEL | default('gpt-5.6-sol') }}"
-      model_reasoning_effort: "{{ env.VIDXP_EVAL_REASONING | default('medium') }}"
-      maxRetries: 0
-      working_dir: "{{ env.VIDXP_EVAL_WORKSPACE }}"
-      skip_git_repo_check: true
-      sandbox_mode: read-only
-      approval_policy: never
-      network_access_enabled: false
-      web_search_mode: disabled
-      persist_threads: false
-      enable_streaming: true
-      output_schema: *result_schema
+      <<: *vidxp_provider
+      working_dir: "{{ env.VIDXP_EVAL_VIDXP_OFF_WORKSPACE }}"
       cli_env:
-        CODEX_HOME: "{{ env.VIDXP_EVAL_CODEX_HOME }}"
+        CODEX_HOME: "{{ env.VIDXP_EVAL_VIDXP_OFF_CODEX_HOME }}"
+        HOME: "{{ env.VIDXP_EVAL_VIDXP_OFF_WORKSPACE }}"
+        TMPDIR: "{{ env.VIDXP_EVAL_VIDXP_OFF_WORKSPACE }}/tmp"
       cli_config:
         features:
           multi_agent: false
+
+  - id: openai:codex-sdk
+    label: codex-clean-user
+    config:
+      <<: *vidxp_provider
+      working_dir: "{{ env.VIDXP_EVAL_CLEAN_USER_WORKSPACE }}"
+      cli_env:
+        CODEX_HOME: "{{ env.VIDXP_EVAL_CLEAN_USER_CODEX_HOME }}"
+        HOME: "{{ env.VIDXP_EVAL_CLEAN_USER_WORKSPACE }}"
+        PATH: "{{ env.VIDXP_EVAL_CLEAN_USER_PATH }}"
+        TMPDIR: "{{ env.VIDXP_EVAL_CLEAN_USER_WORKSPACE }}/tmp"
+      cli_config:
+        features:
+          multi_agent: false
+
+  - id: file://scripts/local_slm_provider.py:call_api
+    label: local-slm
+    config: &local_slm_provider
+      pythonExecutable: "{{ env.PROMPTFOO_PYTHON }}"
+      workers: 1
+      timeout: 900000
+      contextTokens: 64000
+      maxOutputTokens: 32768
+      modelTimeoutSeconds: 180
+      strategy: router
+
+  - id: file://scripts/local_slm_provider.py:call_api
+    label: local-slm-planner
+    config:
+      <<: *local_slm_provider
+      strategy: planner
 
 tests:
   - path: file://../../src/vidxp/benchmarks/agent_ablation_tests.py:generate_tests
     config:
       manifest: tasks/longvale-part9-pilot.json
+      machine_id: "{{ env.VIDXP_EVAL_MACHINE_ID }}"
       providers:
-        mcp_on: codex-vidxp-mcp
-        mcp_off: codex-no-mcp
+        vidxp_on: codex-vidxp
+        vidxp_off: codex-baseline
+        clean_user: codex-clean-user
+        local_slm: local-slm
+        local_slm_planner: local-slm-planner
 
 evaluateOptions:
   cache: false

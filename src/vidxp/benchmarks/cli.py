@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import typer
 from rich import print as rich_print
@@ -16,17 +16,7 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
-from vidxp.benchmarks.didemo import run_didemo
-from vidxp.benchmarks.hirest import (
-    HIREST_DEFAULT_WINDOW_FRACTION,
-    run_hirest,
-)
-from vidxp.benchmarks.prepare import (
-    PreparationPlan,
-    execute_preparation,
-    plan_didemo,
-    plan_hirest,
-)
+from vidxp.benchmarks.config import HIREST_DEFAULT_WINDOW_FRACTION
 from vidxp.app_paths import available_storage_bytes
 from vidxp.capabilities.registry import create_capability_registry
 from vidxp.cli_support import (
@@ -41,6 +31,9 @@ from vidxp.dependencies import (
     inspect_requirement,
     packaged_requirements,
 )
+
+if TYPE_CHECKING:
+    from vidxp.benchmarks.prepare import PreparationPlan
 
 
 app = typer.Typer(help="Prepare and run official benchmark adapters.")
@@ -102,6 +95,8 @@ def _execute_preparation_plan(
     yes: bool,
     json_output: bool,
 ) -> None:
+    from vidxp.benchmarks.prepare import execute_preparation
+
     output_format = effective_output_format(state, json_output)
     if output_format == OutputFormat.rich:
         _show_preparation_plan(plan)
@@ -325,6 +320,8 @@ def prepare_didemo_command(
 ) -> None:
     """Prepare verified DiDeMo artifacts and selected official videos."""
 
+    from vidxp.benchmarks.prepare import plan_didemo
+
     state = state_from_context(ctx)
     root = (
         output_directory
@@ -395,6 +392,8 @@ def prepare_hirest_command(
     ] = False,
 ) -> None:
     """Prepare verified HiREST artifacts and released transcripts."""
+
+    from vidxp.benchmarks.prepare import plan_hirest
 
     state = state_from_context(ctx)
     root = (
@@ -479,6 +478,8 @@ def didemo_command(
 ) -> None:
     """Run DiDeMo scene retrieval and its official evaluator."""
 
+    from vidxp.benchmarks.didemo import run_didemo
+
     _require_benchmark_dependencies("scene")
     state = state_from_context(ctx)
     metrics = run_didemo(
@@ -545,6 +546,8 @@ def hirest_command(
 ) -> None:
     """Run HiREST released-ASR retrieval; score validation predictions."""
 
+    from vidxp.benchmarks.hirest import run_hirest
+
     if not 0 < temporal_window_fraction < 1:
         raise typer.BadParameter(
             "The temporal window fraction must be greater than zero and "
@@ -574,3 +577,258 @@ def hirest_command(
         emit_json(metrics)
     else:
         rich_print(metrics)
+
+
+def _emit_metrics(ctx: typer.Context, metrics: dict, json_output: bool) -> None:
+    state = state_from_context(ctx)
+    if effective_output_format(state, json_output) == OutputFormat.json:
+        emit_json(metrics)
+    else:
+        rich_print(metrics)
+
+
+@app.command("msrvtt-action")
+def msrvtt_action_command(
+    ctx: typer.Context,
+    annotations: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    gallery: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    media_directory: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False),
+    ],
+    run_id: Annotated[str, typer.Option()],
+    query_indices: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional comma-separated query indices for a smoke subset."
+        ),
+    ] = None,
+    output_root: Annotated[Path, typer.Option()] = Path("benchmark_runs"),
+    reset: Annotated[bool, typer.Option()] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Run current VideoPrism on MSR-VTT 1K-A text-video retrieval."""
+
+    from vidxp.benchmarks.modality_gates import run_msrvtt_action
+
+    _require_benchmark_dependencies("action")
+    state = state_from_context(ctx)
+    metrics = run_msrvtt_action(
+        annotations_path=annotations,
+        gallery_path=gallery,
+        media_directory=media_directory,
+        run_id=run_id,
+        query_indices=_annotation_indices(query_indices),
+        output_root=output_root,
+        device=state.settings.runtime_backend,
+        reset=reset,
+    )
+    _emit_metrics(ctx, metrics, json_output)
+
+
+@app.command("charades-action")
+def charades_action_command(
+    ctx: typer.Context,
+    annotations: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    media_directory: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False),
+    ],
+    run_id: Annotated[str, typer.Option()],
+    query_indices: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional comma-separated query indices for a smoke subset."
+        ),
+    ] = None,
+    output_root: Annotated[Path, typer.Option()] = Path("benchmark_runs"),
+    reset: Annotated[bool, typer.Option()] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Run current VideoPrism windows on Charades-STA localization."""
+
+    from vidxp.benchmarks.modality_gates import run_charades_action
+
+    _require_benchmark_dependencies("action")
+    state = state_from_context(ctx)
+    metrics = run_charades_action(
+        annotations_path=annotations,
+        media_directory=media_directory,
+        run_id=run_id,
+        query_indices=_annotation_indices(query_indices),
+        output_root=output_root,
+        device=state.settings.runtime_backend,
+        reset=reset,
+    )
+    _emit_metrics(ctx, metrics, json_output)
+
+
+@app.command("finelap-retrieval")
+def finelap_retrieval_command(
+    ctx: typer.Context,
+    metadata: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    run_id: Annotated[str, typer.Option()],
+    entry_indices: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional comma-separated audio-entry indices for a subset."
+        ),
+    ] = None,
+    output_root: Annotated[Path, typer.Option()] = Path("benchmark_runs"),
+    reset: Annotated[bool, typer.Option()] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Run FineLAP global embeddings on official-format clip retrieval."""
+
+    from vidxp.benchmarks.modality_gates import run_finelap_retrieval
+
+    _require_benchmark_dependencies("sound")
+    state = state_from_context(ctx)
+    metrics = run_finelap_retrieval(
+        metadata_path=metadata,
+        run_id=run_id,
+        entry_indices=_annotation_indices(entry_indices),
+        output_root=output_root,
+        device=state.settings.runtime_backend,
+        reset=reset,
+    )
+    _emit_metrics(ctx, metrics, json_output)
+
+
+@app.command("finelap-grounding")
+def finelap_grounding_command(
+    ctx: typer.Context,
+    metadata: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    audio_directory: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False),
+    ],
+    run_id: Annotated[str, typer.Option()],
+    query_indices: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional comma-separated phrase indices for a subset."
+        ),
+    ] = None,
+    output_root: Annotated[Path, typer.Option()] = Path("benchmark_runs"),
+    reset: Annotated[bool, typer.Option()] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Run FineLAP dense rankings on TAG-format phrase grounding."""
+
+    from vidxp.benchmarks.modality_gates import run_finelap_grounding
+
+    _require_benchmark_dependencies("sound")
+    state = state_from_context(ctx)
+    metrics = run_finelap_grounding(
+        metadata_path=metadata,
+        audio_directory=audio_directory,
+        run_id=run_id,
+        query_indices=_annotation_indices(query_indices),
+        output_root=output_root,
+        device=state.settings.runtime_backend,
+        reset=reset,
+    )
+    _emit_metrics(ctx, metrics, json_output)
+
+
+@app.command("finelap-audio-moment")
+def finelap_audio_moment_command(
+    ctx: typer.Context,
+    metadata: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    audio_directory: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False),
+    ],
+    run_id: Annotated[str, typer.Option()],
+    dataset: Annotated[
+        Literal["clotho-moment", "castella"],
+        typer.Option(help="Lighthouse-format audio-moment dataset."),
+    ] = "clotho-moment",
+    query_indices: Annotated[
+        str | None,
+        typer.Option(
+            help="Optional comma-separated query indices for a subset."
+        ),
+    ] = None,
+    output_root: Annotated[Path, typer.Option()] = Path("benchmark_runs"),
+    reset: Annotated[bool, typer.Option()] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Measure current FineLAP search on a true audio-moment task."""
+
+    from vidxp.benchmarks.modality_gates import run_finelap_audio_moment
+
+    _require_benchmark_dependencies("sound")
+    state = state_from_context(ctx)
+    metrics = run_finelap_audio_moment(
+        metadata_path=metadata,
+        audio_directory=audio_directory,
+        run_id=run_id,
+        dataset=dataset,
+        query_indices=_annotation_indices(query_indices),
+        output_root=output_root,
+        device=state.settings.runtime_backend,
+        reset=reset,
+    )
+    _emit_metrics(ctx, metrics, json_output)
+
+
+@app.command("aegbench-sound")
+def aegbench_sound_command(
+    ctx: typer.Context,
+    manifest: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    run_id: Annotated[str, typer.Option()],
+    provider: Annotated[
+        Literal["finelap", "pe-a-frame"],
+        typer.Option(help="Sound provider to evaluate on identical event queries."),
+    ] = "finelap",
+    audio_directory: Annotated[
+        Path | None,
+        typer.Option(exists=True, file_okay=False),
+    ] = None,
+    pe_model_directory: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            file_okay=False,
+            help="Prepared PE-A-Frame snapshot; required for that provider.",
+        ),
+    ] = None,
+    output_root: Annotated[Path, typer.Option()] = Path("benchmark_runs"),
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Compare sound event ranking and localization on AEGBench."""
+
+    from vidxp.benchmarks.aegbench import run_aegbench_sound
+
+    _require_benchmark_dependencies("sound")
+    state = state_from_context(ctx)
+    metrics = run_aegbench_sound(
+        manifest_path=manifest,
+        audio_directory=audio_directory,
+        run_id=run_id,
+        provider=provider,
+        pe_model_directory=pe_model_directory,
+        output_root=output_root,
+        device=state.settings.runtime_backend,
+    )
+    _emit_metrics(ctx, metrics, json_output)

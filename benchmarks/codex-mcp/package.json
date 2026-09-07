@@ -2,18 +2,23 @@
   "name": "vidxp-codex-mcp-eval",
   "private": true,
   "version": "0.0.0",
-  "description": "Paired Codex evaluation with and without the local VidXP MCP server",
+  "description": "VidXP agent-ablation and local-agent evaluation",
   "engines": {
     "node": ">=22.22.0"
   },
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "test:setup": "node --test scripts/setup.test.mjs",
+    "test:setup": "node --no-warnings --test scripts/setup.test.mjs scripts/report.test.mjs",
     "promptfoo": "node --env-file=.env node_modules/promptfoo/dist/src/entrypoint.js",
     "check": "node scripts/require-node.mjs && node --env-file-if-exists=.env node_modules/promptfoo/dist/src/entrypoint.js validate -c promptfooconfig.yaml",
     "preflight": "node --env-file=.env scripts/preflight.mjs",
-    "eval:smoke": "npm run preflight && npm run promptfoo -- eval -c promptfooconfig.yaml --filter-first-n 2 --repeat 1 --no-cache --no-share",
-    "eval:pilot": "npm run preflight && npm run promptfoo -- eval -c promptfooconfig.yaml --repeat 3 --no-cache --no-share",
+    "eval:smoke": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs smoke",
+    "eval:pilot": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs pilot",
+    "eval:vidxp": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs pilot vidxp-on",
+    "eval:slm:smoke": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs smoke local-slm,local-slm-planner",
+    "eval:slm": "node scripts/require-node.mjs && node --env-file=.env --no-warnings scripts/run-eval.mjs pilot local-slm,local-slm-planner",
+    "export": "node --env-file=.env --no-warnings scripts/export-eval.mjs",
+    "report": "node --env-file-if-exists=.env --no-warnings scripts/report.mjs",
     "view": "npm run promptfoo -- view"
   },
   "devDependencies": {

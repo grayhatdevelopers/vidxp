@@ -1,7 +1,30 @@
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { posix, win32 } from 'node:path';
 
 export const REQUIRED_NODE_VERSION = [22, 22, 0];
+const MACHINE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+export function requireMachineId(value) {
+  if (typeof value !== 'string' || !MACHINE_ID_PATTERN.test(value)) {
+    throw new Error(
+      'A repository machine ID such as mac-m2-01 is required; '
+      + 'pass it to setup with --machine-id.',
+    );
+  }
+  return value;
+}
+
+export function savedMachineId(envPath) {
+  try {
+    const match = readFileSync(envPath, 'utf8').match(
+      /^VIDXP_EVAL_MACHINE_ID=(?:"([^"]+)"|'([^']+)'|([^\r\n]+))$/m,
+    );
+    return match ? match[1] || match[2] || match[3] : null;
+  } catch {
+    return null;
+  }
+}
 
 export function versionAtLeast(actual, required = REQUIRED_NODE_VERSION) {
   const parts = actual.split('.').map(Number);
@@ -33,24 +56,67 @@ export function evaluationEnvironment({
   benchmarkRoot,
   repositoryRoot,
   evaluationRoot,
+  indexSchemaVersion,
   environment = process.env,
   platform = process.platform,
 }) {
+  if (!Number.isInteger(indexSchemaVersion) || indexSchemaVersion < 1) {
+    throw new Error('A positive VidXP index schema version is required.');
+  }
   const paths = platform === 'win32' ? win32 : posix;
   const executable = platform === 'win32' ? 'vidxp-mcp.exe' : 'vidxp-mcp';
+  const pythonExecutable = platform === 'win32' ? 'python.exe' : 'python';
   const scriptsDirectory = platform === 'win32' ? 'Scripts' : 'bin';
+  const cleanUserPath = platform === 'win32'
+    ? [
+      paths.join(environment.SystemRoot || 'C:\\Windows', 'System32'),
+      environment.SystemRoot || 'C:\\Windows',
+    ].join(';')
+    : '/usr/bin:/bin:/usr/sbin:/sbin';
+  const machineId = requireMachineId(environment.VIDXP_EVAL_MACHINE_ID);
   return {
+    VIDXP_EVAL_MACHINE_ID: machineId,
+    VIDXP_EVAL_PROJECT_ROOT: repositoryRoot,
     VIDXP_EVAL_CODEX_HOME: paths.join(evaluationRoot, 'codex-home'),
+    VIDXP_EVAL_VIDXP_ON_CODEX_HOME: paths.join(evaluationRoot, 'codex-home', 'vidxp-on'),
+    VIDXP_EVAL_VIDXP_OFF_CODEX_HOME: paths.join(evaluationRoot, 'codex-home', 'vidxp-off'),
+    VIDXP_EVAL_CLEAN_USER_CODEX_HOME: paths.join(
+      evaluationRoot,
+      'codex-home',
+      'clean-user',
+    ),
     VIDXP_EVAL_WORKSPACE: paths.join(evaluationRoot, 'workspace'),
+    VIDXP_EVAL_VIDXP_ON_WORKSPACE: paths.join(evaluationRoot, 'workspace', 'vidxp-on'),
+    VIDXP_EVAL_VIDXP_OFF_WORKSPACE: paths.join(evaluationRoot, 'workspace', 'vidxp-off'),
+    VIDXP_EVAL_CLEAN_USER_WORKSPACE: paths.join(
+      evaluationRoot,
+      'workspace',
+      'clean-user',
+    ),
+    VIDXP_EVAL_CLEAN_USER_PATH: cleanUserPath,
+    VIDXP_EVAL_UV_CACHE_DIR: paths.join(evaluationRoot, 'uv-cache'),
     VIDXP_EVAL_DATA_DIR: paths.join(evaluationRoot, 'vidxp-data'),
-    VIDXP_EVAL_INDEX_DIR: paths.join(evaluationRoot, 'vidxp-index'),
+    VIDXP_EVAL_INDEX_DIR: paths.join(
+      evaluationRoot,
+      `vidxp-index-schema-${indexSchemaVersion}`,
+    ),
     VIDXP_MCP_COMMAND: paths.join(repositoryRoot, '.venv', scriptsDirectory, executable),
+    PROMPTFOO_PYTHON: paths.join(
+      repositoryRoot,
+      '.venv',
+      scriptsDirectory,
+      pythonExecutable,
+    ),
     VIDXP_EVAL_REPOSITORY: environment.VIDXP_EVAL_REPOSITORY || 'default',
     VIDXP_EVAL_DEVICE: environment.VIDXP_EVAL_DEVICE || 'cpu',
     VIDXP_EVAL_MODEL: environment.VIDXP_EVAL_MODEL || 'gpt-5.6-sol',
     VIDXP_EVAL_REASONING: environment.VIDXP_EVAL_REASONING || 'medium',
     VIDXP_EVAL_ARTIFACT_DIR: paths.join(evaluationRoot, 'longvale-artifacts'),
     VIDXP_EVAL_ENV_FILE: paths.join(benchmarkRoot, '.env'),
+    VIDXP_MODEL_CACHE: paths.resolve(
+      environment.VIDXP_MODEL_CACHE
+        || paths.join(evaluationRoot, 'vidxp-data', 'models'),
+    ),
   };
 }
 

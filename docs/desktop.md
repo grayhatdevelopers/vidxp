@@ -53,9 +53,9 @@ The main Desktop files are:
 | `desktop/src/` | React user interface and frontend tests |
 | `desktop/src-tauri/src/` | Tauri commands, setup lifecycle, activation, and process supervision |
 | `desktop/runtime-manifest.json` | Pinned Python and VidXP runtime versions |
+| `src/vidxp/assets/local-answers.json` | Shared local-answer model and managed-runtime specification |
 | `desktop/sidecars.json` | Pinned `uv` sidecar versions and archive checksums |
-| `desktop/capability-catalog.json` | Generated capability labels, installation extras, and model download plans |
-| `desktop/model-cache-catalog.json` | Generated model-cache recognition catalog |
+| `desktop/generated/` | Ignored build-time capability and model-cache catalogs derived from Python specifications |
 | `desktop/scripts/` | Sidecar, model-catalog, notice, branding, and package scripts |
 | `desktop/THIRD_PARTY_NOTICES.txt` | Generated notices shipped with the installers |
 
@@ -107,15 +107,15 @@ locked Rust dependency information used by notice generation:
 
 ```bash
 npm --prefix desktop ci
+npm --prefix desktop run model-catalog:generate
 cargo install cargo-about --version 0.9.1 --locked --features cli
 cargo fetch --manifest-path desktop/src-tauri/Cargo.toml --locked
 ```
 
-Run the generated-file checks, frontend suite, Python package build, sidecar
-check, and Rust tests:
+Run the legal-notice check, frontend suite, Python package build, sidecar check,
+and Rust tests:
 
 ```bash
-npm --prefix desktop run model-catalog:check
 npm --prefix desktop run notices:check
 npm --prefix desktop run check
 python -m build
@@ -127,13 +127,16 @@ Use `npm --prefix desktop run sidecar:windows` instead of `sidecar:unix` on
 Windows. Report the exact commands you ran and any platform package you could
 not build or inspect.
 
-Three checked-in files must stay synchronized with their source contracts:
+Desktop model catalogs are ignored build outputs. Supported Desktop development
+and package commands generate them from the canonical Python capability registry
+before Cargo runs. Generate them explicitly before invoking Cargo directly:
 
-- After changing capability labels, descriptions, extras, or model contracts,
-  run
-  `npm --prefix desktop run model-catalog:write`, review the diff, and run the
-  corresponding `:check` command. This updates both Desktop catalogs from the
-  canonical capability registry.
+```bash
+npm --prefix desktop run model-catalog:generate
+```
+
+The checked-in legal notice must stay synchronized with its source contracts:
+
 - After changing a production dependency or license, run
   `npm --prefix desktop run notices:write`, review the inventory, and run the
   corresponding `:check` command.
@@ -205,15 +208,15 @@ APT, DNF, or manual command and leaves elevation to the user. Existing
 installations remain responsible for their own media setup.
 
 Local grounded answers do not justify installing another desktop application.
-Desktop reuses a healthy Ollama service without taking ownership, then checks
-for an existing executable. When neither is available on Windows x86-64 or
-macOS Apple Silicon, it downloads the pinned headless archive declared in
-`runtime-manifest.json`, verifies its byte count and SHA-256 digest, extracts it
-into Desktop's private application data, and starts `ollama serve` through the
-shared process supervisor. Downloads are cancellable, incomplete archives and
-staging directories are removed, and only a completely extracted version is
-activated. Linux and unsupported architectures require an external Ollama
-installation. Desktop never invokes an Ollama desktop-app installer.
+Desktop runs `vidxp local-answers prepare` inside its managed environment, so
+the CLI and Desktop use the same endpoint checks, runtime installation, checksum
+verification, model download, and canonical specification. Desktop supplies its
+private runtime path and keeps provider settings in Desktop activation state.
+Tauri only starts and supervises the resulting `ollama serve` process.
+Downloads are cancellable, incomplete archives and staging directories are
+removed, and only a completely extracted version is activated. Linux and
+unsupported architectures require an external Ollama installation. Desktop
+never invokes an Ollama desktop-app installer or stops an external service.
 
 Starting Desktop shows the control panel without opening a browser. **Open
 VidXP** starts or reuses the browser service and opens one tab. Closing the

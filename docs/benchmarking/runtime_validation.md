@@ -4,6 +4,29 @@ This ledger records executable checks for the benchmark-ready core. It is
 separate from unit-test coverage and from benchmark results. A smoke result here
 must not be reported as a paper score.
 
+## 2026-09-05 PE-A-Frame product-path smoke
+
+On `mac-m2-01`, a 75.81-second LongVALE development video ran through the
+product decoder, pinned model runtime, Chroma inner-product storage, overlap
+de-duplication, and sound search. Ten-second sections with the selected
+two-second overlap stored 1,896 unique frame embeddings in 22.156 seconds after
+model load. The opening rain/wind/engine query ranked `0–10` seconds first; the
+ending bell query ranked `70–80` seconds first. A 60-second-section control took
+198.651 seconds, while five-second overlap took 33.564 seconds and did not
+improve either result. Two seconds is therefore the smallest tested nonzero
+overlap, not an accuracy optimum. This selects the documented deployment
+defaults; one development video is not a long-audio quality result.
+
+## 2026-09-03 historical FineLAP two-stage search smoke
+
+A real Apple Silicon macOS search used the existing five-video index and the
+prepared FineLAP checkpoint. One text embedding selected the top three global
+sound windows, then a second Chroma query ranked only dense activations inside
+those windows. The returned sound moment was `1.60–2.08` seconds, and every hit
+identified the same `0–10`-second parent window through context metadata. This
+validates the model, collection-wide filter, storage, application, fusion, and
+JSON output paths. It is one query, not a quality result or an agent comparison.
+
 ## 2026-07-30 current-provider benchmark closure
 
 Two real, bounded runs validated the current CPU providers and official

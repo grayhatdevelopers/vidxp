@@ -15,7 +15,7 @@ from vidxp.capabilities.schemas import SearchInput, SearchResult
 from vidxp.capabilities.sound.config import SoundConfig
 from vidxp.capabilities.sound.models import get_sound_model
 from vidxp.capabilities.sound.operations import index_capability, search_operation
-from vidxp.capabilities.sound.specs import FINELAP_MODEL, SOUND_MODEL_SPECS
+from vidxp.capabilities.sound.specs import PE_A_FRAME_MODEL, SOUND_MODEL_SPECS
 from vidxp.core.contracts import IndexConfig, VideoSource
 from vidxp.core.indexing_common import ProgressCallback, report_preparation
 
@@ -28,7 +28,7 @@ def prepare_models(
     report_preparation(
         progress,
         "sound_model",
-        f"Preparing sound model: {FINELAP_MODEL.model_id}",
+        f"Preparing sound model: {PE_A_FRAME_MODEL.model_id}",
     )
     get_sound_model(context.runtime, download=True, progress=progress)
     return tuple(spec.model_id for spec in SOUND_MODEL_SPECS)
@@ -39,10 +39,7 @@ def model_manifest(
     _sources: tuple[VideoSource, ...],
 ) -> Mapping[str, Any]:
     return {
-        "sound": FINELAP_MODEL.identity(),
-        "sound_text_assets": [
-            spec.identity() for spec in SOUND_MODEL_SPECS[1:]
-        ],
+        "sound": PE_A_FRAME_MODEL.identity(),
     }
 
 
@@ -77,14 +74,11 @@ def create_executor() -> CapabilityExecutor:
             module_import_check("PyAV audio import", "av", "AudioResampler"),
             module_import_check("NumPy import", "numpy"),
             module_import_check("Torch import", "torch"),
-            module_import_check("TorchAudio import", "torchaudio"),
-            module_import_check("timm import", "timm"),
             module_import_check(
-                "Transformers FineLAP import",
+                "Transformers PE-A import",
                 "transformers",
-                "AutoConfig",
-                "RobertaModel",
-                "RobertaTokenizer",
+                "PeAudioFrameLevelModel",
+                "PeAudioProcessor",
             ),
             module_import_check(
                 "Hugging Face Hub import",

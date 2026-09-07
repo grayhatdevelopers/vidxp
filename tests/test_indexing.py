@@ -81,6 +81,7 @@ class IndexingTests(unittest.TestCase):
                     "end": 4.0,
                     "words": [
                         {"word": "one", "start": 0.1, "end": 0.5},
+                        {"word": "discarded", "start": 0.5, "end": 0.5},
                         {"word": "two", "start": 0.6, "end": 1.0},
                         {"word": "three", "start": 1.2, "end": 1.8},
                     ],

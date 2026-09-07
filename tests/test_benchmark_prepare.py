@@ -354,11 +354,11 @@ class BenchmarkPreparationCliTests(unittest.TestCase):
                     ),
                 ),
                 patch(
-                    "vidxp.benchmarks.cli.plan_didemo",
+                    "vidxp.benchmarks.prepare.plan_didemo",
                     return_value=plan,
                 ),
                 patch(
-                    "vidxp.benchmarks.cli.execute_preparation",
+                    "vidxp.benchmarks.prepare.execute_preparation",
                     return_value={"status": "ready"},
                 ),
             ):

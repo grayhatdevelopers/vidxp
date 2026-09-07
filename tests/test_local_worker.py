@@ -352,6 +352,56 @@ class LocalWorkerSupervisorTests(unittest.TestCase):
         )
         self.assertFalse(ready_path.exists())
 
+    def test_stop_terminates_workers_from_previous_application_versions(self):
+        with TemporaryDirectory() as directory:
+            settings = VidXPSettings(repository_root=Path(directory))
+            supervisor = LocalWorkerSupervisor(settings)
+            supervisor.layout.ensure_local_directories()
+            previous_version = "0.4.0+previous"
+            ready_path = (
+                supervisor.layout.local_workflows
+                / f"worker-{previous_version}.ready"
+            )
+            ready_path.write_text(
+                LocalWorkerReady(
+                    pid=456,
+                    application_version=previous_version,
+                    fingerprint="b" * 64,
+                ).model_dump_json(),
+                encoding="utf-8",
+            )
+            previous_lock = Mock()
+            previous_lock.acquire.side_effect = [
+                Timeout("worker.lock"),
+                None,
+            ]
+            current_lock = Mock()
+
+            def lock_for(path):
+                if str(path).endswith(f"worker-{previous_version}.lock"):
+                    return previous_lock
+                return current_lock
+
+            with (
+                patch(
+                    "vidxp.infrastructure.local_worker.FileLock",
+                    side_effect=lock_for,
+                ),
+                patch(
+                    "vidxp.infrastructure.local_worker.write_json_atomic"
+                ) as write_stop,
+            ):
+                stopped = supervisor.stop()
+
+        self.assertTrue(stopped)
+        write_stop.assert_called_once()
+        self.assertEqual(write_stop.call_args.args[1]["pid"], 456)
+        self.assertEqual(
+            write_stop.call_args.args[1]["application_version"],
+            previous_version,
+        )
+        self.assertFalse(ready_path.exists())
+
     def test_worker_destroys_dbos_after_stop_request(self):
         stop_event = Event()
         stop_event.set()

@@ -1,142 +1,388 @@
-# Multimodal model and benchmark direction
+# Evidence retrieval direction
 
 Collection index: [Benchmarking research](README.md)
 
-Status: Current decision record; FineLAP and VideoPrism are implemented, while
-other candidate providers remain planned unless architecture says otherwise
+Status: Current product and evaluation decision
 
-Last verified: 2026-08-30
+Last verified: 2026-09-07
 
-## Product requirement
+The [research adoption record](research_adoption.md) is the source of truth for
+paper-derived product behavior. The [paper inventory](research_papers.md)
+records relevant work without implying that VidXP adopts it.
 
-VidXP needs three independently searchable, timestamped evidence channels:
+## Product target
 
-1. visual scenes and actions;
-2. environmental sounds, music, and other non-speech acoustic events; and
-3. spoken words through ASR and text retrieval.
+VidXP gives an AI agent a compact, inspectable view of a video library: matching
+speech, sounds, frames, action clips, timestamps, and playable evidence. The
+agent remains responsible for interpreting that evidence and answering the
+user. VidXP does not need to replace the agent with one all-in-one video model.
 
-Query-time fusion must preserve which channel produced each hit. A shared
-embedding model is optional; collapsing the channels is not the requirement.
-LongVALE makes this boundary explicit because its events can depend on vision,
-generic audio, speech, or their temporal relationship.
+A product-level comparison succeeds when VidXP matches or improves the agent's
+bounded-chunk hit rate while using fewer total tokens. The current benchmark
+targets a 10-second evidence clip, accepts 8–12 seconds, and requires at least
+half of the event available to one target-size clip. This VidXP serving rule
+rejects both blink-length and whole-video answers. Report cached and uncached
+input, output, reasoning, time, cost, and calls alongside it. Temporal IoU and
+threshold recall remain secondary exact-boundary diagnostics and an explicit
+future research limitation.
 
-## Repository baseline
+## Providers used in the current agent run
 
-The history before this change contained no shipped CLAP provider or generic-sound
-capability. CLAP appears in the later landscape/roadmap research, not in the
-application implementation history, so it was not removed by the VideoPrism
-change. This branch now implements the missing layer with FineLAP; LAION-CLAP
-remains the mature comparison rather than the production provider.
-
-VideoPrism is different: it is a current, separately registered temporal-video
-capability using `google/videoprism-lvt-base-f16r288` through Transformers. The
-new model direction keeps that implementation as the incumbent control while
-testing whether Qwen3-VL-Embedding improves text-to-video scene/action retrieval.
-
-## How models are selected
-
-Published benchmark tables, release history, licensing, adoption, artifact
-format, and runtime size are sufficient to choose the first integration
-candidates. VidXP does not need to spend model or agent runs recreating public
-leaderboards before implementation.
-
-Local evaluation has a narrower purpose: verify preprocessing, timestamps,
-memory, latency, index size, failure behavior, and regressions in this repository.
-It does not substitute a tiny private sample for broad published comparisons.
-Promptfoo is therefore not required for component-model selection. It is the
-selected runner for the separate [Codex MCP-on/MCP-off agent
-ablation](agent_ablation.md), where paired task execution, repetitions, traces,
-and usage accounting are part of the question. VidXP's Python benchmark code
-continues to own dataset preparation and deterministic temporal scoring.
-
-## Current provider direction
-
-| Role | First direction | Control or ceiling | Reason |
-| --- | --- | --- | --- |
-| Speech transcription and semantic search | Keep faster-whisper plus the current Qwen3 text-embedding path | Existing released-ASR benchmark paths | Speech and acoustic-event retrieval are different tasks; MAEB shows that no single audio encoder dominates linguistic and environmental-sound work. |
-| Environmental-sound retrieval | [FineLAP](https://github.com/xiquan-li/FineLAP), now integrated | [LAION-CLAP](https://github.com/LAION-AI/CLAP) as the mature native-Transformers baseline | FineLAP combines global audio-text retrieval with dense frame features and leads the checked same-table AudioCaps comparison. VidXP supplies fixed ten-second windowing and timestamped dense records. |
-| Open-vocabulary sound localization | FineLAP dense features, now stored; compare [PE-A-Frame](https://github.com/facebookresearch/perception_models) | AEGBench methods as research ceilings | Clip retrieval alone cannot identify exact sound intervals, especially repeated or overlapping events. FineLAP integration does not establish boundary quality until AEGBench or LongVALE is run. |
-| Visual scene/action retrieval | Evaluate [Qwen3-VL-Embedding-2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B) as the practical candidate | Qwen3-VL-Embedding-8B as the quality ceiling; VideoPrism as the incumbent control | MVEB's text-video table ranks Qwen 8B and 2B first and second. The checked table has no directly comparable VideoPrism row, so this is stronger current selection evidence, not proof that VideoPrism lost a head-to-head. |
-| Visual temporal grounding | Evaluate [TimeLens2-4B](https://github.com/MCG-NJU/TimeLens2) after candidate retrieval | TimeLens2-8B and existing temporal baselines | The published 4B average nearly matches 8B at much lower cost. TimeLens2 is visual-only and cannot replace the sound or speech channels. |
-| Cross-modal fusion | Keep modality-specific providers and fuse timestamped candidates | A unified permissive audio-video-text encoder can be a later comparison | Separate providers preserve provenance, allow independent upgrades, and match the evidence that different model families lead different modalities and tasks. |
-| Query planning and answer synthesis | [Qwen3.5 4B](https://huggingface.co/Qwen/Qwen3.5-4B) through official Ollama `qwen3.5:4b-q4_K_M` | Qwen3.5 9B as a higher-memory comparison | The 4B model has strong published instruction-following and agent results while its official Q4_K_M artifact is approximately 3.4 GB, about half the 9B artifact. VidXP needs bounded schema generation over retrieved evidence, not a second retrieval encoder. |
-| Future media evidence enrichment | Reuse Qwen3.5 vision for selected keyframes before adding another model | Evaluate an audio-video model only for top uncitable sound/action hits | The current adapter sends JSON evidence, so multimodal model support alone changes nothing. Media inputs must remain timestamp-bound derived evidence and must not replace FineLAP, scene, action, or speech retrieval. |
-
-Before promotion, every new checkpoint still needs an immutable revision, artifact
-hash, license review, safe-loading review, dependency fit, and a bounded real-media
-smoke test.
-
-## Published selection evidence
-
-Scores are comparable only within the named paper and task.
-
-| Source and task | Relevant result | Decision use |
+| Lane | Selection | Evidence and limit |
 | --- | --- | --- |
-| [FineLAP, AudioCaps retrieval](https://aclanthology.org/2026.acl-long.473/) | FineLAP T→A/A→T R@1: 45.7/62.5; the paper's LAION-CLAP row: 35.1/44.2 | Select FineLAP for the first sound integration and retain CLAP as the mature control. |
-| [MVEB text-video leaderboard](https://arxiv.org/abs/2606.14958) | Qwen3-VL-Embedding-8B: 60.9 mean; 2B: 58.1; LCO-Embedding-Omni-7B: 56.8 | Prefer Qwen 2B for the practical visual candidate and 8B only when maximizing published quality. |
-| [TimeLens2 visual grounding](https://github.com/MCG-NJU/TimeLens2) | Seven-dataset average mIoU: 47.7 for 4B and 48.0 for 8B | Start with 4B; the 0.3-point gain does not justify making 8B the default candidate. |
-| [AEGBench](https://arxiv.org/abs/2607.04383) | PE-A-Frame Large: 0.389 mIoU, 0.407 event-F1, 0.607 segment-F1 in the checked table | Use a released specialist to test exact open-vocabulary sound intervals. |
-| [Qwen3.5 4B model card](https://huggingface.co/Qwen/Qwen3.5-4B) | Vendor-reported MMLU-Pro 79.1, IFEval 89.8, BFCL-V4 50.3, and TAU2-Bench 79.9; native 262,144-token context | Select the first local planner/synthesizer from published quality evidence; validate only schema retention, grounding, resource use, and failure behavior in VidXP. |
-| [Official Ollama Q4_K_M artifact](https://ollama.com/library/qwen3.5:4b-q4_K_M) | 4.66B parameters, Q4_K_M, approximately 3.4 GB, Apache-2.0 | Use the official cross-platform build and an explicit pull instead of bundling weights or relying on a community conversion. |
+| Speech | Keep faster-whisper plus Qwen3 Embedding | The real runtime works; the complete HiREST ranking run and a transcription WER gate remain pending. |
+| Scene | Keep SigLIP 2 | The real runtime works; the complete DiDeMo current-provider run remains pending. |
+| Action | Keep VideoPrism LvT | It classified all 50 videos in the frozen five-class Kinetics-mini gate correctly through VidXP's current 2 fps/16-frame records. This establishes basic recognition, not temporal localization. |
+| Sound localization | Use PE-A-Frame Small; keep FineLAP only as a benchmark control | On the identical 149-query AEGBench subset, PE-A improved frame AUROC from `.8401` to `.8614`, frame average precision from `.7484` to `.7616`, top-point accuracy from `.7315` to `.7651`, and default-threshold mean IoU from `.2924` to `.5226`. It was about 10.2 times slower, but still processed audio 3.35 times faster than playback on `mac-m2-01`. |
 
-VideoPrism remains a credible multi-frame video encoder. The decision above does
-not reject it on quality. It rejects two unsupported claims: that implementation
-friction still blocks it, and that it is automatically the first text-video
-retrieval pick despite being absent from the current common MVEB comparison.
+This selects providers; it is not a full product score. The isolated agent
+pilot has now run with this stack. Replacing VideoPrism with another global
+clip-similarity model alone would not fix temporal localization. PE-AV has no
+interval head, uses a 3.39 GB checkpoint, and its one-video direct-forward
+smoke took 13.36 seconds versus VideoPrism's 7.81-second mean over the 50-video
+gate.
 
-## What each dataset or benchmark contributes
+## What the product can claim now
 
-| Dataset or benchmark | Use in VidXP | Does not establish |
-| --- | --- | --- |
-| [MAEB](https://arxiv.org/abs/2602.16008) | Broad audio-embedding selection across speech, music, environmental sound, and audio-text tasks | Long-video timestamp accuracy or end-to-end VidXP quality |
-| [MVEB](https://arxiv.org/abs/2606.14958) | Common video-embedding selection across retrieval and other representation tasks, including paired video-only and audio-plus-video variants | A direct VideoPrism comparison, unrestricted temporal localization, or system latency |
-| [AEGBench](https://arxiv.org/abs/2607.04383) | Open-vocabulary environmental-sound interval grounding, including difficult and repeated events | Visual or speech retrieval |
-| [LongVALE](https://github.com/ttgeng233/LongVALE) | Primary combined target: Omni-TVG for vision, sound, and speech event localization in long videos | Actor clustering; its captioning tasks are relevant only if VidXP claims generation |
-| [FLARE](https://flarebench.github.io/) | Secondary long-video retrieval stress test with visual-only, audio-only, and hard joint queries | Human-authored-query generalization; the queries are model-generated and filtered |
-| [OVSD](https://research.ibm.com/publications/robust-and-efficient-video-scene-detection-using-optimal-sequential-grouping) | Open-licensed scene-boundary segmentation data and a useful temporal-unit regression set | Natural-language retrieval, action recognition, environmental-sound search, speech search, or cross-modal fusion |
-| [MultiVENT 2.0](https://huggingface.co/datasets/hltcoe/MultiVENT2.0) | Large-corpus event retrieval for visual, ASR, OCR, and metadata channels | Generic acoustic-event retrieval or moment boundaries |
+- The intended answer is a ranked list of useful, playable evidence chunks,
+  normally about ten seconds each. It is not a promise to cut the event at its
+  exact first and last frame.
+- PE-A-Frame is the integrated sound-localization provider. On the frozen
+  subset, it put its highest-scoring 40 ms frame inside a labelled event for
+  `76.5%` of queries and reached `.523` mean IoU at its released threshold.
+- VideoPrism remains the action provider. Its perfect result on five easy
+  Kinetics classes shows that the model and VidXP preprocessing recognize broad
+  actions; it does not show that long-video moments are ranked or trimmed well.
+- On the selected nine-task pilot, the VidXP agent returned a qualifying clip
+  on `15/27` repeated runs (`55.6%`), while its visible MCP top three contained
+  one on `19/27` (`70.4%`). Direct local inspection scored `18/27` (`66.7%`).
+  These are pilot rates over nine repeated tasks, not general product accuracy.
+- The same pilot measured 20.6% fewer agent tokens, 18.3% lower latency, and a
+  25.9% lower Promptfoo comparison-cost estimate for VidXP than direct local
+  inspection. VidXP won 20/27 matched token comparisons and 19/27 latency and
+  cost comparisons. This establishes an average efficiency gain under the
+  fixed protocol, not an API bill or an accuracy win.
 
-LongVALE supplies three tasks: omni-modal temporal grounding, dense video
-captioning, and segment captioning. Omni-TVG directly matches VidXP's search and
-timestamp contract. The two captioning tasks should not be adopted merely because
-they share the dataset.
+On this CPU-only Mac, PE-A processed 613.43 seconds of audio in about 183
+seconds, so a linear inference-only estimate is roughly 18 minutes per hour of
+audio. VideoPrism averaged 7.81 seconds per ten-second Kinetics clip, or roughly
+47 minutes per hour at the same sampling policy. These are lane estimates, not
+an end-to-end indexing promise; decoding, speech, scene indexing, storage, and
+long-video chunk overlap still need an hour-video run.
 
-## Remaining benchmark gap
+## Current product path
 
-A generic centralized audio or video embedding leaderboard is not new white
-space: MAEB and MVEB already provide that infrastructure in the MTEB ecosystem,
-and AEGBench, LongVALE, and FLARE cover adjacent temporal and multimodal slices.
+VidXP builds reusable local indexes for separate evidence types:
 
-The defensible gap is narrower: a live, reproducible long-video system benchmark
-that combines scene/action, environmental-sound, and speech queries; scores both
-retrieval and exact boundaries; includes modality-isolation and fusion ablations;
-uses realistic queries; and reports latency, memory, index size, and
-commodity-hardware behavior. If VidXP publishes this, it should extend or
-interoperate with the MTEB/MOEB ecosystem instead of creating an isolated model
-leaderboard.
+- faster-whisper and Qwen3 Embedding produce timestamped speech evidence;
+- PE-A-Frame Small produces frame-ranked environmental-sound evidence;
+- SigLIP 2 retrieves sampled visual frames;
+- VideoPrism ranks fixed multi-frame clips by global text-video similarity; and
+- reciprocal rank fusion ranks bounded candidates. Each candidate keeps one
+  anchor hit and at most one directly overlapping hit from each other modality.
 
-## Cost and execution policy
+This modular path remains the product control. No current evidence requires
+replacing every provider or moving to a single trained temporal model.
 
-Reading published papers, leaderboards, model cards, and open benchmark metadata
-does not consume Codex, Claude, or model-inference runs. Downloading and running
-open checkpoints locally normally has no per-call API charge, but it does consume
-the machine's storage, memory, electricity, and time; dataset and checkpoint
-licenses can also restrict use.
+VideoPrism's published action results do not validate this fixed-window
+ranking as temporal action localization. A direct conformance check found that
+the pinned Transformers port matches Google's official Flax checkpoint; the
+remaining action failure is therefore in the product's global-similarity
+ranking design, not the converted model weights.
 
-Metered model or agent comparisons are not part of the selection gate. Spend
-local compute only after the provider exists, using the smallest smoke that can
-catch integration defects. Schedule full MAEB, MVEB, LongVALE, FLARE, or AEGBench
-runs only when their result answers an approved paper or release question.
+VidXP already has an optional local SLM path: `query_video` can use the
+self-hosted Ollama `qwen3.5:4b-q4_K_M` model for typed query planning and
+grounded answer synthesis, with deterministic evidence fallback. This is a
+VidXP product option, not a retroactive replacement for the Codex MCP
+condition. Evaluate it as a separate local-answer lane.
 
-## Implementation order
+The paper-facing SLM condition is narrower and distinct: the custom Python
+provider gives the same managed model only the event text plus a concise system
+definition of the four indexed modalities. Promptfoo also supplies full test
+rows to custom providers. The adapter selects only the public query inputs and
+does not read the correct time range or expected modalities, keeping the answer
+key away from the model and retrieval path. The model makes one typed routing
+decision. The harness then runs the fixed MCP retrieval lifecycle and copies
+VidXP's top three ready evidence
+tiles without model inspection or reranking. The same output schema and
+deterministic scorers used for Codex apply. This is a router-assisted retrieval
+test, not a skill-, tool-discovery, evidence-synthesis, or general-agent test.
+The general Codex skill stays out of this lane. The provider reports the routing
+tokens, one model request, selected modalities, MCP calls, and total latency.
+Memory, energy, and local compute cost remain unmeasured rather than being
+treated as zero. This tests whether VidXP can serve a local agent without
+external model exposure; it does not claim that the harness agent is already a
+shipped VidXP UI feature or that local inference is costless.
 
-1. Validate the implemented FineLAP sound capability on a bounded real-media
-   sample, then run the LongVALE one-archive adapter pilot.
-2. Compare LAION-CLAP as the mature integration baseline and PE-A-Frame where
-   boundary quality requires a specialist.
-3. Add or replace the visual video-embedding provider with
-   Qwen3-VL-Embedding-2B while keeping current and VideoPrism controls.
-4. Add TimeLens2-4B only after cheap candidate retrieval, for visual temporal
-   proposal or reranking work.
-5. Run LongVALE Omni-TVG and FLARE with all three evidence channels and frozen
-   fusion. Keep OVSD as a scene-boundary component test.
+The generation settings come from two declared sources. The Qwen Team's
+[“Qwen3.5: Towards Native Multimodal Agents” model card](https://huggingface.co/Qwen/Qwen3.5-4B)
+recommends a 32,768-token output allowance and temperature `0.7`, top-p `0.8`,
+and presence penalty `1.5` for ordinary non-thinking requests. Ollama's
+[context guidance](https://docs.ollama.com/context-length) recommends at least
+64,000 tokens for agents and tool use. VidXP adopts those values for the
+managed runtime and disables thinking. The 64,000 value is an Ollama runtime
+recommendation, not a Qwen research result; Qwen reports a 262,144 native
+context but also warns that memory may require a smaller allocation. On this
+8 GB evaluation Mac, VidXP combines the 64,000 allocation with Ollama's
+documented Flash Attention and 8-bit KV-cache settings. The old 1,024-token
+product and 2,048-token benchmark ceilings had no cited model basis and are
+removed.
+
+For the Promptfoo lane, Pydantic AI's
+[native structured-output mode](https://ai.pydantic.dev/output/#native-output)
+constrains the one model response to a non-empty, unique subset of `scene`,
+`action`, `sound`, and `speech`. The harness—not the model—resolves the dataset
+filename through `list_media`, submits the unchanged query, waits for the job,
+and retrieves its evidence board. This avoids spending local-model time and
+tokens copying data that VidXP already returned in a typed form.
+
+## Confirmed limits and decisions
+
+### Keep FineLAP as a historical benchmark control
+
+Xiquan Li et al., [“FineLAP: Taming Heterogeneous Supervision for Fine-grained
+Language-Audio Pretraining”](https://aclanthology.org/2026.acl-long.473/), ACL
+2026, Sections 3.2–3.3, trains separate global and local audio projections for
+clip-level and frame-level supervision. VidXP previously stored both outputs in
+one collection and ranked the raw records together.
+
+That integration was invalid: the two score lists did not form one calibrated
+ranking. On four held-out sound tasks, the mixed top three contained target
+evidence on 0/4 tasks; querying the representations separately did so on 3/4.
+
+FineLAP supports separating the global and local outputs. It does not establish
+VidXP's global top-three gate followed by one pooled activation ranking over
+those windows. Section 3.3 trains local scores against short event phrases and
+frame labels inside a clip; the paper's Limitations section explicitly leaves
+long-form audio and temporally enhanced audio-text retrieval unevaluated. The
+VidXP selector returned no final top-three overlap against the four designated
+intervals and missed the two unambiguous cases. The four-task rate is not a
+valid provider score because one reference is silent and another query has
+multiple correct occurrences. Treat the selector as historical and unvalidated,
+not adopted or conclusively rejected. It remains reproducible in the benchmark
+adapter. Product index schema 8 replaces both representations with PE-A frames,
+so older indexes must be rebuilt.
+
+The sound provider must localize a free-form acoustic description, including
+short environmental events, and return every useful occurrence. It does not
+need to interpret visual or speech-only clauses; those belong to the other
+providers and the agent. Two research tasks are therefore relevant:
+
+- audio moment retrieval tests sentence-to-interval retrieval over minutes of
+  audio; and
+- open-vocabulary sound-event grounding tests fine event boundaries and
+  repeated or overlapping occurrences.
+
+These are sound-provider diagnostics, not substitutes for LongVALE's combined
+task. Product search passes the same full query to each requested modality and
+applies reciprocal rank fusion. A hit seeds a bounded candidate and can receive
+support only from the best directly overlapping hit in each other modality.
+Indirect overlap cannot join distant moments, and hits from the same modality
+remain separate candidates. A sound result can therefore support a visual
+match without merging with another sound match elsewhere in the video.
+
+The API now separates candidate collection from final output. `top_k` limits
+only the fused results returned to the caller. `candidate_top_k` independently
+limits each modality to 100 hits by default; MCP evidence delivery then shows
+three fused candidates by default. Cormack, Clarke, and Buettcher's RRF paper
+supports the rank formula and its `k = 60` constant. It does not prescribe
+either output limit. The candidate budget is a VidXP resource cap: 100 matched
+exhaustive input on the corrected ten-task control, but is not a general
+accuracy optimum.
+
+Fresh fused queries use the `rrf_v2` identity. Existing indexes remain valid,
+and stored `connected_intervals` provenance remains readable.
+
+The original saved-ranking depth control confirmed that candidate depth could
+not be selected while transitive overlap corrupted the output. At full depth,
+every top result covered nearly its entire video. After direct-overlap fusion
+replaced that grouping, depths 100 through all produced identical metrics
+instead of collapsing. The corrected run still reached only `0.20` R@5 at
+tIoU 0.5, so it fixes candidate identity but not provider ranking or boundary
+errors. Neither curve selects a serving depth.
+
+The model papers keep this seam simpler than the current implementation.
+FineLAP exposes separate clip- and frame-level representations; VideoPrism is a
+frozen video encoder; and SigLIP 2 is an image-text encoder whose localization
+results use downstream heads. None defines temporal rank fusion. LongVALE
+Section 3.2 first builds semantically coherent visual and audio events, then
+combines those event boundaries while preserving audio integrity. VidXP's
+direct-overlap rule prevents false video-length unions, but model-specific
+event proposals remain the next boundary-quality seam.
+
+[DCASE 2026 Task 6](https://dcase.community/challenge2026/task-audio-moment-retrieval-from-long-audio-results)
+is the strongest direct long-audio evidence found. Its official
+MS-CLAP/QD-DETR baseline scored 13.56 R1@0.7; a 211.87M-parameter
+M2D-CLAP/CG-DETR entry reached 48.59, but public code and weights for that entry
+were not verified. The released CASTELLA/Lighthouse control reached only 20.3
+R1@0.7, is weak on sub-ten-second moments, truncates audio-feature sequences
+beyond 300 seconds, and conflicts with the managed runtime. A separate runtime
+would reproduce that baseline; it has no demonstrated product advantage.
+
+The first executable dense-sound candidate tested was Meta's
+[PE-A-Frame Small](https://huggingface.co/facebook/pe-a-frame-small), from Vyas
+et al., [“Pushing the Frontier of Audiovisual Perception with Large-Scale
+Multimodal Correspondence Learning”](https://arxiv.org/abs/2512.19687). It
+accepts free-form audio descriptions and emits frame scores and multiple spans
+at about 40 ms resolution. The Apache-2.0 checkpoint has 450M parameters and a
+1,758,756,416-byte F32 weight file. Its official localization AUROC is
+0.83–0.96 across the published event-localization sets; AUROC is not interval
+IoU and does not establish VidXP accuracy. The installed Transformers runtime
+has the official PE-Audio classes, avoiding the source repository's optional
+`xformers` path.
+
+The pinned Small checkpoint failed the initial flawed Mac product diagnostic. A
+complete 73.14-second soundtrack took 244.35 seconds on CPU and peaked at 4.30
+GiB RSS. The full query
+missed the phone-ring target and produced 125 fragments at the official 0.3
+threshold. On target-aware clips, which test recognition but not retrieval, the
+mean best-span IoU was 0.1654 for full queries and 0.1151 for sound-only phrases;
+the target outscored surrounding audio on only one of four full-query cases and
+none of the sound-only cases. Threshold tuning cannot fix a target whose score
+is below the surrounding audio. PE-A-Frame Small was therefore not adopted from
+that run. The diagnostic was not a native provider benchmark: two of its four
+labels were unsuitable for sound-only scoring.
+
+The subsequent frozen AEGBench comparison supplied the missing valid gate. It
+used 50 recordings sampled with seed 42 from the 3,425-row manifest, 149
+categories with annotated intervals, and every repeated interval. Two manifest
+categories with no interval were excluded explicitly. PE-A-Frame Small beat
+FineLAP on every ranking and default-threshold interval measure in the selection
+table while remaining faster than playback on the CPU-only Mac. This selects
+PE-A-Frame Small for sound localization. It does not select PE-AV for
+action/video, and it is not a full AEGBench leaderboard result.
+
+For long media, VidXP defaults to ten-second inference sections with a
+two-second overlap, assigns each overlap at its midpoint, and maps the retained
+40 ms frames to global timestamps. Search ranks with the checkpoint's dot
+product and returns the best frame per fixed ten-second evidence window. The
+values are configurable deployment defaults, not PE-A-Frame claims or measured
+accuracy optima. Keep distinct repeated events separate.
+
+### Treat fused intervals as bounded evidence candidates
+
+The current fusion anchors each candidate to one ranked hit. It adds at most
+the best directly overlapping hit from each other modality and returns the
+smallest interval containing that evidence. It never merges same-modality hits
+or follows an overlap chain into another moment. The RRF formula and `k = 60`
+come from Gordon Cormack, Charles Clarke, and Stefan Buettcher,
+[“Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning
+Methods”](https://doi.org/10.1145/1571941.1572114), SIGIR 2009. Candidate
+construction and interval boundaries remain VidXP engineering.
+
+The direct-overlap correction removes video-length chains, but its ten-task
+replay reached only `0.20` R@5 at tIoU 0.5. Several correct action regions
+remain eight-second windows around two-second references, and some target
+evidence is ranked far below five by its provider. Candidate construction no
+longer corrupts separate moments, but precise boundaries and ordering still
+depend on the modality providers.
+
+No replacement boundary model has been selected. The overlapping-action
+control did produce a near-target shorter record, but the then-existing union
+joined it to its neighbors. A held-out follow-up then tested a simple
+coarse-to-fine path without union. Fine candidate recall improved, but the
+coarse gate and similarity ranking missed most answers, so that path is not a
+product fix.
+Point-to-Span and shot-proposal fusion also remain concluded benchmark controls.
+Their exact results and deviations are recorded in the
+[research adoption record](research_adoption.md).
+
+## Next actions
+
+### Sound
+
+FlexSED's pinned released path was also tested. It processed
+616.7 seconds of unique audio in 10.85 seconds and peaked at 1.57 GiB RSS, so
+the runtime fits. Quality did not: target audio outscored the rest of its
+soundtrack on 0/4 full queries and 0/4 sound-only phrases. At the published
+0.5 threshold with a nine-frame median, only the engine case overlapped its
+reference, at about 0.045 IoU. Overlap cannot repair raw target scores below
+unrelated regions. It also missed the two unambiguous audible targets, siren
+and drumbeat. Do not select it from this result, but do not report `0/4` as a
+valid provider-quality estimate: the phone reference is invalid and the engine
+query has multiple correct occurrences.
+
+The reference-audio check found one invalid component case. The annotated
+telephone-ring interval has `-91.75 dBFS` RMS and `-78.27 dBFS` peak signal;
+the preceding five seconds are `-45.85 dBFS`. The local MP4 is byte-identical
+to the downloaded LongVALE archive, so this is not local corruption. Quarantine
+that task from sound-only scoring pending human review; do not silently remove
+it from the multimodal pilot.
+
+The engine task exposes a separate protocol error. Its sound-only phrase can
+correctly match several engine-rev occurrences. WSTAG's top frame at 242.22
+seconds falls inside LongVALE's separate 241.760–243.554-second annotation for
+the Cayenne engine rumbling and revving. The scorer nevertheless marks it wrong
+because it accepts only 25.560–27.560 seconds, where the multimodal query also
+specifies a gesturing driver. A sound provider cannot use that visual clause.
+Sound-component evaluation must label every acoustically matching occurrence;
+the existing single reference remains valid only for the full multimodal
+fusion task.
+
+DASM is not an executable Mac candidate. The official text-query notebook at
+Transformer4SED revision `c3e883d0fbeaf7031b467d45a3c46a88a76c00b6`
+hard-codes CUDA and a local checkout, and requires a separate MGA-CLAP
+repository and checkpoint. Its model hub publishes 636 MB of DASM artifacts
+under MIT metadata, but the source repository contains no software license.
+Do not copy, port, or benchmark that implementation unless the authors clarify
+the code license and provide a supported non-CUDA path.
+
+Xu et al., [“Towards Weakly Supervised Text-to-Audio
+Grounding”](https://arxiv.org/abs/2401.02584), IEEE Transactions on Multimedia
+2024, provides the next lawful CPU path. The authors recommend a newer
+AudioCaps-v2/LAION-CLAP Hugging Face model rather than the paper's original
+checkpoint. Against the current single-reference control, neither the full
+query nor the sound phrase ranked the designated target first on the three
+audible tasks.
+Mean target-best frame percentile was 0.8688 and 0.8985 respectively, but the
+official `0.5` inference threshold returned no target-overlapping interval, so
+IoU was zero on all six passes. Six CPU forwards over 1,679.9 seconds of input
+audio took 25.82 seconds; each 247–296-second recording took 3.42–5.02 seconds,
+and peak process RSS was 4.15 GiB. WSTAG missed both unambiguous cases at that
+threshold; the engine top result was a separate valid occurrence. It is not
+selected, but the flawed three-task control cannot provide a final quality
+estimate. Its hub metadata is
+also missing the `AutoModel` mapping advertised by its README; the local test
+loaded the same published class and exact weights directly with zero checkpoint
+mismatches.
+
+Three stronger-looking releases do not satisfy the product gate:
+
+- Wu et al., [FLAM](https://arxiv.org/abs/2505.05335), ICML 2025, is the closest
+  compact technical fit, but OpenFLAM is non-commercial and its public model is
+  not the internal model used for the paper's reported results.
+- Sun et al., [SpotSound](https://arxiv.org/abs/2604.13023), ACM MM 2026, directly
+  trains short-event timestamp grounding, but it is a LoRA over the 8B
+  Audio Flamingo 3 base, whose license is non-commercial and whose supported
+  runtime is Linux/CUDA.
+- Wang et al., [TimeAudio](https://arxiv.org/abs/2511.11039), 2025, uses a
+  Vicuna-7B stack and documents more than 40 GB of GPU memory for inference.
+
+Those candidates supplied no better distributable Mac path. The later valid
+AEGBench comparison selected PE-A-Frame Small, which is now integrated. FineLAP
+remains only as the recorded comparison control. Do not build a separate
+DCASE/Lighthouse runtime unless a reproducibility comparison is explicitly
+needed.
+
+### Action
+
+Do not tune fusion, window overlap, or query wording again for this failure.
+The held-out comparison already showed that useful fine windows exist but raw
+VideoPrism similarity ranks most of them too low.
+
+The replacement boundary is now explicit: keep VidXP's action API and reusable
+index, but replace global clip ranking with a trained temporal grounder that
+consumes a sequence of visual features and predicts intervals. An et al.,
+[HieraMamba](https://openaccess.thecvf.com/content/CVPR2026/html/An_HieraMamba_Video_Temporal_Grounding_via_Hierarchical_Anchor-Mamba_Pooling_CVPR_2026_paper.html),
+CVPR 2026, establishes the long-video multi-scale grounding design. An, Jain,
+and Grauman, [UniversalVTG](https://arxiv.org/abs/2604.08522), 2026, adds one
+cross-domain checkpoint and is the closest technical product candidate.
+
+Neither release can be adopted unchanged: both depend on a CUDA-oriented Mamba
+stack, and the checked repositories do not provide a top-level product license.
+The next implementation task is therefore a bounded compatibility decision:
+confirm a lawful checkpoint and a CPU or Apple-Silicon runtime for that exact
+grounder. If either requirement fails, reject it; Lighthouse's 150-second video
+encoder limit is benchmark context, not a fallback for the sound provider. Do
+not change product ranking until one candidate passes that gate on the frozen
+action tasks.

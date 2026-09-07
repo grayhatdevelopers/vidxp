@@ -1,0 +1,152 @@
+#!/bin/sh
+
+set -eu
+
+benchmark_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+if [ -x /opt/homebrew/opt/node@22/bin/node ]; then
+    node_dir=/opt/homebrew/opt/node@22/bin
+elif [ -x /usr/local/opt/node@22/bin/node ]; then
+    node_dir=/usr/local/opt/node@22/bin
+elif command -v node >/dev/null 2>&1; then
+    node_dir=$(dirname -- "$(command -v node)")
+else
+    echo "Node.js 22.22.0 or newer is required." >&2
+    exit 1
+fi
+
+PATH="$node_dir:$PATH"
+export PATH
+
+cd "$benchmark_dir"
+node scripts/require-node.mjs
+
+command=${1:-}
+if [ "$#" -gt 0 ]; then
+    shift
+fi
+
+case "$command" in
+    setup)
+        exec npm run setup -- "$@"
+        ;;
+    check)
+        exec npm run check -- "$@"
+        ;;
+    preflight)
+        exec npm run preflight -- "$@"
+        ;;
+    smoke)
+        exec npm run eval:smoke
+        ;;
+    pilot)
+        case "${1:-}" in
+            "")
+                ;;
+            *[!0-9]*|0)
+                echo "Pilot repetitions must be a positive integer." >&2
+                exit 2
+                ;;
+            *)
+                VIDXP_EVAL_REPETITIONS=$1
+                export VIDXP_EVAL_REPETITIONS
+                shift
+                ;;
+        esac
+        if [ "$#" -gt 0 ]; then
+            echo "Usage: ./benchmarks/codex-mcp/run pilot [repetitions]" >&2
+            exit 2
+        fi
+        exec npm run eval:pilot
+        ;;
+    vidxp)
+        case "${1:-3}" in
+            *[!0-9]*|0)
+                echo "VidXP repetitions must be a positive integer." >&2
+                exit 2
+                ;;
+        esac
+        repetitions=${1:-3}
+        if [ "$#" -gt 1 ]; then
+            echo "Usage: ./benchmarks/codex-mcp/run vidxp [repetitions]" >&2
+            exit 2
+        fi
+        VIDXP_EVAL_REPETITIONS=$repetitions
+        export VIDXP_EVAL_REPETITIONS
+        exec npm run eval:vidxp
+        ;;
+    indexing)
+        case "${1:-3}" in
+            *[!0-9]*|0)
+                echo "Indexing repetitions must be a positive integer." >&2
+                exit 2
+                ;;
+        esac
+        repetitions=${1:-3}
+        if [ "$#" -gt 1 ]; then
+            echo "Usage: ./benchmarks/codex-mcp/run indexing [repetitions]" >&2
+            exit 2
+        fi
+        exec node --env-file=.env --no-warnings scripts/indexing-benchmark.mjs "$repetitions"
+        ;;
+    slm)
+        case "${1:-3}" in
+            *[!0-9]*|0)
+                echo "SLM repetitions must be a positive integer." >&2
+                exit 2
+                ;;
+        esac
+        repetitions=${1:-3}
+        if [ "$#" -gt 1 ]; then
+            echo "Usage: ./benchmarks/codex-mcp/run slm [repetitions]" >&2
+            exit 2
+        fi
+        VIDXP_EVAL_REPETITIONS=$repetitions
+        export VIDXP_EVAL_REPETITIONS
+        exec npm run eval:slm
+        ;;
+    slm-smoke)
+        if [ "$#" -gt 0 ]; then
+            echo "Usage: ./benchmarks/codex-mcp/run slm-smoke" >&2
+            exit 2
+        fi
+        exec npm run eval:slm:smoke
+        ;;
+    results)
+        exec npm run report -- "$@"
+        ;;
+    export)
+        exec npm run export -- "$@"
+        ;;
+    trace)
+        exec npm run report -- --retrieval "$@"
+        ;;
+    probe)
+        exec "$benchmark_dir/../../.venv/bin/python" scripts/modality_probe.py "$@"
+        ;;
+    depth)
+        exec "$benchmark_dir/../../.venv/bin/python" scripts/candidate_depth_control.py "$@"
+        ;;
+    compare)
+        exec "$benchmark_dir/../../.venv/bin/python" scripts/compare_point_to_span.py "$@"
+        ;;
+    representation)
+        exec "$benchmark_dir/../../.venv/bin/python" scripts/action_representation.py "$@"
+        ;;
+    shots)
+        exec "$benchmark_dir/../../.venv/bin/python" scripts/shot_proposal_control.py "$@"
+        ;;
+    queries)
+        exec "$benchmark_dir/../../.venv/bin/python" scripts/query_routing_control.py "$@"
+        ;;
+    sound)
+        exec "$benchmark_dir/../../.venv/bin/python" scripts/sound_two_stage.py "$@"
+        ;;
+    view)
+        exec npm run promptfoo -- view --yes "$@"
+        ;;
+    *)
+        echo "Usage: ./benchmarks/codex-mcp/run {setup|check|preflight|smoke|pilot [repetitions]|vidxp [repetitions]|slm-smoke|slm [repetitions]|indexing [repetitions]|results|export|trace|probe|depth|compare|representation|shots|queries|sound|view}" >&2
+        exit 2
+        ;;
+esac

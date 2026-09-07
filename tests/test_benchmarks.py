@@ -28,6 +28,17 @@ from vidxp.benchmarks.hirest import (
     select_ground_truth,
     validate_predictions as validate_hirest_predictions,
 )
+from vidxp.benchmarks.point_to_span import (
+    TemporalSimilarity,
+    adaptive_span_generator,
+    squared_l2_to_cosine,
+)
+from vidxp.benchmarks.shot_proposals import (
+    RankedShot,
+    TemporalShot,
+    rank_shots_from_scene_records,
+    rank_shots_with_rrf_evidence,
+)
 from vidxp.capabilities.schemas import SearchHit
 
 
@@ -68,6 +79,118 @@ def timed_hit(start, end, score, rank=1):
 
 
 class BenchmarkCommonTests(unittest.TestCase):
+    def test_normalized_squared_l2_converts_to_cosine_similarity(self):
+        self.assertEqual(squared_l2_to_cosine(0.0), 1.0)
+        self.assertEqual(squared_l2_to_cosine(2.0), 0.0)
+        self.assertEqual(squared_l2_to_cosine(4.0), -1.0)
+
+    def test_point_to_span_expands_a_prominent_peak(self):
+        similarities = (0.1, 0.2, 0.6, 0.65, 0.6, 0.2, 0.1)
+        result = adaptive_span_generator(
+            tuple(
+                TemporalSimilarity(
+                    start=float(index),
+                    end=float(index + 1),
+                    similarity=similarity,
+                )
+                for index, similarity in enumerate(similarities)
+            )
+        )
+
+        self.assertEqual(len(result.candidates), 1)
+        self.assertEqual(
+            (result.candidates[0].start, result.candidates[0].end),
+            (2.0, 5.0),
+        )
+
+    def test_shot_proposals_are_disjoint_and_ranked_by_best_scene_score(self):
+        records = [
+            {
+                "start_seconds": 0.0,
+                "ordering_score": 0.1,
+                "source_id": "scene-0",
+            },
+            {
+                "start_seconds": 1.0,
+                "ordering_score": 0.7,
+                "source_id": "scene-1",
+            },
+            {
+                "start_seconds": 2.0,
+                "ordering_score": 0.5,
+                "source_id": "scene-2",
+            },
+        ]
+
+        ranked = rank_shots_from_scene_records(
+            (TemporalShot(0.0, 2.0), TemporalShot(2.0, 3.0)),
+            records,
+        )
+
+        self.assertEqual(
+            [(shot.rank, shot.start, shot.end, shot.score) for shot in ranked],
+            [(1, 0.0, 2.0, 0.7), (2, 2.0, 3.0, 0.5)],
+        )
+
+    def test_rrf_evidence_reranks_without_expanding_shot_boundaries(self):
+        shots = (
+            RankedShot(1, 0.0, 5.0, 0.8, ("scene-1",)),
+            RankedShot(2, 5.0, 10.0, 0.7, ("scene-2",)),
+        )
+        records = {
+            "sound": [
+                {
+                    "start_seconds": 6.0,
+                    "end_seconds": 7.0,
+                    "retrieval_rank": 1,
+                    "source_id": "sound-1",
+                }
+            ]
+        }
+
+        ranked = rank_shots_with_rrf_evidence(
+            (TemporalShot(0.0, 5.0), TemporalShot(5.0, 10.0)),
+            records,
+            scene_ranking=shots,
+            candidate_top_k=3,
+        )
+
+        self.assertEqual((ranked[0].start, ranked[0].end), (5.0, 10.0))
+        self.assertEqual(dict(ranked[0].best_ranks), {"scene": 2, "sound": 1})
+        self.assertEqual(ranked[0].evidence[0].proposal_overlap_count, 1)
+
+    def test_rrf_evidence_can_rank_shots_without_scene_scores(self):
+        ranked = rank_shots_with_rrf_evidence(
+            (TemporalShot(0.0, 5.0), TemporalShot(5.0, 10.0)),
+            {
+                "action": [
+                    {
+                        "start_seconds": 4.0,
+                        "end_seconds": 6.0,
+                        "retrieval_rank": 1,
+                        "source_id": "action-1",
+                    }
+                ],
+                "sound": [
+                    {
+                        "start_seconds": 6.0,
+                        "end_seconds": 7.0,
+                        "retrieval_rank": 1,
+                        "source_id": "sound-1",
+                    }
+                ],
+            },
+            candidate_top_k=3,
+        )
+
+        self.assertEqual((ranked[0].start, ranked[0].end), (5.0, 10.0))
+        self.assertIsNone(ranked[0].scene_rank)
+        self.assertEqual(dict(ranked[0].best_ranks), {"action": 1, "sound": 1})
+        self.assertEqual(
+            {item.modality: item.proposal_overlap_count for item in ranked[0].evidence},
+            {"action": 2, "sound": 1},
+        )
+
     def test_generation_identity_is_stable_and_run_scoped(self):
         first = benchmark_generation_id("hirest", "validation", "run-1")
 

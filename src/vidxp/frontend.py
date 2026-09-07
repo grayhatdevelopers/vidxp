@@ -133,7 +133,7 @@ CAPABILITY_LABELS = {
     "speech": "Speech search",
     "natural-language": "Ask a question",
     "scene": "Scene search",
-    "sound": "Sound event search (FineLAP)",
+    "sound": "Sound event search (PE-A-Frame)",
     "action": "Action and motion search",
 }
 

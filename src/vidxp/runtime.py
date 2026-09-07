@@ -16,6 +16,7 @@ from vidxp.model_contracts import (
     ModelArtifactUnavailableError,
     ModelKey,
     ModelSpec,
+    model_artifact_path,
     model_artifact_valid,
 )
 from vidxp.core.indexing_common import report_preparation
@@ -379,27 +380,13 @@ class ModelRuntime:
     ) -> Path:
         if spec not in self._allowed_specs:
             raise ModelArtifactUnavailableError(spec.capability)
-        from huggingface_hub import snapshot_download
-
         try:
-            snapshot: Path | None
-            try:
-                local_snapshot = Path(
-                    snapshot_download(
-                        repo_id=spec.model_id,
-                        revision=spec.revision,
-                        cache_dir=str(self.settings.model_cache),
-                        local_files_only=True,
-                    )
-                )
-                local_weights = local_snapshot / spec.weights_file
-                snapshot = (
-                    local_snapshot
-                    if model_artifact_valid(local_weights, spec)
-                    else None
-                )
-            except Exception:
-                snapshot = None
+            local_weights = model_artifact_path(self.settings.model_cache, spec)
+            snapshot = (
+                local_weights.parent
+                if model_artifact_valid(local_weights, spec)
+                else None
+            )
             if snapshot is None:
                 if not download or not self.settings.allow_model_downloads:
                     raise ModelArtifactUnavailableError(spec.capability)

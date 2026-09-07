@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from vidxp.benchmarks.agent_ablation_score import (
+    bounded_chunk_window,
+    event_coverage,
     interval_iou,
     score_ablation_boundary,
     score_temporal_grounding,
@@ -13,12 +15,39 @@ from vidxp.benchmarks.agent_ablation_score import (
 from vidxp.benchmarks.agent_ablation_tests import generate_tests
 
 
+@pytest.fixture(autouse=True)
+def _repository_machine_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VIDXP_EVAL_MACHINE_ID", "test-machine-01")
+
+
 def test_interval_iou_matches_temporal_overlap() -> None:
     assert interval_iou(10, 20, 15, 25) == pytest.approx(1 / 3)
     assert interval_iou(0, 5, 6, 10) == 0
 
 
-def test_temporal_grounding_reports_longvale_metrics() -> None:
+@pytest.mark.parametrize(
+    ("source_start", "source_end", "media_duration", "expected"),
+    [
+        (20, 22, 100, (16, 26)),
+        (70, 80, 75.813152, (65.813152, 75.813152)),
+        (0, 1, 6, (0, 6)),
+    ],
+)
+def test_bounded_chunk_window_centers_and_shifts_at_media_edges(
+    source_start: float,
+    source_end: float,
+    media_duration: float,
+    expected: tuple[float, float],
+) -> None:
+    assert bounded_chunk_window(
+        source_start,
+        source_end,
+        media_duration=media_duration,
+        target_chunk_seconds=10,
+    ) == pytest.approx(expected)
+
+
+def test_temporal_grounding_uses_bounded_chunk_hit_as_primary_score() -> None:
     output = json.dumps(
         {
             "video_id": "video-1",
@@ -39,9 +68,125 @@ def test_temporal_grounding_reports_longvale_metrics() -> None:
     )
 
     assert result["pass"] is True
+    assert result["score"] == pytest.approx(0.5)
+    assert result["namedScores"]["bounded_chunk_hit"] == 1
+    assert result["namedScores"]["event_coverage"] == pytest.approx(0.5)
+    assert result["namedScores"]["chunk_duration_in_range"] == 1
     assert result["namedScores"]["temporal_iou"] == pytest.approx(1 / 3)
     assert result["namedScores"]["r1_tiou_0_3"] == 1
     assert result["namedScores"]["r1_tiou_0_5"] == 0
+
+
+def test_temporal_grounding_passes_when_second_ranked_candidate_hits() -> None:
+    output = json.dumps(
+        {
+            "video_id": "video-1",
+            "candidates": [
+                {"start_seconds": 0, "end_seconds": 10},
+                {"start_seconds": 10, "end_seconds": 20},
+            ],
+        }
+    )
+    result = score_temporal_grounding(
+        output,
+        {
+            "vars": {
+                "video_id": "video-1",
+                "duration_seconds": 30,
+                "expected_start": 15,
+                "expected_end": 17,
+                "max_candidates": 3,
+            }
+        },
+    )
+
+    assert result["pass"] is True
+    assert result["namedScores"]["bounded_chunk_hit_at_1"] == 0
+    assert result["namedScores"]["bounded_chunk_hit_at_3"] == 1
+    assert result["namedScores"]["bounded_chunk_mrr"] == 0.5
+    assert result["namedScores"]["candidate_count"] == 2
+    assert result["namedScores"]["r1_tiou_0_3"] == 0
+    assert result["namedScores"]["r3_tiou_0_3"] == 0
+
+
+def test_temporal_grounding_rejects_too_many_or_duplicate_candidates() -> None:
+    context = {
+        "vars": {
+            "video_id": "video-1",
+            "duration_seconds": 40,
+            "expected_start": 15,
+            "expected_end": 17,
+            "max_candidates": 3,
+        }
+    }
+    too_many = score_temporal_grounding(
+        json.dumps(
+            {
+                "video_id": "video-1",
+                "candidates": [
+                    {"start_seconds": start, "end_seconds": start + 10}
+                    for start in (0, 10, 20, 30)
+                ],
+            }
+        ),
+        context,
+    )
+    duplicate = score_temporal_grounding(
+        json.dumps(
+            {
+                "video_id": "video-1",
+                "candidates": [
+                    {"start_seconds": 10, "end_seconds": 20},
+                    {"start_seconds": 10, "end_seconds": 20},
+                ],
+            }
+        ),
+        context,
+    )
+
+    assert too_many["pass"] is False
+    assert "candidate limit" in too_many["reason"]
+    assert duplicate["pass"] is False
+    assert "duplicate" in duplicate["reason"]
+
+
+def test_event_coverage_is_normalized_to_one_practical_chunk() -> None:
+    assert event_coverage(10, 20, 12, 14, target_chunk_seconds=10) == 1
+    assert event_coverage(10, 20, 5, 25, target_chunk_seconds=10) == 1
+    assert event_coverage(0, 8, 20, 22, target_chunk_seconds=10) == 0
+
+
+def test_temporal_grounding_rejects_blink_and_whole_video_answers() -> None:
+    context = {
+        "vars": {
+            "video_id": "video-1",
+            "duration_seconds": 30,
+            "expected_start": 10,
+            "expected_end": 12,
+        }
+    }
+
+    blink = score_temporal_grounding(
+        '{"video_id":"video-1","start_seconds":10,"end_seconds":12}',
+        context,
+    )
+    whole_video = score_temporal_grounding(
+        '{"video_id":"video-1","start_seconds":0,"end_seconds":30}',
+        context,
+    )
+    practical = score_temporal_grounding(
+        '{"video_id":"video-1","start_seconds":8,"end_seconds":16}',
+        context,
+    )
+
+    assert blink["pass"] is False
+    assert blink["namedScores"]["event_coverage"] == 1
+    assert blink["namedScores"]["chunk_duration_in_range"] == 0
+    assert whole_video["pass"] is False
+    assert whole_video["namedScores"]["event_coverage"] == 1
+    assert whole_video["namedScores"]["chunk_duration_in_range"] == 0
+    assert practical["pass"] is True
+    assert practical["namedScores"]["bounded_chunk_hit"] == 1
 
 
 def test_temporal_grounding_rejects_null_or_out_of_bounds_intervals() -> None:
@@ -66,22 +211,345 @@ def test_temporal_grounding_rejects_null_or_out_of_bounds_intervals() -> None:
     assert bounds_result["pass"] is False
 
 
-def test_ablation_boundary_requires_mcp_only_in_the_on_condition() -> None:
-    trace = {
-        "spans": [
+def _ablation_fixture() -> tuple[str, dict, dict]:
+    job_id = "job-1"
+    evidence_id = "evidence-1"
+    output = json.dumps(
+        {
+            "video_id": "video-1",
+            "answer": "The event occurs.",
+            "source_job_id": job_id,
+            "candidates": [
+                {
+                    "start_seconds": 10,
+                    "end_seconds": 20,
+                    "modalities": ["sound"],
+                    "description": "The event is audible.",
+                    "evidence_ids": [evidence_id],
+                }
+            ],
+        }
+    )
+    context = {
+        "vars": {
+            "expected_vidxp": True,
+            "video_id": "video-1",
+            "media_relpath": "media/video-1.mp4",
+            "query": "the event",
+            "modalities": '["sound"]',
+            "allow_media_shell": False,
+        },
+        "trace": {
+            "spans": [
+                {
+                    "name": "exec /bin/zsh",
+                    "attributes": {
+                        "promptfoo.skill.name": "vidxp-find-video-evidence",
+                        "promptfoo.skill.path": (
+                            "/eval/workspace/vidxp-on/.agents/skills/"
+                            "vidxp-find-video-evidence/SKILL.md"
+                        ),
+                        "codex.command": (
+                            "sed -n 1,240p "
+                            ".agents/skills/vidxp-find-video-evidence/SKILL.md"
+                        ),
+                    },
+                },
+                _tool_span("get_workspace", {"filename": "video-1.mp4"}),
+                _tool_span("list_media", {"filename": "video-1.mp4"}),
+                _tool_span(
+                    "search_moments",
+                    {
+                        "idempotency_key": "fresh-search-0001",
+                        "command": {
+                            "media_id": "media-1",
+                            "query": "the event",
+                            "modalities": ["scene", "sound"],
+                            "evidence_delivery": {
+                                "mode": "keyframes_and_clips",
+                                "max_items": 3,
+                            },
+                        }
+                    },
+                ),
+                _tool_span("wait_job", {"job_id": job_id}),
+                _tool_span("get_job_evidence", {"job_id": job_id}),
+            ]
+        },
+    }
+    job = {
+        "job_id": job_id,
+        "kind": "search",
+        "state": "succeeded",
+        "created_at": "2026-09-02T00:00:10Z",
+        "result": {
+            "kind": "search",
+            "result": {
+                "query": "the event",
+                "moments": [
+                    {
+                        "hits": [
+                            {
+                                "media_id": "media-1",
+                                "video_id": "video-1",
+                            }
+                        ]
+                    }
+                ],
+                "evidence_delivery": {
+                    "policy": {
+                        "mode": "keyframes_and_clips",
+                        "max_items": 3,
+                    },
+                    "items": [
+                        {
+                            "evidence_id": evidence_id,
+                            "media_id": "media-1",
+                            "modalities": ["scene", "sound"],
+                            "state": "ready",
+                            "range": {
+                                "source_start_seconds": 9,
+                                "source_end_seconds": 21,
+                            },
+                        }
+                    ],
+                },
+            },
+        },
+    }
+    return output, context, job
+
+
+def _tool_span(name: str, arguments: dict) -> dict:
+    return {
+        "name": f"mcp vidxp/{name}",
+        "startTime": 1_788_307_200_000_000_000,
+        "attributes": {
+            "codex.mcp.server": "vidxp",
+            "codex.mcp.tool": name,
+            "codex.mcp.input": json.dumps(arguments),
+        },
+    }
+
+
+def test_ablation_boundary_attests_successful_vidxp_evidence_job() -> None:
+    output, context, job = _ablation_fixture()
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is True
+
+
+def test_ablation_boundary_accepts_provider_recorded_mcp_trace() -> None:
+    output, context, job = _ablation_fixture()
+    context["metadata"] = {"trace": context.pop("trace")}
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is True
+
+
+def test_ablation_boundary_attests_ready_evidence_board_tile() -> None:
+    output, context, job = _ablation_fixture()
+    delivery = job["result"]["result"]["evidence_delivery"]
+    item = delivery["items"].pop()
+    delivery["board"] = {
+        "tiles": [
             {
-                "name": "MCP tool call",
-                "attributes": {"tool.name": "mcp__vidxp__search_moments"},
+                **item,
+                "start": item["range"]["source_start_seconds"],
+                "end": item["range"]["source_end_seconds"],
+                "range": None,
             }
         ]
     }
 
-    assert score_ablation_boundary(
-        "{}", {"vars": {"expected_mcp": True}, "trace": trace}
-    )["pass"]
-    assert not score_ablation_boundary(
-        "{}", {"vars": {"expected_mcp": False}, "trace": trace}
-    )["pass"]
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is True
+
+
+def test_ablation_boundary_attests_each_ranked_candidate() -> None:
+    output, context, job = _ablation_fixture()
+    result_data = json.loads(output)
+    result_data["candidates"].append(
+        {
+            "start_seconds": 30,
+            "end_seconds": 40,
+            "modalities": ["sound"],
+            "description": "Another plausible occurrence.",
+            "evidence_ids": ["evidence-2"],
+        }
+    )
+    job["result"]["result"]["evidence_delivery"]["items"].append(
+        {
+            "evidence_id": "evidence-2",
+            "media_id": "media-1",
+            "modalities": ["sound"],
+            "state": "ready",
+            "range": {
+                "source_start_seconds": 29,
+                "source_end_seconds": 41,
+            },
+        }
+    )
+
+    valid = score_ablation_boundary(
+        json.dumps(result_data),
+        context,
+        job_loader=lambda _job_id: job,
+    )
+    result_data["candidates"][1]["evidence_ids"] = ["evidence-1"]
+    mismatched = score_ablation_boundary(
+        json.dumps(result_data),
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert valid["pass"] is True
+    assert mismatched["pass"] is False
+    assert "does not overlap" in mismatched["reason"]
+
+
+def test_ablation_boundary_attests_agent_query_paraphrase() -> None:
+    output, context, job = _ablation_fixture()
+    command = json.loads(
+        context["trace"]["spans"][3]["attributes"]["codex.mcp.input"]
+    )
+    command["command"]["query"] = "the same event, with useful context"
+    context["trace"]["spans"][3]["attributes"]["codex.mcp.input"] = json.dumps(
+        command
+    )
+    job["result"]["result"]["query"] = "the same event, with useful context"
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is True
+
+
+def test_ablation_boundary_allows_inspecting_delivered_clip() -> None:
+    output, context, job = _ablation_fixture()
+    job["result"]["result"]["evidence_delivery"]["items"][0]["clip"] = {
+        "artifact": {"artifact_id": "artifact-clip-1"}
+    }
+    context["trace"]["spans"].append(
+        {
+            "name": "exec /bin/zsh",
+            "attributes": {
+                "codex.command": (
+                    "ffprobe /tmp/index/artifacts/objects/ar/artifact-clip-1.mp4"
+                )
+            },
+        }
+    )
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is True
+
+
+def test_ablation_boundary_rejects_source_media_mixed_with_delivered_clip() -> None:
+    output, context, job = _ablation_fixture()
+    job["result"]["result"]["evidence_delivery"]["items"][0]["clip"] = {
+        "artifact": {"artifact_id": "artifact-clip-1"}
+    }
+    context["trace"]["spans"].append(
+        {
+            "name": "exec /bin/zsh",
+            "attributes": {
+                "codex.command": (
+                    "ffmpeg -i /tmp/index/artifacts/objects/ar/artifact-clip-1.mp4 "
+                    "-i /tmp/source.mp4 -f null -"
+                )
+            },
+        }
+    )
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert result["pass"] is False
+    assert "source media" in result["reason"]
+
+
+def test_ablation_boundary_rejects_failed_job_or_shell_fallback() -> None:
+    output, context, job = _ablation_fixture()
+    failed_job = {**job, "state": "failed", "result": None}
+    failed = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: failed_job,
+    )
+    context["trace"]["spans"].append(
+        {
+            "name": "exec /bin/zsh",
+            "attributes": {"codex.command": "ffmpeg -i media/video-1.mp4"},
+        }
+    )
+    fallback = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: job,
+    )
+
+    assert failed["pass"] is False
+    assert "did not succeed" in failed["reason"]
+    assert fallback["pass"] is False
+    assert "through the shell" in fallback["reason"]
+
+
+def test_ablation_boundary_rejects_job_from_an_earlier_trace() -> None:
+    output, context, job = _ablation_fixture()
+    stale_job = {**job, "created_at": "2026-09-01T23:59:59Z"}
+
+    result = score_ablation_boundary(
+        output,
+        context,
+        job_loader=lambda _job_id: stale_job,
+    )
+
+    assert result["pass"] is False
+    assert "predates" in result["reason"]
+
+
+def test_ablation_boundary_accepts_isolated_baseline() -> None:
+    output = json.dumps(
+        {
+            "source_job_id": "baseline-source",
+            "evidence": [{"evidence_id": "baseline-evidence"}],
+        }
+    )
+    trace = {"spans": [{"name": "agent response", "attributes": {}}]}
+
+    result = score_ablation_boundary(
+        output,
+        {"vars": {"expected_vidxp": False}, "trace": trace},
+    )
+
+    assert result["pass"] is True
 
 
 def test_ablation_boundary_rejects_direct_vidxp_cli_bypass() -> None:
@@ -95,11 +563,37 @@ def test_ablation_boundary_rejects_direct_vidxp_cli_bypass() -> None:
     }
 
     result = score_ablation_boundary(
-        "{}", {"vars": {"expected_mcp": False}, "trace": trace}
+        "{}", {"vars": {"expected_vidxp": False}, "trace": trace}
     )
 
     assert result["pass"] is False
     assert "bypassed" in result["reason"]
+
+
+def test_isolated_condition_allows_attempted_unavailable_host_paths() -> None:
+    trace = {
+        "spans": [
+            {
+                "name": "command",
+                "attributes": {
+                    "command": (
+                        "command -v /opt/homebrew/bin/ffmpeg; "
+                        "rg expected_start /project/benchmarks"
+                    )
+                },
+            }
+        ]
+    }
+
+    result = score_ablation_boundary(
+        "{}",
+        {
+            "vars": {"condition": "clean-user", "expected_vidxp": False},
+            "trace": trace,
+        },
+    )
+
+    assert result["pass"] is True
 
 
 def test_generator_pairs_each_manifest_task_across_conditions(
@@ -129,15 +623,47 @@ def test_generator_pairs_each_manifest_task_across_conditions(
     tests = generate_tests(
         {
             "manifest": str(manifest),
-            "providers": {"mcp_on": "on", "mcp_off": "off"},
+            "providers": {
+                "vidxp_on": "on",
+                "vidxp_off": "off",
+                "clean_user": "clean",
+            },
         }
     )
 
-    assert [test["providers"] for test in tests] == [["on"], ["off"]]
-    assert [test["vars"]["expected_mcp"] for test in tests] == [True, False]
+    assert [test["providers"] for test in tests] == [["on"], ["off"], ["clean"]]
+    assert [test["vars"]["expected_vidxp"] for test in tests] == [
+        True,
+        False,
+        False,
+    ]
+    assert [test["vars"]["allow_media_shell"] for test in tests] == [
+        False,
+        True,
+        True,
+    ]
+    assert all("forbid_host_tools" not in test["vars"] for test in tests)
+    assert [test["vars"]["target_chunk_seconds"] for test in tests] == [10] * 3
+    assert [test["vars"]["min_chunk_seconds"] for test in tests] == [8] * 3
+    assert [test["vars"]["max_chunk_seconds"] for test in tests] == [12] * 3
+    assert [test["vars"]["min_event_coverage"] for test in tests] == [0.5] * 3
+    assert [test["vars"]["max_candidates"] for test in tests] == [3] * 3
+    assert [test["vars"]["modalities"] for test in tests] == [
+        '["sound"]',
+        '["sound"]',
+        '["sound"]',
+    ]
+    assert [test["metadata"]["modalities"] for test in tests] == [
+        ["sound"],
+        ["sound"],
+        ["sound"],
+    ]
+    assert {test["metadata"]["machine_id"] for test in tests} == {
+        "test-machine-01"
+    }
 
 
-def test_committed_pilot_expands_to_ten_matched_pairs(
+def test_committed_manifest_expands_to_ten_matched_condition_sets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     benchmark = Path(__file__).parents[1] / "benchmarks" / "codex-mcp"
@@ -146,13 +672,122 @@ def test_committed_pilot_expands_to_ten_matched_pairs(
     tests = generate_tests(
         {
             "manifest": "tasks/longvale-part9-pilot.json",
-            "providers": {"mcp_on": "on", "mcp_off": "off"},
+            "providers": {
+                "vidxp_on": "on",
+                "vidxp_off": "off",
+                "clean_user": "clean",
+            },
         }
     )
 
-    assert len(tests) == 20
+    assert len(tests) == 30
     assert {test["metadata"]["condition"] for test in tests} == {
-        "mcp-on",
-        "mcp-off",
+        "vidxp-on",
+        "vidxp-off",
+        "clean-user",
     }
     assert len({test["metadata"]["task_id"] for test in tests}) == 10
+
+    prompt = (benchmark / "prompts" / "video-evidence.txt").read_text(
+        encoding="utf-8"
+    ).casefold()
+    assert "vidxp" not in prompt
+    assert "ffmpeg" not in prompt
+    assert "condition" not in prompt
+
+
+def test_pilot_uses_three_fresh_counterbalanced_repetitions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = Path(__file__).parents[1] / "benchmarks" / "codex-mcp"
+    monkeypatch.chdir(benchmark)
+    monkeypatch.setenv("VIDXP_EVAL_MODE", "pilot")
+
+    tests = generate_tests(
+        {
+            "manifest": "tasks/longvale-part9-pilot.json",
+            "providers": {
+                "vidxp_on": "on",
+                "vidxp_off": "off",
+                "clean_user": "clean",
+            },
+        }
+    )
+
+    assert len(tests) == 81
+    assert all("retrieval_nonce" not in test["vars"] for test in tests)
+    assert all("evidence_access" not in test["vars"] for test in tests)
+    first_task_id = tests[0]["metadata"]["task_id"]
+    first_task = [
+        test for test in tests if test["metadata"]["task_id"] == first_task_id
+    ]
+    assert [test["metadata"]["condition"] for test in first_task] == [
+        "vidxp-on",
+        "vidxp-off",
+        "clean-user",
+        "vidxp-off",
+        "clean-user",
+        "vidxp-on",
+        "clean-user",
+        "vidxp-on",
+        "vidxp-off",
+    ]
+
+
+def test_pilot_accepts_one_explicit_repetition_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = Path(__file__).parents[1] / "benchmarks" / "codex-mcp"
+    monkeypatch.chdir(benchmark)
+    monkeypatch.setenv("VIDXP_EVAL_MODE", "pilot")
+    monkeypatch.setenv("VIDXP_EVAL_REPETITIONS", "5")
+
+    tests = generate_tests({"manifest": "tasks/longvale-part9-pilot.json"})
+
+    assert len(tests) == 135
+    assert {test["metadata"]["repetition"] for test in tests} == {1, 2, 3, 4, 5}
+
+
+def test_generator_can_select_only_the_vidxp_condition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = Path(__file__).parents[1] / "benchmarks" / "codex-mcp"
+    monkeypatch.chdir(benchmark)
+    monkeypatch.setenv("VIDXP_EVAL_MODE", "pilot")
+    monkeypatch.setenv("VIDXP_EVAL_CONDITIONS", "vidxp-on")
+
+    tests = generate_tests({"manifest": "tasks/longvale-part9-pilot.json"})
+
+    assert len(tests) == 27
+    assert {test["metadata"]["condition"] for test in tests} == {"vidxp-on"}
+
+
+def test_generator_can_select_the_local_slm_conditions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark = Path(__file__).parents[1] / "benchmarks" / "codex-mcp"
+    monkeypatch.chdir(benchmark)
+    monkeypatch.setenv("VIDXP_EVAL_MODE", "pilot")
+    monkeypatch.setenv(
+        "VIDXP_EVAL_CONDITIONS",
+        "local-slm,local-slm-planner",
+    )
+
+    tests = generate_tests(
+        {
+            "manifest": "tasks/longvale-part9-pilot.json",
+            "providers": {
+                "local_slm": "router",
+                "local_slm_planner": "planner",
+            },
+        }
+    )
+
+    assert len(tests) == 54
+    assert {test["providers"][0] for test in tests} == {"router", "planner"}
+    assert {test["metadata"]["condition"] for test in tests} == {
+        "local-slm",
+        "local-slm-planner",
+    }
+    assert all(test["vars"]["expected_vidxp"] is True for test in tests)
+    assert all(test["vars"]["allow_media_shell"] is False for test in tests)

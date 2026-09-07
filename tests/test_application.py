@@ -316,6 +316,7 @@ class ApplicationTests(unittest.TestCase):
 
         self.assertEqual(result.mode, QueryAnswerMode.no_evidence)
         self.assertEqual(requests[0].media_id, MEDIA_ID)
+        self.assertEqual(requests[0].top_k, 100)
         application.index_backend.open_store.assert_called_once_with(pinned)
 
     def test_actor_render_reuses_one_pinned_store_and_context(self):
@@ -520,6 +521,21 @@ class ApplicationTests(unittest.TestCase):
                 query_id="indexed:1",
                 query=request.query,
                 modality="indexed",
+                hits=tuple(
+                    SearchHit(
+                        rank=index + 1,
+                        media_id=MEDIA_ID,
+                        video_id=MEDIA_ID,
+                        generation_id=GENERATION_ID,
+                        start=float(index * 2),
+                        end=float(index * 2 + 1),
+                        score=-float(index),
+                        raw_distance=float(index),
+                        modality="indexed",
+                        source_id=f"indexed:{index}",
+                    )
+                    for index in range(request.top_k)
+                ),
             )
 
         manager = MagicMock()
@@ -531,13 +547,15 @@ class ApplicationTests(unittest.TestCase):
                 modalities=("indexed",),
                 query="yellow taxi",
                 top_k=7,
+                candidate_top_k=23,
             )
         )
 
         self.assertIsInstance(result, FusedSearchResult)
         self.assertEqual(result.modalities, ("indexed",))
+        self.assertEqual(len(result.moments), 7)
         self.assertEqual(calls[0][1].query, "yellow taxi")
-        self.assertEqual(calls[0][1].top_k, 7)
+        self.assertEqual(calls[0][1].top_k, 23)
         self.assertIs(
             calls[0][0].storage,
             manager.__enter__.return_value,

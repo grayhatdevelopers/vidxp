@@ -15,10 +15,12 @@ installation and product usage, start with the main
 | Shared benchmark support | Complete | Stable IDs, time ranges, metadata, top-k retrieval, isolated runs, checkpoints, and prediction files are implemented |
 | Guided input preparation | Complete | `vidxp benchmark prepare` estimates and confirms downloads, verifies pinned artifacts, validates DiDeMo media, resumes partial transfers, and prints the runnable benchmark command |
 | DiDeMo visual localization | Legacy full result + current smoke | The legacy CLIP stack completed 4,021 official test queries over 1,037 videos; the current SigLIP2 stack passed a one-annotation real execution smoke |
+| Action/video retrieval | VideoPrism retained by a small candidate gate; canonical runs pending | VideoPrism scored 50/50 on a five-class Kinetics-mini gate. MSR-VTT 1K-A and Charades-STA remain the required corpus-ranking and temporal tests. |
 | HiREST transcript localization | Legacy full result + current smoke | The legacy MiniLM stack scored all 193 validation pairs; current Qwen3 passed a two-video real execution smoke; 776 released test predictions remain unscored because their public bounds are placeholders |
-| Environmental-sound retrieval | Implementation complete; benchmark pending | FineLAP stores global ten-second windows and dense timestamped sound activations; no VidXP quality score is claimed yet |
-| LongVALE combined evaluation | Next adapter and pilot | Validate vision, environmental sound, and speech together on one evaluation archive before scheduling the full run |
-| Codex MCP ablation | Runnable scaffold; not run | Promptfoo pairs the same Codex video tasks with and without VidXP MCP; no agent result is claimed yet |
+| Environmental-sound retrieval | PE-A-Frame Small integrated; long-audio gate pending | An identical 149-query AEGBench comparison selected PE-A-Frame over FineLAP. The product now indexes its 40 ms frames through bounded overlapping sections and returns distinct ten-second evidence windows. |
+| LongVALE combined evaluation | Selected pilot complete | The current 81-run Codex pilot and 54-case local-SLM comparison use nine held-out tasks. This selected set is not an official LongVALE result. |
+| Codex MCP ablation | Isolated pilot scored; quality gate failed | VidXP used fewer tokens and less time than direct inspection, but Success@3 was 15/27 versus 18/27. Its visible evidence reached 19/27. |
+| Local SLM routing | Router and planner scored | One-request router/planner Success@3 was 15/27 and 19/27. The planner averaged 270 local tokens and 25.544 seconds with no external-provider call. |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
 
 Read [current results](results.md) for the scores, plain-language metric
@@ -29,10 +31,13 @@ definitions, honest comparisons, and the next benchmark decision.
 | If you need to… | Read |
 |---|---|
 | Understand how VidXP performed | [Current results](results.md) |
+| Start a paper-facing audit of benchmark premise, constraints, consolidated metrics, machine profiles, and retained artifacts | [Metric database](metric_database.md) |
+| See the required per-modality gates and exact commands | [Individual modality gates](modality_gates.md) |
 | Reproduce DiDeMo or HiREST | [Adapter validation ledger](adapter_validation.md) |
 | Understand the benchmark-ready Python structure | [Core contract](core_contract.md) |
 | See which benchmarks exist and what each measures | [Benchmark catalog](benchmark_catalog.md) |
-| Understand the current model and benchmark choices | [Multimodal model direction](model_selection.md) |
+| Understand the current product and evaluation choices | [Evidence retrieval direction](model_selection.md) |
+| See exactly which paper-derived ideas are in the product | [Research adoption record](research_adoption.md) |
 | Run the Codex MCP-on/MCP-off experiment | [Codex agent ablation](agent_ablation.md) |
 | Find exact published competitor scores | [Published comparison results](published_results.md) |
 | Review the relevant papers | [Research-paper inventory](research_papers.md) |
@@ -53,13 +58,45 @@ together.
 The retained full DiDeMo and HiREST results establish separate legacy-provider
 visual and transcript baselines. Current SigLIP2 and Qwen3 checks establish
 adapter/runtime compatibility only; they do not yet provide full-corpus quality
-comparisons. VidXP now contributes separate visual, speech, and FineLAP sound
-evidence, including global windows and dense timestamps for music, alarms,
-barking, and other non-speech events. The next target is the LongVALE adapter and
-one-archive pilot. That work must measure the integration before any VidXP sound
-quality or combined-system claim is made. The
-[current model direction](model_selection.md) records the selection evidence and
-remaining controls.
+comparisons. VidXP can emit visual, speech, and PE-A-Frame sound evidence. The
+AEGBench adapter compared FineLAP with PE-A-Frame Small over 149 valid event
+queries and selected the latter for the product. That frozen subset is a
+provider decision, not a full dataset or long-audio product score.
+The earlier LongVALE-derived target-only result remains provenance only.
+
+The corrected Codex MCP development smoke returned a useful opening clip in all
+three conditions. Against direct local inspection, VidXP matched the primary
+bounded-chunk result with 40.9% fewer tokens and 22.1% lower latency. Its saved
+top result was `0–10` seconds; the agent expanded the answer to `0–12`, reducing
+answer IoU from `.600` to `.500`. This is one development task, not a product
+gate or held-out quality claim. Older smokes remain debugging history because
+their prompts named the tool path and reused condition state.
+Earlier local controls exposed a
+separate historical FineLAP integration error: global clip and dense activation
+records were cross-ranked. Separating those representations was correct, but
+the later selector produced no target-overlapping final top-three result on the
+four-task component control. A later input audit found that control cannot
+decide provider quality: one reference has no audible event, and another sound
+query has several valid occurrences but only one accepted interval. That result
+is an auxiliary diagnosis; it neither validates nor rejects the selector and it
+does not decide whether the collective agent comparison can run.
+
+The current isolated Codex pilot completed 81 runs with all 27 primary pairs
+valid and scorable. VidXP was 18.3% faster and used 20.6% fewer tokens than
+direct inspection, but Success@3 was 15/27 versus 18/27, so the paired quality
+gate failed. VidXP's visible MCP evidence reached 19/27 within its top three;
+the agent did not consistently return all of it.
+
+The separate 54-case local-SLM comparison makes one planning request and then
+returns exactly three bounded VidXP windows without model reranking. The basic
+router scored 15/27; allowing the planner to vary query, modalities, and
+candidate depth scored 19/27 at 25.544 seconds and 270 local tokens per case.
+This supports a selected-pilot local-routing result, not general accuracy or an
+official LongVALE score. Success@1, rank, exact boundaries, and raw evidence-tile
+recall remain visible rather than being replaced by Success@3.
+
+See [current model direction](model_selection.md) and the
+[research adoption record](research_adoption.md).
 
 ## Evidence rules
 

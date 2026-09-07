@@ -28,6 +28,7 @@ from vidxp.application_models import (
 )
 from vidxp.core.media import utc_now
 from vidxp.composition import ControlPlaneContext, UploadHookContext
+from vidxp.control_plane import ControlPlaneApplication
 from vidxp.core.uploads import UploadIntentRecord, UploadSessionState, UploadState
 from vidxp.infrastructure.sql_catalog import SQLCatalog
 from vidxp.infrastructure.sql_tables import media as media_table
@@ -181,6 +182,25 @@ def test_upload_hook_context_starts_jobs_without_background_coordinator() -> Non
     catalog.close.assert_called_once_with()
     with pytest.raises(RuntimeError, match="closed upload-hook"):
         context.start()
+
+
+def test_control_plane_context_closes_owned_resources_once(tmp_path: Path) -> None:
+    jobs = Mock()
+    catalog = Mock()
+    context = ControlPlaneContext(
+        application=Mock(spec=ControlPlaneApplication),
+        jobs=jobs,
+        authorization=Mock(),
+        settings=VidXPSettings(repository_root=tmp_path),
+        catalog=catalog,
+    )
+
+    context.close()
+    context.close()
+
+    jobs.stop_worker.assert_called_once_with()
+    jobs.close.assert_called_once_with()
+    catalog.close.assert_called_once_with()
 
 
 def test_coordinator_blocked_stop_cannot_overlap_restart(tmp_path: Path) -> None:

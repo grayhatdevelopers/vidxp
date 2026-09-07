@@ -1,4 +1,14 @@
 import assert from 'node:assert/strict';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
@@ -6,9 +16,16 @@ import {
   evaluationEnvironment,
   indexContainsPilot,
   libsqlBindingName,
+  requireMachineId,
+  savedMachineId,
   serializeEnvironment,
   versionAtLeast,
 } from './setup-lib.mjs';
+import {
+  executableInstallRoots,
+  permissionProfile,
+} from './condition-state.mjs';
+import { resetEvaluationWorkspace } from './reset-workspace.mjs';
 
 test('checks the required Node version numerically', () => {
   assert.equal(versionAtLeast('22.21.9'), false);
@@ -62,14 +79,130 @@ test('builds and serializes the environment consumed by Promptfoo', () => {
     benchmarkRoot: 'C:/repo/benchmarks/codex-mcp',
     repositoryRoot: 'C:/repo',
     evaluationRoot: 'C:/eval',
-    environment: {},
+    indexSchemaVersion: 8,
+    environment: {
+      VIDXP_EVAL_MACHINE_ID: 'win-test-01',
+      VIDXP_MODEL_CACHE: 'C:/shared-models',
+    },
     platform: 'win32',
   });
   const serialized = serializeEnvironment(environment);
 
   assert.match(serialized, /VIDXP_EVAL_WORKSPACE="C:\/eval\/workspace"/);
+  assert.match(serialized, /VIDXP_EVAL_PROJECT_ROOT="C:\/repo"/);
+  assert.match(serialized, /VIDXP_EVAL_MACHINE_ID="win-test-01"/);
+  assert.match(serialized, /VIDXP_EVAL_INDEX_DIR="C:\/eval\/vidxp-index-schema-8"/);
+  assert.match(serialized, /VIDXP_EVAL_VIDXP_ON_WORKSPACE="C:\/eval\/workspace\/vidxp-on"/);
+  assert.match(serialized, /VIDXP_EVAL_VIDXP_OFF_WORKSPACE="C:\/eval\/workspace\/vidxp-off"/);
+  assert.match(
+    serialized,
+    /VIDXP_EVAL_CLEAN_USER_WORKSPACE="C:\/eval\/workspace\/clean-user"/,
+  );
+  assert.match(serialized, /VIDXP_EVAL_VIDXP_ON_CODEX_HOME="C:\/eval\/codex-home\/vidxp-on"/);
+  assert.match(serialized, /VIDXP_EVAL_VIDXP_OFF_CODEX_HOME="C:\/eval\/codex-home\/vidxp-off"/);
+  assert.match(serialized, /VIDXP_EVAL_CLEAN_USER_CODEX_HOME="C:\/eval\/codex-home\/clean-user"/);
+  assert.match(
+    serialized,
+    /VIDXP_EVAL_CLEAN_USER_PATH="C:\/Windows\/System32;C:\/Windows"/,
+  );
+  assert.match(serialized, /VIDXP_EVAL_UV_CACHE_DIR="C:\/eval\/uv-cache"/);
   assert.match(serialized, /VIDXP_MCP_COMMAND="C:\/repo\/\.venv\/Scripts\/vidxp-mcp\.exe"/);
+  assert.match(serialized, /PROMPTFOO_PYTHON="C:\/repo\/\.venv\/Scripts\/python\.exe"/);
   assert.match(serialized, /VIDXP_EVAL_MODEL="gpt-5\.6-sol"/);
+  assert.match(serialized, /VIDXP_MODEL_CACHE="C:\/shared-models"/);
   assert.doesNotMatch(serialized, /VIDXP_EVAL_ENV_FILE/);
   assert.doesNotMatch(serialized, /VIDXP_EVAL_ARTIFACT_DIR/);
+});
+
+test('always records the model cache used by the isolated runtime', () => {
+  const environment = evaluationEnvironment({
+    benchmarkRoot: '/repo/benchmarks/codex-mcp',
+    repositoryRoot: '/repo',
+    evaluationRoot: '/eval',
+    indexSchemaVersion: 8,
+    environment: { VIDXP_EVAL_MACHINE_ID: 'linux-test-01' },
+    platform: 'linux',
+  });
+
+  assert.equal(environment.VIDXP_MODEL_CACHE, '/eval/vidxp-data/models');
+});
+
+test('builds a root-denied Codex profile with explicit condition capabilities', () => {
+  assert.deepEqual(
+    executableInstallRoots(['/opt/homebrew/bin/ffmpeg', '/opt/homebrew/bin/ffprobe']),
+    ['/opt/homebrew'],
+  );
+  const directLocal = permissionProfile({
+    networkEnabled: false,
+    readableRoots: ['/opt/homebrew'],
+  });
+  const cleanUser = permissionProfile({ networkEnabled: true });
+
+  assert.match(directLocal, /":root" = "deny"/);
+  assert.match(directLocal, /":minimal" = "read"/);
+  assert.match(directLocal, /"\/opt\/homebrew" = "read"/);
+  assert.match(directLocal, /enabled = false/);
+  assert.doesNotMatch(cleanUser, /opt\/homebrew/);
+  assert.match(cleanUser, /enabled = true/);
+});
+
+test('requires and reloads a stable repository machine ID', () => {
+  assert.equal(requireMachineId('mac-m2-01'), 'mac-m2-01');
+  assert.throws(() => requireMachineId('MacBook Pro'), /machine ID/);
+
+  const root = mkdtempSync(join(tmpdir(), 'vidxp-eval-machine-'));
+  const envPath = join(root, '.env');
+  writeFileSync(envPath, 'VIDXP_EVAL_MACHINE_ID="mac-m2-01"\n');
+  assert.equal(savedMachineId(envPath), 'mac-m2-01');
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('resets clean-user state before every condition run', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vidxp-eval-reset-'));
+  const workspaceRoot = join(root, 'workspace');
+  const cleanWorkspace = join(workspaceRoot, 'clean-user');
+  mkdirSync(join(cleanWorkspace, 'media'), { recursive: true });
+  mkdirSync(join(cleanWorkspace, '.cache'), { recursive: true });
+  writeFileSync(join(cleanWorkspace, '.cache', 'installed-tool'), 'stale');
+
+  resetEvaluationWorkspace('clean-user', {
+    VIDXP_EVAL_WORKSPACE: workspaceRoot,
+    VIDXP_EVAL_CLEAN_USER_WORKSPACE: cleanWorkspace,
+    VIDXP_EVAL_CLEAN_USER_PATH: '/usr/bin:/bin',
+  });
+
+  assert.equal(existsSync(join(cleanWorkspace, '.cache')), false);
+  assert.equal(existsSync(join(cleanWorkspace, 'media')), true);
+  assert.equal(existsSync(join(cleanWorkspace, 'tmp')), true);
+  assert.equal(existsSync(join(cleanWorkspace, 'bin')), true);
+  assert.equal(
+    readFileSync(join(cleanWorkspace, '.zshenv'), 'utf8'),
+    'export PATH="/usr/bin:/bin"\n',
+  );
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('does not reset a workspace for either tool-only local agent', () => {
+  assert.doesNotThrow(() => resetEvaluationWorkspace('local-slm', {}));
+  assert.doesNotThrow(() => resetEvaluationWorkspace('local-slm-planner', {}));
+});
+
+test('removes source media while retaining the VidXP-on skill', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vidxp-eval-reset-'));
+  const workspaceRoot = join(root, 'workspace');
+  const onWorkspace = join(workspaceRoot, 'vidxp-on');
+  mkdirSync(join(onWorkspace, 'media'), { recursive: true });
+  mkdirSync(join(onWorkspace, '.agents'), { recursive: true });
+  writeFileSync(join(onWorkspace, 'media', 'video.mp4'), 'source');
+  writeFileSync(join(onWorkspace, '.agents', 'skill'), 'installed');
+
+  resetEvaluationWorkspace('vidxp-on', {
+    VIDXP_EVAL_WORKSPACE: workspaceRoot,
+    VIDXP_EVAL_VIDXP_ON_WORKSPACE: onWorkspace,
+  });
+
+  assert.equal(existsSync(join(onWorkspace, 'media')), false);
+  assert.equal(existsSync(join(onWorkspace, '.agents', 'skill')), true);
+  assert.equal(existsSync(join(onWorkspace, 'tmp')), true);
+  rmSync(root, { recursive: true, force: true });
 });

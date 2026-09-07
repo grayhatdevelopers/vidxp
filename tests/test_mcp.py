@@ -2209,8 +2209,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(links), 2)
             self.assertEqual(presented.structured_content["view"], "evidence")
             self.assertIsNone(presented.structured_content["answer"])
-            self.assertTrue(
-                any(isinstance(block, ImageContent) for block in presented.content)
+            self.assertEqual(
+                sum(isinstance(block, ImageContent) for block in presented.content),
+                1,
             )
             self.assertEqual(len(clip_resource.contents), 1)
             duration = float(
@@ -2353,7 +2354,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(linked.structured_content["etag"], f'"{"1" * 64}"')
         self.assertEqual(linked.structured_content["state"], "ready")
         self.assertEqual(linked.structured_content["delivery_mode"], "local_file")
-        self.assertEqual(Path(linked.structured_content["local_path"]), clip)
+        self.assertEqual(
+            Path(linked.structured_content["local_path"]).resolve(),
+            clip.resolve(),
+        )
         self.assertIsNone(linked.structured_content["download_url"])
         self.assertEqual(downloaded.contents[0].blob, "Y2xpcC1jb250ZW50")
 

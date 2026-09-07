@@ -4,7 +4,7 @@ Collection index: [Benchmarking research](README.md)
 
 Status: Primary-source result extraction complete
 
-Last verified: 2026-08-27
+Last verified: 2026-09-04
 
 This is the answer to “what did the published competitors actually score?” It is
 the result-level companion to the capability matrix in the
@@ -50,8 +50,36 @@ proceedings pp. 10398–10399.
 | LAION-CLAP | 35.1 | 44.2 | Mature native-Transformers integration baseline |
 
 The same paper uses fixed ten-second FineLAP inputs and identifies variable-length
-audio as future work. Long-media integration therefore still needs timestamped
-windowing, overlap, and span merging owned by VidXP.
+and long-form modeling as future work. Its global and local representations can
+support clip retrieval and event-phrase scoring; the paper does not validate a
+long-audio selector built by ranking those windows independently.
+
+### DCASE 2026: natural-language retrieval in long audio
+
+Source: [official Task 6 final results](https://dcase.community/challenge2026/task-audio-moment-retrieval-from-long-audio-results),
+checked 2026-09-04. The hidden evaluation has 177 queries over 100 recordings;
+the primary metric is top-one recall at temporal IoU 0.7.
+
+| System | Main representation and interval model | Total parameters | Hidden R1@0.5 | Hidden R1@0.7 | Artifact status |
+| --- | --- | ---: | ---: | ---: | --- |
+| Official baseline | MS-CLAP + QD-DETR | 165.5M | 28.25 | 13.56 | MIT code; released training data and features |
+| Kibata et al. | M2D-CLAP + modified CG-DETR | 211.87M | 69.49 | 48.59 | Technical report only; no public code or checkpoint verified |
+| Kim et al. | Multiple encoders + QAM-DETR + 7B audio LLM | 11.19B | 63.84 | 48.59 | Too large for the 8 GB CPU target |
+| Sugawara et al. | MS-CLAP/M2D-CLAP + UVCOM ensemble | 603.8M | 59.89 | 48.59 | Ensemble entry; exact submitted weights not verified |
+
+This is the direct comparison for VidXP's current sound failure. All leading
+systems consume a temporal audio-feature sequence and predict interval endpoints
+and confidence jointly. The smallest tied winner adds 13.37M trainable parameters
+to a 198.5M frozen M2D-CLAP encoder. Its score establishes the architecture and
+encoder direction, but missing released weights prevent a product adoption claim.
+
+[CASTELLA](https://arxiv.org/abs/2511.15131) provides a released reproduction
+control: its official Lighthouse UVCOM checkpoint reports R1@0.7 20.3 on the
+CASTELLA test split. That is a trained long-audio result, not directly comparable
+with FineLAP's clip-retrieval R@1. CASTELLA also reports a marked weakness on
+moments shorter than ten seconds, which includes VidXP's four sound pilot events.
+Its published quality and conflicting dependencies do not justify a separate
+product runtime; use it only when that reproduction is explicitly needed.
 
 ### MVEB: current text-video embedding comparison
 
@@ -74,11 +102,13 @@ checked 2026-08-27.
 
 | Checkpoint | Seven-dataset average mIoU | Selection use |
 | --- | ---: | --- |
-| TimeLens2-4B | 47.7 | First visual temporal-grounding candidate after cheap recall |
+| TimeLens2-4B | 47.7 | Recent visual temporal-grounding ceiling; no default selection without task-fit and runtime comparison |
 | TimeLens2-8B | 48.0 | Quality ceiling; not the practical default for a 0.3-point gain |
 
 Both checkpoints are visual-only. Neither evaluates environmental audio or spoken
-content, so neither can cover LongVALE's full task alone.
+content, so neither can cover LongVALE's full task alone. These results make
+TimeLens2 a recent ceiling; they do not select it over older, smaller, released
+temporal-grounding systems for VidXP.
 
 ### AEGBench: open-vocabulary sound boundaries
 
@@ -94,6 +124,23 @@ AEGBench contains 3,427 items and 9,790 queries with multiple hard-case labels,
 including repeated occurrence, polyphonic overlap, gradual boundaries, and long
 duration. It is a component benchmark, not evidence of end-to-end visual/sound/
 speech fusion.
+
+### Do not compare frame selection, scene endings, and interval IoU
+
+Three relevant research lines report different outputs and metrics:
+
+| Work | Reported result | Correct interpretation |
+| --- | --- | --- |
+| [BOLT](https://openaccess.thecvf.com/content/CVPR2025/html/Liu_BOLT_Boost_Large_Vision-Language_Model_Without_Training_for_Long-form_Video_CVPR_2025_paper.html) | The paper reports Video-MME accuracy increasing from 53.8 to 56.1 and MLVU from 58.9 to 63.4 under query-aware frame selection | VQA accuracy under a frame budget. BOLT returns selected frames, not an event interval, so these numbers cannot be compared with temporal IoU. |
+| [Automatic Funny Scene Extraction](https://ojs.aaai.org/index.php/AAAI/article/view/41480) | 18.3% relative AP improvement on OVSD, humor F1 0.834, 87% intended-funny curator judgment, and 98% proper scene localization on five full titles | Evidence for an applied shot-to-scene-to-ranking pipeline. The 98% is curator judgment of whether extracted scenes ended properly, not overlap with arbitrary natural-language intervals. |
+| [Off-the-Shelf VMR](https://proceedings.mlr.press/v203/diwan23a.html) | On its released 1,434-video QVHighlights validation subset, ShotDetect + CLIP + SimpleWatershed reaches R1@.5 48.33 and R1@.7 30.96 | Direct evidence that proposal construction changes zero-shot moment retrieval. It is subset-specific and has no official end-to-end release. |
+
+The established scene-segmentation papers and the query-conditioned grounding
+papers answer different questions. LGSS, ShotCoL, BaSSL, and NeighborNet assess
+whether adjacent shots form coherent scenes. Moment-DETR, UMT, QD-DETR, and
+UniVTG assess whether a query identifies one or more moments. UMT and QD-DETR
+also evaluate aligned audio features; visual-only grounding is not the only
+published design.
 
 ## Whole-system and multimodal retrieval
 

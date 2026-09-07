@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import {
   copyFileSync,
   createReadStream,
   existsSync,
+  linkSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -17,9 +20,12 @@ import {
   evaluationEnvironment,
   indexContainsPilot,
   libsqlBindingName,
+  requireMachineId,
+  savedMachineId,
   serializeEnvironment,
   versionAtLeast,
 } from './setup-lib.mjs';
+import { prepareConditionState } from './condition-state.mjs';
 
 const benchmarkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(benchmarkRoot, '..', '..');
@@ -29,9 +35,24 @@ const archiveHash = 'c83d62557f102c6d41ea95c2c3b3581657481c8646cc70b1e12a85ead27
 const archiveRelativePath = join('raw_videos_test', 'LongVALE_test_1171_part_9.zip');
 const annotationFilename = 'longvale-annotations-eval.json';
 const modalities = ['scene', 'action', 'sound', 'speech'];
-
 function executableName(command) {
   return process.platform === 'win32' && command === 'npm' ? 'npm.cmd' : command;
+}
+
+function installedDesktopModelCache() {
+  const candidates = [];
+  if (process.platform === 'darwin') {
+    candidates.push(join(homedir(), 'Library', 'Application Support', 'VidXP', 'models'));
+  } else if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    candidates.push(join(process.env.LOCALAPPDATA, 'VidXP', 'models'));
+  } else if (process.platform === 'linux') {
+    candidates.push(join(
+      process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'),
+      'VidXP',
+      'models',
+    ));
+  }
+  return candidates.find((candidate) => existsSync(candidate));
 }
 
 function formatCommand(command, args) {
@@ -92,22 +113,60 @@ async function main() {
   }
 
   run('uv', ['--version'], { capture: true });
-  run('codex', ['--version'], { capture: true });
+
+  const argumentsList = process.argv.slice(2);
+  let requestedMachineId = null;
+  if (argumentsList.length > 0) {
+    if (argumentsList.length !== 2 || argumentsList[0] !== '--machine-id') {
+      throw new Error('Usage: setup --machine-id <repository-machine-id>');
+    }
+    requestedMachineId = argumentsList[1];
+  }
 
   const evaluationRoot = defaultEvaluationRoot(process.env);
+  const uvCacheDirectory = join(evaluationRoot, 'uv-cache');
+  mkdirSync(uvCacheDirectory, { recursive: true });
+  const uvEnvironment = { ...process.env, UV_CACHE_DIR: uvCacheDirectory };
+  const desktopModelCache = installedDesktopModelCache();
+  const machineId = requireMachineId(
+    requestedMachineId
+      || process.env.VIDXP_EVAL_MACHINE_ID
+      || savedMachineId(join(benchmarkRoot, '.env')),
+  );
+  const setupSourceEnvironment = {
+    ...process.env,
+    VIDXP_EVAL_MACHINE_ID: machineId,
+    ...(process.env.VIDXP_MODEL_CACHE || !desktopModelCache
+      ? {}
+      : { VIDXP_MODEL_CACHE: desktopModelCache }),
+  };
+  run(
+    'uv',
+    [
+      'sync', '--frozen', '--extra', 'local-worker', '--extra', 'mcp', '--extra', 'server',
+      '--extra', 'benchmarks', '--extra', 'test',
+    ],
+    { env: uvEnvironment },
+  );
+  const indexSchemaVersion = Number(run(
+    'uv',
+    [
+      'run', '--no-sync', 'python', '-c',
+      'from vidxp.core.contracts import INDEX_SCHEMA_VERSION; print(INDEX_SCHEMA_VERSION)',
+    ],
+    { capture: true, env: uvEnvironment },
+  ).trim());
   const setupEnvironment = evaluationEnvironment({
     benchmarkRoot,
     repositoryRoot,
     evaluationRoot,
+    indexSchemaVersion,
+    environment: setupSourceEnvironment,
   });
   const commandEnvironment = { ...process.env, ...setupEnvironment };
   const tasks = JSON.parse(readFileSync(manifestPath, 'utf8'));
   const videoIds = [...new Set(tasks.map((task) => task.video_id))];
 
-  run(
-    'uv',
-    ['sync', '--frozen', '--extra', 'local-worker', '--extra', 'mcp', '--extra', 'benchmarks'],
-  );
   run(
     'uv',
     ['run', '--no-sync', 'vidxp', 'init', '--yes'],
@@ -125,14 +184,25 @@ async function main() {
   if (!bindingVersion) {
     throw new Error(`The Promptfoo lock does not declare ${bindingName}.`);
   }
+  const codexManifest = JSON.parse(readFileSync(
+    join(benchmarkRoot, 'node_modules', '@openai', 'codex', 'package.json'),
+    'utf8',
+  ));
+  const codexBindingName = `@openai/codex-${process.platform}-${process.arch}`;
+  const codexBindingVersion = codexManifest.optionalDependencies?.[codexBindingName];
+  if (!codexBindingVersion) {
+    throw new Error(`The pinned Codex package does not support ${process.platform}-${process.arch}.`);
+  }
   run(
     'npm',
     [
-      'install', '--no-save', '--package-lock=false', '--omit=optional',
+      'install', '--no-save', '--package-lock=false',
       `${bindingName}@${bindingVersion}`,
+      `${codexBindingName}@${codexBindingVersion}`,
     ],
     { cwd: benchmarkRoot },
   );
+  run('codex', ['--version'], { capture: true });
   run(
     process.execPath,
     [
@@ -144,16 +214,44 @@ async function main() {
 
   for (const directory of [
     setupEnvironment.VIDXP_EVAL_CODEX_HOME,
+    setupEnvironment.VIDXP_EVAL_VIDXP_ON_CODEX_HOME,
+    setupEnvironment.VIDXP_EVAL_VIDXP_OFF_CODEX_HOME,
+    setupEnvironment.VIDXP_EVAL_CLEAN_USER_CODEX_HOME,
+    setupEnvironment.VIDXP_EVAL_UV_CACHE_DIR,
     setupEnvironment.VIDXP_EVAL_WORKSPACE,
     join(setupEnvironment.VIDXP_EVAL_WORKSPACE, 'media'),
+    setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE,
+    setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE,
+    join(setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE, 'media'),
+    setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE,
+    join(setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE, 'media'),
+    join(setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE, 'bin'),
+    join(setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE, 'tmp'),
     setupEnvironment.VIDXP_EVAL_DATA_DIR,
     setupEnvironment.VIDXP_EVAL_INDEX_DIR,
     setupEnvironment.VIDXP_EVAL_ARTIFACT_DIR,
   ]) {
     mkdirSync(directory, { recursive: true });
   }
+  rmSync(
+    join(setupEnvironment.VIDXP_EVAL_VIDXP_ON_WORKSPACE, 'media'),
+    { recursive: true, force: true },
+  );
+  prepareConditionState({ repositoryRoot, environment: commandEnvironment });
   if (!existsSync(setupEnvironment.VIDXP_MCP_COMMAND)) {
     throw new Error(`VidXP MCP executable was not created at ${setupEnvironment.VIDXP_MCP_COMMAND}.`);
+  }
+  if (process.platform !== 'win32') {
+    const cleanPathProfile = `export PATH=${JSON.stringify(
+      setupEnvironment.VIDXP_EVAL_CLEAN_USER_PATH,
+    )}\n`;
+    for (const profile of ['.zshenv', '.zprofile', '.profile']) {
+      writeFileSync(
+        join(setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE, profile),
+        cleanPathProfile,
+        'utf8',
+      );
+    }
   }
   writeFileSync(
     setupEnvironment.VIDXP_EVAL_ENV_FILE,
@@ -170,6 +268,13 @@ async function main() {
   }
   if (!existsSync(authPath)) {
     throw new Error('Codex login completed without creating auth.json in the isolated profile.');
+  }
+  for (const conditionHome of [
+    setupEnvironment.VIDXP_EVAL_VIDXP_ON_CODEX_HOME,
+    setupEnvironment.VIDXP_EVAL_VIDXP_OFF_CODEX_HOME,
+    setupEnvironment.VIDXP_EVAL_CLEAN_USER_CODEX_HOME,
+  ]) {
+    copyFileSync(authPath, join(conditionHome, 'auth.json'));
   }
 
   process.stdout.write(
@@ -207,8 +312,29 @@ async function main() {
     if (!existsSync(source)) {
       throw new Error(`The LongVALE archive did not contain ${source}.`);
     }
-    copyFileSync(source, join(setupEnvironment.VIDXP_EVAL_WORKSPACE, 'media', `${videoId}.mp4`));
+    const sharedMedia = join(setupEnvironment.VIDXP_EVAL_WORKSPACE, 'media', `${videoId}.mp4`);
+    copyFileSync(source, sharedMedia);
+    for (const conditionWorkspace of [
+      setupEnvironment.VIDXP_EVAL_VIDXP_OFF_WORKSPACE,
+      setupEnvironment.VIDXP_EVAL_CLEAN_USER_WORKSPACE,
+    ]) {
+      const conditionMedia = join(conditionWorkspace, 'media', `${videoId}.mp4`);
+      if (!existsSync(conditionMedia)) {
+        linkSync(sharedMedia, conditionMedia);
+      }
+    }
   }
+
+  run(
+    'uv',
+    [
+      'run', '--no-sync', 'vidxp',
+      '--data-dir', setupEnvironment.VIDXP_EVAL_DATA_DIR,
+      '--index-dir', setupEnvironment.VIDXP_EVAL_INDEX_DIR,
+      'jobs', 'stop-worker',
+    ],
+    { env: commandEnvironment },
+  );
 
   run(
     'uv',
@@ -221,8 +347,13 @@ async function main() {
     { env: commandEnvironment },
   );
 
-  if (!indexContainsPilot(readIndex(setupEnvironment), videoIds, modalities)) {
+  const currentIndex = readIndex(setupEnvironment);
+  if (!indexContainsPilot(currentIndex, videoIds, modalities)) {
     for (const videoId of videoIds) {
+      if (indexContainsPilot(currentIndex, [videoId], modalities)) {
+        process.stdout.write(`\n${videoId}.mp4 is already indexed; skipping.\n`);
+        continue;
+      }
       process.stdout.write(`\nIndexing ${videoId}.mp4\n`);
       const mediaPath = join(setupEnvironment.VIDXP_EVAL_WORKSPACE, 'media', `${videoId}.mp4`);
       const imported = JSON.parse(run(
@@ -259,8 +390,9 @@ async function main() {
 
   process.stdout.write(
     '\nSetup complete. Run:\n'
-      + '  npm --prefix benchmarks/codex-mcp run eval:smoke\n'
-      + '  npm --prefix benchmarks/codex-mcp run eval:pilot\n',
+      + '  ./benchmarks/codex-mcp/run smoke\n'
+      + '  ./benchmarks/codex-mcp/run pilot\n'
+      + '  ./benchmarks/codex-mcp/run view\n',
   );
 }
 

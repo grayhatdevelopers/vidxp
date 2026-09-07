@@ -16,7 +16,14 @@ documentation, tests, or product changes.
 - Explain whether a storage or model change requires existing repositories to
   be rebuilt.
 - Do not commit generated environments, model weights, media, indexes, local
-  data, benchmark runs, or build outputs.
+  databases, bulky raw benchmark output, machine-specific data, or build
+  outputs.
+- A focused pull request may include a lightweight, sanitized benchmark result
+  when it directly supports the change or a documented research claim. Store
+  it with the benchmark documentation, link it from the owning result or metric
+  page, and retain only the configuration, provenance, metrics, and traces a
+  reviewer needs to audit it from another checkout. Maintainers make the final
+  retention decision during review.
 
 GPU support is deferred. Do not make CUDA the default or publish a GPU
 installation path without a separately reviewed implementation and validation

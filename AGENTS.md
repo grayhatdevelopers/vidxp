@@ -12,7 +12,13 @@ share the same application contracts. Read
 - Keep capability-specific models, schemas, dependencies, indexing, and search
   logic under `src/vidxp/capabilities/`.
 - Do not commit generated environments, model weights, media, indexes, build
-  outputs, or local data.
+  outputs, local databases, or other bulky or machine-specific data.
+- You may commit lightweight, sanitized benchmark result artifacts when they
+  support the change or a documented research claim and remain useful from a
+  different checkout. Reference each retained artifact from the owning
+  benchmark documentation and include only the configuration, provenance,
+  metrics, and traces needed to audit it. Contributors may propose these
+  artifacts; maintainers decide whether they remain before merge.
 - Follow the Conventional Commit and release-note rules in the contributing
   guide. State explicitly when a change is internal-only.
 

@@ -131,6 +131,11 @@ class OllamaQueryModelTests(unittest.TestCase):
             )
             self.assertEqual(request["model"], "contract-model")
             self.assertEqual(request["reasoning_effort"], "none")
+            self.assertEqual(request["max_tokens"], 32_768)
+            self.assertEqual(request["temperature"], 0.7)
+            self.assertEqual(request["top_p"], 0.8)
+            self.assertEqual(request["presence_penalty"], 1.5)
+            self.assertNotIn("max_completion_tokens", request)
 
 
 if __name__ == "__main__":

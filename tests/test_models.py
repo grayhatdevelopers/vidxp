@@ -461,7 +461,6 @@ class ModelTests(unittest.TestCase):
     def test_incomplete_cached_snapshot_is_resumed_during_prepare(self):
         with TemporaryDirectory() as directory:
             cache = Path(directory) / "models"
-            incomplete = Path(directory) / "incomplete"
             complete = Path(directory) / "complete"
             content = b"verified weights"
             weights = complete / FASTER_WHISPER_MODEL.weights_file
@@ -477,10 +476,7 @@ class ModelTests(unittest.TestCase):
                 allow_model_downloads=True,
             )
 
-            with patch(
-                "huggingface_hub.snapshot_download",
-                return_value=str(incomplete),
-            ), patch.object(
+            with patch.object(
                 ModelRuntime,
                 "_download_snapshot",
                 return_value=complete,
@@ -489,6 +485,27 @@ class ModelTests(unittest.TestCase):
 
         self.assertEqual(resolved, complete)
         resume.assert_called_once_with(spec, cache=cache, progress=None)
+
+    def test_verified_weights_resolve_without_a_complete_hub_snapshot(self):
+        with TemporaryDirectory() as directory:
+            cache = Path(directory) / "models"
+            content = b"verified weights"
+            spec = replace(
+                FASTER_WHISPER_MODEL,
+                weights_sha256=hashlib.sha256(content).hexdigest(),
+            )
+            weights = model_artifact_path(cache, spec)
+            weights.parent.mkdir(parents=True)
+            weights.write_bytes(content)
+            runtime = self.runtime(
+                directory,
+                allowed_specs=(spec,),
+                allow_model_downloads=False,
+            )
+
+            resolved = runtime.resolve_model(spec)
+
+        self.assertEqual(resolved, weights.parent)
 
     def test_runtime_rejects_specs_not_declared_by_enabled_capabilities(self):
         with TemporaryDirectory() as directory:
@@ -825,6 +842,22 @@ class ModelTests(unittest.TestCase):
             self.assertRaises(ValidationError),
         ):
             VidXPSettings(_env_file=None)
+
+    def test_saved_local_answer_selection_supplies_cli_and_local_surfaces(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "vidxp.local_answers.configured_local_answer_values",
+                return_value={
+                    "slm_base_url": "http://127.0.0.1:11434/v1",
+                    "slm_model": "saved-model",
+                },
+            ),
+        ):
+            settings = VidXPSettings(_env_file=None)
+
+        self.assertEqual(settings.slm_base_url, "http://127.0.0.1:11434/v1")
+        self.assertEqual(settings.slm_model, "saved-model")
 
     def test_auto_runtime_remains_cpu_until_acceleration_parity_is_enabled(self):
         with patch(

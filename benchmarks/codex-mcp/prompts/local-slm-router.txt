@@ -1,0 +1,10 @@
+Choose which indexed VidXP evidence types are relevant to locating the supplied
+event. Return every relevant type and no unrelated type.
+
+- scene: visible objects, setting, appearance, or visual state
+- action: visible movement, activity, or change over time
+- sound: non-speech audio, including environmental and mechanical sounds
+- speech: spoken words or dialogue
+
+Do not locate the event, predict timestamps, rewrite the query, or summarize
+results. Your only task is modality selection.

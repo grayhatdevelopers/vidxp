@@ -526,9 +526,18 @@ class JobService:
             message="The durable workflow database is available.",
         )
 
-    @job_boundary
     def stop_worker(self) -> bool:
-        return self.backend.stop_worker()
+        try:
+            return self.backend.stop_worker()
+        except ApplicationError:
+            raise
+        except Exception as exc:
+            raise ApplicationError(
+                "worker_stop_failed",
+                ErrorCategory.unavailable,
+                f"The local background worker could not be stopped: {exc}",
+                retryable=True,
+            ) from exc
 
     def close(self) -> None:
         self.backend.close()

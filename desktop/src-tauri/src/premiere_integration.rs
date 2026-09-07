@@ -2,6 +2,7 @@ use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
     process::Command,
+    time::Duration,
 };
 
 #[cfg(windows)]
@@ -11,10 +12,16 @@ use std::fs;
 
 use serde::{Deserialize, Serialize};
 
+use crate::background_process::{self, BackgroundPolicy};
+
 const CEP_ID: &str = "org.grayhat.vidxp-premiere.cep.search";
 const UXP_ID: &str = "org.grayhat.vidxp-premiere";
 const CEP_PACKAGE: &str = "vidxp-premiere-cep.zxp";
 const UXP_PACKAGE: &str = "vidxp-premiere-uxp.ccx";
+const COMMAND_OUTPUT_LIMIT_BYTES: usize = 1024 * 1024;
+#[cfg(windows)]
+const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(15);
+const INSTALLER_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -215,10 +222,16 @@ foreach ($root in $roots) {
 }
 $items | ConvertTo-Json -Compress
 "#;
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output();
-    let Ok(output) = output else {
+    let mut command = Command::new("powershell.exe");
+    command.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+    let Ok(output) = background_process::run(
+        command,
+        BackgroundPolicy {
+            timeout: DISCOVERY_TIMEOUT,
+            max_output_bytes: COMMAND_OUTPUT_LIMIT_BYTES,
+        },
+        None,
+    ) else {
         return Vec::new();
     };
     if !output.status.success() {
@@ -338,10 +351,22 @@ fn checked_installer<'a>(
     installer: &Path,
     arguments: impl IntoIterator<Item = &'a str>,
 ) -> Result<String, String> {
-    let output = Command::new(installer)
-        .args(arguments)
-        .output()
-        .map_err(|error| format!("Could not start Adobe's plugin installer: {error}"))?;
+    let mut command = Command::new(installer);
+    command.args(arguments);
+    let output = background_process::run(
+        command,
+        BackgroundPolicy {
+            timeout: INSTALLER_TIMEOUT,
+            max_output_bytes: COMMAND_OUTPUT_LIMIT_BYTES,
+        },
+        None,
+    )
+    .map_err(|error| {
+        format!(
+            "Could not run Adobe's plugin installer: {}",
+            error.detail
+        )
+    })?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if output.status.success() {

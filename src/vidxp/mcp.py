@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import json
 import base64
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -547,8 +548,9 @@ def create_mcp_server(
             "completed search/query job; request keyframes or "
             "keyframes_and_clips only for standalone drill-down artifacts. The "
             "ordinary flow is submit search/query, use wait_job for bounded "
-            "status observation, then call get_job once and "
-            "inspect its board. Use create_evidence_board only for custom selections or "
+            "status observation, then call get_job_evidence once. Fetch the full "
+            "get_job record only when machine-readable job details are required. "
+            "Use create_evidence_board only for custom selections or "
             "continuation pages. Use materialize_job_evidence with evidence "
             "IDs from the completed result to inspect additional candidates in "
             "batches of ten without rerunning retrieval or supplying timestamps. "
@@ -895,7 +897,8 @@ def create_mcp_server(
                 )
                 frame = keyframe.artifact.artifact
                 if (
-                    frame.byte_size <= 512_000
+                    delivery.board is None
+                    and frame.byte_size <= 512_000
                     and frame.byte_size <= settings.mcp_max_resource_bytes
                     and keyframe.width <= 1280
                     and keyframe.height <= 1280
@@ -1077,6 +1080,25 @@ def create_mcp_server(
                 f"- {candidate.rank} | {start:.3f}-{end:.3f} | "
                 f"{','.join(candidate.modalities)} | {candidate.evidence_id}"
             )
+            contributors = candidate.provenance.get("constituent_hits")
+            if isinstance(contributors, list):
+                spans = []
+                for contributor in contributors:
+                    if not isinstance(contributor, Mapping):
+                        continue
+                    modality = contributor.get("modality")
+                    hit_start = contributor.get("start")
+                    hit_end = contributor.get("end")
+                    if (
+                        isinstance(modality, str)
+                        and isinstance(hit_start, (int, float))
+                        and isinstance(hit_end, (int, float))
+                    ):
+                        spans.append(
+                            f"{modality} {float(hit_start):.3f}-{float(hit_end):.3f}s"
+                        )
+                if spans:
+                    line += " | contributors: " + "; ".join(spans)
             if label:
                 line += f" | {label}"
             lines.append(line)

@@ -4,7 +4,7 @@ from hashlib import sha256
 from typing import Annotated, Literal, TypeAlias
 from uuid import UUID
 
-from pydantic import StringConstraints
+from pydantic import Field, StringConstraints
 
 from vidxp.application_models import Principal
 
@@ -15,6 +15,12 @@ IdempotencyKey: TypeAlias = Annotated[
         min_length=8,
         max_length=200,
         pattern=r"^[\x21-\x7e]+$",
+    ),
+    Field(
+        description=(
+            "Use a fresh client-generated key for a new operation; reuse it "
+            "only when retrying that same operation."
+        )
     ),
 ]
 RequestTransport: TypeAlias = Literal["http", "mcp"]

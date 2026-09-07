@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    io::{self, BufRead, BufReader, Read, Write},
+    io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::Command,
@@ -52,14 +52,13 @@ const RUNTIME_PACKAGE_WHEEL_NAME: &str =
     include_str!(concat!(env!("OUT_DIR"), "/runtime-package-name.txt"));
 const RUNTIME_PACKAGE_WHEEL_SHA256: &str =
     include_str!(concat!(env!("OUT_DIR"), "/runtime-package-sha256.txt"));
-const MODEL_CACHE_CATALOG_BYTES: &[u8] = include_bytes!("../../model-cache-catalog.json");
+const MODEL_CACHE_CATALOG_BYTES: &[u8] = include_bytes!("../../generated/model-cache-catalog.json");
 const CODEX_PLUGIN_MARKETPLACE_SOURCE: &str = "grayhatdevelopers/vidxp";
 const CODEX_PLUGIN_MARKETPLACE_REF: Option<&str> = option_env!("VIDXP_PLUGIN_MARKETPLACE_REF");
 const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
 const RUNTIME_CONSTRAINTS_FILE_NAME: &str = "runtime-constraints.txt";
 const MAX_SETUP_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 const MEDIA_RUNTIME_INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-const QUERY_MODEL_PULL_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 static READINESS_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -322,31 +321,6 @@ fn emit_local_answer_progress(
 #[derive(Deserialize)]
 struct OllamaVersionResponse {
     version: String,
-}
-
-#[derive(Deserialize)]
-struct OllamaTagsResponse {
-    models: Vec<OllamaModel>,
-}
-
-#[derive(Deserialize)]
-struct OllamaModel {
-    name: String,
-    #[serde(default)]
-    digest: String,
-}
-
-#[derive(Deserialize)]
-struct OllamaPullProgress {
-    status: String,
-    #[serde(default)]
-    digest: Option<String>,
-    #[serde(default)]
-    total: Option<u64>,
-    #[serde(default)]
-    completed: Option<u64>,
-    #[serde(default)]
-    error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1651,10 +1625,6 @@ fn ollama_management_url(path: &str) -> String {
     format!("http://{}{path}", query_setup::OLLAMA_HOST)
 }
 
-fn human_bytes(bytes: u64) -> String {
-    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
-    format!("{:.2} GiB", bytes as f64 / GIB)
-}
 
 fn ollama_client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
@@ -1678,20 +1648,6 @@ fn ollama_server_version() -> Result<String, String> {
         return Err("The local Ollama service returned an empty version.".into());
     }
     Ok(response.version)
-}
-
-fn installed_ollama_model(model: &str) -> Result<Option<OllamaModel>, String> {
-    let response = ollama_client(Duration::from_secs(10))?
-        .get(ollama_management_url("/api/tags"))
-        .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(|error| format!("Could not inspect local Ollama models: {error}"))?
-        .json::<OllamaTagsResponse>()
-        .map_err(|error| format!("Ollama returned an invalid model inventory: {error}"))?;
-    Ok(response.models.into_iter().find(|candidate| {
-        candidate.name == model
-            || candidate.name.strip_suffix(":latest") == model.strip_suffix(":latest")
-    }))
 }
 
 fn stop_query_process(state: &DesktopState) {
@@ -1770,217 +1726,7 @@ fn ensure_query_service(
     Ok(version)
 }
 
-fn pull_ollama_model(
-    app: &AppHandle,
-    draft_id: &str,
-    current: u8,
-    total_steps: u8,
-    model: &str,
-    cancellation: background_process::CancellationToken,
-) -> Result<OllamaModel, String> {
-    if let Some(installed) = installed_ollama_model(model)? {
-        emit_local_answer_progress(
-            app,
-            draft_id,
-            current,
-            total_steps,
-            format!("Reusing {model}"),
-            None,
-            None,
-        );
-        return Ok(installed);
-    }
-    let response = ollama_client(QUERY_MODEL_PULL_TIMEOUT)?
-        .post(ollama_management_url("/api/pull"))
-        .json(&serde_json::json!({"model": model, "stream": true}))
-        .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(|error| format!("Could not start the {model} download: {error}"))?;
-    let reader = BufReader::new(response);
-    for line in reader.lines() {
-        if cancellation.is_cancelled() {
-            return Err("the local answer model download was cancelled".into());
-        }
-        let line = line.map_err(|error| format!("The model download stream failed: {error}"))?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let progress: OllamaPullProgress = serde_json::from_str(&line)
-            .map_err(|error| format!("Ollama returned invalid download progress: {error}"))?;
-        if let Some(error) = progress.error {
-            return Err(format!("Ollama could not download {model}: {error}"));
-        }
-        let layer = progress
-            .digest
-            .as_deref()
-            .and_then(|digest| digest.get(..12))
-            .map(|digest| format!(" · layer {digest}"))
-            .unwrap_or_default();
-        emit_local_answer_progress(
-            app,
-            draft_id,
-            current,
-            total_steps,
-            format!("{}{layer}", progress.status),
-            progress.completed,
-            progress.total,
-        );
-    }
-    installed_ollama_model(model)?.ok_or_else(|| {
-        format!("Ollama finished downloading {model}, but the model was not present afterward.")
-    })
-}
 
-fn local_answer_platform_error() -> Option<String> {
-    #[cfg(windows)]
-    {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "ver"]);
-        if let Ok(output) = checked_output(command, "Windows version check")
-            && query_setup::version_meets_minimum(
-                &String::from_utf8_lossy(&output.stdout),
-                (10, 0, 19045),
-            ) == Some(false)
-        {
-            return Some(
-                "Local grounded answers require Windows 10 22H2 or newer because that is Ollama's supported Windows baseline."
-                    .into(),
-            );
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let mut command = Command::new("/usr/bin/sw_vers");
-        command.arg("-productVersion");
-        if let Ok(output) = checked_output(command, "macOS version check")
-            && query_setup::version_meets_minimum(
-                &String::from_utf8_lossy(&output.stdout),
-                (14, 0, 0),
-            ) == Some(false)
-        {
-            return Some(
-                "Local grounded answers require macOS 14 or newer because that is Ollama's supported macOS baseline."
-                    .into(),
-            );
-        }
-    }
-    None
-}
-
-async fn prepare_local_answers_runtime(
-    app: &AppHandle,
-    state: &DesktopState,
-    paths: &DesktopPaths,
-    draft_id: &str,
-    current: u8,
-    total_steps: u8,
-    spec: &LocalAnswersSpec,
-    cancellation: background_process::CancellationToken,
-) -> Result<(), String> {
-    if let Some(error) = local_answer_platform_error() {
-        return Err(error);
-    }
-    let server_ready = ollama_server_version().is_ok();
-    let mut executable = resolve_query_executable(paths, &spec.managed_runtime);
-    if !server_ready && executable.is_none() {
-        let artifact = query_setup::current_artifact(&spec.managed_runtime).ok_or_else(|| {
-            "VidXP does not publish a managed headless Ollama runtime for this platform. Install Ollama from https://ollama.com/download, then retry."
-                .to_string()
-        })?;
-        let approved = app
-            .dialog()
-            .message(format!(
-                "Local grounded answers require a local inference runtime and {} (approximately 3.4 GB, Apache-2.0).\n\nDownload the verified headless Ollama {} runtime ({}) into VidXP's private data? No Ollama desktop app will be installed.",
-                spec.model,
-                spec.managed_runtime.version,
-                human_bytes(artifact.download_size_bytes)
-            ))
-            .title("Download local answer runtime")
-            .kind(MessageDialogKind::Info)
-            .buttons(MessageDialogButtons::OkCancelCustom(
-                "Download".into(),
-                "Not now".into(),
-            ))
-            .blocking_show();
-        if !approved {
-            return Err("Local grounded-answer setup was deferred.".into());
-        }
-        emit_local_answer_progress(
-            app,
-            draft_id,
-            current,
-            total_steps,
-            format!(
-                "Downloading the headless Ollama {} runtime",
-                spec.managed_runtime.version
-            ),
-            Some(0),
-            Some(artifact.download_size_bytes),
-        );
-        let download_app = app.clone();
-        let download_draft = draft_id.to_owned();
-        let private_data = paths.private_data.clone();
-        let managed_runtime = spec.managed_runtime.clone();
-        let runtime_version = managed_runtime.version.clone();
-        let runtime_cancellation = cancellation.clone();
-        executable = Some(
-            tauri::async_runtime::spawn_blocking(move || {
-                query_setup::install_managed_runtime(
-                    &private_data,
-                    &managed_runtime,
-                    &runtime_cancellation,
-                    |downloaded, total| {
-                        emit_local_answer_progress(
-                            &download_app,
-                            &download_draft,
-                            current,
-                            total_steps,
-                            format!("Downloading the headless Ollama {runtime_version} runtime"),
-                            Some(downloaded),
-                            Some(total),
-                        );
-                    },
-                )
-            })
-            .await
-            .map_err(|error| {
-                format!("Managed Ollama runtime preparation stopped unexpectedly: {error}")
-            })??,
-        );
-    }
-    let model_directory = paths.models.join("ollama");
-    if let Some(executable) = executable {
-        ensure_query_service(state, &executable, &model_directory)?;
-    } else if !server_ready {
-        return Err(
-            "The managed Ollama runtime finished downloading, but VidXP could not locate its executable."
-                .to_string(),
-        );
-    }
-    let pull_app = app.clone();
-    let pull_draft = draft_id.to_owned();
-    let pull_model = spec.model.clone();
-    let pull_cancellation = cancellation;
-    let installed = tauri::async_runtime::spawn_blocking(move || {
-        pull_ollama_model(
-            &pull_app,
-            &pull_draft,
-            current,
-            total_steps,
-            &pull_model,
-            pull_cancellation,
-        )
-    })
-    .await
-    .map_err(|error| format!("Local answer model preparation stopped unexpectedly: {error}"))??;
-    if installed.digest.trim().is_empty() {
-        return Err(format!(
-            "Ollama did not report a digest for {}.",
-            spec.model
-        ));
-    }
-    Ok(())
-}
 
 fn active_local_answers(paths: &DesktopPaths) -> bool {
     active_runtime(paths).is_ok_and(|active| active.local_answers)
@@ -1990,13 +1736,17 @@ fn configure_local_answer_environment(command: &mut Command, paths: &DesktopPath
     if active_local_answers(paths) {
         let model = manifest()
             .map(|manifest| manifest.local_answers.model)
-            .unwrap_or_else(|_| "qwen3.5:4b-q4_K_M".into());
+            .unwrap_or_default();
         command
             .env(
                 "VIDXP_SLM_BASE_URL",
                 format!("http://{}/v1", query_setup::OLLAMA_HOST),
             )
             .env("VIDXP_SLM_MODEL", model);
+    } else {
+        command
+            .env("VIDXP_SLM_BASE_URL", "")
+            .env("VIDXP_SLM_MODEL", "");
     }
 }
 
@@ -2012,10 +1762,23 @@ fn ensure_active_query_service(state: &DesktopState, paths: &DesktopPaths) -> Re
         })?;
         ensure_query_service(state, &executable, &paths.models.join("ollama"))?;
     }
+    let active = active_runtime(paths)?;
+    let runtime = runtime_directory(paths, &active);
     let model = manifest()?.local_answers.model;
-    installed_ollama_model(&model)?.ok_or_else(|| {
-        format!("The local answer model {model} is missing. Open Setup options and repair VidXP.")
-    })?;
+    run_vidxp(
+        &runtime,
+        paths,
+        &[
+            "local-answers".into(),
+            "status".into(),
+            "--json".into(),
+            "--base-url".into(),
+            format!("http://{}/v1", query_setup::OLLAMA_HOST),
+            "--model".into(),
+            model,
+        ],
+        "Local grounded-answer validation",
+    )?;
     Ok(())
 }
 
@@ -2639,6 +2402,38 @@ fn watch_managed_model_progress(
             && let Ok(progress) = serde_json::from_slice(&contents)
         {
             emit_managed_model_progress(app, draft_id, current, total, &progress);
+            last_contents = Some(contents);
+        }
+        if stop.load(Ordering::Acquire) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn watch_local_answer_progress(
+    app: &AppHandle,
+    draft_id: &str,
+    progress_path: &Path,
+    current: u8,
+    total: u8,
+    stop: &AtomicBool,
+) {
+    let mut last_contents = None;
+    loop {
+        if let Ok(contents) = fs::read(progress_path)
+            && last_contents.as_deref() != Some(contents.as_slice())
+            && let Ok(progress) = serde_json::from_slice::<ManagedModelJobProgress>(&contents)
+        {
+            emit_local_answer_progress(
+                app,
+                draft_id,
+                current,
+                total,
+                progress.message,
+                progress.current,
+                progress.total,
+            );
             last_contents = Some(contents);
         }
         if stop.load(Ordering::Acquire) {
@@ -3473,32 +3268,10 @@ async fn install_runtime(
     let progress_total = (if request.prepare_models { 8 } else { 7 }) + local_answer_offset;
 
     let install_result = async {
-        if request.local_answers {
-            emit_local_answer_progress(
-                &app,
-                &request.draft_id,
-                2,
-                progress_total,
-                "Checking Ollama and the approved Qwen model",
-                None,
-                None,
-            );
-            prepare_local_answers_runtime(
-                &app,
-                &state,
-                &paths,
-                &request.draft_id,
-                2,
-                progress_total,
-                &manifest.local_answers,
-                cancellation.token(),
-            )
-            .await?;
-        }
         emit_managed_setup_progress(
             &app,
             &request.draft_id,
-            2 + local_answer_offset,
+            2,
             progress_total,
             "python",
             "Preparing an isolated Python runtime",
@@ -3533,7 +3306,7 @@ async fn install_runtime(
         emit_managed_setup_progress(
             &app,
             &request.draft_id,
-            3 + local_answer_offset,
+            3,
             progress_total,
             "package",
             "Acquiring the VidXP package",
@@ -3564,7 +3337,7 @@ async fn install_runtime(
         emit_managed_setup_progress(
             &app,
             &request.draft_id,
-            4 + local_answer_offset,
+            4,
             progress_total,
             "dependencies",
             "Installing the selected search features",
@@ -3591,6 +3364,66 @@ async fn install_runtime(
                 Duration::from_secs(30),
             )
             .await?;
+
+            emit_local_answer_progress(
+                &app,
+                &request.draft_id,
+                5,
+                progress_total,
+                "Checking Ollama and the approved Qwen model",
+                None,
+                None,
+            );
+            let progress_path = runtime.join(".managed-local-answer-progress.json");
+            let arguments = vec![
+                "local-answers".into(),
+                "prepare".into(),
+                "--json".into(),
+                "--yes".into(),
+                "--no-save".into(),
+                "--runtime-root".into(),
+                paths.private_data.to_string_lossy().into_owned(),
+                "--base-url".into(),
+                format!("http://{}/v1", query_setup::OLLAMA_HOST),
+                "--model".into(),
+                manifest.local_answers.model.clone(),
+                "--progress-file".into(),
+                progress_path.to_string_lossy().into_owned(),
+            ];
+            let preparation_app = app.clone();
+            let preparation_draft_id = request.draft_id.clone();
+            let monitor_stop = Arc::new(AtomicBool::new(false));
+            let monitor_stop_worker = monitor_stop.clone();
+            let progress_path_worker = progress_path.clone();
+            let progress_monitor = thread::spawn(move || {
+                watch_local_answer_progress(
+                    &preparation_app,
+                    &preparation_draft_id,
+                    &progress_path_worker,
+                    5,
+                    progress_total,
+                    &monitor_stop_worker,
+                );
+            });
+            let preparation = run_vidxp_supervised(
+                &runtime,
+                &paths,
+                &arguments,
+                cancellation.token(),
+                "Local grounded-answer preparation",
+            )
+            .await;
+            monitor_stop.store(true, Ordering::Release);
+            let monitor_result = progress_monitor.join();
+            let _ = fs::remove_file(&progress_path);
+            if let Err(error) =
+                query_setup::cleanup_managed_installation_staging(&paths.private_data)
+            {
+                log::warn!("Could not remove local-answer setup staging files: {error}");
+            }
+            preparation?;
+            monitor_result
+                .map_err(|_| "Local-answer progress stopped unexpectedly".to_owned())?;
         }
         if let Err(error) = fs::remove_file(&runtime_wheel) {
             log::warn!(
@@ -6146,13 +5979,12 @@ mod tests {
         assert_eq!(sound.extra, "sound");
         assert_eq!(sound.modality, "sound");
         assert_eq!(sound.label, "Sound event search");
-        assert_eq!(
+        assert!(!sound.models.is_empty());
+        assert!(
             sound
                 .models
                 .iter()
-                .map(|model| model.download_size_bytes)
-                .sum::<u64>(),
-            981_760_363
+                .all(|model| !model.cache_key.is_empty() && model.download_size_bytes > 0)
         );
         assert_eq!(
             package_specification(&manifest, &["sound".into()], &[]),
@@ -6183,9 +6015,7 @@ mod tests {
                 .artifacts
                 .contains_key("macos-aarch64")
         );
-        if let Some(artifact) =
-            super::query_setup::current_artifact(&manifest.local_answers.managed_runtime)
-        {
+        for artifact in manifest.local_answers.managed_runtime.artifacts.values() {
             assert_eq!(artifact.sha256.len(), 64);
             assert!(artifact.download_size_bytes > 0);
             assert!(

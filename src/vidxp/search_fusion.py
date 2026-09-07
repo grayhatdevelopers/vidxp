@@ -23,7 +23,7 @@ def _query_id(
 ) -> str:
     identity = "\0".join(
         (
-            "rrf_v1",
+            "rrf_v2",
             query,
             ",".join(modalities),
             media_id or "*",
@@ -33,37 +33,64 @@ def _query_id(
     return "fused:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
-def _connected_components(
+def _hit_priority(hit: SearchHit) -> tuple[object, ...]:
+    return (
+        hit.rank,
+        hit.end - hit.start,
+        hit.media_id,
+        hit.start,
+        hit.end,
+        hit.modality,
+        hit.source_id,
+    )
+
+
+def _overlaps(anchor: SearchHit, candidate: SearchHit) -> bool:
+    return (
+        anchor.media_id == candidate.media_id
+        and min(anchor.end, candidate.end) > max(anchor.start, candidate.start)
+    )
+
+
+def _rank_anchored_groups(
     hits: tuple[SearchHit, ...],
 ) -> list[list[SearchHit]]:
-    ordered = sorted(
-        hits,
-        key=lambda hit: (
-            hit.media_id,
-            hit.start,
-            hit.end,
-            hit.modality,
-            hit.rank,
-            hit.source_id,
-        ),
-    )
-    components: list[list[SearchHit]] = []
-    current: list[SearchHit] = []
-    current_media: str | None = None
-    current_end = 0.0
-    for hit in ordered:
-        if not current or hit.media_id != current_media or hit.start > current_end:
-            if current:
-                components.append(current)
-            current = [hit]
-            current_media = hit.media_id
-            current_end = hit.end
-        else:
-            current.append(hit)
-            current_end = max(current_end, hit.end)
-    if current:
-        components.append(current)
-    return components
+    """Keep moments separate and attach only direct cross-modal support."""
+
+    remaining = sorted(hits, key=_hit_priority)
+    groups: list[list[SearchHit]] = []
+    while remaining:
+        anchor = remaining.pop(0)
+        best_by_modality: dict[str, tuple[int, SearchHit]] = {}
+        for index, candidate in enumerate(remaining):
+            if candidate.modality == anchor.modality or not _overlaps(
+                anchor,
+                candidate,
+            ):
+                continue
+            current = best_by_modality.get(candidate.modality)
+            if current is None or _hit_priority(candidate) < _hit_priority(
+                current[1]
+            ):
+                best_by_modality[candidate.modality] = (index, candidate)
+
+        selected = {index for index, _ in best_by_modality.values()}
+        groups.append(
+            [anchor]
+            + [
+                candidate
+                for _, candidate in sorted(
+                    best_by_modality.values(),
+                    key=lambda item: _hit_priority(item[1]),
+                )
+            ]
+        )
+        remaining = [
+            candidate
+            for index, candidate in enumerate(remaining)
+            if index not in selected
+        ]
+    return groups
 
 
 def _score(hits: list[SearchHit]) -> float:
@@ -137,7 +164,7 @@ def fuse_search_results(
     ordered_results = tuple(by_modality[modality] for modality in searched_modalities)
     flattened = tuple(hit for result in ordered_results for hit in result.hits)
     candidates = []
-    for hits in _connected_components(flattened):
+    for hits in _rank_anchored_groups(flattened):
         ordered_hits = tuple(
             sorted(
                 hits,

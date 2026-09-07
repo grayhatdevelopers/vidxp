@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "method": "manual_modality_query_ceiling_v1",
+  "constraints": [
+    "derive each phrase only from the task query's stated content",
+    "do not use timestamps, retrieved results, or video inspection",
+    "retain only the words relevant to the named modality"
+  ],
+  "tasks": {
+    "longvale-part9-ZId-car-siren": {
+      "action": "a red car speeds down a winding road",
+      "sound": "a siren suddenly blares"
+    },
+    "longvale-part9-ZId-engine-rev": {
+      "action": "the driver gestures",
+      "sound": "Cayenne Coupe engine revving and exhaust sound"
+    },
+    "longvale-part9-ZId-sketch": {
+      "scene": "a hand among automotive drawings",
+      "action": "a hand sketches the sleek lines of a car"
+    },
+    "longvale-part9-ZGX-office-speech": {
+      "scene": "Changlin Dou sits at his office desk",
+      "speech": "bringing innovative medicine to the Chinese market"
+    },
+    "longvale-part9-py-signing": {
+      "scene": "a woman against a blue dotted background",
+      "action": "a woman signs the phrase Find words you know"
+    },
+    "longvale-part9-py-phone-ring": {
+      "scene": "Website coming in 2018 appears in purple letters",
+      "sound": "a telephone rings"
+    },
+    "longvale-part9-ZVU-stir-and-cover": {
+      "scene": "chicken casserole in a green pot",
+      "action": "a hand stirs chicken casserole and secures the lid"
+    },
+    "longvale-part9-ZVU-casserole-drumbeat": {
+      "scene": "a close-up of completed chicken casserole",
+      "sound": "a simple drumbeat plays"
+    }
+  }
+}

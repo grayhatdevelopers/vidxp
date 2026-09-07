@@ -2,11 +2,12 @@
 
 Collection index: [Benchmarking research](README.md)
 
-Status: Paper-level benchmark-use audit complete; reading queue active
+Status: Paper-level benchmark-use audit active
 
-Last verified: 2026-08-27
+Last verified: 2026-09-05
 
-Related decision record: [Published benchmark catalog](benchmark_catalog.md)
+Related records: [Published benchmark catalog](benchmark_catalog.md) and
+[research adoption record](research_adoption.md)
 
 This inventory contains papers that introduce a serious candidate benchmark,
 establish an evaluation protocol, or provide a close baseline for an implemented
@@ -17,24 +18,55 @@ The paper-writing team can review these later. This workstream's immediate use i
 to trace which datasets, metrics, baselines, and public artifacts each paper
 actually relies on.
 
+## Coverage method and limit
+
+The pre-2023 search is anchored by the peer-reviewed
+[TPAMI survey](https://doi.org/10.1109/TPAMI.2023.3258628) and
+[ACM TOMM survey](https://doi.org/10.1145/3532626), which organize temporal
+sentence grounding into proposal-based, proposal-free, reinforcement-learning,
+and weakly supervised families. The post-2022 update follows the papers and
+artifacts in those families through CVPR, ICCV, ECCV, WACV, NeurIPS, ACL,
+EMNLP, SIGIR, AAAI, and arXiv through the verification date.
+
+For the current boundary failure, inclusion requires at least one of:
+
+- a method for temporal units, candidate generation, boundary inference, or
+  multimodal combination;
+- a zero-shot or deployable interval baseline; or
+- an evaluation that can distinguish candidate recall from boundary quality.
+
+This is a scoped product-research inventory, not a claim that every temporal
+grounding paper ever published is listed. Newly found work must be placed in a
+method family and checked at method, experiment, artifact, and product-fit
+levels; matching a title or abstract is insufficient.
+
 ## Reading order
 
 Start with these papers before reviewing individual model variants:
 
 1. **MAEB** and **MVEB** for the current common audio/video embedding landscape.
-2. **FineLAP** and **AEGBench** for environmental-sound retrieval and boundaries.
+2. **DCASE 2026 Task 6, AM-DETR, and CASTELLA** for free-form queries over
+   long audio; **PE-A-Frame, DASM, FlexSED, WSTAG, FLAM, SpotSound, TimeAudio,
+   FineLAP, and AEGBench** for the complementary event-grounding problem.
 3. **LongVALE** and **FLARE** for combined long-video vision, sound, and speech.
 4. **TVR / XML** for the closest peer-reviewed corpus-level visual/transcript
    temporal-retrieval task.
 5. **Localizing Moments in Video with Natural Language** for the simplest
    executable visual moment benchmark.
-6. **QVHighlights / Moment-DETR** for modern interval and highlight evaluation.
-7. **Zero-shot Video Moment Retrieval With Off-the-Shelf Models** for the closest
-   methodological comparison to VidXP's untuned CLIP retrieval.
-8. **HiREST** and **QuerYD** for speech-backed retrieval options.
-9. **BCL** for unknown-number video face clustering and its WCP/NMI protocol.
-10. **VPCD** and **C1C** for stronger person/track constraints and dataset context.
-11. **Towards a Complete Benchmark on Video Moment Localization** for cross-dataset
+6. **LGSS, ShotCoL, BaSSL, and NeighborNet** for the established shot-to-scene
+   segmentation lineage.
+7. **QVHighlights / Moment-DETR, UMT, QD-DETR, and UniVTG** for query-conditioned
+   interval prediction, including established audiovisual input.
+8. **BOLT** for query-aware frame selection, kept separate from interval
+   prediction.
+9. **Automatic Funny Scene Extraction**, FunnyNet, and FunnyNet-W for applied
+   semantic-scene construction and multimodal event ranking.
+10. **Diwan et al., Luo et al., TFVTG, REZE, Point-to-Span, and STITCH** for the
+   zero-shot proposal, boundary, compound-query, and reusable-index families.
+11. **HiREST** and **QuerYD** for speech-backed retrieval options.
+12. **BCL** for unknown-number video face clustering and its WCP/NMI protocol.
+13. **VPCD** and **C1C** for stronger person/track constraints and dataset context.
+14. **Towards a Complete Benchmark on Video Moment Localization** for cross-dataset
    bias and evaluation methodology.
 
 ## Current model-selection and modality benchmarks
@@ -43,9 +75,19 @@ Start with these papers before reviewing individual model variants:
 | --- | --- | --- | --- |
 | [MAEB: Massive Audio Embedding Benchmark](https://arxiv.org/abs/2602.16008) | arXiv 2026 | 30-task MAEB from a 98-task pool; 50+ models | Current common audio-embedding landscape across speech, music, environmental sound, and audio-text work; shows why speech and sound need separate providers |
 | [MVEB: Massive Video Embedding Benchmark](https://arxiv.org/abs/2606.14958) | arXiv 2026 | 23-task MVEB from a 184-task pool; 33 models | Current common video-embedding comparison, with Qwen3-VL-Embedding leading its text-video table and paired video/audio variants |
-| [FineLAP: Taming Heterogeneous Supervision for Fine-grained Language-Audio Pretraining](https://aclanthology.org/2026.acl-long.473/) | ACL 2026 | AudioCaps, Clotho, classification, sound-event detection, and text-to-audio grounding | Implemented environmental-sound provider because one model exposes both global retrieval and dense localization features |
+| [FineLAP: Taming Heterogeneous Supervision for Fine-grained Language-Audio Pretraining](https://aclanthology.org/2026.acl-long.473/) | ACL 2026 | AudioCaps, Clotho, classification, sound-event detection, and text-to-audio grounding | Historical provider and retained comparison control; its separate representations did not establish VidXP's former global gate |
+| [Language-based Audio Moment Retrieval](https://h-munakata.github.io/Language-based-Audio-Moment-Retrieval/) | ICASSP 2025 | Clotho-Moment, real UnAV-100 subset, TUT Sound Events 2017; AM-DETR | Direct long-audio text-to-interval task; shows that temporal modeling improves over independently scored sliding windows |
+| [CASTELLA: Long Audio Dataset with Captions and Temporal Boundaries](https://arxiv.org/abs/2511.15131) | ICASSP 2026 | 1,862 human-annotated recordings lasting 1–5 minutes; 3,881 captions and 11,308 intervals | Replaces the small real-audio check in the first AMR paper with a public long-audio benchmark and released Lighthouse checkpoints |
+| [DCASE 2026 Task 6: Audio Moment Retrieval from Long Audio](https://dcase.community/challenge2026/task-audio-moment-retrieval-from-long-audio-results) | DCASE Challenge 2026 | Hidden evaluation over 100 long recordings; natural-language query to ranked intervals | Current direct leaderboard. The best lightweight entry uses M2D-CLAP plus a query-conditioned DETR span model, not independent window ranking |
+| [Pushing the Frontier of Audiovisual Perception with Large-Scale Multimodal Correspondence Learning](https://arxiv.org/abs/2512.19687) | CVPR 2026 | PE-A-Frame on Internal, ASFX-SED, AudioSet Strong, DESED, and UrbanSED event localization | Adopted PE-A-Frame Small provider: Apache-2.0 free-form sound ranking with 40 ms frame embeddings; VidXP's long-media sectioning is separate engineering |
+| [Detect Any Sound](https://arxiv.org/abs/2507.16343) | ACM MM 2025 | AudioSet Strong and cross-dataset DESED; DASM | Open-vocabulary event-phrase detector with frame-level localization; research reference only because its released source is unlicensed and its text inference requires CUDA plus external MGA-CLAP code/weights |
+| [FlexSED](https://arxiv.org/abs/2509.18606) | WASPAA 2025 | AudioSet Strong with zero- and few-shot event queries | Released open-vocabulary event detector; requires a list of event phrases rather than accepting VidXP's full query as an interval-retrieval request |
+| [Towards Weakly Supervised Text-to-Audio Grounding](https://arxiv.org/abs/2401.02584) | IEEE Transactions on Multimedia 2024 | AudioCaps-derived caption and phrase grounding; WSTAG | Established weakly supervised grounding lineage; its newer author-recommended model missed two unique pilot events and exposed invalid single-reference scoring on a repeated engine sound |
+| [FLAM: Frame-Wise Language-Audio Modeling](https://arxiv.org/abs/2505.05335) | ICML 2025 | Open-vocabulary frame localization and clip retrieval | Closest compact technical match, but OpenFLAM is non-commercial and the public checkpoint differs from the unavailable internal model behind the paper results |
+| [SpotSound](https://arxiv.org/abs/2604.13023) | ACM MM 2026 | Clotho-Moment, UnAV-100, AudioGrounding, SpotSound-Bench, and SED | Direct short-event grounding ceiling; released adapter requires the non-commercial 8B Audio Flamingo 3 base and Linux/CUDA path |
+| [TimeAudio](https://arxiv.org/abs/2511.11039) | arXiv 2025 | Temporal grounding, dense captioning, and long-audio tasks | Direct long-audio reference; released Vicuna-7B stack requires more than 40 GB GPU memory |
 | [Auto-AEG and AEGBench](https://arxiv.org/abs/2607.04383) | arXiv 2026 | Open-vocabulary audio-event grounding and AEGBench | Direct sound-interval benchmark for hard, repeated, and overlapping environmental events |
-| [TimeLens2](https://github.com/MCG-NJU/TimeLens2) | arXiv 2026 | Seven visual temporal-grounding datasets | Supports the 4B visual-localizer choice; it has no audio input and cannot cover LongVALE alone |
+| [TimeLens2](https://github.com/MCG-NJU/TimeLens2) | arXiv 2026 | Seven visual temporal-grounding datasets | Recent visual-only ceiling with released checkpoints; not an established default or a complete LongVALE solution |
 | [Robust and Efficient Video Scene Detection using Optimal Sequential Grouping](https://research.ibm.com/publications/robust-and-efficient-video-scene-detection-using-optimal-sequential-grouping) | ISM 2016 | Introduces OVSD | Open-licensed semantic scene-boundary source; useful for segmentation only, not query retrieval, actions, sound, or speech |
 
 ## Multimodal and whole-system retrieval
@@ -62,6 +104,7 @@ Start with these papers before reviewing individual model variants:
 | [SAVE: Speech-Aware Video Representation Learning for Video-Text Retrieval](https://openaccess.thecvf.com/content/CVPR2026/html/Zhao_SAVE_Speech-Aware_Video_Representation_Learning_for_Video-Text_Retrieval_CVPR_2026_paper.html) | CVPR 2026 | MSR-VTT-9k/7k, VATEX, Charades, LSMDC | Speech-aware whole-video retrieval, but not timestamp localization |
 | [LongVALE](https://openaccess.thecvf.com/content/CVPR2025/papers/Geng_LongVALE_Vision-Audio-Language-Event_Benchmark_Towards_Time-Aware_Omni-Modal_Perception_of_Long_Videos_CVPR_2025_paper.pdf) | CVPR 2025 | Introduces LongVALE | Strongest peer-reviewed vision–audio–speech temporal target; no actor task |
 | [MultiVENT 2.0](https://openaccess.thecvf.com/content/CVPR2025/papers/Kriz_MultiVENT_2.0_A_Massive_Multilingual_Benchmark_for_Event-Centric_Video_Retrieval_CVPR_2025_paper.pdf) | CVPR 2025 | Introduces MultiVENT 2.0 | Large-corpus visual, speech/ASR, embedded-text/OCR, and description-metadata retrieval; whole videos rather than moments |
+| [Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods](https://doi.org/10.1145/1571941.1572114) | SIGIR 2009 | TREC ranked-list fusion experiments | Original source for VidXP's adopted rank-only fusion and `k = 60`; it does not define temporal grouping or interval boundaries |
 | [MMMORRF: Multimodal Multilingual Modularized Reciprocal Rank Fusion](https://doi.org/10.1145/3726302.3730157) | SIGIR 2025 | MultiVENT 2.0 and TVR | Direct frames+OCR+ASR fixed-fusion pipeline comparator with exact full-test results |
 | [MAGMaR Shared Task System Description: Video Retrieval with OmniEmbed](https://arxiv.org/abs/2506.09409) | arXiv/MAGMaR presentation 2025 | MultiVENT 2.0 official shared-task test | Provides zero-shot and target-trained unified-embedding results plus a released checkpoint; no archival workshop paper was found |
 | [Q2E: Query-to-Event Decomposition for Zero-Shot Multilingual Text-to-Video Retrieval](https://aclanthology.org/2025.ijcnlp-long.121/) | IJCNLP-AACL 2025 | Original MultiVENT, MSR-VTT 1k-A, and MSVD | Training-free visual/Whisper rank-fusion comparator; the original MultiVENT protocol must not be conflated with MultiVENT 2.0 |
@@ -80,6 +123,7 @@ portable judged benchmark covering all of VidXP.
 | --- | --- | --- | --- |
 | [Multi-modal Video Search by Examples: A Video Quality Impact Analysis](https://pure.ulster.ac.uk/ws/files/222412425/IET_Computer_Vision_-_2024_-_Wu_-_Multi_modal_video_search_by_examples_A_video_quality_impact_analysis.pdf) | IET Computer Vision 2024 | Faces, scenes, speakers, ASR, fusion, approximate search over BBC video | Closest functional analogue; BBC data and judgments are not portable |
 | [WISE: A Multimodal Search Engine for Visual Scenes, Audio, Objects, Faces, Speech, and Metadata](https://www.robots.ox.ac.uk/~vgg/publications/2026/sridhar2026wise/) | SIGIR 2026 | Scene/object/face, acoustic event, WhisperX speech, metadata, composite queries | Open-source system; deployments and latency context, no portable judged protocol |
+| [Lighthouse: A User-Friendly Library for Reproducible Video Moment Retrieval and Highlight Detection](https://aclanthology.org/2024.emnlp-demo.6/) | EMNLP Demo 2024 | Six MR-HD models, three feature families, and five datasets behind one API | Best maintained reproduction surface for a trained interval control; CPU inference exists, with a 150-second video limit and CLIP-only CPU guidance |
 | [ContextIQ](https://openaccess.thecvf.com/content/WACV2025/html/Chaubey_ContextIQ_A_Multimodal_Expert-Based_Video_Retrieval_System_for_Contextual_Advertising_WACV_2025_paper.html) | WACV 2025 | Video, audio, transcript, and metadata experts | Whole-video reference; supplemental annotations but no public implementation |
 | [Collaborative Experts](https://www.robots.ox.ac.uk/~vgg/research/collaborative-experts/) | BMVC 2019 | Appearance, motion, scene, ASR, OCR, audio experts | Public models/features and corrected results; whole-video task |
 | [Multi-Modal Transformer for Video Retrieval](https://www.ecva.net/papers/eccv_2020/papers_ECCV/papers/123490205.pdf) | ECCV 2020 | RGB, motion, scene, face, OCR, speech, audio experts | Multi-stream whole-video retrieval context |
@@ -115,11 +159,33 @@ infrastructure make it unsuitable as the first executable benchmark.
 | --- | --- | --- | --- |
 | [Localizing Moments in Video with Natural Language](https://arxiv.org/abs/1708.01641) | ICCV 2017 | Introduces DiDeMo | Defines the simplest first visual test and its 21-moment evaluator |
 | [Moment-DETR: End-to-End Video Moment Retrieval with Natural Language](https://proceedings.neurips.cc/paper/2021/hash/62e0973455fd26eb03e91d5741a4a3bb-Abstract.html) | NeurIPS 2021 | Introduces QVHighlights | Primary modern interval/saliency benchmark |
+| [UMT: Unified Multi-Modal Transformers for Joint Video Moment Retrieval and Highlight Detection](https://openaccess.thecvf.com/content/CVPR2022/html/Liu_UMT_Unified_Multi-Modal_Transformers_for_Joint_Video_Moment_Retrieval_and_CVPR_2022_paper.html) | CVPR 2022 | QVHighlights, Charades-STA, YouTube Highlights, TVSum | Established query-conditioned interval/highlight model with aligned visual and audio features; official code and checkpoints exist |
 | [Zero-shot Video Moment Retrieval With Off-the-Shelf Models](https://proceedings.mlr.press/v203/diwan23a.html) | Transfer Learning for NLP Workshop, PMLR 2023 | QVHighlights filtered validation set (1,434 videos) | Nearest zero-shot comparison, but its shot proposals and watershed merging go beyond raw frame-level CLIP scoring |
+| [Zero-Shot Video Moment Retrieval From Frozen Vision-Language Models](https://openaccess.thecvf.com/content/WACV2024/html/Luo_Zero-Shot_Video_Moment_Retrieval_From_Frozen_Vision-Language_Models_WACV_2024_paper.html) | WACV 2024 | Charades-STA, ActivityNet Captions, and TACoS, including OOD splits | Strict zero-shot proposal method: query-conditioned frozen features, clustering, and bottom-up combination for compound queries; hyperparameters were selected on Charades-STA and no official code was found |
+| [Training-free Video Temporal Grounding using Large-scale Pre-trained Models](https://arxiv.org/abs/2408.16219) | ECCV 2024 | Charades-STA and ActivityNet Captions, including cross-dataset/OOD tests | Official-code compound-query baseline using LLM sub-event ordering plus VLM dynamic/static proposal scoring; adds query-time large-model work |
 | [TALL: Temporal Activity Localization via Language Query](https://arxiv.org/abs/1705.02101) | ICCV 2017 | Introduces Charades-STA | Established, relatively manageable known-video interval benchmark |
 | [Towards a Complete Benchmark on Video Moment Localization](https://proceedings.mlr.press/v238/chae24a.html) | AISTATS 2024 | ActivityNet Captions, Charades-STA, DiDeMo, TACoS, YouCook2, MSR-VTT, TVR; MoLEF framework | Cross-dataset bias, cost, and benchmark-methodology review; not a new dataset or zero-shot baseline |
 | [QD-DETR: Query-Dependent Video Representation for Moment Retrieval and Highlight Detection](https://github.com/wjun0830/QD-DETR) | CVPR 2023 | QVHighlights, Charades-STA, TVSum | Supervised moment/highlight comparator; no experimental Ego4D, TACoS, DiDeMo, MSR-VTT, or ActivityNet result |
 | [UniVTG: Towards Unified Video-Language Temporal Grounding](https://github.com/showlab/UniVTG) | ICCV 2023 | QVHighlights, Ego4D NLQ, Charades-STA, TACoS, YouTube Highlights, TVSum, QFVS | Broad pretrained/supervised temporal-label comparator; only explicitly marked rows are zero-shot |
+| [HieraMamba: Video Temporal Grounding via Hierarchical Anchor-Mamba Pooling](https://openaccess.thecvf.com/content/CVPR2026/html/An_HieraMamba_Video_Temporal_Grounding_via_Hierarchical_Anchor-Mamba_Pooling_CVPR_2026_paper.html) | CVPR 2026 | Ego4D-NLQ, MAD/MAD-v2, TACoS | Direct response to fixed-window and over-downsampling failures in long video; released Mamba/NMS runtime is CUDA-oriented |
+| [UniversalVTG: A Universal and Lightweight Foundation Model for Video Temporal Grounding](https://arxiv.org/abs/2604.08522) | arXiv 2026 | GoalStep, Ego4D-NLQ, TACoS, Charades-STA, ActivityNet Captions | Closest single-checkpoint long/short-video grounder; 60M grounding head over 2-fps Perception Encoder features, with an inference-time query unifier |
+| [Anchor-Aware Similarity Cohesion in Target Frames Enables Predicting Temporal Moment Boundaries in 2D](https://openaccess.thecvf.com/content/CVPR2025/html/Tan_Anchor-Aware_Similarity_Cohesion_in_Target_Frames_Enables_Predicting_Temporal_Moment_CVPR_2025_paper.html) | CVPR 2025 | QVHighlights, Charades-STA, and ActivityNet Captions | Official-code supervised boundary model around the highest-relevance frame; strong boundary ablations, but visual-only and dataset-specific |
+| [Number It: Temporal Grounding Videos Like Flipping Manga](https://openaccess.thecvf.com/content/CVPR2025/html/Wu_Number_it_Temporal_Grounding_Videos_like_Flipping_Manga_CVPR_2025_paper.html) | CVPR 2025 | Standard VTG benchmarks with training-free and fine-tuned video-LLM settings | Makes timestamps visually legible by overlaying frame numbers; useful direct-MLLM control but changes media and does not use reusable indexed evidence |
+| [Zero-shot Video Moment Retrieval via Off-the-shelf Multimodal Large Language Models](https://arxiv.org/abs/2501.07972) | arXiv 2025 | QVHighlights, ActivityNet Captions, and Charades-STA | Moment-GPT rewrites queries, generates spans, and scores them with several frozen models; high query-time complexity and no accepted venue verified |
+| [Point to Span: Zero-Shot Moment Retrieval for Navigating Unseen Hour-Long Videos](https://arxiv.org/abs/2512.10363) | arXiv 2025 | MAD and MomentSeeker | Training-free adaptive peak expansion plus ordered-subquery refinement for hour-long video; highly relevant search-then-refine method, but no official code was found |
+| [GranAlign: Granularity-Aware Alignment Framework for Zero-Shot Video Moment Retrieval](https://arxiv.org/abs/2601.00584) | AAAI 2026 | QVHighlights, Charades-STA, and ActivityNet Captions | Training-free dual-granularity query rewrite and query-aware caption alignment; accuracy evidence is useful but adds query-time LLM/VLM work and lacks checked official code |
+| [UniversalVTG: A Universal and Lightweight Foundation Model for Video Temporal Grounding](https://arxiv.org/abs/2604.08522) | arXiv 2026 | GoalStep-StepGrounding, Ego4D-NLQ, TACoS, Charades-STA, and ActivityNet Captions | One cross-dataset-trained interval model with official checkpoint/API; current evaluation and feature extraction require CUDA and a separately licensed upstream component |
+| [REZE: Recognition-Based Zero-Shot Extraction for Video Temporal Grounding](https://arxiv.org/abs/2608.04480) | arXiv 2026 | Charades-STA, ActivityNet Captions, and QVHighlights | Separates frozen-VLM clip recognition from deterministic single/multi-interval extraction; unusually complete ablations, but very recent, inference-heavy, and no public code found |
+| [Training-Free Temporal Abstraction for General Video Understanding](https://arxiv.org/abs/2608.27929) | arXiv 2026, submitted to NeurIPS | Kinetics-GEBD, TAPOS, ActivityNet Captions, QVHighlights, and long-video QA sets | STITCH makes query-independent semantic chunks reusable across retrieval and reasoning; closest fit to an offline index, but days old with only an anonymized submission artifact |
+| [BOLT: Boost Large Vision-Language Model Without Training for Long-form Video Understanding](https://openaccess.thecvf.com/content/CVPR2025/html/Liu_BOLT_Boost_Large_Vision-Language_Model_Without_Training_for_Long-form_Video_CVPR_2025_paper.html) | CVPR 2025 | Video-MME, LongVideoBench, MLVU, and a multi-source retrieval setting | Query-aware frame-selection evidence only; it improves downstream VQA but does not emit temporal intervals |
+| [A Local-to-Global Approach to Multi-Modal Movie Scene Segmentation](https://openaccess.thecvf.com/content_CVPR_2020/html/Rao_A_Local-to-Global_Approach_to_Multi-Modal_Movie_Scene_Segmentation_CVPR_2020_paper.html) | CVPR 2020 | Introduces MovieScenes and LGSS | Established multimodal shot-to-scene segmentation; architecture context and temporal-unit benchmark, not text-query grounding |
+| [Shot Contrastive Self-Supervised Learning for Scene Boundary Detection](https://openaccess.thecvf.com/content/CVPR2021/html/Chen_Shot_Contrastive_Self-Supervised_Learning_for_Scene_Boundary_Detection_CVPR_2021_paper.html) | CVPR 2021 | MovieNet scene boundaries and AdCuepoints | Efficient self-supervised shot representations; scene-boundary component evidence only |
+| [BaSSL: Boundary-aware Self-Supervised Learning for Video Scene Segmentation](https://github.com/kakaobrain/bassl) | ACCV 2022 | MovieNet scene segmentation | Reproducible scene-boundary model with released code and checkpoint; older CUDA-oriented environment |
+| [Neighbor Relations Matter in Video Scene Detection](https://openaccess.thecvf.com/content/CVPR2024/html/Tan_Neighbor_Relations_Matter_in_Video_Scene_Detection_CVPR_2024_paper.html) | CVPR 2024 | Public movie-scene datasets | Recent peer-reviewed shot-context method with official code; segmentation rather than query grounding |
+| [Automatic Funny Scene Extraction from Long-form Cinematic Videos](https://ojs.aaai.org/index.php/AAAI/article/view/41480) | IAAI 2026 | OVSD, MovieNet-SSeg, humor datasets, five movies, and 11 trailers | Applied shot detection, multimodal scene construction, and humor ranking; 98% proper-ending judgment is not temporal IoU and no public end-to-end artifact was found |
+| [FunnyNet: Audiovisual Learning of Funny Moments in Videos](https://openaccess.thecvf.com/content/ACCV2022/papers/Liu_FunnyNet_Audiovisual_Learning_of_Funny_Moments_in_Videos_ACCV_2022_paper.pdf) | ACCV 2022 | TBBT, MHD, MUStARD, Friends, and UR-Funny | Domain-specific audiovisual funny-moment evidence; supports the value of audio but not arbitrary-query retrieval |
+| [FunnyNet-W: Multimodal Learning of Funny Moments in Videos in the Wild](https://link.springer.com/article/10.1007/s11263-024-02000-2) | IJCV 2024 | Five humor datasets plus in-the-wild checks | Extends funny-moment detection to visual, audio, and ASR-derived text; code is public but the objective remains humor-specific |
+| [Empowering LLMs with Pseudo-Untrimmed Videos for Audio-Visual Temporal Understanding](https://ojs.aaai.org/index.php/AAAI/article/view/32784) | AAAI 2025 | Introduces PU-VALOR and AVicuna | Unified audiovisual interval-alignment ceiling; trained 7B-class system rather than a drop-in local baseline |
 | [VERIFIED: A Video Corpus Moment Retrieval Benchmark for Fine-Grained Video Understanding](https://proceedings.neurips.cc/paper_files/paper/2024/hash/477929b8d45ab759795b7aac94329b08-Abstract-Datasets_and_Benchmarks_Track.html) | NeurIPS Datasets & Benchmarks 2024 | Introduces Charades-FIG, DiDeMo-FIG, ActivityNet-FIG for corpus moment retrieval | Major fine-grained VCMR robustness test with published baseline tables and released annotations/features; standalone code/evaluator and repository license remain incomplete |
 | [LoVR: A Benchmark for Long Video Retrieval in Multimodal Contexts](https://arxiv.org/abs/2505.13928) | The Web Conference 2026 | Introduces bidirectional long-video and predefined scene-clip retrieval over 467 videos | Accepted benchmark with published zero-shot baselines and public data/code; released split metadata currently conflicts with the paper and must be pinned before execution |
 | [MAD: A Scalable Dataset for Language Grounding in Videos from Movie Audio Descriptions](https://arxiv.org/abs/2112.00431) | CVPR 2022 | Introduces MAD | Long-film match, but raw movies are not distributed |
