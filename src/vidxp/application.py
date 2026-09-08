@@ -32,6 +32,12 @@ from vidxp.application_models import (
     PrepareModelsCommand,
     PrepareModelsResult,
     RemoveIndexCommand,
+    BulkIndexPlan,
+    BulkIndexSkipReason,
+    BulkIndexTarget,
+    BulkIndexTargetState,
+    ListMediaCommand,
+    PlanBulkIndexCommand,
     ResourceNotFoundError,
     RuntimeReadiness,
     QueryAnswer,
@@ -56,10 +62,11 @@ from vidxp.capabilities.contracts import (
 from vidxp.capabilities.registry import CapabilityRegistry
 from vidxp.capability_service import CapabilityService
 from vidxp.capabilities.schemas import SearchResult
+from vidxp.core.media import MediaState
 from vidxp.core.contracts import (
     IndexConfig,
 )
-from vidxp.core.snapshots import IndexSnapshot
+from vidxp.core.snapshots import GenerationReference, IndexSnapshot
 from vidxp.execution import ExecutionContext, execution_context
 from vidxp.ports import IndexBackend, ModelRuntimePort, QueryModelPort
 from vidxp.query_service import GroundedQueryService
@@ -274,6 +281,90 @@ class VidXPApplication(ControlPlaneApplication):
                     source_checksum=media.sha256,
                 )
                 return IndexResult.model_validate(result)
+
+    @application_boundary
+    def plan_bulk_index(self, command: PlanBulkIndexCommand) -> BulkIndexPlan:
+        """Decide which registered media still need indexing.
+
+        The plan is a read-only decision. Callers submit one ordinary indexing
+        operation per pending target, so a failure isolates to its own media
+        and can be retried without disturbing the rest of the selection.
+        """
+
+        selected = self.registry.validate_names(command.modalities)
+        non_indexable = [
+            name for name in selected if self.registry.get(name).collection_name is None
+        ]
+        if non_indexable:
+            raise CapabilityRequestError(
+                "One or more selected capabilities do not support indexing."
+            )
+        snapshot = self._read_active_snapshot()
+        generations = {} if snapshot is None else snapshot.generations
+        requested = frozenset(selected)
+        targets = tuple(
+            self._bulk_index_target(
+                asset,
+                generation=generations.get(asset.media_id),
+                requested=requested,
+                reindex=command.reindex,
+            )
+            for asset in self._bulk_index_selection(command.media_ids)
+        )
+        return BulkIndexPlan(targets=targets, modalities=selected)
+
+    def _bulk_index_selection(
+        self,
+        media_ids: tuple[str, ...],
+    ) -> tuple[MediaAsset, ...]:
+        if media_ids:
+            return tuple(self.get_media(media_id) for media_id in media_ids)
+        assets: list[MediaAsset] = []
+        cursor: str | None = None
+        while True:
+            page = self.list_media(
+                ListMediaCommand(page_size=100, cursor=cursor)
+            )
+            assets.extend(page.items)
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+        return tuple(assets)
+
+    @staticmethod
+    def _bulk_index_target(
+        asset: MediaAsset,
+        *,
+        generation: GenerationReference | None,
+        requested: frozenset[str],
+        reindex: bool,
+    ) -> BulkIndexTarget:
+        if asset.state != MediaState.ready:
+            return BulkIndexTarget(
+                media_id=asset.media_id,
+                original_filename=asset.original_filename,
+                state=BulkIndexTargetState.skipped,
+                reason=BulkIndexSkipReason.media_not_ready,
+            )
+        covered = (
+            not reindex
+            and generation is not None
+            and requested <= frozenset(generation.modalities)
+            and generation.input_sha256 == asset.sha256
+        )
+        if covered and generation is not None:
+            return BulkIndexTarget(
+                media_id=asset.media_id,
+                original_filename=asset.original_filename,
+                state=BulkIndexTargetState.skipped,
+                reason=BulkIndexSkipReason.already_indexed,
+                generation_id=generation.generation_id,
+            )
+        return BulkIndexTarget(
+            media_id=asset.media_id,
+            original_filename=asset.original_filename,
+            state=BulkIndexTargetState.pending,
+        )
 
     @application_boundary
     def indexing_in_progress(self) -> bool:
