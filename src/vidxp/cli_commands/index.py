@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from typing import Annotated, Iterable
+from typing import Annotated, Any, Iterable
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from vidxp.application_models import (
     CreateIndexCommand,
     RemoveIndexCommand,
 )
+from vidxp.bulk_indexing import run_bulk_index
 from vidxp.cli_support import (
     CLIState,
     IndexProgress,
@@ -152,6 +154,180 @@ def index_create(
         capability_options=parse_capability_options(capability_options),
         detach=detach,
     )
+
+
+@app.command("bulk")
+def index_bulk(
+    ctx: typer.Context,
+    media_ids: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="Registered media identifiers to index.",
+        ),
+    ] = None,
+    all_eligible: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Index all eligible registered media in the catalog.",
+        ),
+    ] = False,
+    reindex: Annotated[
+        bool,
+        typer.Option(
+            "--reindex",
+            help="Reindex media even if already present in the active index.",
+        ),
+    ] = False,
+    modalities: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--modality",
+            "-m",
+            help="Modality to index; repeat to select more than one.",
+        ),
+    ] = None,
+    frame_stride: Annotated[
+        int,
+        typer.Option(
+            "--frame-stride",
+            min=1,
+            help=(
+                "Materialize every Nth frame for actor and legacy visual "
+                "indexing."
+            ),
+        ),
+    ] = 1,
+    scene_sample_fps: Annotated[
+        float | None,
+        typer.Option(
+            "--scene-sample-fps",
+            min=0.01,
+            help=(
+                "Target scene samples per second; lower-FPS media uses every "
+                "available frame."
+            ),
+        ),
+    ] = None,
+    capability_options: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--option",
+            help=(
+                "Capability setting as CAPABILITY.KEY=VALUE; "
+                "repeat for multiple settings."
+            ),
+        ),
+    ] = None,
+    detach: Annotated[
+        bool,
+        typer.Option(
+            "--detach",
+            help="Return after the durable job is queued.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Index multiple media items or all eligible media in the catalog."""
+
+    if not media_ids and not all_eligible:
+        raise typer.BadParameter("Provide either media IDs or pass --all.")
+    if media_ids and all_eligible:
+        raise typer.BadParameter("Pass media IDs or --all, not both.")
+
+    state = state_from_context(ctx)
+    indexable = tuple(
+        capability.name
+        for capability in state.service.list_capabilities()
+        if capability.supports_indexing
+    )
+    selected = selected_modalities(modalities, indexable)
+    parsed_options = parse_capability_options(capability_options)
+    output_fmt = effective_output_format(state, json_output)
+    show_progress = not state.quiet and output_fmt == OutputFormat.rich
+
+    with IndexProgress(show_progress) as progress:
+        def on_item_start(media_id: str, filename: str) -> None:
+            if show_progress:
+                progress.update({
+                    "stage": "indexing",
+                    "message": f"Indexing {filename} ({media_id[:8]}...)",
+                })
+
+        def on_item_progress(media_id: str, current: Any) -> None:
+            if show_progress:
+                if hasattr(current, "progress") and current.progress is not None:
+                    progress.update(current.progress.model_dump(mode="python"))
+                elif isinstance(current, dict):
+                    progress.update(current)
+
+        summary = run_bulk_index(
+            application=state.service,
+            jobs=state.jobs,
+            media_ids=media_ids,
+            all_eligible=all_eligible,
+            skip_indexed=not reindex,
+            detach=detach,
+            modalities=selected,
+            frame_stride=frame_stride,
+            scene_sample_fps=scene_sample_fps,
+            capability_options=parsed_options,
+            on_item_start=on_item_start,
+            on_item_progress=on_item_progress,
+        )
+
+    if output_fmt == OutputFormat.json:
+        payload = {
+            "total": summary.total,
+            "indexed": summary.indexed,
+            "skipped": summary.skipped,
+            "failed": summary.failed,
+            "queued": summary.queued,
+            "results": [
+                {
+                    "media_id": r.media_id,
+                    "filename": r.filename,
+                    "status": r.status,
+                    "job_id": r.job_id,
+                    "error_code": r.error_code,
+                    "error_message": r.error_message,
+                }
+                for r in summary.results
+            ],
+        }
+        emit_json(payload)
+    else:
+        table = Table(title="Bulk indexing summary")
+        table.add_column("Media ID")
+        table.add_column("Filename")
+        table.add_column("Status")
+        table.add_column("Job ID")
+        table.add_column("Error")
+        for r in summary.results:
+            error_str = (
+                f"[{r.error_code}] {r.error_message}"
+                if r.error_code
+                else (r.error_message or "—")
+            )
+            table.add_row(
+                escape(r.media_id),
+                escape(r.filename),
+                escape(r.status),
+                escape(r.job_id or "—"),
+                escape(error_str),
+            )
+        Console().print(table)
+        typer.echo(
+            f"Total: {summary.total}, Indexed: {summary.indexed}, "
+            f"Skipped: {summary.skipped}, Failed: {summary.failed}, "
+            f"Queued: {summary.queued}."
+        )
+
+    if summary.failed > 0:
+        raise typer.Exit(code=1)
 
 
 @app.command("remove")
