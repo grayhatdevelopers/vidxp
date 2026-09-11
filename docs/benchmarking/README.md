@@ -32,6 +32,7 @@ definitions, honest comparisons, and the next benchmark decision.
 | Reproduce DiDeMo or HiREST | [Adapter validation ledger](adapter_validation.md) |
 | Understand the benchmark-ready Python structure | [Core contract](core_contract.md) |
 | See which benchmarks exist and what each measures | [Benchmark catalog](benchmark_catalog.md) |
+| Evaluate the complete public search path end-to-end | [End-to-end retrieval evaluation](end_to_end_evaluation.md) |
 | Understand the current model and benchmark choices | [Multimodal model direction](model_selection.md) |
 | Run the Codex MCP-on/MCP-off experiment | [Codex agent ablation](agent_ablation.md) |
 | Find exact published competitor scores | [Published comparison results](published_results.md) |
