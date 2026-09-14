@@ -89,6 +89,7 @@
         let connected = false;
         let hostCapabilities = {};
         let hostContext = {};
+        let progressGeneration = 0;
 
         const element = (tag, className, text) => {
           const node = document.createElement(tag);
@@ -168,6 +169,14 @@
           }
           if (window.openai?.callTool) return normalizeResult(await window.openai.callTool(name, args));
           return normalizeResult(await request("tools/call", { name, arguments: args }));
+        };
+
+        const stopProgressPolling = () => {
+          if (progressTimer !== null) {
+            window.clearTimeout(progressTimer);
+            progressTimer = null;
+          }
+          progressGeneration += 1;
         };
 
         const imageBlocks = (result) => asArray(result?.content).filter((block) => {
@@ -438,7 +447,7 @@
           return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
         };
 
-        const renderLibrary = (data) => {
+        const renderLibrary = (data, query) => {
           const items = asArray(data.items).map(asObject);
           title.textContent = "Select a video";
           lede.textContent = items.length
@@ -492,7 +501,7 @@
             wrapper.append(listing);
           }
 
-          if (typeof data.next_cursor === "string" && data.next_cursor) {
+          if (typeof data.next_cursor === "string" && data.next_cursor && query) {
             const actions = element("div", "toolbar");
             const more = element("button", "button", "Load more");
             more.type = "button";
@@ -500,7 +509,8 @@
               more.disabled = true;
               notice.textContent = "";
               try {
-                render(await callTool("list_media", { cursor: data.next_cursor }));
+                const nextQuery = { ...query, cursor: data.next_cursor };
+                render(await callTool("list_media", nextQuery), { mediaQuery: nextQuery });
               } catch (_error) {
                 notice.textContent = "Could not load more videos.";
                 more.disabled = false;
@@ -514,10 +524,7 @@
         };
 
         const renderProgress = (data) => {
-          if (progressTimer !== null) {
-            window.clearTimeout(progressTimer);
-            progressTimer = null;
-          }
+          const generation = progressGeneration;
           const progress = asObject(data.progress);
           const state = typeof data.state === "string" ? data.state : "unknown";
           const kind = typeof data.kind === "string" ? data.kind : "job";
@@ -552,10 +559,13 @@
           const jobId = typeof data.job_id === "string" ? data.job_id : "";
           if (jobId) {
             const poll = async () => {
+              if (generation !== progressGeneration) return;
               try {
-                render(await callTool("get_job_status", { job_id: jobId }));
+                const next = await callTool("get_job_status", { job_id: jobId });
+                if (generation !== progressGeneration) return;
+                render(next);
               } catch (_error) {
-                notice.textContent = "Could not refresh job status.";
+                if (generation === progressGeneration) notice.textContent = "Could not refresh job status.";
               }
             };
             const actions = element("div", "toolbar");
@@ -564,26 +574,37 @@
             refresh.addEventListener("click", async () => {
               refresh.disabled = true;
               notice.textContent = "";
-              await poll();
+              try {
+                await poll();
+              } finally {
+                refresh.disabled = false;
+              }
             });
             actions.append(refresh);
             wrapper.append(actions);
             if (data.terminal === false) {
               const delay = Number(data.poll_after_seconds);
-              progressTimer = window.setTimeout(poll, (Number.isFinite(delay) && delay > 0 ? delay : 1) * 1000);
+              progressTimer = window.setTimeout(() => {
+                progressTimer = null;
+                void poll();
+              }, (Number.isFinite(delay) && delay > 0 ? delay : 1) * 1000);
             }
           }
 
           content.replaceChildren(wrapper);
         };
 
-        const render = (result) => {
+        const render = (result, context = {}) => {
           latestResult = normalizeResult(result);
           const data = latestResult.structuredContent;
+          stopProgressPolling();
           notice.textContent = latestResult.isError ? "VidXP returned an error." : "";
           if (data.view === "upload" || data.upload_session_url || data.aggregate_state) renderUpload(data);
           else if (data.view === "evidence" || data.board) renderEvidence(data, latestResult);
-          else if (data.view === "library" || asArray(data.items).some((item) => typeof asObject(item).media_id === "string")) renderLibrary(data);
+          else if (
+            data.view === "library" ||
+            (Array.isArray(data.items) && Number.isInteger(data.total) && (data.next_cursor === null || typeof data.next_cursor === "string"))
+          ) renderLibrary(data, context.mediaQuery);
           else if (data.view === "job" || typeof data.job_id === "string") renderProgress(data);
           else {
             title.textContent = "VidXP";
@@ -608,6 +629,7 @@
           if (message.method === "ui/notifications/host-context-changed") updateHostContext(message.params);
           if (message.method === "ui/notifications/tool-cancelled") notice.textContent = message.params?.reason || "The tool call was cancelled.";
           if (message.method === "ui/resource-teardown" && message.id !== undefined) {
+            stopProgressPolling();
             window.parent.postMessage({ jsonrpc: "2.0", id: message.id, result: {} }, "*");
           }
         }, { passive: true });
