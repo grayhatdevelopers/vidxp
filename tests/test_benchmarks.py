@@ -61,7 +61,7 @@ def timed_hit(start, end, score, rank=1):
         end=end,
         score=score,
         raw_distance=-score,
-        modality="dialogue",
+        modality="speech",
         source_id=f"hit-{rank}",
         metadata={},
     )

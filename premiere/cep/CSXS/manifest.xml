@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ExtensionManifest Version="7.0"
+  ExtensionBundleId="org.grayhat.vidxp-premiere.cep"
+  ExtensionBundleVersion="0.1.0"
+  ExtensionBundleName="VidXP Search">
+  <ExtensionList>
+    <Extension Id="org.grayhat.vidxp-premiere.cep.search" Version="0.1.0" />
+  </ExtensionList>
+  <ExecutionEnvironment>
+    <HostList>
+      <Host Name="PPRO" Version="[23.0,25.6)" />
+    </HostList>
+    <LocaleList>
+      <Locale Code="All" />
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="11.0" />
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+  <DispatchInfoList>
+    <Extension Id="org.grayhat.vidxp-premiere.cep.search">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./index.html</MainPath>
+          <ScriptPath>./jsx/host.jsx</ScriptPath>
+          <CEFCommandLine>
+            <Parameter>--enable-nodejs</Parameter>
+            <Parameter>--mixed-context</Parameter>
+          </CEFCommandLine>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>Panel</Type>
+          <Menu>VidXP Search</Menu>
+          <Geometry>
+            <Size>
+              <Width>380</Width>
+              <Height>720</Height>
+            </Size>
+            <MinSize>
+              <Width>320</Width>
+              <Height>480</Height>
+            </MinSize>
+            <MaxSize>
+              <Width>1800</Width>
+              <Height>1800</Height>
+            </MaxSize>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>

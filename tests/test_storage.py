@@ -86,7 +86,7 @@ def fake_storage(config, collection):
     storage._create = True
     storage._collections = {}
     storage._names = {
-        "dialogue": "dialogue",
+        "speech": "speech",
         "scene": "scene",
         "actor": "actor",
     }

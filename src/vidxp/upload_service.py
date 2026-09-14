@@ -384,7 +384,7 @@ class RemoteUploadService:
             raise ApplicationError(
                 "local_ingestion_unavailable",
                 ErrorCategory.unavailable,
-                "Local-path ingestion is available only to the local stdio server.",
+                "Local-path ingestion is available only to a local VidXP runtime.",
             )
         if self.media is None or self.jobs is None:
             raise ApplicationError(

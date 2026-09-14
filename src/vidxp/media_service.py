@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
-import hashlib
 from uuid import uuid4
 
 from vidxp.application_models import (
@@ -274,14 +274,29 @@ class MediaService:
         return media_asset(record)
 
     def list(self, command: ListMediaCommand) -> MediaPage:
-        scope = hashlib.sha256(
+        repository_scope = hashlib.sha256(
             str(self.settings.repository_root.resolve()).encode()
         ).hexdigest()
+        scope = repository_scope
+        if command.filename is not None or command.state is not None:
+            scope = hashlib.sha256(
+                json.dumps(
+                    [
+                        repository_scope,
+                        command.filename,
+                        command.state.value if command.state is not None else None,
+                    ],
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
         try:
             offset = decode_offset_cursor(command.cursor, scope=scope)
         except CursorError as exc:
             raise ValueError("The media cursor is invalid.") from exc
-        total = self.catalog.count_media()
+        total = self.catalog.count_media(
+            filename=command.filename,
+            state=command.state,
+        )
         if offset > total:
             raise ValueError("The media cursor is outside the result set.")
         items = tuple(
@@ -289,6 +304,8 @@ class MediaService:
             for record in self.catalog.list_media(
                 limit=command.page_size,
                 offset=offset,
+                filename=command.filename,
+                state=command.state,
             )
         )
         next_offset = offset + len(items)

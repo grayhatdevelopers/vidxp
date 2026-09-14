@@ -2,6 +2,9 @@
 /venv
 /chroma_data
 /benchmark_runs/
+/benchmarks/codex-mcp/.promptfoo/
+/benchmarks/codex-mcp/results/
+/benchmarks/codex-mcp/workspace/
 /audio.wav
 /video.mp4
 /dist/
@@ -39,6 +42,11 @@ pnpm-debug.log*
 /target
 /desktop/node_modules/
 /desktop/dist/
+/premiere/dist/
+/premiere/ccx/
+/premiere/coverage/
+/premiere/packages/
+/premiere/.rnd
 /desktop/src-tauri/target/
 /desktop/src-tauri/gen/
 /desktop/src-tauri/binaries/uv-*

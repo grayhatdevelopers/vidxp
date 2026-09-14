@@ -472,12 +472,18 @@ def install_codex_plugin(
         data_directory=data_directory,
         device=device,
     )["mcpServers"][PLUGIN_NAME]
+    environment_arguments = [
+        argument
+        for name, value in mcp.get("env", {}).items()
+        for argument in ("--env", f"{name}={value}")
+    ]
     _run_codex(
         command,
         [
             "mcp",
             "add",
             PLUGIN_NAME,
+            *environment_arguments,
             "--",
             str(mcp["command"]),
             *(str(argument) for argument in mcp["args"]),

@@ -3,15 +3,15 @@ from unittest.mock import Mock, patch
 
 from pydantic import ValidationError
 
-from vidxp.capabilities.videoprism.config import VideoPrismConfig
-from vidxp.capabilities.videoprism.indexing import (
+from vidxp.capabilities.action.config import VideoPrismConfig
+from vidxp.capabilities.action.indexing import (
     CLIP_FRAMES,
     VISUAL_PROCESSOR,
     VideoPrismIndexState,
     process_videoprism_samples,
 )
-from vidxp.capabilities.videoprism.models import normalize_pooled_output
-from vidxp.capabilities.videoprism.specs import VIDEOPRISM_MODEL
+from vidxp.capabilities.action.models import normalize_pooled_output
+from vidxp.capabilities.action.specs import VIDEOPRISM_MODEL
 from vidxp.core.contracts import CancellationToken, IndexConfig
 from vidxp.core.video import FrameSample, VideoInfo
 
@@ -33,7 +33,7 @@ class VideoPrismTests(unittest.TestCase):
     def test_streaming_index_groups_clips_and_pads_only_the_tail(self):
         config = IndexConfig(
             video_id="video-1",
-            enabled_modalities=("videoprism",),
+            enabled_modalities=("action",),
         )
         info = VideoInfo(30.0, 270, 9.0, 2, 2)
         samples = [
@@ -47,7 +47,7 @@ class VideoPrismTests(unittest.TestCase):
         )
 
         with patch(
-            "vidxp.capabilities.videoprism.indexing.encode_video_clips",
+            "vidxp.capabilities.action.indexing.encode_video_clips",
             side_effect=lambda clips, _provider: [[0.1] for _ in clips],
         ) as encode:
             process_videoprism_samples(

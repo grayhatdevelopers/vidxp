@@ -2049,7 +2049,7 @@ mod tests {
         existing.display_name = "Editing workstation".into();
         existing.executable = PathBuf::from("/stale/vidxp");
         existing.model_directory = Some(PathBuf::from("/legacy/models"));
-        existing.capabilities = vec!["dialogue".into()];
+        existing.capabilities = vec!["speech".into()];
 
         let reconciled = reconcile_managed_profile(
             Some(&existing),

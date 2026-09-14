@@ -91,9 +91,9 @@ selects the older installed TestPyPI package instead.
 | Source Streamlit UI | Source selected through `PYTHONPATH`, real browser session | Page rendered with upload, index, status, and search controls; no import exception |
 | Built-wheel UI | Fresh wheel installed without VidXP source on its import path; browser interface opened from the installed package | Page rendered successfully and the Streamlit health endpoint returned `ok` |
 | Built-wheel CLI | Final wheel installed into an isolated target while using the validated dependency environment; wheel target placed first on `PYTHONPATH` | Import resolved inside the wheel target and `python -m vidxp --help` listed the expected commands |
-| Dependency doctor | `vidxp doctor --modalities dialogue,scene,actor` | ChromaDB, MiniLM, CLIP, NumPy, OpenCV, Pillow, PyTorch, face recognition, MoviePy, WhisperX, and FFmpeg imports resolved |
-| Released-transcript path | Real MiniLM encoding, Chroma writes, and top-2 dialogue search over three timestamped segments | Run completed; two hits returned; first interval was `[0.0, 2.0]`; full run/source metadata present |
-| Raw-video dialogue path | Five-second derived video with audio, real WhisperX `large-v2`, English alignment, MiniLM, and Chroma writes | Language detected as English; four dialogue phrases indexed; run state completed |
+| Dependency doctor | `vidxp doctor --modalities speech,scene,actor` | ChromaDB, MiniLM, CLIP, NumPy, OpenCV, Pillow, PyTorch, face recognition, MoviePy, WhisperX, and FFmpeg imports resolved |
+| Released-transcript path | Real MiniLM encoding, Chroma writes, and top-2 speech search over three timestamped segments | Run completed; two hits returned; first interval was `[0.0, 2.0]`; full run/source metadata present |
+| Raw-video speech path | Five-second derived video with audio, real WhisperX `large-v2`, English alignment, MiniLM, and Chroma writes | Language detected as English; four speech phrases indexed; run state completed |
 | Scene-only path | Four-frame derived clip, real CLIP encoding and Chroma search | Four frames indexed; two hits returned; neither WhisperX nor face recognition loaded |
 | Actor-only path | Same derived clip, real face detection/clustering | Four frames indexed; eight detections retained |
 | Shared visual path | Same clip with scene and actor enabled | Four source frames advanced once; four scene and four actor frame operations recorded |

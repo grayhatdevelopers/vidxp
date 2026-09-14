@@ -90,6 +90,7 @@ from vidxp.capabilities.registry import create_capability_registry
 from vidxp.composition import HttpApplicationContext
 from vidxp.control_plane import ControlPlaneApplication
 from vidxp.core.artifacts import ArtifactKind, ArtifactState
+from vidxp.core.media import MediaState
 from vidxp.core.uploads import UploadSessionState, UploadState
 from vidxp.job_service import JobService
 from vidxp.mcp import VidXPTokenVerifier, create_mcp_server, create_remote_mcp
@@ -1107,6 +1108,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         config = stdio_client_config(
             command=r"C:\VidXP\vidxp-mcp.exe",
             repository="library",
+            environment={},
         )
         self.assertEqual(
             config,
@@ -1137,6 +1139,24 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             rendered["mcpServers"]["vidxp"]["args"],
             ["--repository", "library"],
+        )
+
+    def test_stdio_config_carries_only_local_query_runtime_environment(self):
+        config = stdio_client_config(
+            command="vidxp-mcp",
+            environment={
+                "VIDXP_SLM_BASE_URL": "http://127.0.0.1:11434/v1",
+                "VIDXP_SLM_MODEL": "qwen3.5:4b-q4_K_M",
+                "VIDXP_HTTP_STATIC_BEARER_TOKEN": "must-not-leak",
+            },
+        )
+
+        self.assertEqual(
+            config["mcpServers"]["vidxp"]["env"],
+            {
+                "VIDXP_SLM_BASE_URL": "http://127.0.0.1:11434/v1",
+                "VIDXP_SLM_MODEL": "qwen3.5:4b-q4_K_M",
+            },
         )
 
     def test_stdio_check_performs_handshake_and_tool_probe(self):
@@ -1304,7 +1324,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         "command": {
                             "question": "What happens after the taxi arrives?",
                             "media_id": MEDIA_ID,
-                            "modalities": ["scene", "dialogue"],
+                            "modalities": ["scene", "speech"],
                         },
                         "idempotency_key": "agent-query-0001",
                     },
@@ -1317,7 +1337,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             QueryVideoCommand(
                 question="What happens after the taxi arrives?",
                 media_id=MEDIA_ID,
-                modalities=("scene", "dialogue"),
+                modalities=("scene", "speech"),
                 evidence_delivery=InitialEvidenceDeliveryPolicy(
                     mode=EvidenceDeliveryMode.none
                 ),
@@ -1366,6 +1386,33 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(context.jobs.list.call_args.args[0].page_size, 9)
 
+    async def test_list_media_passes_filters_to_application(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.application.list_media.return_value = MediaPage(total=0)
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.read"}),
+                ),
+            )
+            async with Client(server) as client:
+                media = await client.call_tool(
+                    "list_media",
+                    {
+                        "page_size": 5,
+                        "filename": "clip.mp4",
+                        "state": "ready",
+                    },
+                )
+
+        self.assertFalse(media.is_error)
+        command = context.application.list_media.call_args.args[0]
+        self.assertEqual(command.page_size, 5)
+        self.assertEqual(command.filename, "clip.mp4")
+        self.assertEqual(command.state, MediaState.ready)
+
     async def test_failed_model_preparation_job_is_structured_over_mcp(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory))
@@ -1381,7 +1428,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     details={
                         "model": "publisher/model",
                         "partial_files_preserved": True,
-                        "remediation": "vidxp prepare --modalities dialogue",
+                        "remediation": "vidxp prepare --modalities speech",
                     },
                     retryable=True,
                 ),
@@ -2306,7 +2353,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(linked.structured_content["etag"], f'"{"1" * 64}"')
         self.assertEqual(linked.structured_content["state"], "ready")
         self.assertEqual(linked.structured_content["delivery_mode"], "local_file")
-        self.assertEqual(Path(linked.structured_content["local_path"]), clip)
+        self.assertEqual(
+            Path(linked.structured_content["local_path"]),
+            clip.resolve(),
+        )
         self.assertIsNone(linked.structured_content["download_url"])
         self.assertEqual(downloaded.contents[0].blob, "Y2xpcC1jb250ZW50")
 
@@ -2706,7 +2756,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             [item["name"] for item in result.structured_content["items"]],
-            ["dialogue", "scene", "actor", "videoprism"],
+            ["speech", "sound", "scene", "actor", "action"],
         )
 
     async def test_streamable_http_works_with_the_official_remote_client(self):

@@ -20,8 +20,8 @@ from vidxp.benchmarks.common import (
     run_logged_evaluator,
     verify_artifact,
 )
-from vidxp.capabilities.dialogue.config import dialogue_config
-from vidxp.capabilities.dialogue.operations import search_dialogue
+from vidxp.capabilities.speech.config import speech_config
+from vidxp.capabilities.speech.operations import search_speech
 from vidxp.capabilities.schemas import SearchHit
 from vidxp.capabilities.registry import create_capability_registry
 from vidxp.core.contracts import IndexConfig, VideoSource
@@ -177,7 +177,7 @@ def rank_interval(
             "HiREST temporal window fraction must be between zero and one."
         )
     if not hits:
-        raise ValueError("HiREST temporal ranking requires dialogue hits.")
+        raise ValueError("HiREST temporal ranking requires speech hits.")
 
     second_count = max(1, math.ceil(duration))
     hit_scores = [float(hit.score) for hit in hits]
@@ -335,7 +335,7 @@ def _generate_predictions(
     predictions: dict[str, dict[str, dict[str, list[float]]]] = {}
     for prompt, video in ordered_pairs:
         media_id = benchmark_media_id("hirest", video)
-        hits = search_dialogue(
+        hits = search_speech(
             prompt,
             config=config,
             top_k=dialogue_counts[media_id],
@@ -445,7 +445,7 @@ def run_hirest(
         dataset="hirest",
         split=split,
         run_id=run_id,
-        enabled_modalities=("dialogue",),
+        enabled_modalities=("speech",),
         device=device,
         output_root=output_root,
         generation_id=benchmark_generation_id("hirest", split, run_id),
@@ -520,7 +520,7 @@ def run_hirest(
             "prediction_format_validated": True,
             "input_mode": "released_timestamped_asr",
             "dialogue_words_per_phrase": (
-                dialogue_config(config).words_per_phrase
+                speech_config(config).words_per_phrase
             ),
             "segment_word_timestamps": (
                 "linear_interpolation_within_srt_cue"

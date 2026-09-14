@@ -16,6 +16,7 @@ from vidxp.cli_support import (
     require_media_runtime,
     state_from_context,
 )
+from vidxp.core.media import MediaState
 
 
 app = typer.Typer(no_args_is_help=True, help="Import and inspect local media.")
@@ -68,6 +69,14 @@ def list_media(
         str | None,
         typer.Option("--cursor", help="Cursor returned by the previous page."),
     ] = None,
+    filename: Annotated[
+        str | None,
+        typer.Option("--filename", help="Filter media by filename."),
+    ] = None,
+    media_state: Annotated[
+        MediaState | None,
+        typer.Option("--state", help="Filter media by readiness/state."),
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit machine-readable JSON."),
@@ -77,7 +86,12 @@ def list_media(
 
     state = state_from_context(ctx)
     page = state.service.list_media(
-        ListMediaCommand(page_size=limit, cursor=cursor)
+        ListMediaCommand(
+            page_size=limit,
+            cursor=cursor,
+            filename=filename,
+            state=media_state,
+        )
     )
     assets = page.items
     payload = page.model_dump(mode="json")

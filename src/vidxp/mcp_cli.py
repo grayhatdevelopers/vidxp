@@ -34,6 +34,7 @@ def stdio_client_config(
     index_directory: str | None = None,
     data_directory: Path | None = None,
     device: str | None = None,
+    environment: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build Claude Desktop/compatible stdio ``mcpServers`` JSON."""
 
@@ -47,12 +48,21 @@ def stdio_client_config(
     ):
         if value is not None:
             arguments.extend((flag, str(value)))
+    server: dict[str, Any] = {
+        "command": command or mcp_executable(),
+        "args": arguments,
+    }
+    selected_environment = environment if environment is not None else os.environ
+    local_query_environment = {
+        name: value
+        for name in ("VIDXP_SLM_BASE_URL", "VIDXP_SLM_MODEL")
+        if (value := selected_environment.get(name))
+    }
+    if local_query_environment:
+        server["env"] = local_query_environment
     return {
         "mcpServers": {
-            "vidxp": {
-                "command": command or mcp_executable(),
-                "args": arguments,
-            }
+            "vidxp": server,
         }
     }
 

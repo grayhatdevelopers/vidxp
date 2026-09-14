@@ -64,6 +64,7 @@ class OllamaQueryModel:
             retries=retries,
             model_settings={
                 "temperature": 0,
+                "openai_reasoning_effort": "none",
                 "max_tokens": 1024,
                 "timeout": timeout_seconds,
             },
@@ -75,6 +76,7 @@ class OllamaQueryModel:
             retries=retries,
             model_settings={
                 "temperature": 0,
+                "openai_reasoning_effort": "none",
                 "max_tokens": 2048,
                 "timeout": timeout_seconds,
             },

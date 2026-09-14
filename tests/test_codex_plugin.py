@@ -52,7 +52,7 @@ def test_export_codex_plugin_materializes_the_canonical_skill_bundle() -> None:
             "installation": "AVAILABLE",
             "authentication": "ON_INSTALL",
         }
-        assert exported.marketplace_path == str(marketplace_path)
+        assert Path(exported.marketplace_path) == marketplace_path.resolve()
         assert not (root / "marketplace.json").exists()
 
 
@@ -114,6 +114,42 @@ def test_install_codex_plugin_registers_marketplace_then_installs_bundle() -> No
     assert result.plugin_id == "vidxp@vidxp-local"
     assert result.installed_path == "/codex/cache/vidxp"
     assert "skills and local MCP server" in result.detail
+
+
+def test_install_codex_plugin_registers_local_query_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[1:4] == ["plugin", "marketplace", "add"]:
+            payload = {"marketplaceName": "vidxp-local"}
+        elif command[1:3] == ["plugin", "add"]:
+            payload = {"pluginId": "vidxp@vidxp-local", "version": "0.4.0"}
+        else:
+            return subprocess.CompletedProcess(command, 0, "ok", "")
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setenv("VIDXP_SLM_BASE_URL", "http://127.0.0.1:11434/v1")
+    monkeypatch.setenv("VIDXP_SLM_MODEL", "qwen3.5:4b-q4_K_M")
+    with TemporaryDirectory() as directory:
+        install_codex_plugin(
+            Path(directory) / "marketplace",
+            codex_command="codex-test",
+            runner=runner,
+        )
+
+    assert calls[2][1:9] == [
+        "mcp",
+        "add",
+        "vidxp",
+        "--env",
+        "VIDXP_SLM_BASE_URL=http://127.0.0.1:11434/v1",
+        "--env",
+        "VIDXP_SLM_MODEL=qwen3.5:4b-q4_K_M",
+        "--",
+    ]
 
 
 def test_install_codex_plugin_uses_git_marketplace_and_migrates_local_source() -> None:

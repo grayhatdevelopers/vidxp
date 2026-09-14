@@ -1,3 +1,4 @@
+import hashlib
 import unittest
 from contextlib import nullcontext
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ from vidxp.artifact_service import (
 )
 from vidxp.core.artifacts import ArtifactState
 from vidxp.core.contracts import CancellationToken, IndexCancelledError
+from vidxp.core.cursors import encode_offset_cursor
 from vidxp.core.media import (
     MediaProbe,
     MediaUnavailableError,
@@ -475,7 +477,8 @@ class MediaServiceTests(unittest.TestCase):
 
     def test_media_pages_are_bounded_and_cursor_scoped(self):
         with TemporaryDirectory() as directory:
-            service, catalog, _store, _probe = self.service(Path(directory))
+            root = Path(directory)
+            service, catalog, _store, _probe = self.service(root)
             catalog.count_media.return_value = 3
             catalog.list_media.side_effect = [
                 (record(), record().model_copy(
@@ -501,12 +504,67 @@ class MediaServiceTests(unittest.TestCase):
 
         self.assertEqual(first.total, 3)
         self.assertEqual(len(first.items), 2)
-        self.assertIsNotNone(first.next_cursor)
+        scope = hashlib.sha256(str(root.resolve()).encode()).hexdigest()
+        self.assertEqual(
+            first.next_cursor,
+            encode_offset_cursor(2, scope=scope),
+        )
         self.assertEqual(len(second.items), 1)
         self.assertIsNone(second.next_cursor)
         self.assertEqual(
             catalog.list_media.call_args_list[1].kwargs["offset"],
             2,
+        )
+
+    def test_filtered_media_cursor_is_bounded_and_filter_scoped(self):
+        with TemporaryDirectory() as directory:
+            service, catalog, _store, _probe = self.service(Path(directory))
+            catalog.count_media.return_value = 2
+            catalog.list_media.side_effect = [(record(),), (record(),)]
+            command = ListMediaCommand(
+                page_size=1,
+                filename="É" * 255,
+                state=MediaState.ready,
+            )
+
+            first = service.list(command)
+            second = service.list(
+                command.model_copy(update={"cursor": first.next_cursor})
+            )
+            for changed_filter in (
+                {"filename": "other.mp4"},
+                {"state": MediaState.failed},
+            ):
+                with (
+                    self.subTest(changed_filter=changed_filter),
+                    self.assertRaisesRegex(ValueError, "cursor"),
+                ):
+                    service.list(
+                        command.model_copy(
+                            update={"cursor": first.next_cursor, **changed_filter}
+                        )
+                    )
+
+        self.assertLessEqual(len(first.next_cursor or ""), 512)
+        self.assertIsNone(second.next_cursor)
+
+    def test_media_list_passes_filters_to_catalog_count(self):
+        with TemporaryDirectory() as directory:
+            service, catalog, _store, _probe = self.service(Path(directory))
+            catalog.count_media.return_value = 1
+            catalog.list_media.return_value = (record(),)
+
+            service.list(
+                ListMediaCommand(
+                    page_size=10,
+                    filename="clip.mp4",
+                    state=MediaState.ready,
+                )
+            )
+
+        catalog.count_media.assert_called_once_with(
+            filename="clip.mp4",
+            state=MediaState.ready,
         )
 
     def test_failed_checksum_is_retried_to_ready(self):

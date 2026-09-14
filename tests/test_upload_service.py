@@ -634,7 +634,7 @@ def test_upload_session_idempotency_validates_shared_request_contract(
         lambda: service.create_upload_session(
             principal=owner,
             request_key="a" * 64,
-            index_modalities=("dialogue",),
+            index_modalities=("speech",),
         ),
         lambda: service.create_upload_session(
             principal=Principal(subject="other", client_id="client-a"),
@@ -1773,12 +1773,12 @@ def test_index_retry_recovery_resubmits_exact_persisted_command(
     retry_job_id = uuid4().hex
     command = CreateIndexCommand(
         media_id=media_id,
-        modalities=("dialogue", "scene"),
+        modalities=("speech", "scene"),
         frame_stride=7,
         scene_sample_fps=2.5,
         capability_options={
             "scene": {"batch_size": 3},
-            "dialogue": {"language": "ur"},
+            "speech": {"language": "ur"},
         },
     )
 

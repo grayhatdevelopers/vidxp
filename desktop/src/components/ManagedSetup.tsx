@@ -17,16 +17,22 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   chooseModelDirectory,
+  cancelManagedSetupOperation,
   displayPath,
   errorMessage,
+  installPremiereExtensions,
   installMediaRuntime,
   installRuntime,
   launchUi,
+  localServerStatus,
   modelDirectoryInventory,
   onManagedSetupProgress,
+  premiereIntegrationState,
   prepareManagedModels,
   runtimeManifest,
   runtimeStatus,
+  startLocalServer,
+  type PremiereIntegrationState,
   type RuntimeManifest,
   type RuntimeStatus,
   type ModelDirectoryInventory,
@@ -38,32 +44,40 @@ import { useExclusiveOperation } from '../useAsyncAction';
 interface ManagedSetupProps {
   draftId: string;
   selectedManagedRuntimeProfile: string | null;
+  premiereRequested: boolean;
   onBack: () => Promise<void>;
-  onCommitted: (setup: TargetSetupState) => void;
+  onCommitted: (setup: TargetSetupState, notice?: { color: 'teal' | 'yellow'; title: string; detail: string }) => void;
 }
 
 type ManagedOperation = 'load' | 'folder' | 'reset' | 'install' | 'prepare' | 'launch';
 
-export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, onCommitted }: ManagedSetupProps) {
+export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, premiereRequested, onBack, onCommitted }: ManagedSetupProps) {
   const [manifest, setManifest] = useState<RuntimeManifest | null>(null);
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [capabilities, setCapabilities] = useState<string[]>([]);
   const [surfaces, setSurfaces] = useState<string[]>([]);
+  const [premiere, setPremiere] = useState<PremiereIntegrationState | null>(null);
+  const [premiereEnabled, setPremiereEnabled] = useState(premiereRequested);
   const [prepareDuringInstall, setPrepareDuringInstall] = useState(true);
+  const [localAnswers, setLocalAnswers] = useState(false);
   const [modelDirectory, setModelDirectory] = useState('');
   const [inventory, setInventory] = useState<ModelDirectoryInventory | null>(null);
   const [operation, setOperation] = useState<ManagedOperation | null>('load');
   const [message, setMessage] = useState('Loading VidXP options…');
   const [failure, setFailure] = useState<string | null>(null);
   const [installFailure, setInstallFailure] = useState<string | null>(null);
+  const [cancelFailure, setCancelFailure] = useState<string | null>(null);
+  const [cancelRequested, setCancelRequested] = useState(false);
   const [setupProgress, setSetupProgress] = useState<ManagedSetupProgress | null>(null);
   const [setupElapsed, setSetupElapsed] = useState(0);
   const operations = useExclusiveOperation<ManagedOperation>();
   const failureAlert = useRef<HTMLDivElement | null>(null);
+  const cancelRequestedRef = useRef(false);
   const initialLoad = useRef<Promise<{
     manifest: RuntimeManifest;
     status: RuntimeStatus;
     inventory: ModelDirectoryInventory;
+    premiere: PremiereIntegrationState;
   }> | null>(null);
 
   const beginOperation = useCallback((kind: ManagedOperation): number | null => {
@@ -83,27 +97,33 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
     if (operationId === null) return;
     setFailure(null);
     try {
-      const request = initialLoad.current ?? Promise.all([runtimeManifest(), runtimeStatus()])
-        .then(async ([nextManifest, nextStatus]) => ({
+      const request = initialLoad.current ?? Promise.all([runtimeManifest(), runtimeStatus(), premiereIntegrationState()])
+        .then(async ([nextManifest, nextStatus, nextPremiere]) => ({
           manifest: nextManifest,
           status: nextStatus,
           inventory: await modelDirectoryInventory(nextStatus.model_directory),
+          premiere: nextPremiere,
         }));
       initialLoad.current = request;
-      const { manifest: nextManifest, status: nextStatus, inventory: nextInventory } = await request;
+      const { manifest: nextManifest, status: nextStatus, inventory: nextInventory, premiere: nextPremiere } = await request;
       if (!operations.current(operationId)) return;
       setManifest(nextManifest);
       setStatus(nextStatus);
+      setPremiere(nextPremiere);
       const recoverable = Boolean(nextStatus.runtime_profile);
+      const shouldEnablePremiere = premiereRequested || Boolean(nextPremiere.cep_installed || nextPremiere.uxp_installed);
       setCapabilities(recoverable ? nextStatus.capabilities : Object.keys(nextManifest.capabilities));
-      setSurfaces(
+      const nextSurfaces = (
         recoverable
           ? nextStatus.surfaces
           : Object.entries(nextManifest.surfaces)
               .filter(([, surface]) => surface.default)
-              .map(([id]) => id),
+              .map(([id]) => id)
       );
+      setSurfaces(shouldEnablePremiere ? [...new Set([...nextSurfaces, 'worker', 'server'])] : nextSurfaces);
+      setPremiereEnabled(shouldEnablePremiere);
       setModelDirectory(nextStatus.model_directory);
+      setLocalAnswers(recoverable ? Boolean(nextStatus.local_answers) : false);
       setPrepareDuringInstall(!recoverable);
       setInventory(nextInventory);
       setMessage(nextStatus.ready ? 'VidXP is ready.' : nextStatus.detail);
@@ -114,7 +134,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
     } finally {
       settleOperation(operationId);
     }
-  }, [beginOperation, operations, settleOperation]);
+  }, [beginOperation, operations, premiereRequested, settleOperation]);
 
   async function refreshInventory(directory: string): Promise<boolean> {
     try {
@@ -172,6 +192,14 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
     if (id === 'worker' && checked && manifest) {
       setCapabilities(Object.keys(manifest.capabilities));
     }
+    if (!checked && (id === 'worker' || id === 'server')) setPremiereEnabled(false);
+  }
+
+  function togglePremiere(checked: boolean) {
+    setPremiereEnabled(checked);
+    if (!checked) return;
+    setSurfaces([...new Set([...surfaces, 'worker', 'server'])]);
+    if (manifest) setCapabilities(Object.keys(manifest.capabilities));
   }
 
   function toggleCapability(id: string, checked: boolean) {
@@ -206,23 +234,28 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
     if (operationId === null) return;
     const captured = {
       capabilities: [...capabilities],
-      surfaces: [...surfaces],
+      surfaces: premiereEnabled ? [...new Set([...surfaces, 'worker', 'server'])] : [...surfaces],
+      premiere: premiereEnabled,
       prepare_models: prepareDuringInstall,
+      local_answers: localAnswers,
       model_directory: modelDirectory || undefined,
       draft_id: draftId,
     };
     setFailure(null);
     setInstallFailure(null);
+    setCancelFailure(null);
+    setCancelRequested(false);
+    cancelRequestedRef.current = false;
     setSetupProgress({
       draft_id: draftId,
       current: 1,
-      total: captured.prepare_models ? 8 : 7,
+      total: (captured.prepare_models ? 8 : 7) + (captured.local_answers ? 1 : 0),
       stage: 'video-tools',
       message: 'Checking FFmpeg and required video codecs',
     });
     try {
       setMessage('Checking FFmpeg and required codecs…');
-      await installMediaRuntime(draftId);
+      await installMediaRuntime(draftId, (captured.prepare_models ? 8 : 7) + (captured.local_answers ? 1 : 0));
       if (status?.state === 'broken' && status.runtime_profile && !dirty) {
         const repaired = await runtimeStatus();
         if (repaired.ready) {
@@ -237,15 +270,63 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
           : 'Installing VidXP…',
       );
       const result = await installRuntime(captured);
+      let premiereNotice: { color: 'teal' | 'yellow'; title: string; detail: string } | undefined;
+      if (captured.premiere) {
+        setMessage('Starting VidXP privately and installing the Premiere extension…');
+        try {
+          const server = await localServerStatus();
+          if (!server.running) await startLocalServer();
+          const extension = await installPremiereExtensions();
+          premiereNotice = {
+            color: extension.opened_packages.length > 0 ? 'yellow' : 'teal',
+            title: extension.opened_packages.length > 0 ? 'Finish Premiere setup in Creative Cloud' : 'VidXP and Premiere are ready',
+            detail: extension.detail,
+          };
+        } catch (error) {
+          premiereNotice = {
+            color: 'yellow',
+            title: 'VidXP is ready; Premiere setup needs attention',
+            detail: errorMessage(error, 'The Premiere extension could not be installed. Use Install for Premiere from the VidXP summary screen to retry.'),
+          };
+        }
+      }
       setMessage(result.install.prepared ? 'VidXP and the selected search features are ready.' : 'VidXP is installed. Search files can be downloaded later.');
-      onCommitted(result.setup);
+      onCommitted(result.setup, premiereNotice);
     } catch (error) {
-      const detail = errorMessage(error, 'Setup did not finish. Your previous VidXP installation is unchanged.');
+      const detail = cancelRequestedRef.current
+        ? 'Setup was cancelled. Your previous VidXP installation is unchanged.'
+        : errorMessage(error, 'Setup did not finish. Your previous VidXP installation is unchanged.');
       setFailure(detail);
       setInstallFailure(detail);
     } finally {
+      cancelRequestedRef.current = false;
+      setCancelRequested(false);
       settleOperation(operationId);
       setSetupProgress(null);
+    }
+  }
+
+  async function cancelInstall() {
+    if (cancelRequestedRef.current) return;
+    cancelRequestedRef.current = true;
+    setCancelRequested(true);
+    setCancelFailure(null);
+    setSetupProgress((current) => ({
+      draft_id: draftId,
+      current: current?.current ?? 1,
+      total: current?.total ?? (prepareDuringInstall ? 8 : 7) + (localAnswers ? 1 : 0),
+      stage: current?.stage ?? 'cancelling',
+      message: 'Stopping setup safely',
+      model_message: current?.model_message,
+      model_current: current?.model_current,
+      model_total: current?.model_total,
+    }));
+    try {
+      await cancelManagedSetupOperation(draftId);
+    } catch (error) {
+      cancelRequestedRef.current = false;
+      setCancelRequested(false);
+      setCancelFailure(errorMessage(error, 'Setup could not be stopped.'));
     }
   }
 
@@ -293,15 +374,20 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
     !sameValues(capabilities, status?.capabilities ?? [])
     || !sameValues(surfaces, status?.surfaces ?? [])
     || modelDirectory !== status?.model_directory
+    || localAnswers !== Boolean(status?.local_answers)
   );
+  const premiereNeedsInstall = premiereEnabled && !premiere?.cep_installed && !premiere?.uxp_installed;
 
   async function resetDraft() {
     if (!recoverableConfiguration || !status) return;
     const operationId = beginOperation('reset');
     if (operationId === null) return;
     setCapabilities(status.capabilities);
-    setSurfaces(status.surfaces);
+    const keepPremiere = premiereRequested || Boolean(premiere?.cep_installed || premiere?.uxp_installed);
+    setPremiereEnabled(keepPremiere);
+    setSurfaces(keepPremiere ? [...new Set([...status.surfaces, 'worker', 'server'])] : status.surfaces);
     setModelDirectory(status.model_directory);
+    setLocalAnswers(Boolean(status.local_answers));
     setInventory(null);
     setFailure(null);
     try {
@@ -314,7 +400,43 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
   const isBusy = operation !== null;
   const attentionTitle = /ffmpeg|ffprobe/i.test(message) ? 'Video tools need attention' : 'VidXP needs attention';
   const progressCurrent = setupProgress?.current ?? 1;
-  const progressTotal = setupProgress?.total ?? (prepareDuringInstall ? 8 : 7);
+  const progressTotal = setupProgress?.total ?? (prepareDuringInstall ? 8 : 7) + (localAnswers ? 1 : 0);
+  const selectedModelDownloads = new Map<string, number>();
+  for (const capability of capabilities) {
+    for (const model of manifest?.capabilities[capability]?.models ?? []) {
+      selectedModelDownloads.set(
+        model.cache_key,
+        Math.max(selectedModelDownloads.get(model.cache_key) ?? 0, model.download_size_bytes),
+      );
+    }
+  }
+  const selectedModelBytes = [...selectedModelDownloads.values()].reduce((total, bytes) => total + bytes, 0);
+  const managedRuntimeBytes = manifest?.managed_runtime_estimated_size_bytes ?? 0;
+  const localAnswerSpec = manifest?.local_answers ?? {
+    engine: 'ollama',
+    model: 'qwen3.5:4b-q4_K_M',
+    download_size_bytes: 3650722202,
+    managed_runtime: {
+      version: '0.32.5',
+      maximum_download_size_bytes: 1457824795,
+    },
+    label: 'Local grounded answers',
+    description: 'Turn VidXP search evidence into cited answers on this computer.',
+  };
+  const localAnswerModelBytes = localAnswers ? localAnswerSpec.download_size_bytes : 0;
+  const localAnswerRuntimeBytes = localAnswers ? localAnswerSpec.managed_runtime.maximum_download_size_bytes : 0;
+  const plannedSetupBytes = managedRuntimeBytes + selectedModelBytes + localAnswerModelBytes + localAnswerRuntimeBytes;
+  const capabilityModelSummary = capabilities
+    .map((id) => {
+      const capability = manifest?.capabilities[id];
+      if (!capability) return null;
+      const models = new Map<string, number>();
+      for (const model of capability.models ?? []) models.set(model.cache_key, model.download_size_bytes);
+      const bytes = [...models.values()].reduce((total, size) => total + size, 0);
+      return `${capability.label}: ${formatBytes(bytes)}`;
+    })
+    .filter((summary): summary is string => summary !== null)
+    .join(' · ');
 
   function dismissInstallFailure() {
     setInstallFailure(null);
@@ -397,8 +519,33 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
           </div>
 
           <div className="setupPanel">
+            <Title order={2} className="panelTitle" mb="md">Grounded answers</Title>
+            <Checkbox
+              checked={localAnswers}
+              disabled={isBusy}
+              onChange={(event) => setLocalAnswers(event.currentTarget.checked)}
+              label={localAnswerSpec.label}
+              description={`${localAnswerSpec.description} Model download: ${formatBytes(localAnswerSpec.download_size_bytes)}.`}
+            />
+            {localAnswers && (
+              <Alert mt="md" color="blue" title="VidXP manages the connection">
+                VidXP reuses a healthy Ollama service or executable when available. Otherwise it asks before downloading a verified headless runtime into VidXP's private data; it never installs the Ollama desktop app. There is no URL to enter.
+              </Alert>
+            )}
+          </div>
+
+          <div className="setupPanel">
             <Title order={2} className="panelTitle" mb="md">Interfaces and integrations</Title>
             <Stack gap="xs">
+              {premiere?.platform_supported && (
+                <Checkbox
+                  checked={premiereEnabled}
+                  disabled={isBusy || !premiere.cep_package_available || !premiere.uxp_package_available}
+                  onChange={(event) => togglePremiere(event.currentTarget.checked)}
+                  label="Premiere Pro extension"
+                  description="Install the matching Adobe extension. VidXP includes local processing and its private connection automatically."
+                />
+              )}
               {Object.entries(manifest.surfaces).filter(([id]) => id !== 'worker').map(([id, surface]) => (
                 <Checkbox key={id} checked={surfaces.includes(id)} disabled={isBusy} onChange={(event) => toggleSurface(id, event.currentTarget.checked)} label={surface.label} description={surface.description} />
               ))}
@@ -407,11 +554,13 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
 
           <div className="setupPanel">
             <Group justify="space-between" align="center" wrap="nowrap">
-              <div className="folderCopy"><Text fw={650}>Downloaded model storage</Text><Text size="sm" className="mutedText">VidXP keeps the files needed by your selected search features here.</Text>{modelDirectory && <details className="technicalDetails"><summary>Storage location</summary><Text size="sm" className="pathText">{displayPath(modelDirectory)}</Text></details>}</div>
+              <div className="folderCopy"><Text fw={650}>Downloaded model storage</Text><Text size="sm" className="mutedText">VidXP keeps search models here. A reused external Ollama service continues to own its existing model store.</Text>{modelDirectory && <details className="technicalDetails"><summary>Storage location</summary><Text size="sm" className="pathText">{displayPath(modelDirectory)}</Text></details>}</div>
               <Button variant="default" leftSection={<IconFolderOpen aria-hidden="true" size={16} />} loading={operation === 'folder'} disabled={isBusy} onClick={() => void chooseFolder()}>Change location…</Button>
             </Group>
             <Alert mt="md" color="blue" title="Plan for local storage">
-              The managed runtime can use approximately 3 GiB. Models add 37 MiB to 4.11 GiB depending on the selected search features. A full local setup uses approximately 7.1 GiB, plus temporary installation space, indexes, and videos.
+              <Text size="sm">The managed runtime can use approximately {formatBytes(managedRuntimeBytes)}. Selected model downloads total up to {formatBytes(selectedModelBytes)}.{localAnswers ? ` Grounded answers add up to ${formatBytes(localAnswerRuntimeBytes)} for the headless runtime and ${formatBytes(localAnswerModelBytes)} for the model.` : ''}</Text>
+              <Text size="sm" mt="xs">{capabilityModelSummary}</Text>
+              <Text size="sm" mt="xs">Plan for approximately {formatBytes(plannedSetupBytes)} locally, plus temporary installation space, indexes, and videos. Valid cached model files are reused.</Text>
             </Alert>
             <div className="cacheInventory" aria-live="polite">
               {operation === 'load' || operation === 'folder' || operation === 'reset' ? (
@@ -451,6 +600,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
           <Text fw={700}>VidXP is installed</Text>
           <Text size="sm">Search: {status.capabilities.map((id) => manifest?.capabilities[id]?.label || id).join(', ') || 'none selected'}</Text>
           <Text size="sm">Processing and access: {status.surfaces.map((id) => manifest?.surfaces[id]?.label || id).join(', ') || 'command line only'}</Text>
+          <Text size="sm">Grounded answers: {status.local_answers ? localAnswerSpec.model : 'not installed'}</Text>
           <details className="technicalDetails"><summary>Technical details</summary><Text size="xs">Version {status.package_version}</Text><Text size="xs" className="pathText">Models: {displayPath(status.model_directory)}</Text></details>
         </div>
       )}
@@ -463,12 +613,12 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
         {recoverableConfiguration ? (
           <Group>
             <Button variant="default" disabled={!dirty || isBusy} onClick={() => void resetDraft()}>Reset changes</Button>
-            <Button disabled={(!dirty && status?.state !== 'broken') || !manifest || isBusy} onClick={() => void install()}>{status?.state === 'broken' && !dirty ? 'Repair VidXP' : 'Apply update'}</Button>
+            <Button disabled={(!dirty && status?.state !== 'broken' && !premiereRequested && !premiereNeedsInstall) || !manifest || isBusy} onClick={() => void install()}>{premiereEnabled ? 'Apply and install Premiere' : status?.state === 'broken' && !dirty ? 'Repair VidXP' : 'Apply update'}</Button>
             <Button variant="light" loading={operation === 'prepare'} disabled={!status?.ready || dirty || !displayedRuntimeSelected || isBusy} onClick={() => void prepareModels()}>Check downloaded models</Button>
             <Button leftSection={<IconExternalLink aria-hidden="true" size={17} />} loading={operation === 'launch'} disabled={!status?.ready || dirty || !displayedRuntimeSelected || isBusy} onClick={() => void launch()}>Open VidXP</Button>
           </Group>
         ) : (
-          <Button disabled={!manifest || isBusy} onClick={() => void install()}>{corruptPointer ? 'Rebuild VidXP' : 'Install VidXP'}</Button>
+          <Button disabled={!manifest || isBusy} onClick={() => void install()}>{premiereEnabled ? 'Install VidXP and Premiere' : corruptPointer ? 'Rebuild VidXP' : 'Install VidXP'}</Button>
         )}
       </div>
       <Modal
@@ -493,7 +643,7 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
               <Text size="sm" className="mutedText">{setupElapsed}s elapsed</Text>
             </Group>
             <Progress value={(progressCurrent / progressTotal) * 100} size="lg" animated />
-            {setupProgress?.stage === 'models'
+            {(setupProgress?.stage === 'models' || setupProgress?.stage === 'local-answers')
               && setupProgress.model_message && (
                 <Stack gap={6}>
                   <Group justify="space-between" align="baseline" wrap="nowrap">
@@ -516,8 +666,18 @@ export function ManagedSetup({ draftId, selectedManagedRuntimeProfile, onBack, o
               )}
             <div>
               <Text fw={650}>{setupProgress?.message ?? 'Starting managed setup'}</Text>
-              <Text size="sm" className="mutedText" mt="xs">The existing installation remains active until every step has completed and the replacement passes validation.</Text>
+              <Text size="sm" className="mutedText" mt="xs">
+                {setupProgress?.stage === 'local-answers'
+                  ? 'VidXP reuses Ollama or manages a private headless runtime. No separate app or setup window is involved.'
+                  : 'The existing installation remains active until every step has completed and the replacement passes validation.'}
+              </Text>
             </div>
+            {cancelFailure && <Alert color="red" title="Could not stop setup" role="alert">{cancelFailure}</Alert>}
+            <Group justify="flex-end">
+              <Button variant="default" loading={cancelRequested} disabled={cancelRequested} onClick={() => void cancelInstall()}>
+                {cancelRequested ? 'Stopping…' : 'Cancel setup'}
+              </Button>
+            </Group>
           </Stack>
         )}
       </Modal>

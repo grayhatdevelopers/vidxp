@@ -1,0 +1,134 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+description: VidXP Codex MCP-on versus MCP-off temporal evidence evaluation
+
+prompts:
+  - id: video-evidence-task
+    label: Fixed video evidence task
+    raw: file://prompts/video-evidence.txt
+
+providers:
+  - id: openai:codex-sdk
+    label: codex-vidxp-mcp
+    config:
+      model: "{{ env.VIDXP_EVAL_MODEL | default('gpt-5.6-sol') }}"
+      model_reasoning_effort: "{{ env.VIDXP_EVAL_REASONING | default('medium') }}"
+      maxRetries: 0
+      working_dir: "{{ env.VIDXP_EVAL_WORKSPACE }}"
+      skip_git_repo_check: true
+      sandbox_mode: read-only
+      approval_policy: never
+      network_access_enabled: false
+      web_search_mode: disabled
+      persist_threads: false
+      enable_streaming: true
+      output_schema: &result_schema
+        type: object
+        additionalProperties: false
+        required:
+          - video_id
+          - answer
+          - start_seconds
+          - end_seconds
+          - modalities
+          - evidence
+        properties:
+          video_id:
+            type: string
+          answer:
+            type: string
+          start_seconds:
+            type:
+              - number
+              - "null"
+          end_seconds:
+            type:
+              - number
+              - "null"
+          modalities:
+            type: array
+            uniqueItems: true
+            items:
+              type: string
+              enum:
+                - scene
+                - action
+                - sound
+                - speech
+          evidence:
+            type: array
+            items:
+              type: object
+              additionalProperties: false
+              required:
+                - start_seconds
+                - end_seconds
+                - modality
+                - description
+              properties:
+                start_seconds:
+                  type: number
+                end_seconds:
+                  type: number
+                modality:
+                  type: string
+                  enum:
+                    - scene
+                    - action
+                    - sound
+                    - speech
+                description:
+                  type: string
+      cli_env:
+        CODEX_HOME: "{{ env.VIDXP_EVAL_CODEX_HOME }}"
+      cli_config:
+        features:
+          multi_agent: false
+        mcp_servers:
+          vidxp:
+            command: "{{ env.VIDXP_MCP_COMMAND }}"
+            args:
+              - --repository
+              - "{{ env.VIDXP_EVAL_REPOSITORY | default('default') }}"
+              - --index-directory
+              - "{{ env.VIDXP_EVAL_INDEX_DIR }}"
+              - --data-dir
+              - "{{ env.VIDXP_EVAL_DATA_DIR }}"
+              - --device
+              - "{{ env.VIDXP_EVAL_DEVICE | default('cpu') }}"
+
+  - id: openai:codex-sdk
+    label: codex-no-mcp
+    config:
+      model: "{{ env.VIDXP_EVAL_MODEL | default('gpt-5.6-sol') }}"
+      model_reasoning_effort: "{{ env.VIDXP_EVAL_REASONING | default('medium') }}"
+      maxRetries: 0
+      working_dir: "{{ env.VIDXP_EVAL_WORKSPACE }}"
+      skip_git_repo_check: true
+      sandbox_mode: read-only
+      approval_policy: never
+      network_access_enabled: false
+      web_search_mode: disabled
+      persist_threads: false
+      enable_streaming: true
+      output_schema: *result_schema
+      cli_env:
+        CODEX_HOME: "{{ env.VIDXP_EVAL_CODEX_HOME }}"
+      cli_config:
+        features:
+          multi_agent: false
+
+tests:
+  - path: file://../../src/vidxp/benchmarks/agent_ablation_tests.py:generate_tests
+    config:
+      manifest: tasks/longvale-part9-pilot.json
+      providers:
+        mcp_on: codex-vidxp-mcp
+        mcp_off: codex-no-mcp
+
+evaluateOptions:
+  cache: false
+  maxConcurrency: 1
+  repeat: 1
+
+tracing:
+  enabled: true

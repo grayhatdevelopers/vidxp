@@ -26,8 +26,8 @@ class SnapshotModelTests(unittest.TestCase):
             "manifest_sha256": SHA256,
             "input_sha256": OTHER_SHA256,
             "config_fingerprint": SHA256,
-            "modalities": ("dialogue", "scene"),
-            "record_counts": {"dialogue": 3, "scene": 4},
+            "modalities": ("speech", "scene"),
+            "record_counts": {"speech": 3, "scene": 4},
             "store_size_bytes_at_commit": 2048,
         }
         values.update(changes)
@@ -41,7 +41,7 @@ class SnapshotModelTests(unittest.TestCase):
             "config_fingerprint": SHA256,
             "configuration": {
                 "device": "cpu",
-                "modalities": ["dialogue", "scene"],
+                "modalities": ["speech", "scene"],
                 "options": {"batch_size": 8},
             },
             "generations": {reference.media_id: reference},
@@ -139,7 +139,7 @@ class SnapshotModelTests(unittest.TestCase):
             self.generation_reference(record_counts={"scene": 1})
         with self.assertRaises(ValidationError):
             self.generation_reference(
-                record_counts={"dialogue": -1, "scene": 1}
+                record_counts={"speech": -1, "scene": 1}
             )
 
     def test_generation_store_size_may_be_unknown(self):

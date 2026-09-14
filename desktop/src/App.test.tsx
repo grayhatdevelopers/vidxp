@@ -8,12 +8,13 @@ const mocks = vi.hoisted(() => ({
   targetSetupState: vi.fn(), recheckTargetState: vi.fn(), discoverLocalTargets: vi.fn(),
   chooseLocalExecutable: vi.fn(), inspectLocalTarget: vi.fn(), activateLocalTarget: vi.fn(),
   selectTargetProfile: vi.fn(), deleteTargetProfile: vi.fn(), confirmForgetTarget: vi.fn(), beginManagedSetup: vi.fn(),
-  cancelManagedSetup: vi.fn(), installMediaRuntime: vi.fn(), installRuntime: vi.fn(),
+  cancelManagedSetup: vi.fn(), cancelManagedSetupOperation: vi.fn(), installMediaRuntime: vi.fn(), installRuntime: vi.fn(),
   prepareManagedModels: vi.fn(), onManagedSetupProgress: vi.fn(),
   runtimeManifest: vi.fn(), runtimeStatus: vi.fn(), launchUi: vi.fn(),
   chooseModelDirectory: vi.fn(), modelDirectoryInventory: vi.fn(),
   targetDoctor: vi.fn(), mcpClientConfig: vi.fn(), installCodexPlugin: vi.fn(), localServerStatus: vi.fn(), localWorkerStatus: vi.fn(), browserServiceStatus: vi.fn(),
   startLocalServer: vi.fn(), startSharedServer: vi.fn(), stopLocalServer: vi.fn(), startSharedBrowser: vi.fn(), stopBrowserService: vi.fn(), startLocalWorker: vi.fn(), stopLocalWorker: vi.fn(), configureExternalInstallation: vi.fn(),
+  premiereIntegrationState: vi.fn(), installPremiereExtensions: vi.fn(), uninstallPremiereExtensions: vi.fn(),
 }));
 
 const windowMocks = vi.hoisted(() => ({
@@ -88,13 +89,14 @@ describe('desktop target lifecycle', () => {
     });
     mocks.beginManagedSetup.mockResolvedValue({ id: 'draft-1', previous_profile_id: null });
     mocks.cancelManagedSetup.mockResolvedValue(emptyState);
+    mocks.cancelManagedSetupOperation.mockResolvedValue(undefined);
     mocks.confirmForgetTarget.mockResolvedValue(true);
-    mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', capabilities: { scene: { extra: 'scene', label: 'Visual scene search' } }, surfaces: {
+    mocks.runtimeManifest.mockResolvedValue({ package_version: '0.4.0', managed_runtime_estimated_size_bytes: 3 * 1024 ** 3, capabilities: { scene: { extra: 'scene', label: 'Visual scene search', description: 'Index and search visual scenes.', models: [{ cache_key: 'scene', download_size_bytes: 1539458338 }] } }, surfaces: {
       worker: { extra: 'local-worker', label: 'Process videos on this computer', description: 'Run video work locally.', default: true },
       browser: { extra: 'frontend', label: 'Browser interface', description: 'Open VidXP in your browser.', default: true },
       mcp: { extra: 'mcp', label: 'AI assistant integration', description: 'Connect a compatible AI app.', default: false },
       server: { extra: 'server', label: 'App integration service', description: 'Let other local apps connect.', default: false },
-    } });
+    }, local_answers: { engine: 'ollama', model: 'qwen3.5:4b-q4_K_M', download_size_bytes: 3650722202, managed_runtime: { version: '0.32.5', maximum_download_size_bytes: 1457824795 }, label: 'Local grounded answers', description: 'Turn search evidence into cited answers locally.' } });
     mocks.runtimeStatus.mockResolvedValue({ state: 'never_configured', ready: false, runtime_profile: null, package_version: '0.4.0', capabilities: [], surfaces: [], model_directory: 'C:\\Models', detail: 'No managed runtime yet.' });
     mocks.modelDirectoryInventory.mockResolvedValue({ directory: 'C:\\Models', exists: false, readable: true, total_bytes: 0, file_count: 0, recognized_models: [], empty: true, verification_required: false, truncated: false, detail: 'Empty.' });
     mocks.installMediaRuntime.mockResolvedValue({ ready: true });
@@ -113,6 +115,13 @@ describe('desktop target lifecycle', () => {
       installed_path: 'C:\\Users\\test\\.codex\\plugins\\vidxp',
       detail: 'VidXP is installed in Codex with its MCP server and skills. Start a new Codex chat to use the updated plugin.',
     });
+    mocks.premiereIntegrationState.mockResolvedValue({
+      installations: [], platform_supported: false, installer_available: false,
+      cep_package_available: true, uxp_package_available: true,
+      cep_installed: false, uxp_installed: false, detail: 'Unavailable.',
+    });
+    mocks.installPremiereExtensions.mockResolvedValue({ installed_hosts: [], opened_packages: [], detail: 'Installed.' });
+    mocks.uninstallPremiereExtensions.mockResolvedValue(undefined);
     mocks.browserServiceStatus.mockResolvedValue({ state: 'stopped', running: false, shared: false, port: null, local_url: null, network_url: null, detail: 'Stopped.' });
     mocks.startSharedBrowser.mockResolvedValue({ state: 'ready', running: true, shared: true, port: 8501, local_url: 'http://127.0.0.1:8501', network_url: 'http://192.168.1.20:8501', detail: 'Shared.' });
     mocks.stopBrowserService.mockResolvedValue({ state: 'stopped', running: false, shared: false, port: null, local_url: null, network_url: null, detail: 'Stopped.' });
@@ -508,12 +517,106 @@ describe('desktop target lifecycle', () => {
     }));
   });
 
+  it('installs the approved local answer model without asking for a URL', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await enterManaged(user);
+
+    await user.click(screen.getByRole('checkbox', { name: /Local grounded answers/i }));
+    expect(screen.getByText(/There is no URL to enter/i)).toBeVisible();
+    expect(screen.getByText(/Grounded answers add up to 1.36 GiB for the headless runtime and 3.40 GiB for the model/i)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Install VidXP' }));
+
+    expect(mocks.installMediaRuntime).toHaveBeenCalledWith('draft-1', 9);
+    expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      local_answers: true,
+      draft_id: 'draft-1',
+    }));
+  });
+
+  it('installs Premiere with its processing and private-service dependencies in one setup flow', async () => {
+    mocks.premiereIntegrationState.mockResolvedValue({
+      installations: [{ display_name: 'Adobe Premiere Pro 2023', version: '23.2.0.69', executable: 'C:\\Program Files\\Adobe\\Premiere.exe', host_kind: 'cep', compatible: true }],
+      platform_supported: true, installer_available: true,
+      cep_package_available: true, uxp_package_available: true,
+      cep_installed: false, uxp_installed: false, detail: 'Found Premiere.',
+    });
+    const premiereProfile = { ...managedProfile, surfaces: ['worker', 'browser', 'server'] };
+    mocks.installRuntime.mockResolvedValue({
+      install: { package_version: '0.4.0', capabilities: ['scene'], surfaces: premiereProfile.surfaces, model_directory: 'C:\\Models', prepared: true },
+      setup: { profiles: [premiereProfile], selected_profile_id: premiereProfile.id, issues: [] },
+    });
+    mocks.installPremiereExtensions.mockResolvedValue({ installed_hosts: ['cep'], opened_packages: [], detail: 'The VidXP extension was installed.' });
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+
+    await user.click(screen.getByRole('checkbox', { name: /Premiere Pro extension/i }));
+    expect(screen.getByRole('checkbox', { name: /Process videos on this computer/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /App integration service/i })).toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Install VidXP and Premiere' }));
+
+    await waitFor(() => expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      surfaces: expect.arrayContaining(['worker', 'server']),
+    })));
+    await waitFor(() => expect(mocks.startLocalServer).toHaveBeenCalledTimes(1));
+    expect(mocks.installPremiereExtensions).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('VidXP and Premiere are ready')).toBeVisible();
+  });
+
+  it('turns Set up Premiere into a preselected managed update instead of a prerequisite warning', async () => {
+    const state = { profiles: [managedProfile], selected_profile_id: managedProfile.id, issues: [] };
+    mocks.targetSetupState.mockResolvedValue(state);
+    mocks.recheckTargetState.mockResolvedValue(state);
+    mocks.runtimeStatus.mockResolvedValue({ state: 'ready', ready: true, runtime_profile: 'runtime-a', package_version: '0.4.0', capabilities: ['scene'], surfaces: [], model_directory: 'C:\\Models', detail: 'Ready.' });
+    mocks.premiereIntegrationState.mockResolvedValue({
+      installations: [{ display_name: 'Adobe Premiere Pro 2023', version: '23.2.0.69', executable: 'C:\\Program Files\\Adobe\\Premiere.exe', host_kind: 'cep', compatible: true }],
+      platform_supported: true, installer_available: true,
+      cep_package_available: true, uxp_package_available: true,
+      cep_installed: false, uxp_installed: false, detail: 'Found Premiere.',
+    });
+    const user = userEvent.setup(); renderApp();
+
+    await user.click(await screen.findByRole('button', { name: 'Set up Premiere' }));
+
+    expect(await screen.findByRole('checkbox', { name: /Premiere Pro extension/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Process videos on this computer/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /App integration service/i })).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Apply and install Premiere' })).toBeEnabled();
+  });
+
   it('passes the scoped draft through first-time installation and does not auto-open the browser', async () => {
     const user = userEvent.setup(); renderApp(); await enterManaged(user);
     await user.click(await screen.findByRole('button', { name: 'Install VidXP' }));
     await waitFor(() => expect(mocks.installRuntime).toHaveBeenCalledWith(expect.objectContaining({ draft_id: 'draft-1' })));
-    expect(mocks.installMediaRuntime).toHaveBeenCalledWith('draft-1');
+    expect(mocks.installMediaRuntime).toHaveBeenCalledWith('draft-1', 8);
     expect(mocks.launchUi).not.toHaveBeenCalled();
+  });
+
+  it('derives the storage plan from every selected capability model', async () => {
+    mocks.runtimeManifest.mockResolvedValue({
+      package_version: '0.4.0',
+      managed_runtime_estimated_size_bytes: 3 * 1024 ** 3,
+      capabilities: {
+        scene: {
+          extra: 'scene', label: 'Visual scene search', description: 'Index and search visual scenes.',
+          models: [{ cache_key: 'scene-model', download_size_bytes: 1539458338 }],
+        },
+        sound: {
+          extra: 'sound', label: 'Sound event search', description: 'Index and search sound events.',
+          models: [
+            { cache_key: 'sound-model', download_size_bytes: 980404741 },
+            { cache_key: 'sound-vocab', download_size_bytes: 1355622 },
+          ],
+        },
+      },
+      surfaces: {
+        worker: { extra: 'local-worker', label: 'Process videos on this computer', description: 'Run video work locally.', default: true },
+      },
+    });
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+
+    expect(screen.getByText(/Selected model downloads total up to 2.35 GiB/)).toBeVisible();
+    expect(screen.getByText(/Visual scene search: 1.43 GiB · Sound event search: 936.3 MiB/)).toBeVisible();
+    expect(screen.getByText(/Plan for approximately 5.35 GiB locally/)).toBeVisible();
   });
 
   it('keeps a managed installation failure visible in the setup dialog until it is acknowledged', async () => {
@@ -544,9 +647,19 @@ describe('desktop target lifecycle', () => {
     expect(screen.getByRole('dialog', { name: 'Setting up VidXP' })).toBeVisible();
     expect(screen.getByText('Step 1 of 8')).toBeVisible();
     expect(screen.getByText('Checking FFmpeg and required video codecs')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Cancel setup' })).toBeEnabled();
     reportProgress?.({ draft_id: 'draft-1', current: 4, total: 8, stage: 'dependencies', message: 'Installing the selected search features' });
     expect(await screen.findByText('Step 4 of 8')).toBeVisible();
     expect(screen.getByText('Installing the selected search features')).toBeVisible();
+    reportProgress?.({
+      draft_id: 'draft-1',
+      current: 2,
+      total: 9,
+      stage: 'local-answers',
+      message: 'Preparing the local grounded-answer model',
+      model_message: 'Downloading the headless Ollama 0.32.5 runtime',
+    });
+    expect(await screen.findByText(/No separate app or setup window is involved/i)).toBeVisible();
     reportProgress?.({
       draft_id: 'draft-1',
       current: 7,
@@ -562,15 +675,30 @@ describe('desktop target lifecycle', () => {
       total: 8,
       stage: 'models',
       message: 'Verifying and downloading selected model files',
-      model_message: 'Downloading dialogue transcription model.',
+      model_message: 'Downloading speech transcription model.',
       model_current: 512 * 1024 * 1024,
       model_total: 1024 * 1024 * 1024,
     });
-    expect(await screen.findByText('Downloading dialogue transcription model.')).toBeVisible();
+    expect(await screen.findByText('Downloading speech transcription model.')).toBeVisible();
     expect(screen.getByText('512.0 MiB of 1.00 GiB')).toBeVisible();
     expect(screen.getByRole('progressbar', { name: 'Current model download progress' })).toHaveAttribute('aria-valuenow', '50');
 
     media.resolve({ ready: true });
+  });
+
+  it('cancels a running managed setup without discarding the draft', async () => {
+    const media = deferred<{ ready: boolean }>();
+    mocks.installMediaRuntime.mockReturnValue(media.promise);
+    const user = userEvent.setup(); renderApp(); await enterManaged(user);
+
+    await user.click(screen.getByRole('button', { name: 'Install VidXP' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel setup' }));
+
+    expect(mocks.cancelManagedSetupOperation).toHaveBeenCalledWith('draft-1');
+    expect(await screen.findByText('Stopping setup safely')).toBeVisible();
+    media.reject('Windows Package Manager FFmpeg installation failed: the operation was cancelled');
+    expect(await screen.findByRole('dialog', { name: 'Setup could not finish' })).toBeVisible();
+    expect(screen.getByRole('alert', { name: 'VidXP was not installed' })).toHaveTextContent('Setup was cancelled');
   });
 
   it('coalesces duplicate managed Continue actions', async () => {

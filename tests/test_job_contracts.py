@@ -490,12 +490,12 @@ class JobContractTests(unittest.TestCase):
             category=ErrorCategory.unavailable,
             message="The model download failed after three attempts.",
             details={
-                "capability": "dialogue.transcription",
+                "capability": "speech.transcription",
                 "model": "publisher/model",
                 "attempts": 3,
                 "reason": "ConnectionError",
                 "partial_files_preserved": True,
-                "remediation": "vidxp prepare --modalities dialogue",
+                "remediation": "vidxp prepare --modalities speech",
             },
             retryable=True,
         )

@@ -36,10 +36,12 @@
     "targets": "all",
     "publisher": "Grayhat Developers PVT Ltd",
     "copyright": "Copyright © 2026 Grayhat Developers PVT Ltd",
-    "resources": [
-      "../THIRD_PARTY_NOTICES.txt",
-      "../../LICENSE"
-    ],
+    "resources": {
+      "../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt",
+      "../../LICENSE": "LICENSE",
+      "../../premiere/packages/vidxp-premiere-cep.zxp": "premiere/vidxp-premiere-cep.zxp",
+      "../../premiere/packages/vidxp-premiere-uxp.ccx": "premiere/vidxp-premiere-uxp.ccx"
+    },
     "externalBin": [
       "binaries/uv"
     ],

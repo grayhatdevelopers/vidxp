@@ -16,8 +16,9 @@
           "type": "json"
         },
         {
+          "jsonpath": "$.package[?(@.name.value==\"vidxp\")].version",
           "path": "uv.lock",
-          "type": "generic"
+          "type": "toml"
         },
         {
           "jsonpath": "$.version",

@@ -11,6 +11,7 @@ from vidxp.application_models import (
     WorkspaceOverview,
 )
 from vidxp.composition import HttpApplicationContext
+from vidxp.core.media import MediaState
 
 
 router = APIRouter(
@@ -32,9 +33,22 @@ def workspace(
         str | None,
         Query(min_length=1, max_length=512),
     ] = None,
+    filename: Annotated[
+        str | None,
+        Query(min_length=1),
+    ] = None,
+    state: Annotated[
+        MediaState | None,
+        Query(),
+    ] = None,
 ) -> WorkspaceOverview:
     return service.application.workspace(
-        ListMediaCommand(page_size=page_size, cursor=cursor)
+        ListMediaCommand(
+            page_size=page_size,
+            cursor=cursor,
+            filename=filename,
+            state=state,
+        )
     )
 
 

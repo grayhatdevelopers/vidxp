@@ -8,6 +8,12 @@ Established: 2026-07-25
 
 Applies to: VidXP / ActorDB paper benchmarking work
 
+> **Current direction:** The 2026-08-27
+> [multimodal model decision](model_selection.md) supersedes this brief's
+> implemented-capability-only sequencing. Environmental-sound retrieval has now
+> been implemented; full vision/sound/speech evaluation is the next phase.
+> This file remains the historical discovery contract.
+
 This document preserves the rules used to start the benchmark research. It
 predates the benchmark-ready core and completed DiDeMo/HiREST runs. Use
 [current results](results.md) and the [collection index](README.md) for the
@@ -48,7 +54,7 @@ keyframe or shot detection, and distributed indexing.
 The current CLI and return types are not fixed research constraints. Benchmark work
 may add stable corpus IDs, top-k results, scores, richer metadata, start/end
 intervals, filtering, deterministic window aggregation, serializers, timing hooks,
-and non-learned late fusion over existing scene and dialogue rankings.
+and non-learned late fusion over existing scene and speech rankings.
 
 These are ordinary adapters. A candidate was not rejected merely because the
 pre-refactor application returned one timestamp or stored too little metadata.

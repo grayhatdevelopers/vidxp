@@ -110,7 +110,7 @@ VidXP currently returns a **point timestamp**, for which IoU is undefined. For a
 - median and 90th-percentile temporal error;
 - interval tIoU metrics only if VidXP is changed to return intervals.
 
-For word alignment as a component diagnostic, the WhisperX paper defines a true positive as an exact word match whose predicted and reference segments overlap within a 200 ms collar, and reports precision and recall ([Bain et al., 2023, §3.2](https://arxiv.org/abs/2303.00747)). This 200 ms collar is suitable for **word-alignment evaluation**, not automatically for user-facing scene/dialogue search; search tolerances should reflect the declared navigation use case.
+For word alignment as a component diagnostic, the WhisperX paper defines a true positive as an exact word match whose predicted and reference segments overlap within a 200 ms collar, and reports precision and recall ([Bain et al., 2023, §3.2](https://arxiv.org/abs/2303.00747)). This 200 ms collar is suitable for **word-alignment evaluation**, not automatically for user-facing scene/speech search; search tolerances should reflect the declared navigation use case.
 
 ## 3. Retrieval metrics
 
@@ -219,7 +219,7 @@ For indexing, report:
 
 - total wall time and real-time factor \(RTF=\text{wall seconds}/\text{video seconds}\);
 - processed video minutes per wall-clock minute and frames/s;
-- stage times: audio extraction, WhisperX transcription, alignment, dialogue embedding/write, video decode, CLIP embedding/write, face detection/encoding/clustering/write;
+- stage times: audio extraction, WhisperX transcription, alignment, speech embedding/write, video decode, CLIP embedding/write, face detection/encoding/clustering/write;
 - final database/index bytes.
 
 For queries, report separately:

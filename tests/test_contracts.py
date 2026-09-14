@@ -116,18 +116,18 @@ class ContractTests(unittest.TestCase):
             ).run_directory
         with self.assertRaisesRegex(ValueError, "distinct"):
             IndexConfig(
-                enabled_modalities=("dialogue", "scene", "actor"),
+                enabled_modalities=("speech", "scene", "actor"),
                 collection_names={
-                    "dialogue": "shared",
+                    "speech": "shared",
                     "scene": "shared",
                     "actor": "actor",
                 }
             )
         with self.assertRaisesRegex(ValueError, "3-512"):
             IndexConfig(
-                enabled_modalities=("dialogue", "scene", "actor"),
+                enabled_modalities=("speech", "scene", "actor"),
                 collection_names={
-                    "dialogue": "a",
+                    "speech": "a",
                     "scene": "scene",
                     "actor": "actor",
                 }

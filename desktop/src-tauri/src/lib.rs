@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    io::{self, Read, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::Command,
@@ -31,6 +31,8 @@ mod background_process;
 mod browser_readiness;
 mod lifecycle;
 mod media_setup;
+mod premiere_integration;
+mod query_setup;
 mod target_profiles;
 
 use activation::{ActivationRecovery, ActivationStage, activation_recovery};
@@ -56,13 +58,23 @@ const CODEX_PLUGIN_MARKETPLACE_REF: Option<&str> = option_env!("VIDXP_PLUGIN_MAR
 const PRODUCT_DATA_DIRECTORY_NAME: &str = "VidXP";
 const RUNTIME_CONSTRAINTS_FILE_NAME: &str = "runtime-constraints.txt";
 const MAX_SETUP_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const MEDIA_RUNTIME_INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const QUERY_MODEL_PULL_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 static READINESS_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Deserialize, Serialize)]
+struct ModelDownloadSpec {
+    cache_key: String,
+    download_size_bytes: u64,
+}
 
 #[derive(Clone, Deserialize, Serialize)]
 struct CapabilitySpec {
     extra: String,
     modality: String,
     label: String,
+    description: String,
+    models: Vec<ModelDownloadSpec>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -81,6 +93,16 @@ struct MediaRuntimeSpec {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+struct LocalAnswersSpec {
+    engine: String,
+    model: String,
+    download_size_bytes: u64,
+    managed_runtime: query_setup::ManagedRuntimeSpec,
+    label: String,
+    description: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 struct RuntimeManifest {
     schema_version: u32,
     desktop_version: String,
@@ -90,6 +112,8 @@ struct RuntimeManifest {
     dependency_constraints_sha256: String,
     python_version: String,
     uv_version: String,
+    managed_runtime_estimated_size_bytes: u64,
+    local_answers: LocalAnswersSpec,
     surfaces: BTreeMap<String, SurfaceSpec>,
     capabilities: BTreeMap<String, CapabilitySpec>,
     media_runtime: MediaRuntimeSpec,
@@ -100,6 +124,7 @@ struct InstallRequest {
     capabilities: Vec<String>,
     surfaces: Vec<String>,
     prepare_models: bool,
+    local_answers: bool,
     model_directory: Option<String>,
     draft_id: String,
 }
@@ -116,6 +141,7 @@ struct InstallResult {
     capabilities: Vec<String>,
     surfaces: Vec<String>,
     model_directory: String,
+    local_answers: bool,
     prepared: bool,
 }
 
@@ -198,6 +224,7 @@ struct RuntimeStatus {
     capabilities: Vec<String>,
     surfaces: Vec<String>,
     model_directory: String,
+    local_answers: bool,
     detail: String,
 }
 
@@ -264,6 +291,62 @@ struct ActiveRuntime {
     surfaces: Vec<String>,
     #[serde(default)]
     model_directory: PathBuf,
+    #[serde(default)]
+    local_answers: bool,
+}
+
+fn emit_local_answer_progress(
+    app: &AppHandle,
+    draft_id: &str,
+    current: u8,
+    total: u8,
+    message: impl Into<String>,
+    downloaded: Option<u64>,
+    download_total: Option<u64>,
+) {
+    let _ = app.emit(
+        "managed-setup-progress",
+        ManagedSetupProgress {
+            draft_id: draft_id.into(),
+            current,
+            total,
+            stage: "local-answers".into(),
+            message: "Preparing the local grounded-answer model".into(),
+            model_message: Some(message.into()),
+            model_current: downloaded,
+            model_total: download_total,
+        },
+    );
+}
+
+#[derive(Deserialize)]
+struct OllamaVersionResponse {
+    version: String,
+}
+
+#[derive(Deserialize)]
+struct OllamaTagsResponse {
+    models: Vec<OllamaModel>,
+}
+
+#[derive(Deserialize)]
+struct OllamaModel {
+    name: String,
+    #[serde(default)]
+    digest: String,
+}
+
+#[derive(Deserialize)]
+struct OllamaPullProgress {
+    status: String,
+    #[serde(default)]
+    digest: Option<String>,
+    #[serde(default)]
+    total: Option<u64>,
+    #[serde(default)]
+    completed: Option<u64>,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -459,6 +542,12 @@ struct ManagedApiService {
     profile_id: String,
 }
 
+struct ManagedQueryService {
+    process: background_process::OwnedChild,
+    executable: PathBuf,
+    model_directory: PathBuf,
+}
+
 #[derive(Clone, Debug, Serialize)]
 struct LocalServerStatus {
     state: &'static str,
@@ -518,6 +607,7 @@ struct TrayMenuItems {
 struct DesktopState {
     ui_process: Mutex<Option<ManagedUi>>,
     api_process: Mutex<Option<ManagedApiService>>,
+    query_process: Mutex<Option<ManagedQueryService>>,
     worker_stop: Arc<WorkerStopSupervisor>,
     operation_cancellation: Arc<Mutex<Option<background_process::CancellationToken>>>,
     transition: Arc<Mutex<TransitionState>>,
@@ -534,6 +624,7 @@ impl Default for DesktopState {
         Self {
             ui_process: Mutex::new(None),
             api_process: Mutex::new(None),
+            query_process: Mutex::new(None),
             worker_stop: Arc::new(WorkerStopSupervisor::default()),
             operation_cancellation: Arc::new(Mutex::new(None)),
             transition: Arc::new(Mutex::new(TransitionState::default())),
@@ -1190,6 +1281,29 @@ fn package_extras(
     extras.into_iter().collect::<Vec<_>>().join(",")
 }
 
+fn managed_package_specification(
+    manifest: &RuntimeManifest,
+    capabilities: &[String],
+    surfaces: &[String],
+    local_answers: bool,
+) -> String {
+    if !local_answers || surfaces.iter().any(|surface| surface == "worker") {
+        return package_specification(manifest, capabilities, surfaces);
+    }
+    let mut extras: BTreeSet<_> = package_extras(manifest, capabilities, surfaces)
+        .split(',')
+        .filter(|extra| !extra.is_empty())
+        .map(str::to_owned)
+        .collect();
+    extras.insert("slm".into());
+    format!(
+        "{}[{}]=={}",
+        manifest.package_name,
+        extras.into_iter().collect::<Vec<_>>().join(","),
+        manifest.package_version
+    )
+}
+
 fn external_installation_arguments(
     manifest: &RuntimeManifest,
     capabilities: &[String],
@@ -1288,6 +1402,7 @@ fn dependency_installation_invocation(
     manifest: &RuntimeManifest,
     capabilities: &[String],
     surfaces: &[String],
+    local_answers: bool,
     python: &Path,
     constraints: &Path,
     cpu_torch: bool,
@@ -1319,7 +1434,12 @@ fn dependency_installation_invocation(
     if cpu_torch {
         arguments.extend(["--torch-backend".into(), "cpu".into()]);
     }
-    arguments.push(package_specification(manifest, capabilities, surfaces));
+    arguments.push(managed_package_specification(
+        manifest,
+        capabilities,
+        surfaces,
+        local_answers,
+    ));
     Ok(UvInvocation {
         arguments,
         working_directory: working_directory.to_path_buf(),
@@ -1374,6 +1494,13 @@ fn executable_candidates(name: &str) -> Vec<PathBuf> {
                 .join("Links"),
         );
     }
+    if cfg!(windows) {
+        for variable in ["PROGRAMFILES", "PROGRAMFILES(X86)", "ProgramW6432"] {
+            if let Some(program_files) = env::var_os(variable) {
+                directories.push(PathBuf::from(program_files).join("WinGet").join("Links"));
+            }
+        }
+    }
     if cfg!(target_os = "macos") {
         directories.extend([
             PathBuf::from("/opt/homebrew/bin"),
@@ -1400,10 +1527,34 @@ fn executable_candidates(name: &str) -> Vec<PathBuf> {
 }
 
 fn resolve_system_executable(name: &str) -> Option<PathBuf> {
-    executable_candidates(name)
+    let mut candidates = executable_candidates(name);
+    if name == "ollama" {
+        candidates.extend(query_setup::executable_candidates());
+    }
+    let resolved = candidates
         .into_iter()
         .find(|candidate| candidate.is_file())
-        .and_then(|candidate| fs::canonicalize(&candidate).ok().or(Some(candidate)))
+        .and_then(|candidate| fs::canonicalize(&candidate).ok().or(Some(candidate)));
+    if resolved.is_some() {
+        return resolved;
+    }
+    #[cfg(windows)]
+    if matches!(name, "ffmpeg" | "ffprobe") {
+        return media_setup::resolve_winget_ffmpeg_executable(&format!("{name}.exe"));
+    }
+    #[cfg(windows)]
+    if name == "ollama" {
+        return query_setup::resolve_winget_ollama_executable();
+    }
+    None
+}
+
+fn resolve_query_executable(
+    paths: &DesktopPaths,
+    spec: &query_setup::ManagedRuntimeSpec,
+) -> Option<PathBuf> {
+    resolve_system_executable("ollama")
+        .or_else(|| query_setup::managed_executable(&paths.private_data, spec))
 }
 
 fn combined_output(output: &background_process::BackgroundOutput) -> String {
@@ -1494,6 +1645,378 @@ fn verified_media_runtime() -> Result<VerifiedMediaRuntime, String> {
                 .ok_or("ffprobe did not resolve to an absolute path.")?,
         ),
     })
+}
+
+fn ollama_management_url(path: &str) -> String {
+    format!("http://{}{path}", query_setup::OLLAMA_HOST)
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    format!("{:.2} GiB", bytes as f64 / GIB)
+}
+
+fn ollama_client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(2))
+        .timeout(timeout)
+        .build()
+        .map_err(|error| format!("Could not configure the local answer runtime client: {error}"))
+}
+
+fn ollama_server_version() -> Result<String, String> {
+    let response = ollama_client(Duration::from_secs(3))?
+        .get(ollama_management_url("/api/version"))
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|error| format!("The local Ollama service is not ready: {error}"))?
+        .json::<OllamaVersionResponse>()
+        .map_err(|error| {
+            format!("The local Ollama service returned an invalid version: {error}")
+        })?;
+    if response.version.trim().is_empty() {
+        return Err("The local Ollama service returned an empty version.".into());
+    }
+    Ok(response.version)
+}
+
+fn installed_ollama_model(model: &str) -> Result<Option<OllamaModel>, String> {
+    let response = ollama_client(Duration::from_secs(10))?
+        .get(ollama_management_url("/api/tags"))
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|error| format!("Could not inspect local Ollama models: {error}"))?
+        .json::<OllamaTagsResponse>()
+        .map_err(|error| format!("Ollama returned an invalid model inventory: {error}"))?;
+    Ok(response.models.into_iter().find(|candidate| {
+        candidate.name == model
+            || candidate.name.strip_suffix(":latest") == model.strip_suffix(":latest")
+    }))
+}
+
+fn stop_query_process(state: &DesktopState) {
+    let Ok(mut active) = state.query_process.lock() else {
+        return;
+    };
+    if let Some(mut service) = active.take() {
+        service.process.terminate_and_reap();
+    }
+}
+
+fn ensure_query_service(
+    state: &DesktopState,
+    executable: &Path,
+    model_directory: &Path,
+) -> Result<String, String> {
+    let mut active = state
+        .query_process
+        .lock()
+        .map_err(|_| "The local answer runtime supervisor is unavailable.".to_string())?;
+    if let Some(service) = active.as_mut() {
+        let running = service
+            .process
+            .try_wait()
+            .map_err(|error| format!("Could not inspect the local answer runtime: {error}"))?
+            .is_none();
+        if running && service.executable == executable && service.model_directory == model_directory
+        {
+            if let Ok(version) = ollama_server_version() {
+                return Ok(version);
+            }
+        }
+        service.process.terminate_and_reap();
+        *active = None;
+    }
+    if let Ok(version) = ollama_server_version() {
+        return Ok(version);
+    }
+    fs::create_dir_all(model_directory).map_err(|error| {
+        format!(
+            "Could not create the local answer model directory at {}: {error}",
+            model_directory.display()
+        )
+    })?;
+    let mut command = Command::new(executable);
+    command
+        .arg("serve")
+        .env("OLLAMA_HOST", query_setup::OLLAMA_HOST)
+        .env("OLLAMA_MODELS", model_directory);
+    let mut process = background_process::spawn_service(command)
+        .map_err(|error| format!("Could not start the local answer runtime: {}", error.detail))?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let version = loop {
+        if let Ok(version) = ollama_server_version() {
+            break version;
+        }
+        if process
+            .try_wait()
+            .map_err(|error| format!("Could not inspect the local answer runtime: {error}"))?
+            .is_some()
+        {
+            return Err("The local answer runtime exited before becoming healthy.".into());
+        }
+        if Instant::now() >= deadline {
+            return Err(
+                "The local answer runtime did not become healthy within 30 seconds.".into(),
+            );
+        }
+        thread::sleep(Duration::from_millis(150));
+    };
+    *active = Some(ManagedQueryService {
+        process,
+        executable: executable.to_path_buf(),
+        model_directory: model_directory.to_path_buf(),
+    });
+    Ok(version)
+}
+
+fn pull_ollama_model(
+    app: &AppHandle,
+    draft_id: &str,
+    current: u8,
+    total_steps: u8,
+    model: &str,
+    cancellation: background_process::CancellationToken,
+) -> Result<OllamaModel, String> {
+    if let Some(installed) = installed_ollama_model(model)? {
+        emit_local_answer_progress(
+            app,
+            draft_id,
+            current,
+            total_steps,
+            format!("Reusing {model}"),
+            None,
+            None,
+        );
+        return Ok(installed);
+    }
+    let response = ollama_client(QUERY_MODEL_PULL_TIMEOUT)?
+        .post(ollama_management_url("/api/pull"))
+        .json(&serde_json::json!({"model": model, "stream": true}))
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|error| format!("Could not start the {model} download: {error}"))?;
+    let reader = BufReader::new(response);
+    for line in reader.lines() {
+        if cancellation.is_cancelled() {
+            return Err("the local answer model download was cancelled".into());
+        }
+        let line = line.map_err(|error| format!("The model download stream failed: {error}"))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let progress: OllamaPullProgress = serde_json::from_str(&line)
+            .map_err(|error| format!("Ollama returned invalid download progress: {error}"))?;
+        if let Some(error) = progress.error {
+            return Err(format!("Ollama could not download {model}: {error}"));
+        }
+        let layer = progress
+            .digest
+            .as_deref()
+            .and_then(|digest| digest.get(..12))
+            .map(|digest| format!(" · layer {digest}"))
+            .unwrap_or_default();
+        emit_local_answer_progress(
+            app,
+            draft_id,
+            current,
+            total_steps,
+            format!("{}{layer}", progress.status),
+            progress.completed,
+            progress.total,
+        );
+    }
+    installed_ollama_model(model)?.ok_or_else(|| {
+        format!("Ollama finished downloading {model}, but the model was not present afterward.")
+    })
+}
+
+fn local_answer_platform_error() -> Option<String> {
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "ver"]);
+        if let Ok(output) = checked_output(command, "Windows version check")
+            && query_setup::version_meets_minimum(
+                &String::from_utf8_lossy(&output.stdout),
+                (10, 0, 19045),
+            ) == Some(false)
+        {
+            return Some(
+                "Local grounded answers require Windows 10 22H2 or newer because that is Ollama's supported Windows baseline."
+                    .into(),
+            );
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("/usr/bin/sw_vers");
+        command.arg("-productVersion");
+        if let Ok(output) = checked_output(command, "macOS version check")
+            && query_setup::version_meets_minimum(
+                &String::from_utf8_lossy(&output.stdout),
+                (14, 0, 0),
+            ) == Some(false)
+        {
+            return Some(
+                "Local grounded answers require macOS 14 or newer because that is Ollama's supported macOS baseline."
+                    .into(),
+            );
+        }
+    }
+    None
+}
+
+async fn prepare_local_answers_runtime(
+    app: &AppHandle,
+    state: &DesktopState,
+    paths: &DesktopPaths,
+    draft_id: &str,
+    current: u8,
+    total_steps: u8,
+    spec: &LocalAnswersSpec,
+    cancellation: background_process::CancellationToken,
+) -> Result<(), String> {
+    if let Some(error) = local_answer_platform_error() {
+        return Err(error);
+    }
+    let server_ready = ollama_server_version().is_ok();
+    let mut executable = resolve_query_executable(paths, &spec.managed_runtime);
+    if !server_ready && executable.is_none() {
+        let artifact = query_setup::current_artifact(&spec.managed_runtime).ok_or_else(|| {
+            "VidXP does not publish a managed headless Ollama runtime for this platform. Install Ollama from https://ollama.com/download, then retry."
+                .to_string()
+        })?;
+        let approved = app
+            .dialog()
+            .message(format!(
+                "Local grounded answers require a local inference runtime and {} (approximately 3.4 GB, Apache-2.0).\n\nDownload the verified headless Ollama {} runtime ({}) into VidXP's private data? No Ollama desktop app will be installed.",
+                spec.model,
+                spec.managed_runtime.version,
+                human_bytes(artifact.download_size_bytes)
+            ))
+            .title("Download local answer runtime")
+            .kind(MessageDialogKind::Info)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Download".into(),
+                "Not now".into(),
+            ))
+            .blocking_show();
+        if !approved {
+            return Err("Local grounded-answer setup was deferred.".into());
+        }
+        emit_local_answer_progress(
+            app,
+            draft_id,
+            current,
+            total_steps,
+            format!(
+                "Downloading the headless Ollama {} runtime",
+                spec.managed_runtime.version
+            ),
+            Some(0),
+            Some(artifact.download_size_bytes),
+        );
+        let download_app = app.clone();
+        let download_draft = draft_id.to_owned();
+        let private_data = paths.private_data.clone();
+        let managed_runtime = spec.managed_runtime.clone();
+        let runtime_version = managed_runtime.version.clone();
+        let runtime_cancellation = cancellation.clone();
+        executable = Some(
+            tauri::async_runtime::spawn_blocking(move || {
+                query_setup::install_managed_runtime(
+                    &private_data,
+                    &managed_runtime,
+                    &runtime_cancellation,
+                    |downloaded, total| {
+                        emit_local_answer_progress(
+                            &download_app,
+                            &download_draft,
+                            current,
+                            total_steps,
+                            format!("Downloading the headless Ollama {runtime_version} runtime"),
+                            Some(downloaded),
+                            Some(total),
+                        );
+                    },
+                )
+            })
+            .await
+            .map_err(|error| {
+                format!("Managed Ollama runtime preparation stopped unexpectedly: {error}")
+            })??,
+        );
+    }
+    let model_directory = paths.models.join("ollama");
+    if let Some(executable) = executable {
+        ensure_query_service(state, &executable, &model_directory)?;
+    } else if !server_ready {
+        return Err(
+            "The managed Ollama runtime finished downloading, but VidXP could not locate its executable."
+                .to_string(),
+        );
+    }
+    let pull_app = app.clone();
+    let pull_draft = draft_id.to_owned();
+    let pull_model = spec.model.clone();
+    let pull_cancellation = cancellation;
+    let installed = tauri::async_runtime::spawn_blocking(move || {
+        pull_ollama_model(
+            &pull_app,
+            &pull_draft,
+            current,
+            total_steps,
+            &pull_model,
+            pull_cancellation,
+        )
+    })
+    .await
+    .map_err(|error| format!("Local answer model preparation stopped unexpectedly: {error}"))??;
+    if installed.digest.trim().is_empty() {
+        return Err(format!(
+            "Ollama did not report a digest for {}.",
+            spec.model
+        ));
+    }
+    Ok(())
+}
+
+fn active_local_answers(paths: &DesktopPaths) -> bool {
+    active_runtime(paths).is_ok_and(|active| active.local_answers)
+}
+
+fn configure_local_answer_environment(command: &mut Command, paths: &DesktopPaths) {
+    if active_local_answers(paths) {
+        let model = manifest()
+            .map(|manifest| manifest.local_answers.model)
+            .unwrap_or_else(|_| "qwen3.5:4b-q4_K_M".into());
+        command
+            .env(
+                "VIDXP_SLM_BASE_URL",
+                format!("http://{}/v1", query_setup::OLLAMA_HOST),
+            )
+            .env("VIDXP_SLM_MODEL", model);
+    }
+}
+
+fn ensure_active_query_service(state: &DesktopState, paths: &DesktopPaths) -> Result<(), String> {
+    if !active_local_answers(paths) {
+        return Ok(());
+    }
+    if ollama_server_version().is_err() {
+        let local_answers = manifest()?.local_answers;
+        let executable = resolve_query_executable(paths, &local_answers.managed_runtime).ok_or_else(|| {
+            "Local grounded answers are enabled, but their Ollama runtime is no longer available. Open Setup options and repair VidXP."
+                .to_string()
+        })?;
+        ensure_query_service(state, &executable, &paths.models.join("ollama"))?;
+    }
+    let model = manifest()?.local_answers.model;
+    installed_ollama_model(&model)?.ok_or_else(|| {
+        format!("The local answer model {model} is missing. Open Setup options and repair VidXP.")
+    })?;
+    Ok(())
 }
 
 fn clean_environment(paths: &DesktopPaths) -> Vec<(String, String)> {
@@ -2062,10 +2585,25 @@ async fn supervised_output(
     cancellation: background_process::CancellationToken,
     operation: &str,
 ) -> Result<background_process::BackgroundOutput, String> {
+    supervised_output_with_timeout(
+        command,
+        cancellation,
+        operation,
+        Duration::from_secs(30 * 60),
+    )
+    .await
+}
+
+async fn supervised_output_with_timeout(
+    command: Command,
+    cancellation: background_process::CancellationToken,
+    operation: &str,
+    timeout: Duration,
+) -> Result<background_process::BackgroundOutput, String> {
     let output = background_process::run_async(
         command,
         background_process::BackgroundPolicy {
-            timeout: Duration::from_secs(30 * 60),
+            timeout,
             max_output_bytes: MAX_SETUP_OUTPUT_BYTES,
         },
         cancellation,
@@ -2547,6 +3085,54 @@ async fn cancel_managed_setup(
 }
 
 #[tauri::command]
+fn cancel_managed_setup_operation(
+    state: tauri::State<'_, DesktopState>,
+    draft_id: String,
+) -> Result<(), String> {
+    cancel_managed_setup_operation_inner(&state, &draft_id)
+}
+
+fn cancel_managed_setup_operation_inner(
+    state: &DesktopState,
+    draft_id: &str,
+) -> Result<(), String> {
+    {
+        let transition = state
+            .transition
+            .lock()
+            .map_err(|_| "The managed setup operation is unavailable.".to_string())?;
+        let record = transition
+            .draft
+            .as_ref()
+            .ok_or_else(|| "This managed setup draft has expired.".to_string())?;
+        if record.draft.id != draft_id {
+            return Err("A stale managed setup screen cannot stop the current operation.".into());
+        }
+        if record.phase != DraftPhase::Applying
+            || !transition.active.is_some_and(|active| {
+                matches!(
+                    active.kind,
+                    TransitionKind::InstallMedia
+                        | TransitionKind::InstallRuntime
+                        | TransitionKind::PrepareModels
+                )
+            })
+        {
+            return Err("No cancellable managed setup operation is active.".into());
+        }
+    }
+    let active = state
+        .operation_cancellation
+        .lock()
+        .map_err(|_| "The setup cancellation supervisor is unavailable.".to_string())?;
+    let cancellation = active
+        .as_ref()
+        .ok_or_else(|| "The managed setup operation has already settled.".to_string())?;
+    cancellation.cancel();
+    Ok(())
+}
+
+#[tauri::command]
 fn choose_model_directory(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
@@ -2571,8 +3157,10 @@ async fn install_media_runtime(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
     draft_id: String,
+    total_steps: u8,
 ) -> Result<MediaRuntimeStatus, String> {
     let cancellation = OperationCancellationGuard::register(&state)?;
+    let total_steps = total_steps.max(1);
     let _transition =
         TargetTransitionCoordinator::begin_apply(&state, &draft_id, TransitionKind::InstallMedia)
             .map_err(|error| error.to_string())?;
@@ -2618,20 +3206,47 @@ async fn install_media_runtime(
     if !approved {
         return Err("FFmpeg setup was deferred.".into());
     }
+    emit_managed_setup_progress(
+        &app,
+        &draft_id,
+        1,
+        total_steps,
+        "video-tools",
+        &format!("Installing FFmpeg with {}", plan.manager),
+    );
     let command = app
         .shell()
         .command(plan.command[0].clone())
         .args(&plan.command[1..]);
     let command: Command = command.into();
-    supervised_output(
+    supervised_output_with_timeout(
         command,
         cancellation.token(),
         &format!("{} FFmpeg installation", plan.manager),
+        MEDIA_RUNTIME_INSTALL_TIMEOUT,
     )
     .await?;
-    let status = tauri::async_runtime::spawn_blocking(inspect_media_runtime)
-        .await
-        .map_err(|error| format!("Media runtime verification stopped unexpectedly: {error}"))?;
+    emit_managed_setup_progress(
+        &app,
+        &draft_id,
+        1,
+        total_steps,
+        "video-tools",
+        "Verifying FFmpeg and required video codecs",
+    );
+    let status = tauri::async_runtime::spawn_blocking(|| {
+        let mut status = inspect_media_runtime();
+        for _ in 0..4 {
+            if status.ready {
+                break;
+            }
+            thread::sleep(Duration::from_secs(1));
+            status = inspect_media_runtime();
+        }
+        status
+    })
+    .await
+    .map_err(|error| format!("Media runtime verification stopped unexpectedly: {error}"))?;
     if !status.ready {
         return Err(format!(
             "FFmpeg installation finished but verification failed: {}",
@@ -2665,6 +3280,7 @@ fn runtime_status_sync(app: &AppHandle) -> Result<RuntimeStatus, String> {
             capabilities: Vec::new(),
             surfaces: Vec::new(),
             model_directory: default_model_directory,
+            local_answers: false,
             detail: "No Desktop-managed runtime has been created yet.".into(),
         });
     }
@@ -2681,6 +3297,7 @@ fn runtime_status_sync(app: &AppHandle) -> Result<RuntimeStatus, String> {
                 capabilities: Vec::new(),
                 surfaces: Vec::new(),
                 model_directory: default_model_directory,
+                local_answers: false,
                 detail: format!("The active runtime pointer is invalid: {error}"),
             });
         }
@@ -2731,6 +3348,7 @@ fn configured_runtime_status(active: ActiveRuntime, problems: Vec<String>) -> Ru
         capabilities: active.capabilities,
         surfaces: active.surfaces,
         model_directory: active.model_directory.to_string_lossy().into_owned(),
+        local_answers: active.local_answers,
         detail: if ready {
             "Local video processing is ready.".into()
         } else {
@@ -2835,12 +3453,13 @@ async fn install_runtime(
     .map_err(|error| format!("Managed runtime preparation stopped unexpectedly: {error}"))??;
 
     let profile_seed = format!(
-        "{}:{}:{}:{}:{}",
+        "{}:{}:{}:{}:{}:{}",
         manifest_digest(),
         std::env::consts::OS,
         std::env::consts::ARCH,
         capabilities.join(","),
-        surfaces.join(",")
+        surfaces.join(","),
+        request.local_answers,
     );
     let profile_hash = hex::encode(Sha256::digest(profile_seed.as_bytes()));
     let timestamp = SystemTime::now()
@@ -2850,13 +3469,36 @@ async fn install_runtime(
     let profile = format!("{profile_hash}-{timestamp}");
     let runtime = paths.runtimes.join(&profile);
     let constraints = runtime.join(RUNTIME_CONSTRAINTS_FILE_NAME);
-    let progress_total = if request.prepare_models { 8 } else { 7 };
+    let local_answer_offset = u8::from(request.local_answers);
+    let progress_total = (if request.prepare_models { 8 } else { 7 }) + local_answer_offset;
 
     let install_result = async {
+        if request.local_answers {
+            emit_local_answer_progress(
+                &app,
+                &request.draft_id,
+                2,
+                progress_total,
+                "Checking Ollama and the approved Qwen model",
+                None,
+                None,
+            );
+            prepare_local_answers_runtime(
+                &app,
+                &state,
+                &paths,
+                &request.draft_id,
+                2,
+                progress_total,
+                &manifest.local_answers,
+                cancellation.token(),
+            )
+            .await?;
+        }
         emit_managed_setup_progress(
             &app,
             &request.draft_id,
-            2,
+            2 + local_answer_offset,
             progress_total,
             "python",
             "Preparing an isolated Python runtime",
@@ -2891,7 +3533,7 @@ async fn install_runtime(
         emit_managed_setup_progress(
             &app,
             &request.draft_id,
-            3,
+            3 + local_answer_offset,
             progress_total,
             "package",
             "Acquiring the VidXP package",
@@ -2914,6 +3556,7 @@ async fn install_runtime(
             &manifest,
             &capabilities,
             &surfaces,
+            request.local_answers,
             &executable(&runtime, "python"),
             &constraints,
             !cfg!(target_os = "macos"),
@@ -2921,7 +3564,7 @@ async fn install_runtime(
         emit_managed_setup_progress(
             &app,
             &request.draft_id,
-            4,
+            4 + local_answer_offset,
             progress_total,
             "dependencies",
             "Installing the selected search features",
@@ -2935,6 +3578,20 @@ async fn install_runtime(
             "VidXP package installation",
         )
         .await?;
+        if request.local_answers {
+            let mut query_client_check = configured_command(&executable(&runtime, "python"), &paths);
+            query_client_check.args([
+                "-c",
+                "from pydantic_ai.models.openai import OpenAIChatModel",
+            ]);
+            supervised_output_with_timeout(
+                query_client_check,
+                cancellation.token(),
+                "Local grounded-answer client validation",
+                Duration::from_secs(30),
+            )
+            .await?;
+        }
         if let Err(error) = fs::remove_file(&runtime_wheel) {
             log::warn!(
                 "Installed the embedded VidXP package, but could not remove its staged wheel: {error}"
@@ -2944,7 +3601,7 @@ async fn install_runtime(
         emit_managed_setup_progress(
             &app,
             &request.draft_id,
-            5,
+            5 + local_answer_offset,
             progress_total,
             "media",
             "Configuring FFmpeg and video codecs",
@@ -2968,7 +3625,7 @@ async fn install_runtime(
         emit_managed_setup_progress(
             &app,
             &request.draft_id,
-            6,
+            6 + local_answer_offset,
             progress_total,
             "validation",
             "Validating installed packages and video tools",
@@ -2988,7 +3645,7 @@ async fn install_runtime(
             emit_managed_setup_progress(
                 &app,
                 &request.draft_id,
-                7,
+                7 + local_answer_offset,
                 progress_total,
                 "models",
                 "Verifying and downloading selected model files",
@@ -3009,7 +3666,7 @@ async fn install_runtime(
                     &preparation_app,
                     &preparation_draft_id,
                     &progress_path_worker,
-                    7,
+                    7 + local_answer_offset,
                     progress_total,
                     &monitor_stop_worker,
                 );
@@ -3074,6 +3731,7 @@ async fn install_runtime(
         capabilities: capabilities.clone(),
         surfaces: surfaces.clone(),
         model_directory: paths.models.clone(),
+        local_answers: request.local_answers,
     };
     let activation_app = app.clone();
     let activation_cancellation = cancellation.token();
@@ -3197,6 +3855,9 @@ async fn install_runtime(
     }
     stop_ui_process(&state);
     stop_api_process(&state);
+    if !request.local_answers {
+        stop_query_process(&state);
+    }
     transition.commit_draft();
     refresh_tray_for_selected_target(&app);
 
@@ -3209,6 +3870,7 @@ async fn install_runtime(
                 .selected_profile()
                 .and_then(|profile| profile.model_directory.as_ref())
                 .map_or_else(String::new, |path| path.to_string_lossy().into_owned()),
+            local_answers: request.local_answers,
             prepared: request.prepare_models,
         },
         setup: activation,
@@ -3287,6 +3949,7 @@ fn start_ui(
     if let Some(model_directory) = &profile.model_directory {
         paths.models = model_directory.clone();
     }
+    ensure_active_query_service(state, &paths)?;
     let mut active_process = state
         .ui_process
         .lock()
@@ -3455,10 +4118,14 @@ fn target_command(
     paths: &DesktopPaths,
     executable_path: &Path,
 ) -> Command {
-    match profile.kind {
+    let mut command = match profile.kind {
         target_profiles::TargetKind::Managed => configured_command(executable_path, paths),
         target_profiles::TargetKind::ExistingLocal => Command::new(executable_path),
+    };
+    if profile.kind == target_profiles::TargetKind::Managed {
+        configure_local_answer_environment(&mut command, paths);
     }
+    command
 }
 
 fn selected_target_context(
@@ -3510,6 +4177,7 @@ async fn target_doctor(
     let _active = state.active_operations.register()?;
     tauri::async_runtime::spawn_blocking(move || {
         let (profile, paths) = selected_target_context(&app)?;
+        ensure_active_query_service(&app.state::<DesktopState>(), &paths)?;
         let arguments = capability_command_arguments(&manifest()?, "doctor", &profile.capabilities);
         let mut command = target_command(&profile, &paths, &profile.executable);
         command
@@ -3595,6 +4263,7 @@ async fn configure_external_installation(
     }
     stop_ui_process(&state);
     stop_api_process(&state);
+    stop_query_process(&state);
     let target_version = external_installation_version(
         &manifest,
         runtime_update_required,
@@ -3636,6 +4305,7 @@ async fn mcp_client_config(
     let _active = state.active_operations.register()?;
     tauri::async_runtime::spawn_blocking(move || {
         let (profile, paths) = selected_target_context(&app)?;
+        ensure_active_query_service(&app.state::<DesktopState>(), &paths)?;
         if !profile
             .surfaces
             .iter()
@@ -3679,6 +4349,7 @@ async fn install_codex_plugin(
     let _active = state.active_operations.register()?;
     tauri::async_runtime::spawn_blocking(move || {
         let (profile, paths) = selected_target_context(&app)?;
+        ensure_active_query_service(&app.state::<DesktopState>(), &paths)?;
         if !profile
             .surfaces
             .iter()
@@ -3728,11 +4399,66 @@ async fn install_codex_plugin(
     .map_err(|error| format!("Codex plugin setup stopped unexpectedly: {error}"))?
 }
 
+#[tauri::command]
+fn premiere_integration_state(
+    app: AppHandle,
+) -> Result<premiere_integration::PremiereIntegrationState, String> {
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("Could not locate VidXP Desktop resources: {error}"))?;
+    Ok(premiere_integration::state(&resource_dir))
+}
+
+#[tauri::command]
+async fn install_premiere_extensions(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<premiere_integration::PremiereInstallResult, String> {
+    let _active = state.active_operations.register()?;
+    let (profile, _) = selected_target_context(&app)?;
+    if !profile.surfaces.iter().any(|surface| surface == "server") {
+        return Err("Enable the App integration service in Setup options before installing the Premiere extension.".into());
+    }
+    let worker_app = app.clone();
+    let (result, packages) = tauri::async_runtime::spawn_blocking(move || {
+        let resource_dir = worker_app
+            .path()
+            .resource_dir()
+            .map_err(|error| format!("Could not locate VidXP Desktop resources: {error}"))?;
+        premiere_integration::install(&resource_dir)
+    })
+    .await
+    .map_err(|error| format!("Premiere setup stopped unexpectedly: {error}"))??;
+    for package in packages {
+        app.opener()
+            .open_path(package.display().to_string(), None::<&str>)
+            .map_err(|error| {
+                format!(
+                    "Could not open {} with Adobe Creative Cloud: {error}",
+                    package.display()
+                )
+            })?;
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+async fn uninstall_premiere_extensions(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<(), String> {
+    let _active = state.active_operations.register()?;
+    tauri::async_runtime::spawn_blocking(premiere_integration::uninstall)
+        .await
+        .map_err(|error| format!("Premiere removal stopped unexpectedly: {error}"))?
+}
+
 fn execute_worker_action(app: &AppHandle, action: &str) -> Result<LocalWorkerStatus, String> {
     let (profile, paths) = selected_target_context(app)?;
     if !profile.surfaces.iter().any(|surface| surface == "worker") {
         return Err("Local video processing is not installed for this VidXP setup.".into());
     }
+    ensure_active_query_service(&app.state::<DesktopState>(), &paths)?;
     let mut command = target_command(&profile, &paths, &profile.executable);
     command
         .arg("--data-dir")
@@ -3933,6 +4659,7 @@ fn start_server_mode(
             "The selected VidXP installation does not include the app integration service.".into(),
         );
     }
+    ensure_active_query_service(state, &paths)?;
     let mut active = state
         .api_process
         .lock()
@@ -4511,6 +5238,7 @@ fn begin_shutdown(app: &AppHandle) {
     log::info!("VidXP supervised shutdown requested");
     stop_ui_process(&state);
     stop_api_process(&state);
+    stop_query_process(&state);
     let app = app.clone();
     let operations = state.active_operations.clone();
     tauri::async_runtime::spawn(async move {
@@ -4669,6 +5397,7 @@ fn shutdown(app: &AppHandle, deadline: Instant) {
     cancel_active_operation(&state);
     stop_ui_process(&state);
     stop_api_process(&state);
+    stop_query_process(&state);
     let Ok(mut paths) = desktop_paths(app) else {
         log::warn!("Could not resolve desktop paths during shutdown");
         return;
@@ -4748,6 +5477,7 @@ pub fn run() {
             confirm_forget_target,
             begin_managed_setup,
             cancel_managed_setup,
+            cancel_managed_setup_operation,
             choose_model_directory,
             install_media_runtime,
             runtime_status,
@@ -4759,6 +5489,9 @@ pub fn run() {
             configure_external_installation,
             mcp_client_config,
             install_codex_plugin,
+            premiere_integration_state,
+            install_premiere_extensions,
+            uninstall_premiere_extensions,
             local_worker_status,
             start_local_worker,
             stop_local_worker,
@@ -4812,10 +5545,10 @@ mod tests {
         configure_ui_service_command, configured_runtime_status,
         dependency_installation_invocation, desktop_paths_from_roots, display_command,
         external_installation_arguments, external_installation_version, inventory_model_directory,
-        manifest, manifest_digest, normalize_line_endings, normalized_runtime_constraints,
-        package_acquisition_arguments, package_specification, read_active_runtime_snapshot,
-        reconcile_managed_runtime_storage, required_encoder_missing, restore_active_runtime,
-        selected_capabilities, selected_surfaces, ui_process_action,
+        managed_package_specification, manifest, manifest_digest, normalize_line_endings,
+        normalized_runtime_constraints, package_acquisition_arguments, package_specification,
+        read_active_runtime_snapshot, reconcile_managed_runtime_storage, required_encoder_missing,
+        restore_active_runtime, selected_capabilities, selected_surfaces, ui_process_action,
         validate_managed_runtime_identity, write_activation_journal, write_active_runtime,
     };
     use std::{
@@ -5038,6 +5771,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn active_managed_operation_can_be_cancelled_without_cancelling_its_draft() {
+        let state = DesktopState::default();
+        state.transition.lock().expect("transition").draft = Some(DraftRecord {
+            draft: ManagedSetupDraft {
+                id: "draft-current".into(),
+                previous_profile_id: None,
+            },
+            phase: DraftPhase::Draft,
+        });
+        let operation = super::OperationCancellationGuard::register(&state).expect("operation");
+        let token = operation.token();
+        let applying = TargetTransitionCoordinator::begin_apply(
+            &state,
+            "draft-current",
+            TransitionKind::InstallMedia,
+        )
+        .expect("apply");
+
+        super::cancel_managed_setup_operation_inner(&state, "draft-current")
+            .expect("cancel operation");
+
+        assert!(token.is_cancelled());
+        assert_eq!(
+            state
+                .transition
+                .lock()
+                .expect("transition")
+                .draft
+                .as_ref()
+                .expect("draft")
+                .phase,
+            DraftPhase::Applying
+        );
+        drop(applying);
+        drop(operation);
+    }
+
     fn worker_supervisor_fixture() -> (
         Arc<WorkerStopSupervisor>,
         Arc<AtomicUsize>,
@@ -5231,6 +6002,7 @@ mod tests {
             capabilities: vec!["scene".into()],
             surfaces: vec!["browser".into()],
             model_directory: paths.models.clone(),
+            local_answers: false,
         };
         let active = runtime(active_profile.clone());
         write_active_runtime(&paths, &active).expect("active pointer");
@@ -5306,6 +6078,7 @@ mod tests {
             capabilities: vec!["scene".into()],
             surfaces: vec!["browser".into()],
             model_directory: PathBuf::from(model_directory),
+            local_answers: false,
         }
     }
 
@@ -5351,15 +6124,78 @@ mod tests {
             &manifest,
             &[
                 "scene".into(),
-                "videoprism".into(),
-                "dialogue".into(),
+                "action".into(),
+                "speech".into(),
                 "scene".into(),
             ],
         )
         .expect("selection");
 
-        assert_eq!(selected, ["dialogue", "scene", "videoprism"]);
+        assert_eq!(selected, ["action", "scene", "speech"]);
         assert!(selected_capabilities(&manifest, &["other".into()]).is_err());
+    }
+
+    #[test]
+    fn runtime_manifest_exposes_sound_and_local_answer_setup() {
+        let manifest = manifest().expect("manifest");
+        let sound = manifest
+            .capabilities
+            .get("sound")
+            .expect("sound setup capability");
+
+        assert_eq!(sound.extra, "sound");
+        assert_eq!(sound.modality, "sound");
+        assert_eq!(sound.label, "Sound event search");
+        assert_eq!(
+            sound
+                .models
+                .iter()
+                .map(|model| model.download_size_bytes)
+                .sum::<u64>(),
+            981_760_363
+        );
+        assert_eq!(
+            package_specification(&manifest, &["sound".into()], &[]),
+            format!("vidxp[sound]=={}", manifest.package_version)
+        );
+        assert_eq!(manifest.local_answers.engine, "ollama");
+        assert_eq!(manifest.local_answers.model, "qwen3.5:4b-q4_K_M");
+        assert_eq!(manifest.local_answers.download_size_bytes, 3_650_722_202);
+        assert_eq!(manifest.local_answers.managed_runtime.version, "0.32.5");
+        assert_eq!(
+            manifest
+                .local_answers
+                .managed_runtime
+                .maximum_download_size_bytes,
+            1_457_824_795
+        );
+        assert!(
+            manifest
+                .local_answers
+                .managed_runtime
+                .artifacts
+                .contains_key("windows-x86_64")
+        );
+        assert!(
+            manifest
+                .local_answers
+                .managed_runtime
+                .artifacts
+                .contains_key("macos-aarch64")
+        );
+        if let Some(artifact) =
+            super::query_setup::current_artifact(&manifest.local_answers.managed_runtime)
+        {
+            assert_eq!(artifact.sha256.len(), 64);
+            assert!(artifact.download_size_bytes > 0);
+            assert!(
+                artifact.download_size_bytes
+                    <= manifest
+                        .local_answers
+                        .managed_runtime
+                        .maximum_download_size_bytes
+            );
+        }
     }
 
     #[test]
@@ -5388,10 +6224,10 @@ mod tests {
         assert_eq!(
             package_specification(
                 &manifest,
-                &["scene".into(), "dialogue".into()],
+                &["scene".into(), "speech".into()],
                 &["browser".into()],
             ),
-            format!("vidxp[dialogue,frontend,scene]=={version}")
+            format!("vidxp[frontend,scene,speech]=={version}")
         );
         assert_eq!(
             package_specification(&manifest, &["scene".into()], &[]),
@@ -5400,9 +6236,22 @@ mod tests {
         assert_eq!(
             package_specification(
                 &manifest,
-                &["actor".into(), "dialogue".into(), "scene".into()],
+                &["actor".into(), "speech".into(), "scene".into()],
                 &["worker".into()],
             ),
+            format!("vidxp[local-worker]=={version}")
+        );
+        assert_eq!(
+            managed_package_specification(
+                &manifest,
+                &["scene".into()],
+                &["browser".into(), "mcp".into()],
+                true,
+            ),
+            format!("vidxp[frontend,mcp,scene,slm]=={version}")
+        );
+        assert_eq!(
+            managed_package_specification(&manifest, &["scene".into()], &["worker".into()], true,),
             format!("vidxp[local-worker]=={version}")
         );
         assert_eq!(
@@ -5485,6 +6334,7 @@ mod tests {
             &manifest,
             &["scene".into()],
             &[],
+            false,
             python,
             &constraints,
             true,
@@ -5552,6 +6402,7 @@ mod tests {
             &manifest,
             &["scene".into()],
             &[],
+            false,
             Path::new("managed-python"),
             &constraints,
             false,
@@ -5573,8 +6424,8 @@ mod tests {
         let manifest = manifest().expect("manifest");
 
         assert_eq!(
-            capability_command_arguments(&manifest, "doctor", &["dialogue".into(), "scene".into()]),
-            ["doctor", "--json", "--modalities", "dialogue,scene"]
+            capability_command_arguments(&manifest, "doctor", &["scene".into(), "speech".into()]),
+            ["doctor", "--json", "--modalities", "scene,speech"]
         );
         assert_eq!(
             capability_command_arguments(&manifest, "prepare", &["scene".into()]),

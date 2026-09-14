@@ -1,8 +1,28 @@
 [
   {
+    "id": "AndreasXi/FineLAP",
+    "label": "AndreasXi/FineLAP",
+    "relative_artifact": "models--AndreasXi--FineLAP/snapshots/b419aa22947d29907a5567f21b81bf3b39a40449/model.safetensors"
+  },
+  {
     "id": "dropbox-dash/faster-whisper-large-v3-turbo",
     "label": "dropbox-dash/faster-whisper-large-v3-turbo",
     "relative_artifact": "models--dropbox-dash--faster-whisper-large-v3-turbo/snapshots/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/model.bin"
+  },
+  {
+    "id": "FacebookAI/roberta-base config",
+    "label": "FacebookAI/roberta-base config",
+    "relative_artifact": "finelap-tokenizer/config.json"
+  },
+  {
+    "id": "FacebookAI/roberta-base merges",
+    "label": "FacebookAI/roberta-base merges",
+    "relative_artifact": "finelap-tokenizer/merges.txt"
+  },
+  {
+    "id": "FacebookAI/roberta-base vocab",
+    "label": "FacebookAI/roberta-base vocab",
+    "relative_artifact": "finelap-tokenizer/vocab.json"
   },
   {
     "id": "google/siglip2-base-patch16-224",

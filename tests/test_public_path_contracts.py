@@ -94,7 +94,7 @@ class PublicPathContractTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             CreateIndexCommand(
                 media_id=MEDIA_ID,
-                modalities=("dialogue",),
+                modalities=("speech",),
                 scene_sample_fps=1.0,
             )
         with self.assertRaises(ValidationError):

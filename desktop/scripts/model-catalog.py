@@ -9,15 +9,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from vidxp.local_probe import desktop_model_cache_catalog  # noqa: E402
+from vidxp.local_probe import (  # noqa: E402
+    desktop_capability_catalog,
+    desktop_model_cache_catalog,
+)
 
 
-CATALOG_PATH = ROOT / "desktop" / "model-cache-catalog.json"
+CATALOGS = {
+    ROOT / "desktop" / "capability-catalog.json": desktop_capability_catalog,
+    ROOT / "desktop" / "model-cache-catalog.json": desktop_model_cache_catalog,
+}
 
 
-def rendered_catalog() -> str:
+def rendered_catalog(value: object) -> str:
     return json.dumps(
-        desktop_model_cache_catalog(),
+        value,
         indent=2,
         ensure_ascii=False,
     ) + "\n"
@@ -29,13 +35,23 @@ def main() -> int:
     mode.add_argument("--write", action="store_true")
     mode.add_argument("--check", action="store_true")
     arguments = parser.parse_args()
-    derived = rendered_catalog()
     if arguments.write:
-        CATALOG_PATH.write_text(derived, encoding="utf-8", newline="\n")
+        for path, derive in CATALOGS.items():
+            path.write_text(
+                rendered_catalog(derive()),
+                encoding="utf-8",
+                newline="\n",
+            )
         return 0
-    if CATALOG_PATH.read_text(encoding="utf-8") != derived:
+    stale = [
+        path.relative_to(ROOT).as_posix()
+        for path, derive in CATALOGS.items()
+        if not path.exists()
+        or path.read_text(encoding="utf-8") != rendered_catalog(derive())
+    ]
+    if stale:
         raise SystemExit(
-            "desktop/model-cache-catalog.json is stale; run npm run "
+            f"{', '.join(stale)} is stale; run npm run "
             "model-catalog:write from desktop/."
         )
     return 0

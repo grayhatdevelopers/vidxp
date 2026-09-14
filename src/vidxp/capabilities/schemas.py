@@ -9,7 +9,12 @@ from vidxp.core.identifiers import MediaId
 
 class SearchInput(CapabilityInput):
     query: SearchQuery
-    top_k: int = Field(default=10, gt=0, le=100)
+    top_k: int = Field(
+        default=10,
+        gt=0,
+        le=500,
+        description="Internal per-channel candidate limit before fusion.",
+    )
     media_id: MediaId | None = None
 
 
