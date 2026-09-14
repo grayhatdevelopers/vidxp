@@ -1,11 +1,18 @@
 import unittest
 
-from vidxp.application_models import FusedSearchResult, SearchHit, SearchResult
+from vidxp.application_models import (
+    FusedSearchResult,
+    RetrievalScoring,
+    SearchHit,
+    SearchResult,
+)
 from vidxp.search_fusion import (
     RRF_RANK_CONSTANT,
     fuse_search_results,
     resolve_candidate_limit,
 )
+
+
 MEDIA_ID = "123456781234423481234567890abcde"
 GENERATION_ID = "223456781234423481234567890abcde"
 
@@ -259,6 +266,97 @@ class SearchFusionTests(unittest.TestCase):
         self.assertEqual(len(result.moments[0].hits), 3)
         self.assertEqual(result.moments[0].start, 2.2)
         self.assertEqual(result.moments[0].end, 2.8)
+
+    def test_fused_result_marks_every_score_ordering_only(self):
+        scene = SearchResult(
+            query_id="scene:q",
+            query="taxi",
+            modality="scene",
+            hits=(hit("scene", 1, 1, 2, "scene:1"),),
+        )
+
+        result = fuse_search_results(
+            query="taxi",
+            requested_modalities=("scene",),
+            results=(scene,),
+        )
+
+        self.assertEqual(result.scoring.score_calibration, "ordering_only")
+        self.assertEqual(result.fusion.score_calibration, "ordering_only")
+        self.assertEqual(result.fusion.score_direction, "higher_is_better")
+
+    def test_fused_result_inherits_the_channel_distance_metric(self):
+        scene = SearchResult(
+            query_id="scene:q",
+            query="taxi",
+            modality="scene",
+            scoring=RetrievalScoring(distance_metric="cosine"),
+            hits=(hit("scene", 1, 1, 2, "scene:1"),),
+        )
+
+        result = fuse_search_results(
+            query="taxi",
+            requested_modalities=("scene",),
+            results=(scene,),
+        )
+
+        self.assertEqual(result.scoring.distance_metric, "cosine")
+
+    def test_legacy_stored_result_without_scoring_still_loads(self):
+        scene = SearchResult(
+            query_id="scene:q",
+            query="taxi",
+            modality="scene",
+            hits=(hit("scene", 1, 1, 2, "scene:1"),),
+        )
+        result = fuse_search_results(
+            query="taxi",
+            requested_modalities=("scene",),
+            results=(scene,),
+        )
+
+        # Simulate a job result stored before the scoring descriptor existed.
+        payload = result.model_dump(mode="json")
+        payload.pop("scoring")
+        payload["fusion"].pop("score_direction")
+        payload["fusion"].pop("score_calibration")
+
+        restored = FusedSearchResult.model_validate(payload)
+
+        # The metric was never recorded, so it must stay unknown rather than
+        # silently becoming a definite metric.
+        self.assertIsNone(restored.scoring.distance_metric)
+        self.assertEqual(restored.scoring.score_calibration, "ordering_only")
+        self.assertEqual(restored.fusion.score_calibration, "ordering_only")
+
+    def test_fused_metric_is_unknown_unless_every_channel_agrees(self):
+        def channel(modality, metric):
+            return SearchResult(
+                query_id=f"{modality}:q",
+                query="taxi",
+                modality=modality,
+                scoring=RetrievalScoring(distance_metric=metric),
+                hits=(hit(modality, 1, 1, 2, f"{modality}:1"),),
+            )
+
+        def fused_metric(*results):
+            return fuse_search_results(
+                query="taxi",
+                requested_modalities=tuple(result.modality for result in results),
+                results=results,
+            ).scoring.distance_metric
+
+        self.assertEqual(
+            fused_metric(channel("scene", "cosine"), channel("speech", "cosine")),
+            "cosine",
+        )
+        self.assertIsNone(
+            fused_metric(channel("scene", "cosine"), channel("speech", None))
+        )
+        self.assertIsNone(
+            fused_metric(channel("scene", "cosine"), channel("speech", "ip"))
+        )
+        self.assertIsNone(fused_metric())
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from vidxp.application_models import (
     FusedMoment,
     FusedSearchResult,
     FusionProvenance,
+    RetrievalScoring,
     SearchHit,
     SearchResult,
 )
@@ -98,6 +99,20 @@ def _score(hits: list[SearchHit]) -> float:
             best_ranks.get(hit.modality, hit.rank),
         )
     return sum(1.0 / (RRF_RANK_CONSTANT + rank) for rank in best_ranks.values())
+
+
+def _shared_scoring(results: tuple[SearchResult, ...]) -> RetrievalScoring:
+    """Describe fused hits without turning an unrecorded metric into a known one.
+
+    Channels searched together share one index and normally record the same
+    metric. The metric is reported only when every channel recorded it
+    identically; otherwise it stays unknown.
+    """
+
+    metrics = {result.scoring.distance_metric for result in results}
+    return RetrievalScoring(
+        distance_metric=next(iter(metrics)) if len(metrics) == 1 else None
+    )
 
 
 def _moment_id(
@@ -214,6 +229,7 @@ def fuse_search_results(
         ),
         query=query,
         modalities=searched_modalities,
+        scoring=_shared_scoring(ordered_results),
         moments=moments,
         fusion=FusionProvenance(
             overlap_rule="shared_overlap",

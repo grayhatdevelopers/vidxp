@@ -6,14 +6,18 @@ from vidxp.application_models import (
     FusedSearchResult,
     FusionProvenance,
     IndexSnapshotReference,
+    QueryAnswer,
     QueryAnswerMode,
     QueryModelIdentity,
     QueryPlan,
     QueryVideoCommand,
+    RetrievalScoring,
     SearchHit,
     SearchMomentsPlanStep,
     SearchResult,
 )
+from vidxp.capabilities.search import search_embeddings
+from vidxp.core.contracts import IndexConfig
 from vidxp.ports import QueryProviderError
 from vidxp.query_service import GroundedQueryService
 from vidxp.search_fusion import fuse_search_results
@@ -371,6 +375,94 @@ class GroundedQueryServiceTests(unittest.TestCase):
         self.assertTrue(
             all(item.source_id in retained_sources for item in evidence)
         )
+
+    def test_query_answer_keeps_cosine_retrieval_scoring(self):
+        class CosineStore:
+            def query(self, modality, embedding, **options):
+                return [
+                    {
+                        "source_id": "speech:1",
+                        "raw_distance": 0.25,
+                        "metadata": {
+                            "video_id": MEDIA_ID,
+                            "generation_id": GENERATION_ID,
+                            "start": 1.0,
+                            "end": 2.0,
+                            "text": "the taxi arrived",
+                        },
+                    }
+                ]
+
+        config = IndexConfig(
+            dataset="sample",
+            split="test",
+            run_id="run-1",
+            enabled_modalities=("speech",),
+            vector_distance="cosine",
+        )
+        atomic = search_embeddings(
+            "taxi",
+            "speech",
+            [0.5, 0.25],
+            config=config,
+            required_metadata=frozenset({"text"}),
+            storage=CosineStore(),
+        )
+        fused_result = fused("speech", atomic)
+        service = GroundedQueryService()
+        evidence = service.evidence(
+            snapshot=self.snapshot,
+            fused=fused_result,
+            actors=(),
+        )
+
+        answer = service.answer(
+            self.command,
+            plan=QueryPlan(
+                steps=(SearchMomentsPlanStep(modality="speech", query="taxi"),)
+            ),
+            planning_fallback="query_model_not_configured",
+            evidence=evidence,
+            fused=fused_result,
+        )
+
+        self.assertEqual(answer.scoring, fused_result.scoring)
+        self.assertEqual(answer.scoring.distance_metric, "cosine")
+        self.assertEqual(answer.scoring.score_transform, "negated_distance")
+        hit = answer.evidence[0].hit
+        self.assertEqual(hit.score, -hit.raw_distance)
+        # Stored query job results keep the descriptor too.
+        restored = QueryAnswer.model_validate_json(answer.model_dump_json())
+        self.assertEqual(restored.scoring.distance_metric, "cosine")
+
+    def test_legacy_query_answer_without_scoring_keeps_metric_unknown(self):
+        atomic = result(text="the taxi arrived", modality="speech").model_copy(
+            update={"scoring": RetrievalScoring(distance_metric="cosine")}
+        )
+        fused_result = fused("speech", atomic)
+        service = GroundedQueryService()
+        evidence = service.evidence(
+            snapshot=self.snapshot,
+            fused=fused_result,
+            actors=(),
+        )
+        answer = service.answer(
+            self.command,
+            plan=QueryPlan(
+                steps=(SearchMomentsPlanStep(modality="speech", query="taxi"),)
+            ),
+            planning_fallback="query_model_not_configured",
+            evidence=evidence,
+            fused=fused_result,
+        )
+        self.assertEqual(answer.scoring.distance_metric, "cosine")
+
+        # Simulate a query job result stored before the descriptor existed.
+        payload = answer.model_dump(mode="json")
+        payload.pop("scoring")
+        restored = QueryAnswer.model_validate(payload)
+
+        self.assertIsNone(restored.scoring.distance_metric)
 
 
 if __name__ == "__main__":

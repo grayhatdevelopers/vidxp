@@ -5,6 +5,7 @@ import json
 
 from vidxp.application_models import (
     ApplicationError,
+    ChannelHitScoreSemantics,
     CreateSnippetCommand,
     ErrorCategory,
     ErrorDetail,
@@ -19,6 +20,7 @@ from vidxp.application_models import (
     EvidenceFrameMatch,
     EvidenceKeyframe,
     EvidenceRangeResolution,
+    FusedMomentScoreSemantics,
     FusedSearchResult,
     Job,
     JobKind,
@@ -163,6 +165,7 @@ class EvidenceDeliveryService:
         result: FusedSearchResult,
     ) -> tuple[EvidenceBoardCandidate, ...]:
         candidates: list[EvidenceBoardCandidate] = []
+        score_semantics = FusedMomentScoreSemantics(fusion=result.fusion)
         for moment in result.moments:
             if moment.moment_id is None:
                 continue
@@ -193,6 +196,7 @@ class EvidenceDeliveryService:
                         else EvidenceFrameMatch.representative
                     ),
                     score=moment.score,
+                    score_semantics=score_semantics,
                     display_text=EvidenceDeliveryService._display_text(
                         selected.metadata
                     ),
@@ -217,6 +221,7 @@ class EvidenceDeliveryService:
         answer: QueryAnswer,
     ) -> tuple[EvidenceBoardCandidate, ...]:
         candidates: list[EvidenceBoardCandidate] = []
+        hit_score_semantics = ChannelHitScoreSemantics(scoring=answer.scoring)
         for rank, evidence in enumerate(answer.evidence, start=1):
             if isinstance(evidence, MomentEvidence):
                 raw_index = evidence.hit.metadata.get("frame_index")
@@ -233,6 +238,7 @@ class EvidenceDeliveryService:
                     else (evidence.start + evidence.end) / 2
                 )
                 score = evidence.hit.score
+                score_semantics = hit_score_semantics
                 provenance = {
                     "source_id": evidence.source_id,
                     "kind": evidence.kind,
@@ -241,6 +247,7 @@ class EvidenceDeliveryService:
                 frame_index = None
                 representative = (evidence.start + evidence.end) / 2
                 score = None
+                score_semantics = None
                 provenance = {
                     "cluster_id": evidence.cluster_id,
                     "detection_count": evidence.detection_count,
@@ -264,6 +271,7 @@ class EvidenceDeliveryService:
                         else EvidenceFrameMatch.representative
                     ),
                     score=score,
+                    score_semantics=score_semantics,
                     display_text=evidence.display_text,
                     provenance=provenance,
                 )
@@ -439,6 +447,7 @@ class EvidenceDeliveryService:
                         generation_id=candidate.generation_id,
                         modalities=candidate.modalities,
                         score=candidate.score,
+                        score_semantics=candidate.score_semantics,
                         provenance=candidate.provenance,
                         state=EvidenceDeliveryState.failed,
                         errors=(
@@ -525,6 +534,7 @@ class EvidenceDeliveryService:
                     generation_id=candidate.generation_id,
                     modalities=candidate.modalities,
                     score=candidate.score,
+                    score_semantics=candidate.score_semantics,
                     provenance=candidate.provenance,
                     state=(
                         EvidenceDeliveryState.partial

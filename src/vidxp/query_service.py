@@ -204,6 +204,7 @@ class GroundedQueryService:
             "plan": plan,
             "model": self.model.identity if self.model is not None else None,
             "evidence": evidence,
+            "scoring": fused.scoring,
             "moments": fused.moments,
             "fusion": fused.fusion,
         }

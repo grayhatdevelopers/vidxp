@@ -8,9 +8,15 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from pydantic import ValidationError
+
 from vidxp.application_models import (
+    ActorEvidence,
     ApplicationError,
     Artifact,
+    EvidenceBoardCandidate,
+    EvidenceBoardTile,
+    EvidenceDeliveryItem,
     EvidenceDeliveryMode,
     EvidenceDeliveryPolicy,
     EvidenceDeliveryState,
@@ -22,6 +28,7 @@ from vidxp.application_models import (
     QueryAnswer,
     QueryAnswerMode,
     QueryPlan,
+    RetrievalScoring,
     SearchMomentsPlanStep,
     SearchHit,
     SearchResult,
@@ -397,6 +404,145 @@ class EvidenceDeliveryTests(unittest.TestCase):
             delivered.evidence_delivery.items[0].evidence_id,
             delivered.evidence[0].evidence_id,
         )
+
+    def test_search_evidence_score_is_described_as_the_fused_moment_score(self):
+        service, _artifacts = self.service()
+        result = service.deliver_search(
+            fused(),
+            EvidenceDeliveryPolicy(
+                mode=EvidenceDeliveryMode.keyframes,
+                max_items=1,
+            ),
+            execution=ExecutionContext(job_id=JOB_ID),
+        )
+
+        moment = result.moments[0]
+        candidate = EvidenceDeliveryService.candidates(result)[0]
+        item = result.evidence_delivery.items[0]
+        for evidence in (candidate, item):
+            self.assertEqual(evidence.score, moment.score)
+            self.assertEqual(evidence.score_semantics.source, "fused_moment")
+            self.assertEqual(evidence.score_semantics.fusion, result.fusion)
+
+    def test_query_evidence_score_is_described_as_the_channel_hit_score(self):
+        service, _artifacts = self.service()
+        hit = SearchHit.model_validate(
+            {**scene_hit().model_dump(), "score": -1.0, "raw_distance": 1.0}
+        )
+        atomic = SearchResult(
+            query_id="scene:known",
+            query="green frame",
+            modality="scene",
+            scoring=RetrievalScoring(distance_metric="cosine"),
+            hits=(hit,),
+        )
+        fused_result = fuse_search_results(
+            query="green frame",
+            requested_modalities=("scene",),
+            results=(atomic,),
+            snapshot_id=SNAPSHOT_ID,
+        )
+        answer = QueryAnswer(
+            question="Which frame is green?",
+            mode=QueryAnswerMode.evidence_only,
+            plan=QueryPlan(
+                steps=(SearchMomentsPlanStep(modality="scene", query="green frame"),)
+            ),
+            evidence=(
+                MomentEvidence(
+                    evidence_id="d" * 64,
+                    snapshot_id=SNAPSHOT_ID,
+                    media_id=MEDIA_ID,
+                    generation_id=GENERATION_ID,
+                    modality="scene",
+                    source_id=hit.source_id,
+                    start=hit.start,
+                    end=hit.end,
+                    hit=hit,
+                ),
+                ActorEvidence(
+                    evidence_id="e" * 64,
+                    snapshot_id=SNAPSHOT_ID,
+                    media_id=MEDIA_ID,
+                    generation_id=GENERATION_ID,
+                    cluster_id="cluster-1",
+                    start=1.0,
+                    end=2.0,
+                    detection_count=3,
+                    display_text="Actor cluster cluster-1 appears 3 times.",
+                ),
+            ),
+            scoring=fused_result.scoring,
+            moments=fused_result.moments,
+            fusion=fused_result.fusion,
+            fallback_reason="query_model_not_configured",
+        )
+
+        delivered = service.deliver_query(
+            answer,
+            EvidenceDeliveryPolicy(
+                mode=EvidenceDeliveryMode.keyframes,
+                max_items=2,
+            ),
+            execution=ExecutionContext(job_id=JOB_ID),
+        )
+
+        # The fused moment score differs from the channel score copied into
+        # video-query evidence, so the payload must say which one it carries.
+        self.assertAlmostEqual(fused_result.moments[0].score, 1 / 61)
+        moment_candidate, actor_candidate = EvidenceDeliveryService.candidates(
+            delivered
+        )
+        moment_item, actor_item = delivered.evidence_delivery.items
+        for evidence in (moment_candidate, moment_item):
+            self.assertEqual(evidence.score, -1.0)
+            self.assertEqual(evidence.score_semantics.source, "channel_hit")
+            scoring = evidence.score_semantics.scoring
+            self.assertEqual(scoring.distance_metric, "cosine")
+            self.assertEqual(scoring.score_transform, "negated_distance")
+        for evidence in (actor_candidate, actor_item):
+            self.assertIsNone(evidence.score)
+            self.assertIsNone(evidence.score_semantics)
+
+    def test_evidence_score_semantics_require_a_score(self):
+        candidate = EvidenceDeliveryService.candidates(fused())[0]
+
+        with self.assertRaises(ValidationError):
+            EvidenceBoardCandidate.model_validate(
+                {**candidate.model_dump(), "score": None}
+            )
+        with self.assertRaises(ValidationError):
+            EvidenceDeliveryItem(
+                evidence_id=candidate.evidence_id,
+                rank=1,
+                media_id=MEDIA_ID,
+                generation_id=GENERATION_ID,
+                modalities=("scene",),
+                score=None,
+                score_semantics=candidate.score_semantics,
+                state=EvidenceDeliveryState.ready,
+            )
+
+    def test_board_tiles_keep_score_semantics_and_legacy_evidence_loads(self):
+        candidate = EvidenceDeliveryService.candidates(fused())[0]
+
+        # Board tiles are built from candidates the same way the board job does.
+        tile = EvidenceBoardTile(
+            **candidate.model_dump(),
+            tile_id="f" * 64,
+            page_number=1,
+            position=1,
+            state=EvidenceDeliveryState.ready,
+        )
+        self.assertEqual(tile.score_semantics, candidate.score_semantics)
+
+        # A candidate stored before score semantics existed still loads, and its
+        # source stays unrecorded instead of being guessed.
+        legacy = candidate.model_dump(mode="json")
+        legacy.pop("score_semantics")
+        restored = EvidenceBoardCandidate.model_validate(legacy)
+        self.assertEqual(restored.score, candidate.score)
+        self.assertIsNone(restored.score_semantics)
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg is required")
