@@ -23,7 +23,7 @@ from the contributing guide before submitting a pull request. Common checks:
 
 ```bash
 uv run --no-sync ruff check .
-uv run --no-sync pytest -q
+uv run --no-sync python -m pytest -q
 npm --prefix desktop run check
 ```
 
