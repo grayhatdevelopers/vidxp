@@ -128,6 +128,16 @@ boundaries require maintainer review. For a new capability, follow
 Run the smallest relevant checks while developing, then the checks that cover
 the changed boundary before opening a pull request.
 
+PRs limited to Python files under `src/vidxp/benchmarks/` and the benchmark
+tests listed in `utils/ci_scope.py` keep the full Python suite, lockfile,
+upload-page, and Python package smoke checks. They skip container builds,
+Desktop packaging, and the separate Windows provider checks. Documentation
+can accompany these changes without widening the scope. Dependency files,
+shared code, packaging, workflows, and unrecognized paths retain their normal
+validation, including when they accompany benchmark changes. Forced release
+validation is unaffected. The `validation/required` check requires every
+selected job to succeed.
+
 | Change | Minimum validation |
 |---|---|
 | Python logic or contracts | Targeted test file, Ruff, then the full Python test suite |
