@@ -8,9 +8,11 @@ from vidxp.application_models import (
     CreateIndexCommand,
     ListMediaCommand,
     MediaAsset,
+    PlanBulkIndexCommand,
+    BulkIndexPlan,
+    BulkIndexTargetState,
     MediaState,
 )
-from vidxp.core.snapshots import IndexSnapshot
 
 if TYPE_CHECKING:
     from vidxp.application import VidXPApplication
@@ -58,21 +60,6 @@ def _resolve_all_media(
     return media_list
 
 
-def _is_already_indexed(
-    snapshot: IndexSnapshot | None,
-    media_id: str,
-    requested_modalities: Sequence[str] | None = None,
-) -> bool:
-    if snapshot is None:
-        return False
-    generation = snapshot.generations.get(media_id)
-    if generation is None:
-        return False
-    if requested_modalities is not None:
-        return set(requested_modalities).issubset(set(generation.modalities))
-    return True
-
-
 def run_bulk_index(
     application: VidXPApplication | ControlPlaneApplication,
     jobs: JobService,
@@ -81,6 +68,7 @@ def run_bulk_index(
     all_eligible: bool = False,
     skip_indexed: bool = True,
     detach: bool = False,
+    plan: BulkIndexPlan | None = None,
     modalities: Sequence[str] | None = None,
     frame_stride: int = 1,
     scene_sample_fps: float | None = None,
@@ -89,41 +77,33 @@ def run_bulk_index(
     on_item_progress: Callable[[str, Any], None] | None = None,
     on_item_complete: Callable[[BulkIndexItemResult], None] | None = None,
 ) -> BulkIndexSummary:
-    items: list[tuple[str, str]] = []
-    if all_eligible:
-        all_media = _resolve_all_media(application)
-        items = [(asset.media_id, asset.original_filename) for asset in all_media]
-    elif media_ids:
-        for mid in media_ids:
-            asset = application.get_media(mid)
-            items.append((asset.media_id, asset.original_filename))
-
-    read_snapshot = getattr(application, "_read_active_snapshot", None)
-    snapshot: IndexSnapshot | None = (
-        read_snapshot() if callable(read_snapshot) else None
-    )
-
-    if modalities is not None:
-        cmd_modalities = tuple(modalities)
-    elif hasattr(application, "select_index_modalities"):
-        cmd_modalities = application.select_index_modalities(None)
-    elif hasattr(application, "list_capabilities"):
-        cmd_modalities = tuple(
-            c.name
-            for c in application.list_capabilities()
-            if getattr(c, "supports_indexing", True)
+    if plan is None:
+        if bool(media_ids) == all_eligible:
+            raise ValueError("Provide media IDs or all_eligible, not both.")
+        selected = application.select_index_modalities(
+            tuple(modalities) if modalities is not None else None
         )
-    else:
-        cmd_modalities = ()
+        plan = application.plan_bulk_index(
+            PlanBulkIndexCommand(
+                media_ids=tuple(media_ids or ()),
+                modalities=selected,
+                reindex=not skip_indexed,
+                frame_stride=frame_stride,
+                scene_sample_fps=scene_sample_fps,
+                capability_options=capability_options or {},
+            )
+        )
 
     results: list[BulkIndexItemResult] = []
 
-    for media_id, filename in items:
-        if skip_indexed and _is_already_indexed(snapshot, media_id, modalities):
+    for target in plan.targets:
+        media_id, filename = target.media_id, target.original_filename
+        if target.state == BulkIndexTargetState.skipped:
             item_result = BulkIndexItemResult(
                 media_id=media_id,
                 filename=filename,
                 status="skipped",
+                error_message=target.reason.value if target.reason else None,
             )
             results.append(item_result)
             if on_item_complete is not None:
@@ -134,15 +114,13 @@ def run_bulk_index(
             on_item_start(media_id, filename)
 
         command = CreateIndexCommand(
-            media_id=media_id,
-            modalities=cmd_modalities,
-            frame_stride=frame_stride,
-            scene_sample_fps=scene_sample_fps,
-            capability_options=capability_options or {},
+            media_id=media_id, **plan.options.model_dump(mode="python")
         )
+        job_id = None
 
         try:
             job = jobs.submit_index(command)
+            job_id = job.job_id
             if detach:
                 item_result = BulkIndexItemResult(
                     media_id=media_id,
@@ -154,6 +132,7 @@ def run_bulk_index(
                 if on_item_complete is not None:
                     on_item_complete(item_result)
             else:
+
                 def _progress(current: Any) -> None:
                     if on_item_progress is not None:
                         on_item_progress(media_id, current)
@@ -173,6 +152,7 @@ def run_bulk_index(
                 media_id=media_id,
                 filename=filename,
                 status="failed",
+                job_id=job_id,
                 error_code=exc.code,
                 error_message=str(exc),
             )
@@ -184,6 +164,7 @@ def run_bulk_index(
                 media_id=media_id,
                 filename=filename,
                 status="failed",
+                job_id=job_id,
                 error_code="unexpected_error",
                 error_message=str(exc),
             )

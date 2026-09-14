@@ -562,13 +562,7 @@ class MediaUploadSessionStatus(ApplicationModel):
     next_action: str = Field(min_length=1, max_length=1024)
 
 
-class CreateIndexCommand(ApplicationModel):
-    media_id: MediaId = Field(
-        description=(
-            "Stable identifier returned by list_media, get_media, or a "
-            "completed upload."
-        )
-    )
+class IndexOptions(ApplicationModel):
     modalities: tuple[str, ...]
     frame_stride: int = Field(
         default=1,
@@ -628,10 +622,19 @@ class CreateIndexCommand(ApplicationModel):
         return payload
 
     @model_validator(mode="after")
-    def _scene_sampling_requires_scene(self) -> "CreateIndexCommand":
+    def _scene_sampling_requires_scene(self) -> "IndexOptions":
         if self.scene_sample_fps is not None and "scene" not in self.modalities:
             raise ValueError("scene_sample_fps requires the scene modality.")
         return self
+
+
+class CreateIndexCommand(IndexOptions):
+    media_id: MediaId = Field(
+        description=(
+            "Stable identifier returned by list_media, get_media, or a "
+            "completed upload."
+        )
+    )
 
 
 class IndexResult(ApplicationModel):
@@ -676,7 +679,7 @@ class BulkIndexTarget(ApplicationModel):
         return self
 
 
-class PlanBulkIndexCommand(ApplicationModel):
+class PlanBulkIndexCommand(IndexOptions):
     media_ids: tuple[MediaId, ...] = Field(
         default=(),
         description=(
@@ -701,6 +704,7 @@ class PlanBulkIndexCommand(ApplicationModel):
 
 
 class BulkIndexPlan(ApplicationModel):
+    options: IndexOptions
     targets: tuple[BulkIndexTarget, ...] = ()
     modalities: tuple[str, ...]
 

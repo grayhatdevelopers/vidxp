@@ -5,6 +5,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from types import MethodType
+from vidxp.control_plane import ControlPlaneApplication
+from vidxp.core.contracts import IndexConfig
 from unittest.mock import Mock, patch
 
 from typer.testing import CliRunner
@@ -31,7 +34,6 @@ from vidxp.application_models import (
 from vidxp.bulk_indexing import (
     BulkIndexItemResult,
     BulkIndexSummary,
-    _is_already_indexed,
     _resolve_all_media,
     run_bulk_index,
 )
@@ -114,8 +116,16 @@ def make_snapshot(generations: dict[str, tuple[str, ...]]) -> IndexSnapshot:
             generation_id=GENERATION_ID,
             media_id=mid,
             manifest_sha256="1" * 64,
-            input_sha256="2" * 64,
-            config_fingerprint="3" * 64,
+            input_sha256="1" * 64,
+            config_fingerprint=IndexConfig.local(
+                enabled_modalities=modalities,
+                collection_names=create_capability_registry().collection_names(
+                    modalities
+                ),
+                capability_options=create_capability_registry().validate_options(
+                    modalities, {}
+                ),
+            ).fingerprint(),
             modalities=modalities,
             record_counts={m: 1 for m in modalities},
             store_size_bytes_at_commit=1024,
@@ -163,42 +173,31 @@ class BulkIndexingHelperTests(unittest.TestCase):
 
     def test_resolve_all_media_empty_catalog(self):
         app = Mock()
-        app.list_media.return_value = MediaPage(
-            items=(), total=0, next_cursor=None
-        )
+        app.list_media.return_value = MediaPage(items=(), total=0, next_cursor=None)
 
         result = _resolve_all_media(app)
 
         self.assertEqual(result, [])
         self.assertEqual(app.list_media.call_count, 1)
 
-    def test_is_already_indexed_snapshot_none(self):
-        self.assertFalse(_is_already_indexed(None, MEDIA_ID_1))
 
-    def test_is_already_indexed_media_not_in_generations(self):
-        snapshot = make_snapshot({MEDIA_ID_2: ("scene",)})
-        self.assertFalse(_is_already_indexed(snapshot, MEDIA_ID_1))
-
-    def test_is_already_indexed_no_modalities_requested(self):
-        snapshot = make_snapshot({MEDIA_ID_1: ("scene",)})
-        self.assertTrue(_is_already_indexed(snapshot, MEDIA_ID_1, None))
-
-    def test_is_already_indexed_matching_modalities_subset(self):
-        snapshot = make_snapshot({MEDIA_ID_1: ("scene", "speech", "actor")})
-        self.assertTrue(
-            _is_already_indexed(snapshot, MEDIA_ID_1, ("scene", "speech"))
-        )
-
-    def test_is_already_indexed_missing_requested_modality(self):
-        snapshot = make_snapshot({MEDIA_ID_1: ("scene",)})
-        self.assertFalse(
-            _is_already_indexed(snapshot, MEDIA_ID_1, ("scene", "speech"))
-        )
+def bind_planner(app):
+    app.capabilities = CapabilityService(create_capability_registry())
+    app.layout.indexes = Path("unused/indexes")
+    for name in (
+        "select_index_modalities",
+        "_index_config",
+        "plan_bulk_index",
+        "_bulk_index_selection",
+    ):
+        setattr(app, name, MethodType(getattr(ControlPlaneApplication, name), app))
+    app._bulk_index_target = ControlPlaneApplication._bulk_index_target
 
 
 class RunBulkIndexTests(unittest.TestCase):
     def setUp(self):
         self.app = Mock()
+        bind_planner(self.app)
         self.jobs = Mock()
         self.media_1 = make_media(MEDIA_ID_1, "one.mp4")
         self.media_2 = make_media(MEDIA_ID_2, "two.mp4")
@@ -376,11 +375,10 @@ class RunBulkIndexTests(unittest.TestCase):
         self.assertEqual(summary.total, 2)
         self.assertEqual(summary.indexed, 1)
         self.assertEqual(summary.failed, 1)
+        self.assertEqual(summary.results[0].job_id, JOB_ID_1)
         self.assertEqual(summary.skipped, 0)
         self.assertEqual(summary.results[0].status, "failed")
-        self.assertEqual(
-            summary.results[0].error_code, "transcription_failed"
-        )
+        self.assertEqual(summary.results[0].error_code, "transcription_failed")
         self.assertEqual(
             summary.results[0].error_message,
             "Model crashed during transcription.",
@@ -404,7 +402,6 @@ class RunBulkIndexTests(unittest.TestCase):
         self.assertEqual(summary.results[0].error_code, "unexpected_error")
         self.assertIn("Disk IO error", summary.results[0].error_message or "")
 
-
     def test_bulk_index_forwards_options_and_command_fields(self):
         job_1 = make_job(JOB_ID_1, media_id=MEDIA_ID_1)
         self.jobs.submit_index.return_value = job_1
@@ -426,7 +423,7 @@ class RunBulkIndexTests(unittest.TestCase):
             modalities=["scene"],
             frame_stride=3,
             scene_sample_fps=1.5,
-            capability_options={"scene": {"threshold": 0.7}},
+            capability_options={"scene": {"batch_size": 8}},
             on_item_progress=lambda mid, curr: progress_events.append((mid, curr)),
         )
 
@@ -440,7 +437,7 @@ class RunBulkIndexTests(unittest.TestCase):
         self.assertEqual(submitted_command.scene_sample_fps, 1.5)
         self.assertEqual(
             submitted_command.capability_options,
-            {"scene": {"threshold": 0.7}},
+            {"scene": {"batch_size": 8}},
         )
         self.assertEqual(len(progress_events), 1)
         self.assertEqual(progress_events[0][0], MEDIA_ID_1)
@@ -449,7 +446,9 @@ class RunBulkIndexTests(unittest.TestCase):
         job_1 = make_job(JOB_ID_1, media_id=MEDIA_ID_1)
         self.jobs.submit_index.return_value = job_1
         self.jobs.wait.return_value = job_1
-        self.app.select_index_modalities.return_value = ("scene", "speech")
+        self.app.select_index_modalities = lambda requested: (
+            requested or ("scene", "speech")
+        )
 
         summary = run_bulk_index(
             application=self.app,
@@ -463,35 +462,12 @@ class RunBulkIndexTests(unittest.TestCase):
         submitted_command = self.jobs.submit_index.call_args.args[0]
         self.assertEqual(submitted_command.modalities, ("scene", "speech"))
 
-    def test_bulk_index_default_modalities_resolves_from_list_capabilities(self):
-        job_1 = make_job(JOB_ID_1, media_id=MEDIA_ID_1)
-        self.jobs.submit_index.return_value = job_1
-        self.jobs.wait.return_value = job_1
-        del self.app.select_index_modalities
-        cap1 = Mock()
-        cap1.name = "scene"
-        cap1.supports_indexing = True
-        cap2 = Mock()
-        cap2.name = "summary"
-        cap2.supports_indexing = False
-        self.app.list_capabilities.return_value = [cap1, cap2]
-
-        summary = run_bulk_index(
-            application=self.app,
-            jobs=self.jobs,
-            media_ids=[MEDIA_ID_1],
-            modalities=None,
-        )
-
-        self.assertEqual(summary.total, 1)
-        submitted_command = self.jobs.submit_index.call_args.args[0]
-        self.assertEqual(submitted_command.modalities, ("scene",))
-
     def test_bulk_index_empty_items(self):
+        self.app.list_media.return_value = MediaPage(items=(), total=0)
         summary = run_bulk_index(
             application=self.app,
             jobs=self.jobs,
-            media_ids=[],
+            all_eligible=True,
             modalities=["scene"],
         )
         self.assertEqual(summary.total, 0)
@@ -506,6 +482,7 @@ class CliBulkIndexTests(unittest.TestCase):
     def setUp(self):
         self.runner = CliRunner()
         self.service = Mock()
+        bind_planner(self.service)
         self.service.registry = create_capability_registry()
         self.service.list_capabilities.return_value = CapabilityService(
             self.service.registry
@@ -561,6 +538,15 @@ class CliBulkIndexTests(unittest.TestCase):
         self.create_local_application = create_local_application
         return result
 
+    def test_cli_preview_does_not_submit_jobs(self):
+        result = self.invoke(
+            ["index", "bulk", "--all", "--modality", "scene", "--plan-only", "--json"]
+        )
+        self.assertEqual(result.exit_code, 0, result.output)
+        payload = json.loads(result.output)
+        self.assertEqual(len(payload["targets"]), 2)
+        self.jobs.submit_index.assert_not_called()
+
     def test_cli_requires_media_ids_or_all(self):
         result = self.invoke(["index", "bulk"])
         self.assertEqual(result.exit_code, 2, result.output)
@@ -610,7 +596,9 @@ class CliBulkIndexTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("Bulk indexing summary", result.output)
-        self.assertIn("Total: 2, Indexed: 2, Skipped: 0, Failed: 0, Queued: 0.", result.output)
+        self.assertIn(
+            "Total: 2, Indexed: 2, Skipped: 0, Failed: 0, Queued: 0.", result.output
+        )
 
     def test_cli_bulk_index_forwards_options_and_flags(self):
         job_1 = make_job(JOB_ID_1, state=JobState.queued, media_id=MEDIA_ID_1)
@@ -628,7 +616,7 @@ class CliBulkIndexTests(unittest.TestCase):
                 "--scene-sample-fps",
                 "2.5",
                 "--option",
-                "scene.threshold=0.8",
+                "scene.batch_size=8",
                 "--detach",
                 "--reindex",
                 "--json",
@@ -644,7 +632,7 @@ class CliBulkIndexTests(unittest.TestCase):
         self.assertEqual(submitted_command.scene_sample_fps, 2.5)
         self.assertEqual(
             submitted_command.capability_options,
-            {"scene": {"threshold": 0.8}},
+            {"scene": {"batch_size": 8}},
         )
 
     def test_cli_bulk_index_with_failure_exits_code_1(self):
@@ -673,7 +661,9 @@ class CliBulkIndexTests(unittest.TestCase):
         self.jobs.submit_index.side_effect = [job_1, job_2]
         self.jobs.wait.side_effect = [job_1, job_2]
 
-        result = self.invoke(["index", "bulk", "--all", "--modality", "scene", "--json"])
+        result = self.invoke(
+            ["index", "bulk", "--all", "--modality", "scene", "--json"]
+        )
 
         self.assertEqual(result.exit_code, 0, result.output)
         payload = json.loads(result.output)

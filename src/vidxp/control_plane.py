@@ -6,6 +6,12 @@ from typing import Callable
 from vidxp.application_boundary import application_boundary
 from vidxp.application_models import (
     Artifact,
+    IndexOptions,
+    PlanBulkIndexCommand,
+    BulkIndexPlan,
+    BulkIndexTarget,
+    BulkIndexTargetState,
+    BulkIndexSkipReason,
     CapabilityInfo,
     CapabilityRole,
     CapabilitySummary,
@@ -30,7 +36,9 @@ from vidxp.artifact_service import ArtifactQueryService
 from vidxp.capabilities.contracts import CapabilityRequestError
 from vidxp.capability_service import CapabilityService
 from vidxp.core.media import QuarantinedMedia
-from vidxp.core.snapshots import IndexSnapshot
+from vidxp.core.snapshots import GenerationReference, IndexSnapshot
+from vidxp.core.contracts import IndexConfig
+from vidxp.core.media import MediaState
 from vidxp.index_state import INDEX_STATUS_SCHEMA
 from vidxp.media_service import MediaService
 from vidxp.ports import LocalFileResource
@@ -58,6 +66,112 @@ class ControlPlaneApplication:
         self._read_index_status = index_status
         self._read_active_snapshot = active_snapshot or (lambda: None)
         self.model_cache = model_cache
+
+    def _index_config(
+        self, command: IndexOptions, *, media_id: str | None = None
+    ) -> IndexConfig:
+        selected = self.select_index_modalities(command.modalities)
+        registry = self.capabilities.registry
+        options = {
+            name: dict(values) for name, values in command.capability_options.items()
+        }
+        if command.scene_sample_fps is not None:
+            options.setdefault("scene", {})["sample_fps"] = command.scene_sample_fps
+        return IndexConfig.local(
+            video_id=media_id,
+            enabled_modalities=selected,
+            frame_stride=command.frame_stride,
+            storage_directory=self.layout.indexes,
+            collection_names=registry.collection_names(selected),
+            capability_options=registry.validate_options(selected, options),
+        )
+
+    @application_boundary
+    def plan_bulk_index(self, command: PlanBulkIndexCommand) -> BulkIndexPlan:
+        """Decide which registered media still need indexing.
+
+        The plan is a read-only decision. Callers submit one ordinary indexing
+        operation per pending target, so a failure isolates to its own media
+        and can be retried without disturbing the rest of the selection.
+        """
+
+        config = self._index_config(command)
+        selected = config.enabled_modalities
+        snapshot = self._read_active_snapshot()
+        generations = {} if snapshot is None else snapshot.generations
+        requested = frozenset(selected)
+        targets = tuple(
+            self._bulk_index_target(
+                asset,
+                generation=generations.get(asset.media_id),
+                requested=requested,
+                reindex=command.reindex,
+                config_fingerprint=config.fingerprint(),
+            )
+            for asset in self._bulk_index_selection(command.media_ids)
+        )
+        return BulkIndexPlan(
+            targets=targets,
+            modalities=selected,
+            options=IndexOptions(
+                modalities=selected,
+                frame_stride=config.frame_stride,
+                capability_options=config.capability_options,
+            ),
+        )
+
+    def _bulk_index_selection(
+        self,
+        media_ids: tuple[str, ...],
+    ) -> tuple[MediaAsset, ...]:
+        if media_ids:
+            return tuple(self.get_media(media_id) for media_id in media_ids)
+        assets: list[MediaAsset] = []
+        cursor: str | None = None
+        while True:
+            page = self.list_media(ListMediaCommand(page_size=100, cursor=cursor))
+            assets.extend(page.items)
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+        return tuple(assets)
+
+    @staticmethod
+    def _bulk_index_target(
+        asset: MediaAsset,
+        *,
+        generation: GenerationReference | None,
+        requested: frozenset[str],
+        reindex: bool,
+        config_fingerprint: str,
+    ) -> BulkIndexTarget:
+        if asset.state != MediaState.ready:
+            return BulkIndexTarget(
+                media_id=asset.media_id,
+                original_filename=asset.original_filename,
+                state=BulkIndexTargetState.skipped,
+                reason=BulkIndexSkipReason.media_not_ready,
+            )
+        covered = (
+            not reindex
+            and generation is not None
+            and requested <= frozenset(generation.modalities)
+            and generation.input_sha256 == asset.sha256
+            and generation.config_fingerprint == config_fingerprint
+        )
+        if covered and generation is not None:
+            return BulkIndexTarget(
+                media_id=asset.media_id,
+                original_filename=asset.original_filename,
+                state=BulkIndexTargetState.skipped,
+                reason=BulkIndexSkipReason.already_indexed,
+                generation_id=generation.generation_id,
+            )
+        return BulkIndexTarget(
+            media_id=asset.media_id,
+            original_filename=asset.original_filename,
+            state=BulkIndexTargetState.pending,
+        )
 
     @application_boundary
     def import_uploaded_media(
@@ -99,13 +213,9 @@ class ControlPlaneApplication:
         registry = self.capabilities.registry
         indexable = registry.index_names()
         selected = (
-            indexable
-            if requested is None
-            else registry.validate_names(requested)
+            indexable if requested is None else registry.validate_names(requested)
         )
-        unsupported = tuple(
-            name for name in selected if name not in indexable
-        )
+        unsupported = tuple(name for name in selected if name not in indexable)
         if unsupported:
             raise CapabilityRequestError(
                 "Indexing does not support these capabilities: "

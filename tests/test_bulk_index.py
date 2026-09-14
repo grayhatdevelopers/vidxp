@@ -14,6 +14,7 @@ from vidxp.application_models import (
     PlanBulkIndexCommand,
 )
 from vidxp.capabilities.registry import create_capability_registry
+from vidxp.core.contracts import IndexConfig
 from vidxp.core.media import MediaState, MediaStream
 from vidxp.core.snapshots import GenerationReference, IndexSnapshot
 from vidxp.runtime import ModelRuntime
@@ -27,7 +28,12 @@ GENERATION_ID = "323456781234423481234567890abcde"
 SNAPSHOT_ID = "423456781234423481234567890abcde"
 FIRST_SHA256 = "a" * 64
 SECOND_SHA256 = "b" * 64
-CONFIG_FINGERPRINT = "c" * 64
+_registry = create_capability_registry()
+CONFIG_FINGERPRINT = IndexConfig.local(
+    enabled_modalities=("scene",),
+    collection_names=_registry.collection_names(("scene",)),
+    capability_options=_registry.validate_options(("scene",), {}),
+).fingerprint()
 MANIFEST_SHA256 = "d" * 64
 
 
@@ -77,9 +83,7 @@ def snapshot(*references: GenerationReference) -> IndexSnapshot:
         created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         config_fingerprint=CONFIG_FINGERPRINT,
         configuration={"enabled_modalities": ["scene"]},
-        generations={
-            reference.media_id: reference for reference in references
-        },
+        generations={reference.media_id: reference for reference in references},
     )
 
 
@@ -109,9 +113,7 @@ class BulkIndexPlanTests(unittest.TestCase):
             return MediaPage(
                 items=window,
                 total=len(assets),
-                next_cursor=(
-                    str(following) if following < len(assets) else None
-                ),
+                next_cursor=(str(following) if following < len(assets) else None),
             )
 
         media_service.list.side_effect = list_media
@@ -142,6 +144,27 @@ class BulkIndexPlanTests(unittest.TestCase):
         skipped = plan.skipped[0]
         self.assertEqual(skipped.reason, BulkIndexSkipReason.already_indexed)
         self.assertEqual(skipped.generation_id, GENERATION_ID)
+
+    def test_changed_configuration_is_planned_and_matches_execution_options(self):
+        application = self.application(
+            "unused",
+            assets=(media_asset(FIRST_MEDIA_ID),),
+            active_snapshot=snapshot(generation(FIRST_MEDIA_ID)),
+        )
+        for options in (
+            {"frame_stride": 3},
+            {"scene_sample_fps": 2},
+            {"capability_options": {"scene": {"batch_size": 8}}},
+        ):
+            with self.subTest(options=options):
+                plan = application.plan_bulk_index(
+                    PlanBulkIndexCommand(modalities=("scene",), **options)
+                )
+                self.assertEqual(len(plan.pending), 1)
+                self.assertNotEqual(
+                    application._index_config(plan.options).fingerprint(),
+                    CONFIG_FINGERPRINT,
+                )
 
     def test_media_missing_a_requested_modality_is_planned(self):
         with TemporaryDirectory() as root:
@@ -190,9 +213,7 @@ class BulkIndexPlanTests(unittest.TestCase):
         with TemporaryDirectory() as root:
             application = self.application(
                 root,
-                assets=(
-                    media_asset(FIRST_MEDIA_ID, state=MediaState.pending),
-                ),
+                assets=(media_asset(FIRST_MEDIA_ID, state=MediaState.pending),),
             )
             plan = application.plan_bulk_index(
                 PlanBulkIndexCommand(modalities=("scene",))

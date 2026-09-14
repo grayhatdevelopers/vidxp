@@ -9,6 +9,7 @@ from rich.table import Table
 
 from vidxp.application_models import (
     CreateIndexCommand,
+    PlanBulkIndexCommand,
     RemoveIndexCommand,
 )
 from vidxp.bulk_indexing import run_bulk_index
@@ -38,9 +39,7 @@ def create_index(
     capability_options: dict[str, dict],
     detach: bool = False,
 ) -> dict:
-    show_progress = (
-        not state.quiet and state.output_format == OutputFormat.rich
-    )
+    show_progress = not state.quiet and state.output_format == OutputFormat.rich
     selected = tuple(modalities)
     with IndexProgress(show_progress) as progress:
         job = state.jobs.submit_index(
@@ -56,9 +55,7 @@ def create_index(
             job = state.jobs.wait(
                 job.job_id,
                 progress=lambda current: (
-                    progress.update(
-                        current.progress.model_dump(mode="python")
-                    )
+                    progress.update(current.progress.model_dump(mode="python"))
                     if current.progress is not None
                     else None
                 ),
@@ -99,10 +96,7 @@ def index_create(
         typer.Option(
             "--frame-stride",
             min=1,
-            help=(
-                "Materialize every Nth frame for actor and legacy visual "
-                "indexing."
-            ),
+            help=("Materialize every Nth frame for actor and legacy visual indexing."),
         ),
     ] = 1,
     scene_sample_fps: Annotated[
@@ -172,6 +166,9 @@ def index_bulk(
             help="Index all eligible registered media in the catalog.",
         ),
     ] = False,
+    plan_only: Annotated[
+        bool, typer.Option("--plan-only", help="Preview indexing and skip decisions.")
+    ] = False,
     reindex: Annotated[
         bool,
         typer.Option(
@@ -192,10 +189,7 @@ def index_bulk(
         typer.Option(
             "--frame-stride",
             min=1,
-            help=(
-                "Materialize every Nth frame for actor and legacy visual "
-                "indexing."
-            ),
+            help=("Materialize every Nth frame for actor and legacy visual indexing."),
         ),
     ] = 1,
     scene_sample_fps: Annotated[
@@ -249,13 +243,48 @@ def index_bulk(
     output_fmt = effective_output_format(state, json_output)
     show_progress = not state.quiet and output_fmt == OutputFormat.rich
 
+    if plan_only and detach:
+        raise typer.BadParameter("--plan-only cannot be combined with --detach.")
+    plan = state.service.plan_bulk_index(
+        PlanBulkIndexCommand(
+            media_ids=tuple(media_ids or ()),
+            modalities=selected,
+            reindex=reindex,
+            frame_stride=frame_stride,
+            scene_sample_fps=scene_sample_fps,
+            capability_options=parsed_options,
+        )
+    )
+    if plan_only:
+        if output_fmt == OutputFormat.json:
+            emit_json(plan.model_dump(mode="json"))
+        else:
+            for target in plan.targets:
+                detail = target.reason.value if target.reason else "would index"
+                typer.echo(f"{target.original_filename}: {detail}")
+            typer.echo(f"{len(plan.pending)} to index, {len(plan.skipped)} skipped.")
+        return
+
+    completed = 0
+
+    def on_item_complete(result) -> None:
+        nonlocal completed
+        completed += 1
+        if show_progress:
+            typer.echo(
+                f"[{completed}/{len(plan.targets)}] {result.filename}: {result.status}"
+            )
+
     with IndexProgress(show_progress) as progress:
+
         def on_item_start(media_id: str, filename: str) -> None:
             if show_progress:
-                progress.update({
-                    "stage": "indexing",
-                    "message": f"Indexing {filename} ({media_id[:8]}...)",
-                })
+                progress.update(
+                    {
+                        "stage": "indexing",
+                        "message": f"Indexing {filename} ({media_id[:8]}...)",
+                    }
+                )
 
         def on_item_progress(media_id: str, current: Any) -> None:
             if show_progress:
@@ -266,6 +295,8 @@ def index_bulk(
 
         summary = run_bulk_index(
             application=state.service,
+            plan=plan,
+            on_item_complete=on_item_complete,
             jobs=state.jobs,
             media_ids=media_ids,
             all_eligible=all_eligible,
@@ -345,9 +376,7 @@ def index_remove(
     """Remove one media item from the active snapshot."""
 
     state = state_from_context(ctx)
-    removed = state.service.remove_from_index(
-        RemoveIndexCommand(media_id=media_id)
-    )
+    removed = state.service.remove_from_index(RemoveIndexCommand(media_id=media_id))
     payload = {"removed": removed, "media_id": media_id}
     if effective_output_format(state, json_output) == OutputFormat.json:
         emit_json(payload)
@@ -392,10 +421,7 @@ def index_list(
     assets = (
         ()
         if summary is None
-        else tuple(
-            state.service.get_media(media_id)
-            for media_id in summary.media_ids
-        )
+        else tuple(state.service.get_media(media_id) for media_id in summary.media_ids)
     )
     payload = {
         "state": status.state,
