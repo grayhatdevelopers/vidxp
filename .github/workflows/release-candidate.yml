@@ -56,6 +56,7 @@ jobs:
       source_tree: ${{ steps.source.outputs.tree }}
       tag: ${{ steps.contract.outputs.tag }}
       version: ${{ steps.contract.outputs.version }}
+      previous_tag: ${{ steps.source.outputs.previous_tag }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -85,6 +86,15 @@ jobs:
           [[ "$(jq -r .head.sha <<< "$pr")" == "$HEAD_SHA" ]]
           [[ "$(jq -r .head.ref <<< "$pr")" == release-please--branches--* ]]
           echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+          manifest=.release-please-manifest.json
+          if [[ "$TARGET_BRANCH" == "release" ]]; then
+            manifest=.release-please-manifest.stable.json
+          fi
+          previous_version="$(git show "$BASE_SHA:$manifest" | jq -er '.["."]')"
+          previous_tag="v$previous_version"
+          git show-ref --verify --quiet "refs/tags/$previous_tag"
+          git merge-base --is-ancestor "refs/tags/$previous_tag" "$BASE_SHA"
+          echo "previous_tag=$previous_tag" >> "$GITHUB_OUTPUT"
 
       - name: Validate the combined version contract
         id: contract
@@ -152,6 +162,7 @@ jobs:
           CONTROL_DIGEST: ${{ needs.containers.outputs.control_digest }}
           HEAD_SHA: ${{ inputs.head_sha }}
           PRODUCT_DIGEST: ${{ needs.containers.outputs.product_digest }}
+          PREVIOUS_TAG: ${{ needs.contract.outputs.previous_tag }}
           SOURCE_TREE: ${{ needs.contract.outputs.source_tree }}
           TAG: ${{ needs.contract.outputs.tag }}
           VERSION: ${{ needs.contract.outputs.version }}
@@ -163,6 +174,7 @@ jobs:
             --arg channel "$CHANNEL" \
             --arg control_digest "$CONTROL_DIGEST" \
             --arg product_digest "$PRODUCT_DIGEST" \
+            --arg previous_tag "$PREVIOUS_TAG" \
             --arg source_sha "$HEAD_SHA" \
             --arg source_tree "$SOURCE_TREE" \
             --arg tag "$TAG" \
@@ -170,7 +182,8 @@ jobs:
             --arg worker_digest "$WORKER_DIGEST" \
             '{candidate_run_id: $candidate_run_id, channel: $channel,
               source_sha: $source_sha, source_tree: $source_tree, tag: $tag,
-              version: $version, containers: {product: $product_digest,
+              version: $version, previous_tag: $previous_tag,
+              containers: {product: $product_digest,
               control: $control_digest, worker: $worker_digest}}' \
             > release-candidate.json
 

@@ -8,6 +8,8 @@ from urllib.parse import quote
 PAGE_START = "<!-- vidxp-release-page:start -->"
 CHANGELOG_START = "<!-- vidxp-release-changelog:start -->"
 PAGE_END = "<!-- vidxp-release-page:end -->"
+ATTRIBUTION_START = "<!-- vidxp-release-attribution:start -->"
+ATTRIBUTION_END = "<!-- vidxp-release-attribution:end -->"
 COMPOSED_PAGE = re.compile(
     rf"{re.escape(PAGE_START)}.*?{re.escape(CHANGELOG_START)}"
     rf"(?P<changelog>.*?){re.escape(PAGE_END)}",
@@ -36,7 +38,7 @@ def _download_url(repository: str, tag: str, asset: Path) -> str:
 def _original_changelog(notes: str) -> str:
     match = COMPOSED_PAGE.fullmatch(notes.strip())
     if match:
-        return match.group("changelog").strip()
+        return match.group("changelog").split(ATTRIBUTION_START, 1)[0].strip()
     return notes.strip()
 
 
@@ -49,6 +51,7 @@ def render(
     tag: str,
     version: str,
     channel: str,
+    github_notes: str | None = None,
 ) -> str:
     if channel not in {"beta", "stable"}:
         raise ValueError(f"unsupported release channel: {channel}")
@@ -89,10 +92,27 @@ def render(
     if not changelog:
         changelog = "No user-facing changes were listed for this release."
 
+    attribution = ""
+    if github_notes is not None:
+        if not github_notes.strip():
+            raise ValueError("GitHub contribution notes must not be empty")
+        attribution = (
+            f"\n{ATTRIBUTION_START}\n"
+            "<details>\n<summary>Contributors and pull requests</summary>\n\n"
+            f"{github_notes.strip()}\n\n</details>\n{ATTRIBUTION_END}\n"
+        )
+    elif ATTRIBUTION_START in existing_notes and ATTRIBUTION_END in existing_notes:
+        # Preserve credits when an existing page is rendered without new notes.
+        attribution = (
+            f"\n{ATTRIBUTION_START}"
+            + existing_notes.split(ATTRIBUTION_START, 1)[1].split(ATTRIBUTION_END, 1)[0]
+            + f"{ATTRIBUTION_END}\n"
+        )
+
     return (
         f"{PAGE_START}\n{intro}\n\n"
         f"## What changed\n\n{CHANGELOG_START}\n"
-        f"{changelog}\n{PAGE_END}\n"
+        f"{changelog}\n{attribution}{PAGE_END}\n"
     )
 
 
@@ -103,6 +123,7 @@ def main() -> None:
     parser.add_argument("--assets", type=Path, required=True)
     parser.add_argument("--channel", choices=("beta", "stable"), required=True)
     parser.add_argument("--existing", type=Path, required=True)
+    parser.add_argument("--github-notes", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--tag", required=True)
@@ -118,6 +139,11 @@ def main() -> None:
         tag=args.tag,
         version=args.version,
         channel=args.channel,
+        github_notes=(
+            args.github_notes.read_text(encoding="utf-8")
+            if args.github_notes is not None
+            else None
+        ),
     )
     args.output.write_text(rendered, encoding="utf-8")
 
