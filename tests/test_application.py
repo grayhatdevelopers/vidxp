@@ -726,11 +726,14 @@ class ApplicationTests(unittest.TestCase):
         )
         backend.open_store.return_value = manager
 
+        application.settings = application.settings.model_copy(
+            update={"search_candidate_depth": 500}
+        )
+
         # Request top_k=3 to caller
         application.search(SearchCommand(query="taxi", top_k=3))
 
-        # Capability search operation should have received expanded candidate limit (50)
-        self.assertEqual(searched_top_ks, [("scene", 50)])
+        self.assertEqual(searched_top_ks, [("scene", 500)])
 
     def test_query_video_uses_candidate_limit_for_channel_searches(self):
         requests = []
@@ -741,11 +744,29 @@ class ApplicationTests(unittest.TestCase):
                 query_id="indexed:1",
                 query=request.query,
                 modality="indexed",
+                hits=tuple(
+                    SearchHit(
+                        rank=rank,
+                        media_id=MEDIA_ID,
+                        video_id=MEDIA_ID,
+                        generation_id=GENERATION_ID,
+                        start=rank * 10,
+                        end=rank * 10 + 1,
+                        score=-float(rank),
+                        raw_distance=float(rank),
+                        modality="indexed",
+                        source_id=f"indexed:{rank}",
+                    )
+                    for rank in range(1, 6)
+                ),
             )
 
         manager = MagicMock()
         manager.__enter__.return_value = Mock(spec=IndexStore)
         application = self.indexed_application(handler, manager)
+        application.settings = application.settings.model_copy(
+            update={"search_candidate_depth": 500}
+        )
         pinned = IndexConfig.local(
             enabled_modalities=("indexed",),
             collection_names={"indexed": "indexed"},
@@ -768,10 +789,9 @@ class ApplicationTests(unittest.TestCase):
             ),
         )
 
-        # Underlying search operation should receive expanded candidate limit (50)
-        self.assertEqual(requests[0].top_k, 50)
-        # Fused moments / evidence should respect requested top_k=3
-        self.assertLessEqual(len(result.moments), 3)
+        self.assertEqual(requests[0].top_k, 500)
+        self.assertEqual(len(result.moments), 3)
+        self.assertEqual([moment.start for moment in result.moments], [10, 20, 30])
 
     def test_application_search_recovers_moment_ranked_past_public_top_k(self):
         def search_plugin(name: str, hits_fn) -> CapabilityPlugin:
