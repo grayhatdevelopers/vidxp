@@ -7,7 +7,9 @@ from rich.console import Console
 from rich.table import Table
 
 from vidxp.application_models import (
+    BulkIndexTargetState,
     CreateIndexCommand,
+    PlanBulkIndexCommand,
     RemoveIndexCommand,
 )
 from vidxp.cli_support import (
@@ -152,6 +154,173 @@ def index_create(
         capability_options=parse_capability_options(capability_options),
         detach=detach,
     )
+
+
+@app.command("bulk")
+def index_bulk(
+    ctx: typer.Context,
+    media_ids: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--media-id",
+            help=(
+                "Registered media identifier to index; repeat to select more "
+                "than one. Omit to select every registered media item."
+            ),
+        ),
+    ] = None,
+    modalities: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--modality",
+            "-m",
+            help="Modality to index; repeat to select more than one.",
+        ),
+    ] = None,
+    reindex: Annotated[
+        bool,
+        typer.Option(
+            "--reindex",
+            help="Index already-indexed media instead of skipping it.",
+        ),
+    ] = False,
+    plan_only: Annotated[
+        bool,
+        typer.Option(
+            "--plan-only",
+            help="Show what would be indexed and skipped without indexing.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Index many media items, skipping those the active snapshot covers."""
+
+    state = state_from_context(ctx)
+    indexable = tuple(
+        capability.name
+        for capability in state.service.list_capabilities()
+        if capability.supports_indexing
+    )
+    selected = selected_modalities(modalities, indexable)
+    plan = state.service.plan_bulk_index(
+        PlanBulkIndexCommand(
+            media_ids=tuple(media_ids or ()),
+            modalities=selected,
+            reindex=reindex,
+        )
+    )
+    output_format = effective_output_format(state, json_output)
+    pending = plan.pending
+    outcomes: list[dict] = [
+        {
+            "media_id": target.media_id,
+            "original_filename": target.original_filename,
+            "state": target.state.value,
+            "reason": None if target.reason is None else target.reason.value,
+            "generation_id": target.generation_id,
+            "job_id": None,
+        }
+        for target in plan.skipped
+    ]
+
+    if plan_only:
+        outcomes.extend(
+            {
+                "media_id": target.media_id,
+                "original_filename": target.original_filename,
+                "state": target.state.value,
+                "reason": None,
+                "generation_id": None,
+                "job_id": None,
+            }
+            for target in pending
+        )
+    else:
+        for position, target in enumerate(pending, start=1):
+            if output_format == OutputFormat.rich and not state.quiet:
+                typer.echo(
+                    f"[{position}/{len(pending)}] Indexing "
+                    f"{target.original_filename} ({target.media_id})."
+                )
+            entry = {
+                "media_id": target.media_id,
+                "original_filename": target.original_filename,
+                "state": "indexed",
+                "reason": None,
+                "generation_id": None,
+                "job_id": None,
+            }
+            try:
+                job = state.jobs.submit_index(
+                    CreateIndexCommand(
+                        media_id=target.media_id,
+                        modalities=plan.modalities,
+                    )
+                )
+                entry["job_id"] = job.job_id
+                completed = state.jobs.wait(job.job_id)
+                entry["job_id"] = completed.job_id
+            # One media item failing must not abandon the rest of the
+            # batch, so every error is recorded and the loop continues.
+            except Exception as exc:
+                entry["state"] = "failed"
+                entry["reason"] = str(exc)
+            outcomes.append(entry)
+
+    failed = [entry for entry in outcomes if entry["state"] == "failed"]
+    payload = {
+        "planned": len(pending),
+        "skipped": len(plan.skipped),
+        "indexed": len(
+            [entry for entry in outcomes if entry["state"] == "indexed"]
+        ),
+        "failed": len(failed),
+        "plan_only": plan_only,
+        "modalities": list(plan.modalities),
+        "items": outcomes,
+    }
+    if output_format == OutputFormat.json:
+        emit_json(payload)
+    else:
+        table = Table(
+            title="Planned media" if plan_only else "Bulk indexing results"
+        )
+        table.add_column("Filename")
+        table.add_column("Outcome")
+        table.add_column("Detail")
+        for target in plan.skipped:
+            table.add_row(
+                target.original_filename,
+                "skipped",
+                "" if target.reason is None else target.reason.value,
+            )
+        if plan_only:
+            for target in pending:
+                table.add_row(target.original_filename, "would index", "")
+        else:
+            for entry in outcomes:
+                if entry["state"] == BulkIndexTargetState.skipped.value:
+                    continue
+                table.add_row(
+                    entry["original_filename"],
+                    entry["state"],
+                    entry["reason"] or entry["job_id"] or "",
+                )
+        Console().print(table)
+        typer.echo(
+            f"Selected {len(plan.targets)} media item(s): "
+            f"{payload['skipped']} skipped, "
+            + (
+                f"{payload['planned']} would be indexed."
+                if plan_only
+                else f"{payload['indexed']} indexed, {payload['failed']} failed."
+            )
+        )
+    if failed:
+        raise typer.Exit(code=1)
 
 
 @app.command("remove")

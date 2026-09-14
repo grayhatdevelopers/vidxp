@@ -642,6 +642,85 @@ class IndexResult(ApplicationModel):
     record_counts: dict[str, NonNegativeInt] = Field(default_factory=dict)
 
 
+class BulkIndexTargetState(StrEnum):
+    pending = "pending"
+    skipped = "skipped"
+
+
+class BulkIndexSkipReason(StrEnum):
+    already_indexed = "already_indexed"
+    media_not_ready = "media_not_ready"
+
+
+class BulkIndexTarget(ApplicationModel):
+    media_id: MediaId
+    original_filename: str = Field(min_length=1)
+    state: BulkIndexTargetState
+    reason: BulkIndexSkipReason | None = Field(
+        default=None,
+        description="Why the media was skipped. Absent for pending targets.",
+    )
+    generation_id: IndexGenerationId | None = Field(
+        default=None,
+        description=(
+            "Generation already covering this media in the active snapshot."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _reason_matches_state(self) -> "BulkIndexTarget":
+        if self.state == BulkIndexTargetState.skipped and self.reason is None:
+            raise ValueError("A skipped target requires a reason.")
+        if self.state == BulkIndexTargetState.pending and self.reason is not None:
+            raise ValueError("A pending target cannot carry a skip reason.")
+        return self
+
+
+class PlanBulkIndexCommand(ApplicationModel):
+    media_ids: tuple[MediaId, ...] = Field(
+        default=(),
+        description=(
+            "Registered media to consider. Empty selects every registered "
+            "media item in the repository."
+        ),
+    )
+    modalities: tuple[str, ...]
+    reindex: bool = Field(
+        default=False,
+        description=(
+            "Plan already-indexed media for indexing instead of skipping it."
+        ),
+    )
+
+    @field_validator("media_ids")
+    @classmethod
+    def _unique_media_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("media_ids must not repeat a media identifier.")
+        return value
+
+
+class BulkIndexPlan(ApplicationModel):
+    targets: tuple[BulkIndexTarget, ...] = ()
+    modalities: tuple[str, ...]
+
+    @property
+    def pending(self) -> tuple[BulkIndexTarget, ...]:
+        return tuple(
+            target
+            for target in self.targets
+            if target.state == BulkIndexTargetState.pending
+        )
+
+    @property
+    def skipped(self) -> tuple[BulkIndexTarget, ...]:
+        return tuple(
+            target
+            for target in self.targets
+            if target.state == BulkIndexTargetState.skipped
+        )
+
+
 class RemoveIndexCommand(ApplicationModel):
     media_id: MediaId
 

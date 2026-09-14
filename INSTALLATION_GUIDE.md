@@ -245,6 +245,21 @@ vidxp search speech "the bread just came out of the oven"
 Add `--media-id <media-id>` to a search command to restrict results to one
 video. Without it, VidXP searches all indexed videos in the active repository.
 
+### Index more than one video
+
+Index every registered video that the active index does not already cover:
+
+```bash
+vidxp index bulk --modality scene
+```
+
+Videos the active index already covers are skipped, so the command is safe to
+repeat after importing more. Add `--media-id <media-id>` once per video to index
+a specific selection, `--plan-only` to see what would be indexed and skipped
+without indexing, and `--reindex` to index covered videos again. A video that
+fails does not stop the rest; rerun the command to retry only what is still
+missing.
+
 ### Start an installed interface
 
 | Interface | Command |
