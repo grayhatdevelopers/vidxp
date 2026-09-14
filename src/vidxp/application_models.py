@@ -962,7 +962,7 @@ class SearchResult(ApplicationModel):
 class FusionProvenance(ApplicationModel):
     profile: Literal[FusionProfile.reciprocal_rank] = FusionProfile.reciprocal_rank
     rank_constant: int = Field(default=60, gt=0)
-    overlap_rule: Literal["connected_intervals"] = "connected_intervals"
+    overlap_rule: Literal["connected_intervals", "shared_overlap"] = "connected_intervals"
     requested_modalities: tuple[Identifier, ...] = ()
     searched_modalities: tuple[Identifier, ...] = ()
 
