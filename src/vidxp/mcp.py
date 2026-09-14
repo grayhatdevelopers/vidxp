@@ -1352,6 +1352,10 @@ def create_mcp_server(
             "that a video is present in the active index snapshot."
         ),
         annotations=_READ_ONLY,
+        meta=_mcp_app_tool_meta(
+            "Listing VidXP media…",
+            "VidXP media library ready.",
+        ),
         structured_output=True,
     )
     async def list_media(
@@ -2060,6 +2064,10 @@ def create_mcp_server(
             "initial observation."
         ),
         annotations=_READ_ONLY,
+        meta=_mcp_app_tool_meta(
+            "Checking VidXP job status…",
+            "VidXP job status ready.",
+        ),
         structured_output=True,
     )
     async def get_job_status(job_id: JobId) -> JobSummary:
