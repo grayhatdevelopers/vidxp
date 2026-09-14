@@ -101,11 +101,43 @@ candidate have the same version and Git tree. It then:
 3. uploads the Python distributions, three Desktop packages, and
    `SHA256SUMS` to the GitHub release;
 4. renders `.github/release-intro.md` with the exact asset names above the
-   generated changelog; and
+   generated changelog and adds GitHub's contributor notes; and
 5. publishes the GitHub release as a prerelease or the latest stable release.
 
 Publication reuses the candidate artifacts. It does not rebuild them after the
 release pull request is merged.
+
+### Contributor attribution
+
+Release Please continues to own version selection and the product changelog.
+An expandable **Contributors and pull requests** section below that changelog
+contains GitHub's native generated notes: PR author credits, any **New
+Contributors** entries, and the full comparison link. The output is preserved
+as Markdown rather than parsed into a separate author list. It credits PR
+contributions, not every reviewer, issue reporter, or co-author.
+
+The candidate records the previous tag from its target branch's release
+manifest at the verified base revision. Beta uses
+`.release-please-manifest.json`; stable uses
+`.release-please-manifest.stable.json`. Both candidate validation and publication
+check that the previous tag exists and is an ancestor of the selected source.
+Publication supplies this explicit range to GitHub, instead of asking it to
+choose the latest release. `.github/release.yml` excludes release automation
+by `github-actions[bot]`; human documentation and test contributions remain
+eligible for credit.
+
+A contributor can appear as new in both a beta and its later stable release
+when both comparison ranges include their first contribution. This follows
+GitHub's attribution behavior; VidXP does not track a separate announcement
+history. Nightly TestPyPI packages do not have a GitHub release or this section.
+
+GitHub generates the contribution notes before the final asset upload and
+release-page edit. If generation fails, publication stops at that step; PyPI
+and container publication may already have completed. Retry the same workflow
+after resolving the error. Rendering replaces the previous attribution block
+without duplicating it or changing the product changelog. Notes are regenerated
+on retry, so later PR-title edits can be reflected even though the tag range
+stays fixed.
 
 The Desktop installers contain the candidate's tested VidXP wheel. This allows
 managed setup to be tested before that wheel is public. Selected dependencies
