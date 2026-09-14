@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Mapping
+from threading import RLock
 
 from vidxp.capabilities.registry import (
     CapabilityRegistry,
@@ -250,6 +251,7 @@ class ManifestStore:
         self.checkpoint_directory = (
             self.run_directory / CHECKPOINT_DIRECTORY
         )
+        self._lock = RLock()
 
     def _checkpoint_path(self, video_id: str) -> Path:
         digest = hashlib.sha256(video_id.encode("utf-8")).hexdigest()
@@ -366,10 +368,12 @@ class ManifestStore:
         return manifest
 
     def read(self) -> dict[str, Any]:
-        return json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        with self._lock:
+            return json.loads(self.manifest_path.read_text(encoding="utf-8"))
 
     def write(self, manifest: Mapping[str, Any]) -> None:
-        write_json_atomic(self.manifest_path, manifest)
+        with self._lock:
+            write_json_atomic(self.manifest_path, manifest)
 
     def _refresh_runtime(self, manifest: dict[str, Any]) -> None:
         manifest["models"]["runtime"] = self.runtime.describe()
@@ -401,26 +405,27 @@ class ManifestStore:
         if checkpoint.get("state") != "complete":
             return False
 
-        manifest = self.read()
-        if video_id not in manifest["completed_videos"]:
-            manifest["videos"][video_id] = {
-                "state": "complete",
-                "completed_at": checkpoint["completed_at"],
-                "summary": checkpoint.get("summary", {}),
-                "stages": manifest["videos"].get(video_id, {}).get(
-                    "stages",
-                    {},
-                ),
-            }
-            manifest["completed_videos"].append(video_id)
-            manifest["completed_videos"].sort()
-            for key in ("failed_videos", "interrupted_videos"):
-                manifest[key] = [
-                    item for item in manifest[key] if item != video_id
-                ]
-            manifest["updated_at"] = utc_now()
-            self.write(manifest)
-        return True
+        with self._lock:
+            manifest = self.read()
+            if video_id not in manifest["completed_videos"]:
+                manifest["videos"][video_id] = {
+                    "state": "complete",
+                    "completed_at": checkpoint["completed_at"],
+                    "summary": checkpoint.get("summary", {}),
+                    "stages": manifest["videos"].get(video_id, {}).get(
+                        "stages",
+                        {},
+                    ),
+                }
+                manifest["completed_videos"].append(video_id)
+                manifest["completed_videos"].sort()
+                for key in ("failed_videos", "interrupted_videos"):
+                    manifest[key] = [
+                        item for item in manifest[key] if item != video_id
+                    ]
+                manifest["updated_at"] = utc_now()
+                self.write(manifest)
+            return True
 
     def start_video(self, video_id: str) -> None:
         self._checkpoint_path(video_id).unlink(missing_ok=True)
@@ -455,10 +460,11 @@ class ManifestStore:
             "recorded_at": utc_now(),
         }
         _append_jsonl(self.timings_path, timing)
-        manifest = self.read()
-        manifest["videos"][video_id]["stages"][stage] = timing
-        manifest["updated_at"] = utc_now()
-        self.write(manifest)
+        with self._lock:
+            manifest = self.read()
+            manifest["videos"][video_id]["stages"][stage] = timing
+            manifest["updated_at"] = utc_now()
+            self.write(manifest)
 
     def complete_video(
         self,
