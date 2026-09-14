@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from typing import Annotated, Iterable
+from typing import Annotated, Any, Iterable
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from vidxp.application_models import (
-    BulkIndexTargetState,
     CreateIndexCommand,
-    PlanBulkIndexCommand,
     RemoveIndexCommand,
 )
+from vidxp.bulk_indexing import run_bulk_index
 from vidxp.cli_support import (
     CLIState,
     IndexProgress,
@@ -161,14 +161,24 @@ def index_bulk(
     ctx: typer.Context,
     media_ids: Annotated[
         list[str] | None,
-        typer.Option(
-            "--media-id",
-            help=(
-                "Registered media identifier to index; repeat to select more "
-                "than one. Omit to select every registered media item."
-            ),
+        typer.Argument(
+            help="Registered media identifiers to index.",
         ),
     ] = None,
+    all_eligible: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Index all eligible registered media in the catalog.",
+        ),
+    ] = False,
+    reindex: Annotated[
+        bool,
+        typer.Option(
+            "--reindex",
+            help="Reindex media even if already present in the active index.",
+        ),
+    ] = False,
     modalities: Annotated[
         list[str] | None,
         typer.Option(
@@ -177,18 +187,43 @@ def index_bulk(
             help="Modality to index; repeat to select more than one.",
         ),
     ] = None,
-    reindex: Annotated[
-        bool,
+    frame_stride: Annotated[
+        int,
         typer.Option(
-            "--reindex",
-            help="Index already-indexed media instead of skipping it.",
+            "--frame-stride",
+            min=1,
+            help=(
+                "Materialize every Nth frame for actor and legacy visual "
+                "indexing."
+            ),
         ),
-    ] = False,
-    plan_only: Annotated[
+    ] = 1,
+    scene_sample_fps: Annotated[
+        float | None,
+        typer.Option(
+            "--scene-sample-fps",
+            min=0.01,
+            help=(
+                "Target scene samples per second; lower-FPS media uses every "
+                "available frame."
+            ),
+        ),
+    ] = None,
+    capability_options: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--option",
+            help=(
+                "Capability setting as CAPABILITY.KEY=VALUE; "
+                "repeat for multiple settings."
+            ),
+        ),
+    ] = None,
+    detach: Annotated[
         bool,
         typer.Option(
-            "--plan-only",
-            help="Show what would be indexed and skipped without indexing.",
+            "--detach",
+            help="Return after the durable job is queued.",
         ),
     ] = False,
     json_output: Annotated[
@@ -196,7 +231,12 @@ def index_bulk(
         typer.Option("--json", help="Emit machine-readable JSON."),
     ] = False,
 ) -> None:
-    """Index many media items, skipping those the active snapshot covers."""
+    """Index multiple media items or all eligible media in the catalog."""
+
+    if not media_ids and not all_eligible:
+        raise typer.BadParameter("Provide either media IDs or pass --all.")
+    if media_ids and all_eligible:
+        raise typer.BadParameter("Pass media IDs or --all, not both.")
 
     state = state_from_context(ctx)
     indexable = tuple(
@@ -205,121 +245,88 @@ def index_bulk(
         if capability.supports_indexing
     )
     selected = selected_modalities(modalities, indexable)
-    plan = state.service.plan_bulk_index(
-        PlanBulkIndexCommand(
-            media_ids=tuple(media_ids or ()),
+    parsed_options = parse_capability_options(capability_options)
+    output_fmt = effective_output_format(state, json_output)
+    show_progress = not state.quiet and output_fmt == OutputFormat.rich
+
+    with IndexProgress(show_progress) as progress:
+        def on_item_start(media_id: str, filename: str) -> None:
+            if show_progress:
+                progress.update({
+                    "stage": "indexing",
+                    "message": f"Indexing {filename} ({media_id[:8]}...)",
+                })
+
+        def on_item_progress(media_id: str, current: Any) -> None:
+            if show_progress:
+                if hasattr(current, "progress") and current.progress is not None:
+                    progress.update(current.progress.model_dump(mode="python"))
+                elif isinstance(current, dict):
+                    progress.update(current)
+
+        summary = run_bulk_index(
+            application=state.service,
+            jobs=state.jobs,
+            media_ids=media_ids,
+            all_eligible=all_eligible,
+            skip_indexed=not reindex,
+            detach=detach,
             modalities=selected,
-            reindex=reindex,
+            frame_stride=frame_stride,
+            scene_sample_fps=scene_sample_fps,
+            capability_options=parsed_options,
+            on_item_start=on_item_start,
+            on_item_progress=on_item_progress,
         )
-    )
-    output_format = effective_output_format(state, json_output)
-    pending = plan.pending
-    outcomes: list[dict] = [
-        {
-            "media_id": target.media_id,
-            "original_filename": target.original_filename,
-            "state": target.state.value,
-            "reason": None if target.reason is None else target.reason.value,
-            "generation_id": target.generation_id,
-            "job_id": None,
+
+    if output_fmt == OutputFormat.json:
+        payload = {
+            "total": summary.total,
+            "indexed": summary.indexed,
+            "skipped": summary.skipped,
+            "failed": summary.failed,
+            "queued": summary.queued,
+            "results": [
+                {
+                    "media_id": r.media_id,
+                    "filename": r.filename,
+                    "status": r.status,
+                    "job_id": r.job_id,
+                    "error_code": r.error_code,
+                    "error_message": r.error_message,
+                }
+                for r in summary.results
+            ],
         }
-        for target in plan.skipped
-    ]
-
-    if plan_only:
-        outcomes.extend(
-            {
-                "media_id": target.media_id,
-                "original_filename": target.original_filename,
-                "state": target.state.value,
-                "reason": None,
-                "generation_id": None,
-                "job_id": None,
-            }
-            for target in pending
-        )
-    else:
-        for position, target in enumerate(pending, start=1):
-            if output_format == OutputFormat.rich and not state.quiet:
-                typer.echo(
-                    f"[{position}/{len(pending)}] Indexing "
-                    f"{target.original_filename} ({target.media_id})."
-                )
-            entry = {
-                "media_id": target.media_id,
-                "original_filename": target.original_filename,
-                "state": "indexed",
-                "reason": None,
-                "generation_id": None,
-                "job_id": None,
-            }
-            try:
-                job = state.jobs.submit_index(
-                    CreateIndexCommand(
-                        media_id=target.media_id,
-                        modalities=plan.modalities,
-                    )
-                )
-                entry["job_id"] = job.job_id
-                completed = state.jobs.wait(job.job_id)
-                entry["job_id"] = completed.job_id
-            # One media item failing must not abandon the rest of the
-            # batch, so every error is recorded and the loop continues.
-            except Exception as exc:
-                entry["state"] = "failed"
-                entry["reason"] = str(exc)
-            outcomes.append(entry)
-
-    failed = [entry for entry in outcomes if entry["state"] == "failed"]
-    payload = {
-        "planned": len(pending),
-        "skipped": len(plan.skipped),
-        "indexed": len(
-            [entry for entry in outcomes if entry["state"] == "indexed"]
-        ),
-        "failed": len(failed),
-        "plan_only": plan_only,
-        "modalities": list(plan.modalities),
-        "items": outcomes,
-    }
-    if output_format == OutputFormat.json:
         emit_json(payload)
     else:
-        table = Table(
-            title="Planned media" if plan_only else "Bulk indexing results"
-        )
+        table = Table(title="Bulk indexing summary")
+        table.add_column("Media ID")
         table.add_column("Filename")
-        table.add_column("Outcome")
-        table.add_column("Detail")
-        for target in plan.skipped:
-            table.add_row(
-                target.original_filename,
-                "skipped",
-                "" if target.reason is None else target.reason.value,
+        table.add_column("Status")
+        table.add_column("Job ID")
+        table.add_column("Error")
+        for r in summary.results:
+            error_str = (
+                f"[{r.error_code}] {r.error_message}"
+                if r.error_code
+                else (r.error_message or "—")
             )
-        if plan_only:
-            for target in pending:
-                table.add_row(target.original_filename, "would index", "")
-        else:
-            for entry in outcomes:
-                if entry["state"] == BulkIndexTargetState.skipped.value:
-                    continue
-                table.add_row(
-                    entry["original_filename"],
-                    entry["state"],
-                    entry["reason"] or entry["job_id"] or "",
-                )
+            table.add_row(
+                escape(r.media_id),
+                escape(r.filename),
+                escape(r.status),
+                escape(r.job_id or "—"),
+                escape(error_str),
+            )
         Console().print(table)
         typer.echo(
-            f"Selected {len(plan.targets)} media item(s): "
-            f"{payload['skipped']} skipped, "
-            + (
-                f"{payload['planned']} would be indexed."
-                if plan_only
-                else f"{payload['indexed']} indexed, {payload['failed']} failed."
-            )
+            f"Total: {summary.total}, Indexed: {summary.indexed}, "
+            f"Skipped: {summary.skipped}, Failed: {summary.failed}, "
+            f"Queued: {summary.queued}."
         )
-    if failed:
+
+    if summary.failed > 0:
         raise typer.Exit(code=1)
 
 
