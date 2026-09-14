@@ -88,6 +88,7 @@ jobs:
       run_container: ${{ steps.scope.outputs.run_container }}
       run_desktop: ${{ steps.scope.outputs.run_desktop }}
       run_suite: ${{ steps.scope.outputs.run_suite }}
+      run_providers: ${{ steps.scope.outputs.run_providers }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -228,7 +229,7 @@ jobs:
         run: bash utils/smoke_container.sh vidxp:ci
 
   provider-platform-smoke:
-    if: needs.scope.outputs.run_suite == 'true'
+    if: needs.scope.outputs.run_providers == 'true'
     needs: scope
     name: CPU providers (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -293,13 +294,20 @@ jobs:
           PROVIDER_RESULT: ${{ needs.provider-platform-smoke.result }}
           SCOPE_RESULT: ${{ needs.scope.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
+          EXPECT_DESKTOP: ${{ needs.scope.outputs.run_desktop }}
+          EXPECT_PROVIDERS: ${{ needs.scope.outputs.run_providers }}
+          EXPECT_VALIDATE: ${{ needs.scope.outputs.needs_python }}
         shell: bash
         run: |
-          [[ "$SCOPE_RESULT" == "success" ]]
-          for result in \
-            "$DESKTOP_RESULT" \
-            "$PROVIDER_RESULT" \
-            "$VALIDATE_RESULT"
-          do
-            [[ "$result" == "success" || "$result" == "skipped" ]]
-          done
+          [[ "$SCOPE_RESULT" == "success" ]] || exit 1
+          require_result() {
+            if [[ "$1" == "true" ]]; then
+              [[ "$2" == "success" ]]
+            else
+              [[ "$1" == "false" ]] || return 1
+              [[ "$2" == "success" || "$2" == "skipped" ]]
+            fi
+          }
+          require_result "$EXPECT_DESKTOP" "$DESKTOP_RESULT" || exit 1
+          require_result "$EXPECT_PROVIDERS" "$PROVIDER_RESULT" || exit 1
+          require_result "$EXPECT_VALIDATE" "$VALIDATE_RESULT" || exit 1

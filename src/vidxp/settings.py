@@ -65,14 +65,10 @@ def _tusd_cors_origins(pattern: str) -> tuple[str, ...]:
             )
         port_text = match.group("port")
         if port_text is not None and not 1 <= int(port_text) <= 65535:
-            raise ValueError(
-                "The upload CORS origin regex contains an invalid port."
-            )
+            raise ValueError("The upload CORS origin regex contains an invalid port.")
         origins.append(value.replace(r"\.", ".").lower())
     if len(set(origins)) != len(origins):
-        raise ValueError(
-            "The upload CORS origin regex contains a duplicate origin."
-        )
+        raise ValueError("The upload CORS origin regex contains a duplicate origin.")
     return tuple(origins)
 
 
@@ -134,13 +130,9 @@ class VidXPSettings(BaseSettings):
 
     mode: ApplicationMode = ApplicationMode.local
     data_dir: Path = Field(default_factory=default_data_directory)
-    repository_root: Path = Field(
-        default_factory=default_repository_directory
-    )
+    repository_root: Path = Field(default_factory=default_repository_directory)
     runtime_backend: str = "auto"
-    model_cache: Path = Field(
-        default_factory=default_model_directory
-    )
+    model_cache: Path = Field(default_factory=default_model_directory)
     allow_model_downloads: bool = True
     max_loaded_models: int = Field(default=3, gt=0, le=16)
     max_concurrent_indexing: int = Field(default=1, gt=0, le=16)
@@ -166,6 +158,8 @@ class VidXPSettings(BaseSettings):
     )
     evidence_board_tiles_per_page: int = Field(default=24, gt=0, le=48)
     evidence_board_pages_per_job: int = Field(default=4, gt=0, le=16)
+    search_candidate_depth: int = Field(default=50, gt=0, le=500)
+
     http_bind_host: str = Field(default="127.0.0.1", min_length=1)
     http_port: int = Field(default=DEFAULT_HTTP_PORT, gt=0, le=65535)
     http_auth_mode: HttpAuthMode = HttpAuthMode.none
@@ -382,8 +376,7 @@ class VidXPSettings(BaseSettings):
         backend = value.strip().lower()
         if not re.fullmatch(r"(auto|cpu|mps|cuda(?::[0-9]+)?)", backend):
             raise ValueError(
-                "runtime_backend must be auto, cpu, mps, cuda, "
-                "or cuda:<device-index>."
+                "runtime_backend must be auto, cpu, mps, cuda, or cuda:<device-index>."
             )
         return backend
 
@@ -401,8 +394,7 @@ class VidXPSettings(BaseSettings):
         ]
         if invalid:
             raise ValueError(
-                "capability_allowlist entries must use "
-                "DISTRIBUTION:ENTRY_POINT."
+                "capability_allowlist entries must use DISTRIBUTION:ENTRY_POINT."
             )
         return cleaned
 
@@ -415,9 +407,7 @@ class VidXPSettings(BaseSettings):
     )
     @classmethod
     def _clean_http_lists(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        return tuple(
-            dict.fromkeys(value.strip() for value in values if value.strip())
-        )
+        return tuple(dict.fromkeys(value.strip() for value in values if value.strip()))
 
     @field_validator("http_trusted_hosts")
     @classmethod
@@ -427,17 +417,10 @@ class VidXPSettings(BaseSettings):
     ) -> tuple[str, ...]:
         normalized = tuple(value.lower() for value in values)
         for value in normalized:
-            if (
-                "*" in value[1:]
-                or (
-                    value.startswith("*")
-                    and value != "*"
-                    and not value.startswith("*.")
-                )
+            if "*" in value[1:] or (
+                value.startswith("*") and value != "*" and not value.startswith("*.")
             ):
-                raise ValueError(
-                    "Trusted-host wildcards must use *.example.com."
-                )
+                raise ValueError("Trusted-host wildcards must use *.example.com.")
         return normalized
 
     @field_validator("mcp_allowed_hosts")
@@ -449,13 +432,9 @@ class VidXPSettings(BaseSettings):
         normalized = tuple(value.lower() for value in values)
         for value in normalized:
             if "*" in value and not value.endswith(":*"):
-                raise ValueError(
-                    "MCP host wildcards are supported only as host:*."
-                )
+                raise ValueError("MCP host wildcards are supported only as host:*.")
             if "/" in value or "://" in value:
-                raise ValueError(
-                    "MCP allowed hosts must be Host header values."
-                )
+                raise ValueError("MCP allowed hosts must be Host header values.")
         return normalized
 
     @field_validator("mcp_allowed_origins")
@@ -477,9 +456,7 @@ class VidXPSettings(BaseSettings):
                 or parsed.query
                 or parsed.fragment
             ):
-                raise ValueError(
-                    "MCP allowed origins must be serialized HTTP origins."
-                )
+                raise ValueError("MCP allowed origins must be serialized HTTP origins.")
             try:
                 parsed.port
             except ValueError as exc:
@@ -487,9 +464,7 @@ class VidXPSettings(BaseSettings):
                     "An MCP allowed origin contains an invalid port."
                 ) from exc
             if "*" in value and not value.endswith(":*"):
-                raise ValueError(
-                    "MCP origin wildcards are supported only as origin:*."
-                )
+                raise ValueError("MCP origin wildcards are supported only as origin:*.")
         return values
 
     @field_validator("http_oidc_algorithms")
@@ -527,23 +502,17 @@ class VidXPSettings(BaseSettings):
         if value != value.strip():
             raise ValueError(f"{info.field_name} must not contain whitespace.")
         if "\\" in value or any(
-            character.isspace()
-            or ord(character) < 32
-            or ord(character) == 127
+            character.isspace() or ord(character) < 32 or ord(character) == 127
             for character in value
         ):
-            raise ValueError(
-                f"{info.field_name} contains an unsafe URL character."
-            )
+            raise ValueError(f"{info.field_name} contains an unsafe URL character.")
         parsed = urlsplit(value)
         if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
             raise ValueError(f"{info.field_name} must be an HTTP URL.")
         try:
             parsed.port
         except ValueError as exc:
-            raise ValueError(
-                f"{info.field_name} contains an invalid port."
-            ) from exc
+            raise ValueError(f"{info.field_name} contains an invalid port.") from exc
         if parsed.username is not None or parsed.password is not None:
             raise ValueError(f"{info.field_name} must not contain credentials.")
         if "#" in value:
@@ -553,9 +522,7 @@ class VidXPSettings(BaseSettings):
             "127.0.0.1",
             "::1",
         }:
-            raise ValueError(
-                f"{info.field_name} must use HTTPS outside loopback."
-            )
+            raise ValueError(f"{info.field_name} must use HTTPS outside loopback.")
         if info.field_name == "http_oidc_issuer" and "?" in value:
             raise ValueError("http_oidc_issuer must not contain a query.")
         return value
@@ -588,32 +555,24 @@ class VidXPSettings(BaseSettings):
         try:
             parsed.port
         except ValueError as exc:
-            raise ValueError(
-                f"{info.field_name} contains an invalid port."
-            ) from exc
+            raise ValueError(f"{info.field_name} contains an invalid port.") from exc
         if (
             info.field_name == "upload_public_endpoint"
             and parsed.scheme != "https"
-            and parsed.hostname.lower() not in {
+            and parsed.hostname.lower()
+            not in {
                 "localhost",
                 "127.0.0.1",
                 "::1",
             }
         ):
-            raise ValueError(
-                "upload_public_endpoint must use HTTPS outside loopback."
-            )
+            raise ValueError("upload_public_endpoint must use HTTPS outside loopback.")
         if info.field_name == "slm_base_url":
             if parsed.path.rstrip("/") != "/v1":
                 raise ValueError("slm_base_url must end with /v1.")
             if parsed.hostname.lower() in {"ollama.com", "www.ollama.com"}:
-                raise ValueError(
-                    "slm_base_url must use a self-hosted Ollama service."
-                )
-        if (
-            info.field_name != "slm_base_url"
-            and not value.endswith("/")
-        ):
+                raise ValueError("slm_base_url must use a self-hosted Ollama service.")
+        if info.field_name != "slm_base_url" and not value.endswith("/"):
             raise ValueError(f"{info.field_name} must end with a slash.")
         return value
 
@@ -634,17 +593,13 @@ class VidXPSettings(BaseSettings):
             or parsed.fragment
             or parsed.path.rstrip("/") != "/mcp"
         ):
-            raise ValueError(
-                "mcp_public_url must be a plain HTTP URL ending in /mcp."
-            )
-        if (
-            parsed.scheme != "https"
-            and parsed.hostname.lower()
-            not in {"localhost", "127.0.0.1", "::1"}
-        ):
-            raise ValueError(
-                "mcp_public_url must use HTTPS outside loopback."
-            )
+            raise ValueError("mcp_public_url must be a plain HTTP URL ending in /mcp.")
+        if parsed.scheme != "https" and parsed.hostname.lower() not in {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        }:
+            raise ValueError("mcp_public_url must use HTTPS outside loopback.")
         return value.rstrip("/")
 
     @field_validator("upload_handoff_public_url")
@@ -677,9 +632,7 @@ class VidXPSettings(BaseSettings):
         cls,
         values: tuple[Path, ...],
     ) -> tuple[Path, ...]:
-        return tuple(
-            dict.fromkeys(path.expanduser() for path in values)
-        )
+        return tuple(dict.fromkeys(path.expanduser() for path in values))
 
     @model_validator(mode="after")
     def _require_explicit_server_backend(self) -> "VidXPSettings":
@@ -689,17 +642,17 @@ class VidXPSettings(BaseSettings):
                 "Connect agents to the remote MCP endpoint or use the HTTP "
                 "API directly."
             )
-        if (
-            self.mode == ApplicationMode.server
-            and not re.fullmatch(r"(cpu|cuda(?::[0-9]+)?)", self.runtime_backend)
+        if self.mode == ApplicationMode.server and not re.fullmatch(
+            r"(cpu|cuda(?::[0-9]+)?)", self.runtime_backend
         ):
             raise ValueError(
                 "Server mode requires an explicit cpu or cuda runtime backend."
             )
         if self.http_auth_mode == HttpAuthMode.static:
-            if self.http_static_bearer_token is None or len(
-                self.http_static_bearer_token.get_secret_value()
-            ) < 32:
+            if (
+                self.http_static_bearer_token is None
+                or len(self.http_static_bearer_token.get_secret_value()) < 32
+            ):
                 raise ValueError(
                     "Static HTTP authentication requires a bearer token of "
                     "at least 32 characters."
@@ -805,9 +758,7 @@ class VidXPSettings(BaseSettings):
                 "per-file upload limit."
             )
         if self.upload_cors_origin_regex is not None:
-            allowed_origins = _tusd_cors_origins(
-                self.upload_cors_origin_regex
-            )
+            allowed_origins = _tusd_cors_origins(self.upload_cors_origin_regex)
             if self.upload_handoff_public_url is not None:
                 parsed_handoff = urlsplit(self.upload_handoff_public_url)
                 handoff_origin = (
@@ -818,9 +769,7 @@ class VidXPSettings(BaseSettings):
                         "The upload CORS origin regex must allow the handoff origin."
                     )
         if (self.slm_base_url is None) != (self.slm_model is None):
-            raise ValueError(
-                "slm_base_url and slm_model must be configured together."
-            )
+            raise ValueError("slm_base_url and slm_model must be configured together.")
         if self.slm_model is not None and self.slm_model.endswith("-cloud"):
             raise ValueError("slm_model must be a self-hosted Ollama model.")
         return self
@@ -831,13 +780,13 @@ class VidXPSettings(BaseSettings):
             and self.http_auth_mode == HttpAuthMode.none
         ):
             raise ValueError(
-                "Server-mode HTTP requires static bearer or OIDC "
-                "authentication."
+                "Server-mode HTTP requires static bearer or OIDC authentication."
             )
-        if (
-            self.http_auth_mode == HttpAuthMode.none
-            and self.http_bind_host not in {"127.0.0.1", "::1", "localhost"}
-        ):
+        if self.http_auth_mode == HttpAuthMode.none and self.http_bind_host not in {
+            "127.0.0.1",
+            "::1",
+            "localhost",
+        }:
             raise ValueError(
                 "Unauthenticated HTTP may bind only to a loopback address."
             )
@@ -845,13 +794,8 @@ class VidXPSettings(BaseSettings):
             raise ValueError("At least one trusted HTTP host is required.")
         if not self.mcp_allowed_hosts:
             raise ValueError("At least one allowed MCP host is required.")
-        if (
-            self.http_auth_mode == HttpAuthMode.oidc
-            and self.mcp_public_url is None
-        ):
-            raise ValueError(
-                "OIDC MCP authentication requires mcp_public_url."
-            )
+        if self.http_auth_mode == HttpAuthMode.oidc and self.mcp_public_url is None:
+            raise ValueError("OIDC MCP authentication requires mcp_public_url.")
 
     @property
     def layout(self) -> RepositoryLayout:

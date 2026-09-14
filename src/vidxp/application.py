@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from contextlib import contextmanager
 from pathlib import Path
 from shutil import which
@@ -63,7 +65,10 @@ from vidxp.core.snapshots import IndexSnapshot
 from vidxp.execution import ExecutionContext, execution_context
 from vidxp.ports import IndexBackend, ModelRuntimePort, QueryModelPort
 from vidxp.query_service import GroundedQueryService
-from vidxp.search_fusion import fuse_search_results
+from vidxp.search_fusion import (
+    fuse_search_results,
+    resolve_candidate_limit,
+)
 from vidxp.model_contracts import (
     ModelArtifactDownloadError,
     ModelArtifactUnavailableError,
@@ -232,36 +237,11 @@ class VidXPApplication(ControlPlaneApplication):
         execution: ExecutionContext | None = None,
     ) -> IndexResult:
         active_execution = execution_context(execution)
-        selected = self.registry.validate_names(command.modalities)
-        non_indexable = [
-            name for name in selected if self.registry.get(name).collection_name is None
-        ]
-        if non_indexable:
-            raise CapabilityRequestError(
-                "One or more selected capabilities do not support indexing."
-            )
+        config = replace(self._index_config(command, media_id=command.media_id), device=self.device)
+        selected = config.enabled_modalities
         media = self.media.require_record(command.media_id)
         content = self.media.content(command.media_id)
         self.layout.ensure_local_directories()
-        capability_options = {
-            name: dict(options) for name, options in command.capability_options.items()
-        }
-        if command.scene_sample_fps is not None:
-            capability_options.setdefault("scene", {})["sample_fps"] = (
-                command.scene_sample_fps
-            )
-        config = IndexConfig.local(
-            video_id=command.media_id,
-            enabled_modalities=selected,
-            frame_stride=command.frame_stride,
-            storage_directory=self.index_directory,
-            collection_names=self.registry.collection_names(selected),
-            capability_options=self.registry.validate_options(
-                selected,
-                capability_options,
-            ),
-            device=self.device,
-        )
         with self.runtime.scheduler.indexing():
             with self._capability_dependencies(selected):
                 result = self.index_backend.create(
@@ -529,6 +509,9 @@ class VidXPApplication(ControlPlaneApplication):
             config,
             include_actor=False,
         )
+        candidate_limit = resolve_candidate_limit(
+            command.top_k, self.settings.search_candidate_depth
+        )
         with self._capability_dependencies(selected):
             with self.index_backend.open_store(config) as storage:
                 context = CapabilityContext(
@@ -542,7 +525,7 @@ class VidXPApplication(ControlPlaneApplication):
                             modality,
                             query=command.query,
                             media_id=command.media_id,
-                            top_k=command.top_k,
+                            top_k=candidate_limit,
                             context=context,
                         )
                         for modality in selected
@@ -667,6 +650,9 @@ class VidXPApplication(ControlPlaneApplication):
         results: list[SearchResult] = []
         actors: tuple[ActorClusterSummary, ...] = ()
         dependencies = search_modalities + (("actor",) if actor_overview else ())
+        candidate_limit = resolve_candidate_limit(
+            command.top_k, self.settings.search_candidate_depth
+        )
         with self._capability_dependencies(dependencies):
             with self.index_backend.open_store(config) as storage:
                 context = CapabilityContext(
@@ -683,7 +669,7 @@ class VidXPApplication(ControlPlaneApplication):
                                     step.modality,
                                     query=step.query,
                                     media_id=command.media_id,
-                                    top_k=command.top_k,
+                                    top_k=candidate_limit,
                                     context=context,
                                 )
                             )
