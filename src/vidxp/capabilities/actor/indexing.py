@@ -74,7 +74,7 @@ def _actor_records(
         records.append(
             StorageRecord(
                 source_id=source_id,
-                embedding=[0.0],
+                embedding=detection["encoding"],
                 metadata={
                     **config.record_identity("actor", source_id),
                     "detection_id": detection["detection_id"],
@@ -94,6 +94,7 @@ def _actor_records(
 def _actor_cluster_records(
     cluster_sizes: dict[str, int],
     cluster_ranges: dict[str, tuple[float, float]],
+    cluster_embeddings: dict[str, Any],
     config: IndexConfig,
 ) -> list[StorageRecord]:
     records = []
@@ -110,7 +111,7 @@ def _actor_cluster_records(
         records.append(
             StorageRecord(
                 source_id=source_id,
-                embedding=[0.0],
+                embedding=[float(value) for value in cluster_embeddings[cluster_id]],
                 metadata={
                     **config.record_identity("actor", source_id),
                     "record_kind": "cluster_summary",
@@ -209,6 +210,7 @@ def process_actor_samples(
                             min(height, int(face[1] + face[3])),
                             max(0, int(face[0])),
                         ),
+                        "encoding": encoding.tolist(),
                     }
                 )
             state.processed_frames += 1
@@ -250,6 +252,11 @@ def finalize_actor_index(
             {
                 cluster_id: state.cluster_ranges[cluster_id]
                 for cluster_id in retained
+            },
+            {
+                cluster_id: state.known_encodings[index]
+                for index, cluster_id in enumerate(state.known_ids)
+                if cluster_id in retained
             },
             config,
         ),
