@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from contextlib import contextmanager
 from pathlib import Path
 from shutil import which
@@ -235,36 +237,11 @@ class VidXPApplication(ControlPlaneApplication):
         execution: ExecutionContext | None = None,
     ) -> IndexResult:
         active_execution = execution_context(execution)
-        selected = self.registry.validate_names(command.modalities)
-        non_indexable = [
-            name for name in selected if self.registry.get(name).collection_name is None
-        ]
-        if non_indexable:
-            raise CapabilityRequestError(
-                "One or more selected capabilities do not support indexing."
-            )
+        config = replace(self._index_config(command, media_id=command.media_id), device=self.device)
+        selected = config.enabled_modalities
         media = self.media.require_record(command.media_id)
         content = self.media.content(command.media_id)
         self.layout.ensure_local_directories()
-        capability_options = {
-            name: dict(options) for name, options in command.capability_options.items()
-        }
-        if command.scene_sample_fps is not None:
-            capability_options.setdefault("scene", {})["sample_fps"] = (
-                command.scene_sample_fps
-            )
-        config = IndexConfig.local(
-            video_id=command.media_id,
-            enabled_modalities=selected,
-            frame_stride=command.frame_stride,
-            storage_directory=self.index_directory,
-            collection_names=self.registry.collection_names(selected),
-            capability_options=self.registry.validate_options(
-                selected,
-                capability_options,
-            ),
-            device=self.device,
-        )
         with self.runtime.scheduler.indexing():
             with self._capability_dependencies(selected):
                 result = self.index_backend.create(
