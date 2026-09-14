@@ -20,6 +20,7 @@ installation and product usage, start with the main
 | LongVALE combined evaluation | Next adapter and pilot | Validate vision, environmental sound, and speech together on one evaluation archive before scheduling the full run |
 | Codex MCP ablation | Runnable scaffold; not run | Promptfoo pairs the same Codex video tasks with and without VidXP MCP; no agent result is claimed yet |
 | Actor clustering | Data-gated | The preferred BBT/Buffy evaluation still requires lawful access to the source episodes |
+| Indexing latency benchmark | Ready | `vidxp benchmark index-latency` measures throughput, per-stage timings, and peak memory on synthetic FFmpeg media; supports regression detection against baselines |
 
 Read [current results](results.md) for the scores, plain-language metric
 definitions, honest comparisons, and the next benchmark decision.
