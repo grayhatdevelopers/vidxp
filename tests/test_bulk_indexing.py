@@ -10,6 +10,7 @@ from vidxp.control_plane import ControlPlaneApplication
 from vidxp.core.contracts import IndexConfig
 from unittest.mock import Mock, patch
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from vidxp import cli
@@ -550,12 +551,12 @@ class CliBulkIndexTests(unittest.TestCase):
     def test_cli_requires_media_ids_or_all(self):
         result = self.invoke(["index", "bulk"])
         self.assertEqual(result.exit_code, 2, result.output)
-        self.assertIn("Provide either media IDs or pass --all.", result.output)
+        self.assertIn("Provide either media IDs or pass --all.", unstyle(result.output))
 
     def test_cli_rejects_both_media_ids_and_all(self):
         result = self.invoke(["index", "bulk", MEDIA_ID_1, "--all"])
         self.assertEqual(result.exit_code, 2, result.output)
-        self.assertIn("Pass media IDs or --all, not both.", result.output)
+        self.assertIn("Pass media IDs or --all, not both.", unstyle(result.output))
 
     def test_cli_bulk_index_success_json(self):
         job_1 = make_job(JOB_ID_1, media_id=MEDIA_ID_1)
