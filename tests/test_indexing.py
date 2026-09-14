@@ -552,6 +552,7 @@ class IndexingTests(unittest.TestCase):
         records = _actor_cluster_records(
             {"cluster-1": 3},
             {"cluster-1": (1.25, 4.5)},
+            {"cluster-1": [0.6, 0.8]},
             config,
         )
 
@@ -564,6 +565,7 @@ class IndexingTests(unittest.TestCase):
         self.assertEqual(records[0].metadata["detection_count"], 3)
         self.assertEqual(records[0].metadata["first_timestamp"], 1.25)
         self.assertEqual(records[0].metadata["last_timestamp"], 4.5)
+        self.assertEqual(records[0].embedding, [0.6, 0.8])
 
 
 if __name__ == "__main__":
