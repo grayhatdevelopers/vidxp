@@ -29,8 +29,17 @@ class FakeStorage:
         self.calls = []
 
     def query(self, modality, embedding, **options):
-        self.calls.append((modality, embedding, options))
+        self.calls.append(("query", modality, embedding, options))
         return list(self.rows)
+
+    def records(self, modality, **options):
+        self.calls.append(("records", modality, options))
+        video_id = options.get("video_id")
+        return [
+            dict(row["metadata"])
+            for row in self.rows
+            if video_id is None or row["metadata"]["video_id"] == video_id
+        ]
 
 
 def dialogue_row(source_id, distance, video_id=MEDIA_ID):
@@ -99,14 +108,64 @@ class SearchTests(unittest.TestCase):
             ],
         )
         self.assertEqual([hit.rank for hit in result.hits], [1, 2, 3])
-        self.assertEqual(result.hits[0].raw_distance, 0.1)
-        self.assertEqual(result.hits[0].score, -0.1)
+        self.assertEqual(result.hits[0].raw_distance, 0.0)
+        self.assertEqual(result.hits[0].score, 0.0)
         self.assertEqual(
             result.hits[0].metadata,
-            {"text": "fresh bread", "phrase_id": 3},
+            {
+                "text": "fresh bread",
+                "phrase_id": 3,
+                "match_kind": "exact",
+            },
         )
-        self.assertEqual(storage.calls[0][2]["top_k"], 3)
-        self.assertEqual(storage.calls[0][2]["video_id"], MEDIA_ID)
+        self.assertEqual(storage.calls[0][0], "query")
+        self.assertEqual(storage.calls[0][3]["top_k"], 3)
+        self.assertEqual(storage.calls[0][3]["video_id"], MEDIA_ID)
+
+    def test_keyword_match_surfaces_missed_semantic_candidate(self):
+        semantic_only = dialogue_row("run:video-1:speech:semantic", 0.4)
+        semantic_only["metadata"]["text"] = "something related"
+        lexical = dialogue_row("run:video-1:speech:exact", 0.9)
+        lexical["metadata"]["text"] = "please pass the fresh bread now"
+        storage = FakeStorage([semantic_only, lexical])
+        with patch(
+            "vidxp.capabilities.speech.operations.speech_embedding",
+            return_value=[0.5, 0.25],
+        ):
+            result = search_speech(
+                "fresh bread",
+                config=self.config,
+                runtime=self.runtime,
+                top_k=2,
+                video_id=MEDIA_ID,
+                storage=storage,
+            )
+
+        self.assertEqual(result.hits[0].source_id, "run:video-1:speech:exact")
+        self.assertEqual(result.hits[0].metadata["match_kind"], "exact")
+        self.assertEqual(result.hits[0].metadata["text"], lexical["metadata"]["text"])
+        self.assertEqual(result.hits[0].start, 1.0)
+        self.assertEqual(result.hits[0].end, 2.0)
+
+    def test_keyword_tokens_do_not_match_substrings(self):
+        row = dialogue_row("run:video-1:speech:start", 0.9)
+        row["metadata"]["text"] = "please start the oven"
+        storage = FakeStorage([row])
+        with patch(
+            "vidxp.capabilities.speech.operations.speech_embedding",
+            return_value=[0.5],
+        ):
+            result = search_speech(
+                "art",
+                config=self.config,
+                runtime=self.runtime,
+                top_k=1,
+                video_id=MEDIA_ID,
+                storage=storage,
+            )
+
+        self.assertEqual(result.hits[0].metadata["match_kind"], "semantic")
+        self.assertEqual(result.hits[0].raw_distance, 0.9)
 
     def test_score_is_strictly_monotonic_and_not_a_probability(self):
         self.assertGreater(distance_to_score(0.1), distance_to_score(0.2))

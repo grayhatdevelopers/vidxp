@@ -522,6 +522,12 @@ def run_hirest(
             "dialogue_words_per_phrase": (
                 speech_config(config).words_per_phrase
             ),
+            "dialogue_segmentation_mode": (
+                speech_config(config).segmentation_mode
+            ),
+            "dialogue_window_stride_words": (
+                speech_config(config).window_stride_words
+            ),
             "segment_word_timestamps": (
                 "linear_interpolation_within_srt_cue"
             ),

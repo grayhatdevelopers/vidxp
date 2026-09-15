@@ -25,6 +25,10 @@ PUBLIC_SEARCH_METADATA = frozenset(
         "representation",
         "window_index",
         "activation_index",
+        "match_kind",
+        "word_start",
+        "word_end",
+        "segmentation_mode",
     }
 )
 
@@ -60,7 +64,7 @@ def stable_query_id(
     return f"{modality}:{digest}"
 
 
-def _to_hits(
+def hits_from_rows(
     modality: str,
     rows: list[dict[str, Any]],
     required_metadata: frozenset[str],
@@ -143,7 +147,7 @@ def search_embeddings(
         query_id=query_id or stable_query_id(query, modality, config),
         query=query,
         modality=modality,
-        hits=_to_hits(modality, rows, required_metadata),
+        hits=hits_from_rows(modality, rows, required_metadata),
     )
 
 

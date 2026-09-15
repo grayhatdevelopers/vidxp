@@ -5,7 +5,7 @@
       "extra": "speech",
       "modality": "speech",
       "label": "Speech search",
-      "description": "Transcribe and search spoken words with timestamps.",
+      "description": "Transcribe spoken words once, build searchable segments, and retrieve them with semantic and exact keyword matching.",
       "models": [
         {
           "cache_key": "models--Qwen--Qwen3-Embedding-0.6B/snapshots/97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3/model.safetensors",
