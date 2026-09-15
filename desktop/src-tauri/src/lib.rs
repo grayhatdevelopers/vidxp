@@ -2766,7 +2766,9 @@ async fn refresh_target_state(
         let _transition = transition;
         match target_profiles::selected_profile(&worker_app) {
             Ok(profile) => {
-                if profile.kind == target_profiles::TargetKind::Managed {
+                if profile.kind == target_profiles::TargetKind::Remote {
+                    let _ = target_profiles::validated_selected_remote_profile(&worker_app);
+                } else if profile.kind == target_profiles::TargetKind::Managed {
                     let validation = (|| {
                         let paths = desktop_paths(&worker_app).map_err(|message| {
                             transition_error(
@@ -2874,6 +2876,45 @@ async fn inspect_local_target(
             format!("Target inspection stopped unexpectedly: {error}"),
         )
     })?
+}
+
+#[tauri::command]
+async fn inspect_remote_target(
+    state: tauri::State<'_, DesktopState>,
+    url: String,
+    authorization: Option<String>,
+) -> Result<target_profiles::RemoteTargetInspection, target_profiles::TargetError> {
+    let _active = track_target_operation(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        target_profiles::inspect_remote(target_profiles::RemoteTargetInput {
+            url,
+            display_name: None,
+            authorization,
+        })
+    })
+    .await
+    .map_err(|error| transition_error(target_profiles::TargetErrorCode::RemoteUnavailable, format!("Remote inspection stopped unexpectedly: {error}")))?
+}
+
+#[tauri::command]
+async fn adopt_remote_target(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    url: String,
+    display_name: Option<String>,
+    authorization: Option<String>,
+) -> Result<target_profiles::TargetState, target_profiles::TargetError> {
+    let _active = track_target_operation(&state)?;
+    let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::Adopt)?;
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let _transition = transition;
+        target_profiles::adopt_remote(&worker_app, target_profiles::RemoteTargetInput { url, display_name, authorization })
+    })
+    .await
+    .map_err(|error| transition_error(target_profiles::TargetErrorCode::RemoteUnavailable, format!("Remote target adoption stopped unexpectedly: {error}")))??;
+    refresh_tray_for_selected_target(&app);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -4121,6 +4162,9 @@ fn target_command(
     let mut command = match profile.kind {
         target_profiles::TargetKind::Managed => configured_command(executable_path, paths),
         target_profiles::TargetKind::ExistingLocal => Command::new(executable_path),
+        target_profiles::TargetKind::Remote => {
+            unreachable!("remote targets do not launch local VidXP commands")
+        }
     };
     if profile.kind == target_profiles::TargetKind::Managed {
         configure_local_answer_environment(&mut command, paths);
@@ -4904,6 +4948,13 @@ async fn open_ui_in_browser(app: AppHandle) -> Result<(), String> {
     let transition = TargetTransitionCoordinator::begin(&state, TransitionKind::OpenBrowser)
         .map_err(|error| error.to_string())?;
     let current = inspect_browser_service(&state)?;
+    if let Ok(profile) = target_profiles::selected_profile(&app) {
+        if profile.kind == target_profiles::TargetKind::Remote {
+            let url = profile.remote_url.ok_or_else(|| "The selected remote target has no server URL.".to_string())?;
+            app.opener().open_url(&url, None::<&str>).map_err(|error| format!("Could not open the remote VidXP interface: {error}"))?;
+            return Ok(());
+        }
+    }
     let status = if current.running {
         current
     } else {
@@ -5471,7 +5522,9 @@ pub fn run() {
             discover_local_targets,
             choose_local_executable,
             inspect_local_target,
+            inspect_remote_target,
             adopt_local_target,
+            adopt_remote_target,
             select_target_profile,
             delete_target_profile,
             confirm_forget_target,

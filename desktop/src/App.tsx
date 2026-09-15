@@ -4,6 +4,7 @@ import { useCallback, useEffect, useReducer, useRef } from 'react';
 
 import { LocalSetup } from './components/LocalSetup';
 import { ManagedSetup } from './components/ManagedSetup';
+import { RemoteSetup } from './components/RemoteSetup';
 import { TargetChoice } from './components/TargetChoice';
 import { TargetSummary } from './components/TargetSummary';
 import { DesktopViewport } from './components/TitleBar';
@@ -24,7 +25,7 @@ import {
 } from './tauri';
 import { useExclusiveOperation } from './useAsyncAction';
 
-type Stage = 'loading' | 'choice' | 'local' | 'managed-confirm' | 'managed' | 'summary';
+type Stage = 'loading' | 'choice' | 'local' | 'remote' | 'managed-confirm' | 'managed' | 'summary';
 type AppOperation = 'startup-check' | 'recheck' | 'begin-managed' | 'cancel-managed' | 'select-profile' | 'forget-profile' | 'open-browser';
 
 interface CompletionNotice {
@@ -237,9 +238,10 @@ export function App() {
                 <Group><Button size="xs" variant="light" loading={state.operationProfile === saved.id && state.operation === 'select-profile'} disabled={operationPending || saved.id === state.setup?.selected_profile_id} onClick={() => void selectSaved(saved.id)}>Select</Button>{saved.kind !== 'managed' && <Button size="xs" color="red" variant="subtle" leftSection={<IconTrash size={14} />} loading={state.operationProfile === saved.id && state.operation === 'forget-profile'} disabled={operationPending} onClick={() => void forgetSaved(saved.id, saved.display_name)}>Forget</Button>}</Group>
               </Group>)}</Stack>
             </section>}
-            <TargetChoice value={state.choice} disabled={operationPending} onChange={(choice) => dispatch({ type: 'choice', choice })} onContinue={() => dispatch({ type: 'navigate', stage: state.choice === 'existing_local' ? 'local' : 'managed-confirm' })} />
+            <TargetChoice value={state.choice} disabled={operationPending} onChange={(choice) => dispatch({ type: 'choice', choice })} onContinue={() => dispatch({ type: 'navigate', stage: state.choice === 'existing_local' ? 'local' : state.choice === 'remote' ? 'remote' : 'managed-confirm' })} />
           </>}
           {state.stage === 'local' && <LocalSetup onBack={() => dispatch({ type: 'navigate', stage: 'choice' })} onActivated={(setup) => dispatch({ type: 'operationSettled', setup, stage: 'summary' })} />}
+          {state.stage === 'remote' && <RemoteSetup onBack={() => dispatch({ type: 'navigate', stage: 'choice' })} onActivated={(setup) => dispatch({ type: 'operationSettled', setup, stage: 'summary' })} />}
           {state.stage === 'managed-confirm' && <section aria-labelledby="managed-confirm-title"><Button variant="subtle" leftSection={<IconArrowLeft size={17} />} disabled={operationPending} onClick={() => dispatch({ type: 'navigate', stage: 'choice' })}>Back</Button><div className="confirmationPanel"><ThemeIcon size={54} radius="xl" variant="light"><IconDownload size={28} /></ThemeIcon><Text className="eyebrow" mt="xl">SET UP VIDXP</Text><Title id="managed-confirm-title" order={1} className="pageTitle">Install and manage VidXP on this computer?</Title><Text className="lede centeredCopy">You choose the features. VidXP checks the new setup before switching to it, so your current installation stays available.</Text><Group justify="center" mt="xl"><Button variant="default" disabled={operationPending} onClick={() => dispatch({ type: 'navigate', stage: 'choice' })}>Cancel</Button><Button loading={state.operation === 'begin-managed'} disabled={operationPending} onClick={() => void beginManaged()}>Choose features</Button></Group></div></section>}
           {state.stage === 'managed' && state.draft && <ManagedSetup draftId={state.draft.id} selectedManagedRuntimeProfile={profile?.kind === 'managed' ? profile.managed_runtime_profile ?? null : null} premiereRequested={state.premiereSetupRequested} onBack={cancelManaged} onCommitted={(setup, completionNotice) => dispatch({ type: 'operationSettled', setup, draft: null, stage: 'summary', completionNotice, premiereSetupRequested: false })} />}
           {state.stage === 'summary' && profile && <TargetSummary profile={profile} validationError={profile.validation_error} checking={state.operation === 'startup-check' || state.operation === 'recheck'} opening={state.operation === 'open-browser'} operationPending={operationPending} onRecheck={() => recheck()} onManageManaged={() => void beginManaged()} onSetUpPremiere={() => void beginManaged(true)} onSetupChanged={(setup) => dispatch({ type: 'operationSettled', setup, stage: 'summary' })} onChooseAnother={() => dispatch({ type: 'navigate', stage: 'choice', choice: null })} onOpen={openBrowser} />}

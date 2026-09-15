@@ -1,5 +1,5 @@
 import { Button, Group, Radio, Stack, Text, ThemeIcon, Title } from '@mantine/core';
-import { IconDeviceDesktop, IconDownload } from '@tabler/icons-react';
+import { IconCloud, IconDeviceDesktop, IconDownload } from '@tabler/icons-react';
 
 import type { TargetKind } from '../tauri';
 
@@ -11,6 +11,13 @@ interface TargetChoiceProps {
 }
 
 const targets = [
+  {
+    value: 'remote' as const,
+    title: 'Connect to a remote server',
+    description: 'Use a VidXP server running on another computer or network.',
+    detail: 'The server remains responsible for its own installation and services.',
+    icon: IconCloud,
+  },
   {
     value: 'existing_local' as const,
     title: 'Use an existing installation',
