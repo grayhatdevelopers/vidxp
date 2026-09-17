@@ -231,6 +231,24 @@ class IndexStorage:
                 self._call(self.client.delete_collection, name)
             self._collections.pop(modality, None)
 
+    def drop_all_collections(self) -> tuple[str, ...]:
+        """Delete every collection in this store and report what was dropped.
+
+        Recovery has to remove collections this configuration does not name.
+        An incompatible store can hold collections written by another index
+        profile, and a collection keeps the embedding dimensions it was
+        created with, so reusing one after a schema change fails.
+        """
+
+        dropped = sorted(
+            getattr(collection, "name", collection)
+            for collection in self._call(self.client.list_collections)
+        )
+        for name in dropped:
+            self._call(self.client.delete_collection, name)
+        self._collections.clear()
+        return tuple(dropped)
+
     def delete_video(self, modality: str, video_id: str) -> None:
         self._call(
             self.collection(modality).delete,

@@ -466,6 +466,70 @@ def index_list(
         )
 
 
+@app.command("reset")
+def index_reset(
+    ctx: typer.Context,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip the confirmation prompt."),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Discard generated index data so an unusable index can be rebuilt.
+
+    Use this when indexing or clearing fails because the existing index was
+    written by an incompatible index schema. Imported media is preserved, so
+    indexing it again restores search.
+    """
+
+    state = state_from_context(ctx)
+    output_format = effective_output_format(state, json_output)
+    if not yes:
+        typer.secho(
+            "Resetting discards every generated index in this repository, "
+            "including its vector collections.",
+            fg=typer.colors.YELLOW,
+        )
+        typer.echo(
+            "Imported media is preserved. Indexed media has to be indexed "
+            "again before it can be searched."
+        )
+        typer.confirm(
+            f"Discard the generated index data at "
+            f"{state.service.index_directory}?",
+            abort=True,
+        )
+    result = state.service.reset_index()
+    payload = result.model_dump(mode="json")
+    if output_format == OutputFormat.json:
+        emit_json(payload)
+        return
+    if not result.discarded and not result.collections:
+        typer.echo("No generated index data was found.")
+        return
+    if result.media_ids:
+        table = Table(title="Discarded index data")
+        table.add_column("Media ID")
+        table.add_column("Generation")
+        for media_id, generation_id in zip(
+            result.media_ids,
+            result.generation_ids,
+        ):
+            table.add_row(media_id, generation_id)
+        Console().print(table)
+    typer.secho("Generated index data discarded.", fg=typer.colors.GREEN)
+    typer.echo(
+        f"Media needing indexing again: {len(result.media_ids)}; "
+        f"capabilities affected: {', '.join(result.modalities) or 'none'}; "
+        f"vector collections deleted: "
+        f"{', '.join(result.collections) or 'none'}."
+    )
+    typer.echo("Rebuild with: vidxp index bulk")
+
+
 @app.command("clear")
 def index_clear(
     ctx: typer.Context,

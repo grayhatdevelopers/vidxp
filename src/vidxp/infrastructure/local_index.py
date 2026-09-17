@@ -583,3 +583,41 @@ class LocalIndexBackend(LocalIndexReader):
         repository = self.repository
         with repository.lease():
             return repository.clear()
+
+    def reset(self, config: IndexConfig) -> dict[str, object]:
+        """Discard generated index data so the repository can be rebuilt.
+
+        Clearing validates the active generations first, so it cannot recover
+        a repository whose generations were written by an incompatible index
+        schema. Reset reads the snapshot document without those generations
+        and drops the vector collections as well, because a collection keeps
+        the embedding dimensions it was created with.
+
+        Imported media is untouched. Retained generation directories are left
+        on disk, as `clear` leaves them.
+        """
+
+        self._require_index_directory(config.index_directory)
+        repository = self.repository
+        with repository.lease():
+            summary = repository.describe_active_generations()
+            dropped: tuple[str, ...] = ()
+            store_config = replace(
+                config,
+                storage_directory=repository.store,
+            )
+            # Drop the vector collections before replacing the metadata. A
+            # failure here then leaves the repository exactly as it was, so
+            # the operation can be retried and still report what it removed.
+            if store_config.index_directory.is_dir():
+                # Opened for writing rather than through the committed-store
+                # helper: that helper rejects a store holding no collections,
+                # and a repository with nothing left to drop still has to be
+                # recoverable.
+                with IndexStorage(
+                    store_config,
+                    client_factory=self.chroma_clients,
+                ) as storage:
+                    dropped = storage.drop_all_collections()
+            repository.discard_generations()
+            return {**summary, "collections": dropped}

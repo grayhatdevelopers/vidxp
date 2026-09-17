@@ -34,6 +34,7 @@ from vidxp.application_models import (
     PrepareModelsCommand,
     PrepareModelsResult,
     RemoveIndexCommand,
+    IndexResetResult,
     ResourceNotFoundError,
     RuntimeReadiness,
     QueryAnswer,
@@ -932,6 +933,26 @@ class VidXPApplication(ControlPlaneApplication):
         base_config = self._base_config()
         try:
             return self.index_backend.clear(base_config)
+        except ModuleNotFoundError as exc:
+            raise DependencyUnavailableError(
+                self.registry.index_names(),
+                self.registry.install_hint(self.registry.index_names()),
+            ) from exc
+
+    @application_boundary
+    def reset_index(self) -> IndexResetResult:
+        """Discard generated index data so the repository can be rebuilt.
+
+        Use this when an index cannot be cleared or rebuilt because its
+        generations were written by an incompatible index schema. Imported
+        media is preserved, so indexing it again restores search.
+        """
+
+        base_config = self._base_config()
+        try:
+            return IndexResetResult.model_validate(
+                self.index_backend.reset(base_config)
+            )
         except ModuleNotFoundError as exc:
             raise DependencyUnavailableError(
                 self.registry.index_names(),

@@ -725,6 +725,35 @@ class BulkIndexPlan(ApplicationModel):
         )
 
 
+class IndexResetResult(ApplicationModel):
+    """What discarding generated index data gave up.
+
+    Imported media is never part of a reset, so it is not reported here.
+    """
+
+    discarded: bool = Field(
+        description=(
+            "Whether an active snapshot with generated data was replaced."
+        )
+    )
+    media_ids: tuple[MediaId, ...] = Field(
+        default=(),
+        description="Media that must be indexed again to become searchable.",
+    )
+    generation_ids: tuple[IndexGenerationId, ...] = Field(
+        default=(),
+        description="Generations the discarded snapshot referenced.",
+    )
+    modalities: tuple[str, ...] = Field(
+        default=(),
+        description="Capabilities the discarded snapshot had indexed.",
+    )
+    collections: tuple[str, ...] = Field(
+        default=(),
+        description="Vector collections deleted so they can be rebuilt.",
+    )
+
+
 class RemoveIndexCommand(ApplicationModel):
     media_id: MediaId
 
