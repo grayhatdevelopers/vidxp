@@ -270,6 +270,23 @@ use the same indexing settings. Bulk indexing does not migrate an existing
 multi-video index to a different profile or remove old results to make room
 for one. Such jobs report the existing profile-compatibility error.
 
+### Rebuild an index VidXP can no longer use
+
+If an upgrade changes how indexes are stored, VidXP reports that the existing
+index is incompatible. Indexing, clearing, and even reading the index status
+fail while that data is in place. Discard the generated index data and start
+over:
+
+```bash
+vidxp index reset --yes
+vidxp index bulk --all --modality scene
+```
+
+Resetting deletes every generated index in the repository, including its
+vector collections, and reports which videos it gave up. Imported media is
+preserved, so the second command rebuilds search from the videos already in
+the repository. Nothing has to be imported again.
+
 ### Start an installed interface
 
 | Interface | Command |

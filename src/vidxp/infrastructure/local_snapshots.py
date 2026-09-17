@@ -120,10 +120,24 @@ class LocalSnapshotRepository:
         resolved = self._read_active(required=required)
         return None if resolved is None else resolved[1]
 
+    def read_active_document(
+        self,
+    ) -> tuple[ActiveSnapshotPointer, IndexSnapshot] | None:
+        """Read the active snapshot without validating the generations.
+
+        The snapshot document is still checked for integrity and identity.
+        Only the generation manifests it points at are left unread, so a
+        repository whose generations were written by an incompatible index
+        schema can still be inspected and discarded.
+        """
+
+        return self._read_active(validate_generations=False)
+
     def _read_active(
         self,
         *,
         required: bool = False,
+        validate_generations: bool = True,
     ) -> tuple[ActiveSnapshotPointer, IndexSnapshot] | None:
         if not self.active_pointer.is_file():
             if required:
@@ -138,6 +152,7 @@ class LocalSnapshotRepository:
             snapshot = self.read_snapshot(
                 pointer.snapshot_id,
                 expected_sha256=pointer.snapshot_sha256,
+                validate_generations=validate_generations,
             )
             return pointer, snapshot
         except IndexSchemaError:
@@ -152,6 +167,7 @@ class LocalSnapshotRepository:
         snapshot_id: str,
         *,
         expected_sha256: str | None = None,
+        validate_generations: bool = True,
     ) -> IndexSnapshot:
         snapshot_path = self._snapshot_path(snapshot_id)
         if not snapshot_path.is_file():
@@ -177,7 +193,8 @@ class LocalSnapshotRepository:
             raise IndexSchemaError(
                 "The snapshot filename and document identifier differ."
             )
-        self._validate_generations(snapshot)
+        if validate_generations:
+            self._validate_generations(snapshot)
         return snapshot
 
     def _validate_generations(self, snapshot: IndexSnapshot) -> None:
@@ -345,6 +362,63 @@ class LocalSnapshotRepository:
             generations={},
             config_fingerprint=active.config_fingerprint,
             configuration=dict(active.configuration),
+        )
+        return True
+
+    def describe_active_generations(self) -> dict[str, Any]:
+        """Report what the active snapshot holds without validating it.
+
+        Read-only, so a caller can tell the user exactly which generated data
+        a reset would give up before anything is destroyed.
+        """
+
+        resolved = self.read_active_document()
+        if resolved is None:
+            return {
+                "discarded": False,
+                "media_ids": (),
+                "generation_ids": (),
+                "modalities": (),
+            }
+        _, snapshot = resolved
+        media_ids = tuple(sorted(snapshot.generations))
+        return {
+            "discarded": bool(media_ids),
+            "media_ids": media_ids,
+            "generation_ids": tuple(
+                snapshot.generations[media_id].generation_id
+                for media_id in media_ids
+            ),
+            "modalities": tuple(
+                sorted(
+                    {
+                        modality
+                        for reference in snapshot.generations.values()
+                        for modality in reference.modalities
+                    }
+                )
+            ),
+        }
+
+    def discard_generations(self) -> bool:
+        """Publish an empty active snapshot, whatever the generations hold.
+
+        Unlike `clear`, this does not validate the generations it replaces, so
+        it can recover a repository whose generations were written by an
+        incompatible index schema. Retained generation directories are left on
+        disk, exactly as `clear` leaves them.
+        """
+
+        resolved = self.read_active_document()
+        if resolved is None:
+            return False
+        _, snapshot = resolved
+        if not snapshot.generations:
+            return False
+        self._publish(
+            generations={},
+            config_fingerprint=snapshot.config_fingerprint,
+            configuration=dict(snapshot.configuration),
         )
         return True
 

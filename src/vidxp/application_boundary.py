@@ -97,7 +97,10 @@ def application_boundary(handler: Callable) -> Callable:
             raise ApplicationError(
                 "index_schema_incompatible",
                 ErrorCategory.conflict,
-                "The index schema is incompatible with this version.",
+                "The index schema is incompatible with this version. "
+                "Discard the generated index data with "
+                "`vidxp index reset --yes`, then index the media again. "
+                "Imported media is preserved.",
             ) from exc
         except IndexStorageUnavailableError as exc:
             raise ApplicationError(

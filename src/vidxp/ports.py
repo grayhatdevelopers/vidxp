@@ -430,6 +430,8 @@ class IndexBackend(Protocol):
 
     def clear(self, config: IndexConfig) -> bool: ...
 
+    def reset(self, config: IndexConfig) -> dict[str, Any]: ...
+
 
 class JobBackend(Protocol):
     """Durable lifecycle operations owned by the workflow engine."""
