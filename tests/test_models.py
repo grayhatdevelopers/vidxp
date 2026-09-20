@@ -16,8 +16,8 @@ from packaging.requirements import Requirement
 from pydantic import ValidationError
 
 from vidxp.capabilities.contracts import CapabilityDefinition
-from vidxp.capabilities.dialogue import models as dialogue_models
-from vidxp.capabilities.dialogue.specs import (
+from vidxp.capabilities.speech import models as speech_models
+from vidxp.capabilities.speech.specs import (
     FASTER_WHISPER_MODEL,
     QWEN3_EMBEDDING_MODEL,
 )
@@ -40,10 +40,11 @@ from vidxp.model_contracts import (
     ModelArtifactDownloadError,
     ModelArtifactUnavailableError,
     ModelKey,
+    model_artifact_cached,
     model_artifact_path,
 )
 from vidxp.runtime import ModelRuntime, resolve_backends
-from vidxp.settings import VidXPSettings
+from vidxp.settings import DEFAULT_LOCAL_QUERY_MODEL, VidXPSettings
 
 
 class ModelTests(unittest.TestCase):
@@ -83,8 +84,8 @@ class ModelTests(unittest.TestCase):
                 sys.modules,
                 {"sentence_transformers": fake_module},
             ):
-                first = dialogue_models.get_embedder(runtime)
-                second = dialogue_models.get_embedder(runtime)
+                first = speech_models.get_embedder(runtime)
+                second = speech_models.get_embedder(runtime)
 
         self.assertIs(first, second)
         constructor.assert_called_once_with(
@@ -94,7 +95,7 @@ class ModelTests(unittest.TestCase):
             local_files_only=True,
         )
         self.assertEqual(
-            runtime.describe()["compute_precision"]["dialogue.embedding"],
+            runtime.describe()["compute_precision"]["speech.embedding"],
             "bfloat16",
         )
 
@@ -108,7 +109,7 @@ class ModelTests(unittest.TestCase):
 
         keys = (
             ModelKey("scene", "one", "one", "1", "cpu"),
-            ModelKey("dialogue", "two", "two", "1", "cpu"),
+            ModelKey("speech", "two", "two", "1", "cpu"),
         )
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [
@@ -204,7 +205,7 @@ class ModelTests(unittest.TestCase):
 
         retrieve.assert_not_called()
 
-    def test_model_readiness_checks_the_pinned_cache_without_loading(self):
+    def test_model_readiness_rejects_corrupt_pinned_cache_without_loading(self):
         with TemporaryDirectory() as directory:
             cache = Path(directory) / "models"
             path = model_artifact_path(cache, YUNET_MODEL)
@@ -224,7 +225,7 @@ class ModelTests(unittest.TestCase):
                 (
                     YUNET_MODEL.model_id,
                     YUNET_MODEL.download_size_bytes,
-                    True,
+                    False,
                 ),
                 (
                     SFACE_MODEL.model_id,
@@ -233,6 +234,23 @@ class ModelTests(unittest.TestCase):
                 ),
             ],
         )
+
+    def test_model_cache_requires_the_pinned_checksum(self):
+        with TemporaryDirectory() as directory:
+            content = b"verified model"
+            spec = replace(
+                YUNET_MODEL,
+                filename="verified.onnx",
+                sha256=hashlib.sha256(content).hexdigest(),
+            )
+            cache = Path(directory) / "models"
+            path = model_artifact_path(cache, spec)
+            path.parent.mkdir(parents=True)
+            path.write_bytes(content)
+
+            self.assertTrue(model_artifact_cached(cache, spec))
+            path.write_bytes(b"corrupt")
+            self.assertFalse(model_artifact_cached(cache, spec))
 
     def test_explicit_snapshot_download_reports_bytes(self):
         with TemporaryDirectory() as directory:
@@ -263,7 +281,7 @@ class ModelTests(unittest.TestCase):
             with patch(
                 "huggingface_hub.snapshot_download",
                 side_effect=download,
-            ), patch(
+            ) as snapshot_download, patch(
                 "huggingface_hub.constants.HF_HUB_DISABLE_XET",
                 False,
             ):
@@ -277,6 +295,10 @@ class ModelTests(unittest.TestCase):
                 )
 
         self.assertEqual(resolved, snapshot)
+        self.assertEqual(
+            snapshot_download.call_args.kwargs["ignore_patterns"],
+            ("*.h5", "*.msgpack", "*.npz", "*.ot"),
+        )
         download_events = [
             event for event in events if event["stage"] == "downloading_model"
         ]
@@ -680,7 +702,7 @@ class ModelTests(unittest.TestCase):
         distributions = {
             requirement.name
             for requirement in registry.requirements_for(
-                ("dialogue",),
+                ("speech",),
                 source=source,
             )
         }
@@ -710,7 +732,7 @@ class ModelTests(unittest.TestCase):
             "faster-whisper import",
             {
                 check.label
-                for check in registry.runtime_checks_for(("dialogue",))
+                for check in registry.runtime_checks_for(("speech",))
             },
         )
 
@@ -739,8 +761,13 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(settings.runtime_backend, "cuda:0")
         self.assertNotIn("database_url", VidXPSettings.model_fields)
         self.assertNotIn("chroma_server_url", VidXPSettings.model_fields)
-        with self.assertRaises(ValidationError):
-            VidXPSettings(slm_base_url="http://localhost:11434/v1")
+        default_slm = VidXPSettings(
+            slm_base_url="http://localhost:11434/v1"
+        )
+        self.assertEqual(
+            default_slm.slm_model,
+            DEFAULT_LOCAL_QUERY_MODEL,
+        )
         with self.assertRaises(ValidationError):
             VidXPSettings(
                 slm_base_url="https://ollama.com/v1",
@@ -757,6 +784,9 @@ class ModelTests(unittest.TestCase):
         )
         self.assertEqual(slm.slm_model, "evaluated-model")
 
+        with self.assertRaises(ValidationError):
+            VidXPSettings(slm_model=DEFAULT_LOCAL_QUERY_MODEL)
+
     def test_only_optional_slm_environment_values_ignore_empty_strings(self):
         with patch.dict(
             os.environ,
@@ -770,6 +800,18 @@ class ModelTests(unittest.TestCase):
 
         self.assertIsNone(settings.slm_base_url)
         self.assertIsNone(settings.slm_model)
+
+        with patch.dict(
+            os.environ,
+            {
+                "VIDXP_SLM_BASE_URL": "http://localhost:11434/v1",
+                "VIDXP_SLM_MODEL": "",
+            },
+            clear=True,
+        ):
+            settings = VidXPSettings(_env_file=None)
+
+        self.assertEqual(settings.slm_model, DEFAULT_LOCAL_QUERY_MODEL)
 
         with (
             patch.dict(

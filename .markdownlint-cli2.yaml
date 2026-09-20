@@ -1,0 +1,15 @@
+config:
+  default: true
+  line-length: false
+  no-duplicate-heading:
+    siblings_only: true
+  no-inline-html: false
+  first-line-heading: false
+  table-column-style: false
+gitignore: true
+globs:
+  - "**/*.md"
+ignores:
+  - ".worktrees/**"
+  - "**/CHANGELOG.md"
+noProgress: true

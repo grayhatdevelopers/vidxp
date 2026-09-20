@@ -27,7 +27,7 @@ class OllamaQueryModelTests(unittest.TestCase):
                 "steps": [
                     {
                         "kind": "search_moments",
-                        "modality": "dialogue",
+                        "modality": "speech",
                         "query": "taxi arrival",
                     }
                 ]
@@ -88,7 +88,7 @@ class OllamaQueryModelTests(unittest.TestCase):
             end=2,
             score=-0.1,
             raw_distance=0.1,
-            modality="dialogue",
+            modality="speech",
             source_id="dialogue:1",
             metadata={"text": "the taxi arrived"},
         )
@@ -97,7 +97,7 @@ class OllamaQueryModelTests(unittest.TestCase):
             snapshot_id=SNAPSHOT_ID,
             media_id=MEDIA_ID,
             generation_id=GENERATION_ID,
-            modality="dialogue",
+            modality="speech",
             source_id="dialogue:1",
             start=1,
             end=2,
@@ -108,7 +108,7 @@ class OllamaQueryModelTests(unittest.TestCase):
             plan = model.plan(
                 QueryPlanningRequest(
                     question="When did the taxi arrive?",
-                    allowed_modalities=("dialogue",),
+                    allowed_modalities=("speech",),
                 )
             )
             answer = model.synthesize(
@@ -130,6 +130,7 @@ class OllamaQueryModelTests(unittest.TestCase):
                 "json_schema",
             )
             self.assertEqual(request["model"], "contract-model")
+            self.assertEqual(request["reasoning_effort"], "none")
 
 
 if __name__ == "__main__":

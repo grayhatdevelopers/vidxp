@@ -1,101 +1,159 @@
-# Release process
+# Release VidXP
 
-VidXP ships one version across the Python package, three desktop installers,
-and the product, control, and worker container images.
+This runbook is for maintainers publishing VidXP. A beta or stable release
+uses one version across the Python package, Desktop installers, container
+images, and GitHub release.
 
-| Channel | Trigger | Python | Desktop | Containers | GitHub |
-|---|---|---|---|---|---|
-| Nightly | Non-documentation push to `main` | Unique `.dev…` build on TestPyPI | — | — | Actions artifact only |
-| Beta | Merge the Release Please PR into `main` | PyPI prerelease | Windows, macOS, Linux | Versioned and `beta` tags | One prerelease |
-| Stable | Merge the Release Please PR into `release` | PyPI release | Windows, macOS, Linux | Versioned and `latest` tags | One latest release |
+## Choose the release channel
 
-`main` is the integration and beta branch. `release` is the stable branch.
-Feature and fix pull requests target `main`; the existing promotion workflow
-maintains the `main` → `release` draft used to select a stable baseline.
+| Channel | Source | Published result |
+|---|---|---|
+| Nightly | A non-documentation change on `main` | Unique development package on TestPyPI and an Actions artifact |
+| Beta | Release Please pull request targeting `main` | PyPI prerelease, Desktop installers, `beta` container tags, and a GitHub prerelease |
+| Stable | Release Please pull request targeting `release` | PyPI release, Desktop installers, `latest` container tags, and the latest GitHub release |
 
-## Candidate before merge
+Nightly publication is automatic and does not use the rest of this runbook.
 
-Release Please maintains one combined release PR per channel and updates every
-version source together. The **Prepare releases** workflow brings that PR up to
-date with its target branch and explicitly dispatches **Release candidate**.
+Feature and fix pull requests normally target `main`. To prepare a stable
+release, first review and merge the maintained promotion pull request from
+`main` to `release`. The commit selected for that promotion becomes the stable
+baseline.
 
-The candidate reuses the normal CI, desktop, and container workflows. It:
+## 1. Prepare the changelog input
 
-1. validates the exact Release Please head against the current target branch;
-2. runs the full Python/provider suite and retains its tested wheel and sdist;
-3. embeds that exact tested wheel into, builds, and tests all three desktop
-   installers, then retains them;
-4. builds and smokes the three container targets once, pushes temporary
-   candidate tags, and records their immutable digests; and
-5. records a `release/candidate` commit status linked to the Actions run.
+Release Please builds the changelog from Conventional Commits on the target
+branch. For a squash merge, the pull request title normally becomes that
+commit.
 
-Merging a Release Please PR is allowed only when `release/candidate` succeeds.
-The lightweight **Release gate** marks that same context successful for ordinary
-PRs, so the rule does not add release builds to normal development changes.
+When one pull request needs several release entries, put the intended commits
+in its description:
 
-Require these GitHub Actions statuses on both channel branches:
+```text
+BEGIN_COMMIT_OVERRIDE
+feat(desktop): sign and notarize macOS installers
 
-- `validation/required` aggregates the applicable Python, provider, container,
-  and Desktop checks. It reports without heavy builds for documentation-only
-  changes and Release Please PRs.
-- `dependency-review` rejects newly introduced high-severity dependencies.
-- `release/candidate` stays pending on Release Please PRs until the complete
-  retained candidate succeeds; ordinary PRs receive an immediate success.
+fix(desktop): preserve the signed installer artifact
+END_COMMIT_OVERRIDE
+```
 
-Require pull-request branches to be up to date before merging so the checked
-tree cannot differ from the eventual merge. Roll the rules out in order: merge
-the workflow changes to `main`, observe all three statuses on a new or refreshed
-PR, enable them on `main`, promote the workflow baseline to `release`, and then
-enable the same requirements there. Do not enable the `release` rules before
-its base branch contains the validation and release-gate workflows.
+Release Please uses this block instead of the squash commit when generating
+the changelog. The block does not rename the pull request and has no effect on
+a plain merge.
 
-## Publication after merge
+Correct unreleased entries through the pull request or Release Please
+configuration. Do not hand-edit a changelog section that has already been
+published.
 
-After a valid release PR is merged, Release Please creates the combined tag and
-a draft GitHub release. **Publish combined release** then:
+## 2. Review the release pull request
 
-1. downloads artifacts from the successful candidate run;
-2. proves that the merged tag and candidate have the same Git tree and version;
-3. publishes the already-tested wheel and sdist to PyPI;
-4. promotes the recorded container digests to public version/channel tags
-   without rebuilding; and
-5. uploads the Python and desktop artifacts plus checksums to the same GitHub
-   release, prepends the product download/install guide to Release Please's
-   generated changes, and then makes the complete release public.
+The **Prepare releases** workflow creates or updates one combined Release
+Please pull request for the branch:
 
-The product-facing introduction is maintained once in
-`.github/release-intro.md`. The publisher fills it with the exact installer
-filenames from the validated candidate and preserves the generated changelog
-below it. Re-running publication updates the same marked section instead of
-duplicating release notes.
+- a beta pull request targets `main`;
+- a stable pull request targets `release`.
 
-Desktop-managed setup installs its pinned VidXP package from the exact candidate
-wheel embedded in the installer, so an unpublished candidate can complete a
-fresh setup before the release PR is merged. Beta and stable packages are still
-published to real PyPI, and selected extras plus their normal dependencies
-resolve from that production index. TestPyPI is reserved for unique nightly
-package validation.
+Before continuing, confirm that the pull request contains the intended version
+and that every package and Desktop manifest uses that same version. Read the
+generated changelog as product release notes. Rewrite entries that expose
+implementation details without explaining the user-visible result.
 
-Publication is resumable. An existing Python version must have the exact same
-filenames and SHA-256 values; immutable container tags must resolve to the
-recorded candidate digests. Matching work is reused, while a conflict stops the
-run. A failed publication leaves the GitHub release as a draft, and rerunning
-the same publisher continues from the same candidate without rebuilding or
-rewriting a branch.
+Do not merge the release pull request yet. The complete candidate must pass
+first.
 
-After a stable release is public, **Synchronize release channels** carries the
-published version baseline back to `main`. It fast-forwards when possible and
-opens a synchronization PR rather than overwriting newer work.
+## 3. Wait for the release candidate
 
-## Maintainer checklist
+**Prepare releases** dispatches the **Release candidate** workflow for the
+current pull request head. If that head changes, the previous candidate no
+longer applies and a new one must succeed.
 
-Before merging a Release Please PR:
+The candidate workflow builds and retains:
 
-- confirm it contains one `v<version>` change across the package and desktop
-  manifests;
-- confirm `release/candidate` points to the latest PR head and succeeded;
-- review the generated changelog as product release notes; and
-- for stable, confirm the selected `main` baseline was promoted to `release`.
+- the tested Python wheel and source distribution;
+- the Windows x86-64 NSIS installer;
+- the macOS Apple Silicon DMG;
+- the Linux x86-64 AppImage;
+- the product, control, and worker container images; and
+- a manifest that records the version, channel, source revision, source tree,
+  and container digests.
 
-If version selection or changelog content is wrong, do not merge the release
-PR. Correct the commits or configuration and let Release Please update it.
+The same workflow runs the Python and provider suite, tests all three Desktop
+packages, and smoke-tests every container target. It records the result as the
+`release/candidate` status on the pull request head.
+
+The beta and stable macOS DMGs are signed with a Developer ID certificate and
+the hardened runtime. They are then notarized, stapled, and verified before the
+candidate succeeds. The Windows installer is currently unsigned.
+
+Continue only when `release/candidate` is successful on the latest pull request
+revision.
+
+## 4. Merge and publish
+
+Merge the validated Release Please pull request. Release Please creates the tag
+and a draft GitHub release, then dispatches **Publish combined release**.
+
+Before publishing any asset, that workflow proves that the tag and retained
+candidate have the same version and Git tree. It then:
+
+1. publishes the tested wheel and source distribution to PyPI;
+2. promotes the retained container digests to their public version and channel
+   tags;
+3. uploads the Python distributions, three Desktop packages, and
+   `SHA256SUMS` to the GitHub release;
+4. renders `.github/release-intro.md` with the exact asset names above the
+   generated changelog; and
+5. publishes the GitHub release as a prerelease or the latest stable release.
+
+Publication reuses the candidate artifacts. It does not rebuild them after the
+release pull request is merged.
+
+The Desktop installers contain the candidate's tested VidXP wheel. This allows
+managed setup to be tested before that wheel is public. Selected dependencies
+still resolve from production PyPI; TestPyPI is used only for nightly package
+validation.
+
+After a stable publication, the workflow synchronizes the released version
+baseline back to `main`. It opens a synchronization pull request when a safe
+fast-forward is not possible.
+
+## 5. Verify the public release
+
+Confirm all of the following:
+
+- GitHub marks a beta as a prerelease or a stable release as latest.
+- The wheel, source distribution, three Desktop packages, and checksum file
+  are attached.
+- The release notes describe macOS signing and notarization accurately and
+  state that the Windows installer is unsigned.
+- PyPI shows the expected version and files.
+- The public product, control, and worker container tags resolve to the
+  candidate digests.
+- The release introduction and changelog read as product documentation rather
+  than internal implementation notes.
+
+## Recover from a publication failure
+
+Rerun **Publish combined release** with the same tag, candidate workflow run,
+and candidate head. The workflow reuses matching files and container digests,
+so a failure after one registry succeeds does not require a new build.
+
+Do not rebuild an asset manually, move the release tag, or overwrite a
+published file. Publication stops if an existing filename or immutable
+container tag does not match the candidate. Investigate that conflict before
+retrying. The GitHub release remains a draft until every publication step
+succeeds.
+
+## Required repository checks
+
+Branch protection on both `main` and `release` must require pull requests to be
+up to date and must require these statuses:
+
+| Status | Purpose |
+|---|---|
+| `validation/required` | Collects the applicable Python, provider, container, and Desktop checks |
+| `dependency-review` | Rejects newly introduced high-severity dependencies |
+| `release/candidate` | Runs the retained candidate for Release Please pull requests and a lightweight gate for ordinary pull requests |
+
+These are persistent repository settings, not switches to change during a
+release. Enable them on a branch only after that branch contains the matching
+validation and release-gate workflows.

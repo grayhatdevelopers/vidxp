@@ -1,7 +1,7 @@
 {
   "name": "vidxp-desktop",
   "private": true,
-  "version": "0.4.0-b.3",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

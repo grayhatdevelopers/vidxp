@@ -22,6 +22,9 @@ PUBLIC_SEARCH_METADATA = frozenset(
         "timestamp",
         "fps",
         "duration",
+        "representation",
+        "window_index",
+        "activation_index",
     }
 )
 

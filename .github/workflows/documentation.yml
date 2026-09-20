@@ -1,0 +1,34 @@
+name: Documentation
+
+on:
+  pull_request:
+    branches:
+      - main
+      - release
+    paths:
+      - "**/*.md"
+      - ".markdownlint-cli2.yaml"
+      - ".lycheeignore"
+      - "lychee.toml"
+      - ".github/workflows/documentation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  markdown:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint Markdown
+        uses: DavidAnson/markdownlint-cli2-action@v24
+        with:
+          globs: "**/*.md"
+
+      - name: Check local documentation links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: '"**/*.md" ".github/**/*.md" ".agents/**/*.md"'
+          lycheeVersion: v0.24.2

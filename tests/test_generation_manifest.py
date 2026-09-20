@@ -35,7 +35,7 @@ def completed_manifest() -> dict:
         "config_fingerprint": SHA256,
         "execution_fingerprint": OTHER_SHA256,
         "configuration": {
-            "enabled_modalities": ["scene", "dialogue"],
+            "enabled_modalities": ["scene", "speech"],
             "frame_stride": 1,
         },
         "models": {"runtime": {"requested": "cpu"}},
@@ -75,7 +75,7 @@ def completed_manifest() -> dict:
         "failed_videos": [],
         "interrupted_videos": [],
         "processed_frames": 4,
-        "record_counts": {"scene": 4, "dialogue": 2},
+        "record_counts": {"scene": 4, "speech": 2},
         "store_size_bytes_at_commit": 4096,
     }
 
@@ -162,8 +162,8 @@ class CompletedGenerationManifestTests(unittest.TestCase):
     def test_record_counts_exactly_match_modalities_and_sizes_are_nonnegative(self):
         invalid_counts = (
             {"scene": 4},
-            {"scene": 4, "dialogue": 2, "actor": 1},
-            {"scene": -1, "dialogue": 2},
+            {"scene": 4, "speech": 2, "actor": 1},
+            {"scene": -1, "speech": 2},
         )
         for record_counts in invalid_counts:
             with self.subTest(record_counts=record_counts):

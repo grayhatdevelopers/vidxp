@@ -88,15 +88,15 @@ config = IndexConfig(
     split="test",
     run_id="released-asr",
     generation_id="423456781234423481234567890abcde",
-    enabled_modalities=("dialogue",),
+    enabled_modalities=("speech",),
 )
 
 run_index([source], config)
 ```
 
 Scene-only runs do not load a transcription or actor model. Supplied-transcript
-dialogue runs load the dialogue encoder but do not decode video. Actor-only runs
-do not load scene or transcription models. Scene inference, dialogue encoding,
+speech runs load the speech encoder but do not decode video. Actor-only runs do
+not load scene or transcription models. Scene inference, speech encoding,
 and Chroma writes use their configured batch sizes. Cancellation is cooperative
 and is checked between batches. The Streamlit process exposes cancellation for
 indexing workers it started and reports that the current batch must finish
@@ -134,7 +134,7 @@ IDs are lowercase UUID4 hex. Dataset adapters retain official video keys at
 their input/evaluator boundary and deterministically map them to valid internal
 IDs.
 
-- Dialogue records store text, start/end, phrase ID, video ID, modality, source
+- Speech records store text, start/end, phrase ID, video ID, modality, source
   ID, dataset, split, and run ID.
 - Scene records store frame index, timestamp, start/end, FPS, duration, video ID,
   modality, source ID, dataset, split, and run ID.
@@ -166,7 +166,7 @@ for hit in result.hits:
 
 Passing a media UUID through `video_id` restricts retrieval to one video; omitting it
 searches the run corpus. Results are deterministically ordered by raw distance and
-then source ID. Scene vectors and, by default, dialogue vectors are normalized
+then source ID. Scene vectors and, by default, speech vectors are normalized
 before the explicitly configured Chroma distance (`vector_distance`, default
 `l2`), making the default ordering cosine-equivalent. The distance is stored in
 the run configuration and Chroma collection rather than relying on Chroma's

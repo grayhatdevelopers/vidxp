@@ -72,6 +72,10 @@ def render(
             repository, tag, asset_paths["checksums"]
         ),
         container_image=f"ghcr.io/{repository.lower()}",
+        container_package_url=(
+            f"https://github.com/{repository.lower()}/pkgs/container/"
+            f"{repository.rsplit('/', maxsplit=1)[-1].lower()}"
+        ),
         deployment_url=f"{source_root}/docs/deployment/coolify.md",
         installation_url=f"{source_root}/INSTALLATION_GUIDE.md",
         issues_url=f"https://github.com/{repository}/issues",

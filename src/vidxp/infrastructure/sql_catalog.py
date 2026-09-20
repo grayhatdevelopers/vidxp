@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool
 
 from vidxp.core.artifacts import ArtifactRecord, ArtifactState
-from vidxp.core.media import MediaRecord, utc_now
+from vidxp.core.media import MediaRecord, MediaState, utc_now
 from vidxp.core.uploads import (
     UploadIntentRecord,
     UploadSessionFileRecord,
@@ -49,6 +49,7 @@ _RESERVED_UPLOAD_STATES = {
     UploadState.processing.value,
     UploadState.failed.value,
 }
+_REPLACEABLE_MEDIA_STATES = {MediaState.pending, MediaState.failed}
 _UPLOAD_QUOTA_ID = "1"
 _EXPECTED_VALUE_UNSET = object()
 
@@ -65,6 +66,41 @@ def _payload(value: Any) -> dict[str, Any]:
 
 def _record(model: Any, value: Any) -> Any:
     return model.model_validate(_payload(value), strict=False)
+
+
+def _escape_like_pattern(value: str) -> str:
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    return f"%{escaped}%"
+
+
+def _media_payload_text(key: str):
+    return media.c.payload[key].as_string()
+
+
+def _media_list_conditions(
+    *,
+    dialect_name: str,
+    filename: str | None,
+    state: MediaState | None,
+) -> tuple[Any, ...]:
+    conditions: list[Any] = []
+    if state is not None:
+        conditions.append(_media_payload_text("state") == state.value)
+    if filename is not None:
+        filename_text = _media_payload_text("original_filename")
+        if dialect_name == "postgresql":
+            filename_text = filename_text.collate("pg_unicode_fast")
+        conditions.append(
+            func.casefold(filename_text).like(
+                _escape_like_pattern(filename.casefold()),
+                escape="\\",
+            )
+        )
+    return tuple(conditions)
 
 
 def _upload_record(row: Any) -> UploadIntentRecord:
@@ -179,6 +215,12 @@ class SQLCatalog:
 
     @staticmethod
     def _configure_sqlite(dbapi_connection: Any, _record: Any) -> None:
+        dbapi_connection.create_function(
+            "casefold",
+            1,
+            str.casefold,
+            deterministic=True,
+        )
         cursor = dbapi_connection.cursor()
         try:
             cursor.execute("PRAGMA foreign_keys = ON")
@@ -258,6 +300,30 @@ class SQLCatalog:
                 raise
         return record
 
+    def replace_media(self, record: MediaRecord) -> MediaRecord:
+        with self._write_transaction() as connection:
+            existing = self._media_by_id(connection, record.media_id)
+            if existing is None:
+                raise FileNotFoundError(
+                    f"Media {record.media_id} is not cataloged."
+                )
+            if existing.sha256 != record.sha256:
+                raise FileExistsError(
+                    f"Media {record.media_id} already has another record."
+                )
+            if existing == record:
+                return existing
+            if existing.state not in _REPLACEABLE_MEDIA_STATES:
+                raise FileExistsError(
+                    f"Media {record.media_id} already has another record."
+                )
+            connection.execute(
+                update(media)
+                .where(media.c.media_id == record.media_id)
+                .values(payload=record.model_dump(mode="json"))
+            )
+        return record
+
     @staticmethod
     def _media_by_id(
         connection: Connection,
@@ -291,28 +357,44 @@ class SQLCatalog:
         *,
         limit: int,
         offset: int = 0,
+        filename: str | None = None,
+        state: MediaState | None = None,
     ) -> tuple[MediaRecord, ...]:
         if limit <= 0 or offset < 0:
             raise ValueError("limit must be positive and offset nonnegative")
+        conditions = _media_list_conditions(
+            dialect_name=self.engine.dialect.name,
+            filename=filename,
+            state=state,
+        )
+        query = select(media.c.payload).order_by(media.c.created_at, media.c.media_id)
+        if conditions:
+            query = query.where(and_(*conditions))
         with self.engine.connect() as connection:
             payloads = connection.execute(
-                select(media.c.payload)
-                .order_by(media.c.created_at, media.c.media_id)
-                .limit(limit)
-                .offset(offset)
+                query.limit(limit).offset(offset)
             ).scalars()
             return tuple(
                 _record(MediaRecord, payload)
                 for payload in payloads
             )
 
-    def count_media(self) -> int:
+    def count_media(
+        self,
+        *,
+        filename: str | None = None,
+        state: MediaState | None = None,
+    ) -> int:
+        conditions = _media_list_conditions(
+            dialect_name=self.engine.dialect.name,
+            filename=filename,
+            state=state,
+        )
+        query = select(func.count()).select_from(media)
+        if conditions:
+            query = query.where(and_(*conditions))
         with self.engine.connect() as connection:
-            return int(
-                connection.execute(
-                    select(func.count()).select_from(media)
-                ).scalar_one()
-            )
+            return int(connection.execute(query).scalar_one())
 
     def reserve_media_import(
         self,

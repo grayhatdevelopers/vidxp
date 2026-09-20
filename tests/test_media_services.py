@@ -1,3 +1,4 @@
+import hashlib
 import unittest
 from contextlib import nullcontext
 from datetime import datetime, timezone
@@ -19,8 +20,10 @@ from vidxp.artifact_service import (
 )
 from vidxp.core.artifacts import ArtifactState
 from vidxp.core.contracts import CancellationToken, IndexCancelledError
+from vidxp.core.cursors import encode_offset_cursor
 from vidxp.core.media import (
     MediaProbe,
+    MediaUnavailableError,
     QuarantinedMedia,
     MediaRecord,
     MediaState,
@@ -73,6 +76,19 @@ def record() -> MediaRecord:
     )
 
 
+def pending_record(*, state: MediaState = MediaState.pending) -> MediaRecord:
+    return MediaRecord(
+        media_id=MEDIA_ID,
+        video_id=MEDIA_ID,
+        sha256="1" * 64,
+        original_filename="video.mp4",
+        byte_size=5,
+        storage_key="objects/11/video.mp4",
+        state=state,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
 class MediaServiceTests(unittest.TestCase):
     def service(self, root: Path):
         catalog = Mock()
@@ -88,6 +104,8 @@ class MediaServiceTests(unittest.TestCase):
             store=store,
             probe=probe,
         )
+        catalog.put_media.side_effect = lambda item: item
+        catalog.replace_media.side_effect = lambda item: item
         return service, catalog, store, probe
 
     def test_import_probes_staging_before_publishing_and_cataloging(self):
@@ -125,7 +143,6 @@ class MediaServiceTests(unittest.TestCase):
                 ),
             )
             catalog.get_media_by_checksum.return_value = None
-            catalog.put_media.side_effect = lambda item: item
             with patch("vidxp.media_service.uuid4") as identifier:
                 identifier.return_value.hex = MEDIA_ID
                 result = service.import_local(ImportMediaCommand(path=source))
@@ -135,9 +152,18 @@ class MediaServiceTests(unittest.TestCase):
         probe.probe.assert_called_once_with(staged.path)
         store.publish.assert_called_once_with(staged)
         catalog.put_media.assert_called_once()
+        self.assertEqual(
+            catalog.put_media.call_args.args[0].state,
+            MediaState.pending,
+        )
+        catalog.replace_media.assert_called_once()
+        self.assertEqual(
+            catalog.replace_media.call_args.args[0].state,
+            MediaState.ready,
+        )
         store.discard.assert_called_once_with(staged)
 
-    def test_invalid_probe_never_publishes_or_catalogs_media(self):
+    def test_invalid_probe_catalogs_failed_media_without_publishing(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "video.mp4"
@@ -157,7 +183,16 @@ class MediaServiceTests(unittest.TestCase):
                 service.import_local(ImportMediaCommand(path=source))
 
         store.publish.assert_not_called()
-        catalog.put_media.assert_not_called()
+        catalog.put_media.assert_called_once()
+        self.assertEqual(
+            catalog.put_media.call_args.args[0].state,
+            MediaState.pending,
+        )
+        catalog.replace_media.assert_called_once()
+        self.assertEqual(
+            catalog.replace_media.call_args.args[0].state,
+            MediaState.failed,
+        )
         store.discard.assert_called_once_with(staged)
 
     def test_quarantined_import_reuses_the_same_ingestion_pipeline(self):
@@ -195,7 +230,6 @@ class MediaServiceTests(unittest.TestCase):
                 ),
             )
             catalog.get_media_by_checksum.return_value = None
-            catalog.put_media.side_effect = lambda item: item
             with patch("vidxp.media_service.uuid4") as identifier:
                 identifier.return_value.hex = MEDIA_ID
                 result = service.import_quarantined(
@@ -249,16 +283,17 @@ class MediaServiceTests(unittest.TestCase):
             catalog.reserve_media_import.return_value = None
             catalog.get_media_by_checksum.return_value = None
             imported = record()
-            catalog.put_media.return_value = imported
             catalog.get_media.return_value = imported
 
-            result = service.import_quarantined(
-                QuarantinedMedia(
-                    path=source,
-                    original_filename="upload.mp4",
-                ),
-                request_key="request-key",
-            )
+            with patch("vidxp.media_service.uuid4") as identifier:
+                identifier.return_value.hex = MEDIA_ID
+                result = service.import_quarantined(
+                    QuarantinedMedia(
+                        path=source,
+                        original_filename="upload.mp4",
+                    ),
+                    request_key="request-key",
+                )
 
         self.assertEqual(result.media_id, MEDIA_ID)
         fingerprint = catalog.reserve_media_import.call_args.args[1]
@@ -381,16 +416,69 @@ class MediaServiceTests(unittest.TestCase):
                 ),
             )
             catalog.get_media_by_checksum.return_value = None
-            catalog.put_media.side_effect = RuntimeError("catalog failed")
+
+            def replace_side_effect(record):
+                if record.state == MediaState.ready:
+                    raise RuntimeError("catalog failed")
+                return record
+
+            catalog.replace_media.side_effect = replace_side_effect
 
             with self.assertRaisesRegex(RuntimeError, "catalog failed"):
                 service.import_local(ImportMediaCommand(path=source))
 
         store.delete.assert_called_once_with(stored.storage_key)
+        failed_calls = [
+            call.args[0].state
+            for call in catalog.replace_media.call_args_list
+            if call.args[0].state == MediaState.failed
+        ]
+        self.assertEqual(failed_calls, [MediaState.failed])
+
+    def test_publish_failure_catalogs_failed_media_without_publishing(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "video.mp4"
+            source.write_bytes(b"video")
+            service, catalog, store, probe = self.service(root)
+            staged = StagedMedia(
+                sha256="1" * 64,
+                byte_size=5,
+                storage_key="objects/11/video.mp4",
+                path=root / "staged.tmp",
+            )
+            store.stage_local.return_value = staged
+            probe.probe.return_value = MediaProbe(
+                detected_mime_type="video/mp4",
+                container="mp4",
+                duration_seconds=2,
+                streams=(
+                    MediaStream(
+                        index=0,
+                        kind="video",
+                        codec="h264",
+                        width=1,
+                        height=1,
+                    ),
+                ),
+            )
+            catalog.get_media_by_checksum.return_value = None
+            store.publish.side_effect = RuntimeError("publish failed")
+
+            with self.assertRaisesRegex(RuntimeError, "publish failed"):
+                service.import_local(ImportMediaCommand(path=source))
+
+        catalog.replace_media.assert_called_once()
+        self.assertEqual(
+            catalog.replace_media.call_args.args[0].state,
+            MediaState.failed,
+        )
+        store.discard.assert_called_once_with(staged)
 
     def test_media_pages_are_bounded_and_cursor_scoped(self):
         with TemporaryDirectory() as directory:
-            service, catalog, _store, _probe = self.service(Path(directory))
+            root = Path(directory)
+            service, catalog, _store, _probe = self.service(root)
             catalog.count_media.return_value = 3
             catalog.list_media.side_effect = [
                 (record(), record().model_copy(
@@ -416,13 +504,133 @@ class MediaServiceTests(unittest.TestCase):
 
         self.assertEqual(first.total, 3)
         self.assertEqual(len(first.items), 2)
-        self.assertIsNotNone(first.next_cursor)
+        scope = hashlib.sha256(str(root.resolve()).encode()).hexdigest()
+        self.assertEqual(
+            first.next_cursor,
+            encode_offset_cursor(2, scope=scope),
+        )
         self.assertEqual(len(second.items), 1)
         self.assertIsNone(second.next_cursor)
         self.assertEqual(
             catalog.list_media.call_args_list[1].kwargs["offset"],
             2,
         )
+
+    def test_filtered_media_cursor_is_bounded_and_filter_scoped(self):
+        with TemporaryDirectory() as directory:
+            service, catalog, _store, _probe = self.service(Path(directory))
+            catalog.count_media.return_value = 2
+            catalog.list_media.side_effect = [(record(),), (record(),)]
+            command = ListMediaCommand(
+                page_size=1,
+                filename="É" * 255,
+                state=MediaState.ready,
+            )
+
+            first = service.list(command)
+            second = service.list(
+                command.model_copy(update={"cursor": first.next_cursor})
+            )
+            for changed_filter in (
+                {"filename": "other.mp4"},
+                {"state": MediaState.failed},
+            ):
+                with (
+                    self.subTest(changed_filter=changed_filter),
+                    self.assertRaisesRegex(ValueError, "cursor"),
+                ):
+                    service.list(
+                        command.model_copy(
+                            update={"cursor": first.next_cursor, **changed_filter}
+                        )
+                    )
+
+        self.assertLessEqual(len(first.next_cursor or ""), 512)
+        self.assertIsNone(second.next_cursor)
+
+    def test_media_list_passes_filters_to_catalog_count(self):
+        with TemporaryDirectory() as directory:
+            service, catalog, _store, _probe = self.service(Path(directory))
+            catalog.count_media.return_value = 1
+            catalog.list_media.return_value = (record(),)
+
+            service.list(
+                ListMediaCommand(
+                    page_size=10,
+                    filename="clip.mp4",
+                    state=MediaState.ready,
+                )
+            )
+
+        catalog.count_media.assert_called_once_with(
+            filename="clip.mp4",
+            state=MediaState.ready,
+        )
+
+    def test_failed_checksum_is_retried_to_ready(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "video.mp4"
+            source.write_bytes(b"video")
+            service, catalog, store, probe = self.service(root)
+            staged = StagedMedia(
+                sha256="1" * 64,
+                byte_size=5,
+                storage_key="objects/11/video.mp4",
+                path=root / "staged.tmp",
+            )
+            stored = StoredMedia(
+                sha256=staged.sha256,
+                byte_size=5,
+                storage_key=staged.storage_key,
+                local_path=root / "managed.mp4",
+            )
+            store.stage_local.return_value = staged
+            store.publish.return_value = stored
+            probe.probe.return_value = MediaProbe(
+                detected_mime_type="video/mp4",
+                container="mp4",
+                duration_seconds=2,
+                streams=(
+                    MediaStream(
+                        index=0,
+                        kind="video",
+                        codec="h264",
+                        width=1,
+                        height=1,
+                    ),
+                ),
+            )
+            catalog.get_media_by_checksum.return_value = pending_record(
+                state=MediaState.failed
+            )
+
+            result = service.import_local(ImportMediaCommand(path=source))
+
+        self.assertEqual(result.media_id, MEDIA_ID)
+        self.assertEqual(result.state, MediaState.ready)
+        catalog.put_media.assert_not_called()
+        self.assertEqual(
+            [call.args[0].state for call in catalog.replace_media.call_args_list],
+            [MediaState.pending, MediaState.ready],
+        )
+
+    def test_get_returns_non_ready_media(self):
+        with TemporaryDirectory() as directory:
+            service, catalog, _store, _probe = self.service(Path(directory))
+            catalog.get_media.return_value = pending_record(state=MediaState.failed)
+
+            result = service.get(MEDIA_ID)
+
+        self.assertEqual(result.state, MediaState.failed)
+
+    def test_require_record_rejects_non_ready_media(self):
+        with TemporaryDirectory() as directory:
+            service, catalog, _store, _probe = self.service(Path(directory))
+            catalog.get_media.return_value = pending_record()
+
+            with self.assertRaises(MediaUnavailableError):
+                service.require_record(MEDIA_ID)
 
 
 class ArtifactServiceTests(unittest.TestCase):

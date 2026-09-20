@@ -1,6 +1,6 @@
 {
   "name": "vidxp",
-  "version": "0.4.0-b.3",
+  "version": "0.4.0",
   "description": "Ingest, index, search, and inspect video evidence with VidXP.",
   "author": {
     "name": "Grayhat",
@@ -9,7 +9,12 @@
   "homepage": "https://github.com/grayhatdevelopers/vidxp",
   "repository": "https://github.com/grayhatdevelopers/vidxp",
   "license": "MIT",
-  "keywords": ["video", "search", "evidence", "mcp"],
+  "keywords": [
+    "video",
+    "search",
+    "evidence",
+    "mcp"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "VidXP",
@@ -17,7 +22,11 @@
     "longDescription": "Use VidXP to ingest and index videos, search dialogue and scenes, answer grounded questions, and review evidence boards, frames, and clips.",
     "developerName": "Grayhat",
     "category": "Productivity",
-    "capabilities": ["Read", "Write", "Interactive"],
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
     "websiteURL": "https://grayhat.studio/",
     "defaultPrompt": [
       "Find and verify moments in my indexed videos.",

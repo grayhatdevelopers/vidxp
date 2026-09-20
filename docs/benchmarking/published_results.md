@@ -4,7 +4,7 @@ Collection index: [Benchmarking research](README.md)
 
 Status: Primary-source result extraction complete
 
-Last verified: 2026-07-26
+Last verified: 2026-08-27
 
 This is the answer to “what did the published competitors actually score?” It is
 the result-level companion to the capability matrix in the
@@ -32,6 +32,68 @@ with a third-party implementation.
 Scores are preserved on the authors' scale. In particular, FLARE, LongVALE,
 VALOR-32K, CLaMR, MUVR, and several temporal-retrieval papers report percentages,
 while MultiVENT 2.0 and TRECVID report fractions in `[0, 1]`.
+
+## Component-model selection results
+
+These results choose first integration candidates. They are not VidXP scores and
+do not remove the need for bounded repository-specific validation after a provider
+exists.
+
+### FineLAP: audio-text retrieval and dense sound features
+
+Source: [ACL 2026 paper](https://aclanthology.org/2026.acl-long.473/), Table 2,
+proceedings pp. 10398–10399.
+
+| Model | AudioCaps text→audio R@1 | AudioCaps audio→text R@1 | Selection use |
+| --- | ---: | ---: | --- |
+| FineLAP | 45.7 | 62.5 | First environmental-sound provider; also exposes dense frame features |
+| LAION-CLAP | 35.1 | 44.2 | Mature native-Transformers integration baseline |
+
+The same paper uses fixed ten-second FineLAP inputs and identifies variable-length
+audio as future work. Long-media integration therefore still needs timestamped
+windowing, overlap, and span merging owned by VidXP.
+
+### MVEB: current text-video embedding comparison
+
+Source: [MVEB paper](https://arxiv.org/pdf/2606.14958), Table 11, PDF p. 30.
+
+| Model | MVEB(text, video) mean | Selection use |
+| --- | ---: | --- |
+| Qwen3-VL-Embedding-8B | 60.9 | Published quality ceiling |
+| Qwen3-VL-Embedding-2B | 58.1 | Practical first visual scene/action candidate |
+| LCO-Embedding-Omni-7B | 56.8 | Strong audio-video-text context, but substantially larger |
+
+The checked MVEB paper contains no VideoPrism row. These numbers support the Qwen
+candidate order, but they do not establish a direct Qwen-versus-VideoPrism win.
+VideoPrism remains an incumbent multi-frame encoder control.
+
+### TimeLens2: visual temporal grounding size trade-off
+
+Source: [official TimeLens2 release table](https://github.com/MCG-NJU/TimeLens2),
+checked 2026-08-27.
+
+| Checkpoint | Seven-dataset average mIoU | Selection use |
+| --- | ---: | --- |
+| TimeLens2-4B | 47.7 | First visual temporal-grounding candidate after cheap recall |
+| TimeLens2-8B | 48.0 | Quality ceiling; not the practical default for a 0.3-point gain |
+
+Both checkpoints are visual-only. Neither evaluates environmental audio or spoken
+content, so neither can cover LongVALE's full task alone.
+
+### AEGBench: open-vocabulary sound boundaries
+
+Source: [Auto-AEG/AEGBench](https://arxiv.org/html/2607.04383v4), Table 3.
+
+| Model | mIoU | Event F1 | Segment F1 | Selection use |
+| --- | ---: | ---: | ---: | --- |
+| PE-A-Frame Large | 0.389 | 0.407 | 0.607 | Released sound-localization specialist and integration comparator |
+| DASM | 0.204 | 0.215 | 0.277 | Lower detector baseline |
+| Qwen3-Omni-30B + SFT + GRPO | 0.480 | 0.524 | 0.697 | Training-heavy research ceiling, not the local first pick |
+
+AEGBench contains 3,427 items and 9,790 queries with multiple hard-case labels,
+including repeated occurrence, polyphonic overlap, gradual boundaries, and long
+duration. It is a component benchmark, not evidence of end-to-end visual/sound/
+speech fusion.
 
 ## Whole-system and multimodal retrieval
 

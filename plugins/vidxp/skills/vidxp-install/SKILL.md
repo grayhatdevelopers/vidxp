@@ -35,12 +35,13 @@ Ask before starting an installer, changing a tool environment, or downloading mo
 
 1. Identify the operating system and architecture.
 2. Use the latest applicable release from `https://github.com/grayhatdevelopers/vidxp/releases`:
-   - Windows x86-64: signed setup executable.
+   - Windows x86-64: setup executable. The current release is unsigned, so
+     Windows SmartScreen may require user confirmation.
    - Apple Silicon macOS: signed and notarized DMG.
    - Linux x86-64: AppImage.
 3. Prefer the stable release unless the user explicitly requests beta. Verify any published checksum before launching the artifact.
 4. Let the user complete the native installer and choose the VidXP capabilities in Desktop. Do not silently select model-heavy features.
-5. In VidXP Desktop, use **Set up Codex** after the runtime reports healthy. Desktop registers this plugin and the exact private-runtime `vidxp-mcp` command.
+5. In VidXP Desktop, use **Set up in Codex** after the runtime reports healthy. Desktop registers this plugin and the exact private-runtime `vidxp-mcp` command.
 6. Start a new Codex task, then verify the VidXP MCP tools are available.
 
 ## CLI path
@@ -78,7 +79,7 @@ Ask before starting an installer, changing a tool environment, or downloading mo
 
 ## Updates and repairs
 
-- Desktop: use a current installer for the same channel, then re-run **Set up Codex** so the private runtime path and plugin source are refreshed.
+- Desktop: use a current installer for the same channel, then re-run **Set up in Codex** so the private runtime path and plugin source are refreshed.
 - CLI: use `uv tool upgrade vidxp`, run `vidxp doctor`, and re-register the resolved `vidxp-mcp` command if its path changed.
 - If Codex reports duplicate VidXP plugins, keep the Git-backed `vidxp` marketplace for release installs and remove the obsolete `vidxp@vidxp-local` entry only after the Git-backed plugin works.
 

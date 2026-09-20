@@ -16,7 +16,7 @@ from vidxp.application_models import (
 from vidxp.capabilities.registry import create_capability_registry
 from vidxp.capability_service import CapabilityService
 from vidxp.control_plane import ControlPlaneApplication
-from vidxp.core.media import MediaState, MediaStream
+from vidxp.core.media import MediaState, MediaStream, MediaUnavailableError
 from vidxp.core.snapshots import GenerationReference, IndexSnapshot
 from vidxp.repository_layout import RepositoryLayout
 
@@ -52,6 +52,30 @@ def media_asset(media_id: str, filename: str) -> MediaAsset:
 
 
 class ControlPlaneWorkspaceTests(unittest.TestCase):
+    def test_select_index_modalities_defaults_and_rejects_non_indexable_names(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            application = ControlPlaneApplication(
+                layout=RepositoryLayout(root=root),
+                capabilities=CapabilityService(create_capability_registry()),
+                media=Mock(),
+                artifacts=Mock(),
+                index_status=lambda: None,
+                model_cache=root / "models",
+            )
+
+            defaults = application.select_index_modalities(None)
+            selected = application.select_index_modalities(("scene", "sound"))
+            with self.assertRaises(ApplicationError) as raised:
+                application.select_index_modalities(("query",))
+
+        self.assertEqual(
+            defaults,
+            ("speech", "sound", "scene", "actor", "action"),
+        )
+        self.assertEqual(selected, ("scene", "sound"))
+        self.assertEqual(raised.exception.detail.code, "invalid_request")
+
     def test_index_preflight_rejects_unknown_capability_with_next_action(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -77,7 +101,40 @@ class ControlPlaneWorkspaceTests(unittest.TestCase):
         self.assertEqual(error["reason"], "capability_unknown")
         self.assertEqual(error["requested"], ["unknown"])
         self.assertIn("get_workspace", error["next_action"])
-        media.get.assert_not_called()
+        media.require_record.assert_not_called()
+
+    def test_index_preflight_rejects_non_ready_media(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = Mock()
+            media.require_record.side_effect = MediaUnavailableError(
+                "The media asset is unavailable."
+            )
+            application = ControlPlaneApplication(
+                layout=RepositoryLayout(root=root),
+                capabilities=CapabilityService(create_capability_registry()),
+                media=media,
+                artifacts=Mock(),
+                index_status=lambda: None,
+                model_cache=root / "models",
+            )
+
+            for state in (MediaState.pending, MediaState.failed):
+                with self.subTest(state=state):
+                    media.require_record.reset_mock()
+                    with self.assertRaises(ApplicationError) as raised:
+                        application.preflight_index(
+                            CreateIndexCommand(
+                                media_id=MEDIA_ID,
+                                modalities=("scene",),
+                            )
+                        )
+
+                    self.assertEqual(
+                        raised.exception.to_dict()["category"],
+                        "not_found",
+                    )
+                    media.require_record.assert_called_once_with(MEDIA_ID)
 
     def test_workspace_projects_index_coverage_roles_and_next_actions(self):
         indexed = media_asset(MEDIA_ID, "indexed.mp4")
@@ -146,6 +203,65 @@ class ControlPlaneWorkspaceTests(unittest.TestCase):
             CapabilityIdentityMode.anonymous_clusters,
         )
         self.assertEqual(workspace.media[1].capabilities[0].roles, ())
+
+    def test_workspace_index_action_uses_repository_total_when_filtered(self):
+        indexed = media_asset(MEDIA_ID, "indexed.mp4")
+        snapshot = IndexSnapshot(
+            snapshot_id=SNAPSHOT_ID,
+            created_at=datetime.now(timezone.utc),
+            config_fingerprint="b" * 64,
+            configuration={},
+            generations={
+                MEDIA_ID: GenerationReference(
+                    generation_id=GENERATION_ID,
+                    media_id=MEDIA_ID,
+                    manifest_sha256="c" * 64,
+                    input_sha256="d" * 64,
+                    config_fingerprint="e" * 64,
+                    modalities=("scene",),
+                    record_counts={"scene": 12},
+                    store_size_bytes_at_commit=100,
+                ),
+                OTHER_MEDIA_ID: GenerationReference(
+                    generation_id="523456781234423481234567890abcde",
+                    media_id=OTHER_MEDIA_ID,
+                    manifest_sha256="f" * 64,
+                    input_sha256="a" * 64,
+                    config_fingerprint="b" * 64,
+                    modalities=("scene",),
+                    record_counts={"scene": 8},
+                    store_size_bytes_at_commit=90,
+                ),
+            },
+        )
+        media = Mock()
+
+        def list_media(command: ListMediaCommand) -> MediaPage:
+            if command.filename == "clip":
+                return MediaPage(items=(indexed,), total=1)
+            return MediaPage(items=(indexed,), total=3)
+
+        media.list.side_effect = list_media
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            application = ControlPlaneApplication(
+                layout=RepositoryLayout(root=root),
+                capabilities=CapabilityService(create_capability_registry()),
+                media=media,
+                artifacts=Mock(),
+                index_status=lambda: {
+                    "schema_version": 2,
+                    "state": "ready",
+                    "stage": "status",
+                    "message": "Index ready.",
+                },
+                active_snapshot=lambda: snapshot,
+                model_cache=root / "models",
+            )
+
+            workspace = application.workspace(ListMediaCommand(filename="clip"))
+
+        self.assertIn("index_media", workspace.next_actions)
 
 
 if __name__ == "__main__":

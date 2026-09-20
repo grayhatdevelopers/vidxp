@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 import re
 from typing import Any
@@ -174,4 +175,23 @@ def model_artifact_cached(
     cache: Path,
     spec: ModelSpec | ArtifactSpec,
 ) -> bool:
-    return model_artifact_path(cache, spec).is_file()
+    return model_artifact_valid(model_artifact_path(cache, spec), spec)
+
+
+def model_artifact_valid(
+    path: Path,
+    spec: ModelSpec | ArtifactSpec,
+) -> bool:
+    if not path.is_file():
+        return False
+    expected = (
+        spec.weights_sha256 if isinstance(spec, ModelSpec) else spec.sha256
+    )
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+    except OSError:
+        return False
+    return digest.hexdigest() == expected

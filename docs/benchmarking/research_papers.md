@@ -4,7 +4,7 @@ Collection index: [Benchmarking research](README.md)
 
 Status: Paper-level benchmark-use audit complete; reading queue active
 
-Last verified: 2026-07-26
+Last verified: 2026-08-27
 
 Related decision record: [Published benchmark catalog](benchmark_catalog.md)
 
@@ -21,20 +21,32 @@ actually relies on.
 
 Start with these papers before reviewing individual model variants:
 
-1. **TVR / XML** for the closest peer-reviewed corpus-level visual/transcript
+1. **MAEB** and **MVEB** for the current common audio/video embedding landscape.
+2. **FineLAP** and **AEGBench** for environmental-sound retrieval and boundaries.
+3. **LongVALE** and **FLARE** for combined long-video vision, sound, and speech.
+4. **TVR / XML** for the closest peer-reviewed corpus-level visual/transcript
    temporal-retrieval task.
-2. **Localizing Moments in Video with Natural Language** for the simplest
+5. **Localizing Moments in Video with Natural Language** for the simplest
    executable visual moment benchmark.
-3. **QVHighlights / Moment-DETR** for modern interval and highlight evaluation.
-4. **Zero-shot Video Moment Retrieval With Off-the-Shelf Models** for the closest
+6. **QVHighlights / Moment-DETR** for modern interval and highlight evaluation.
+7. **Zero-shot Video Moment Retrieval With Off-the-Shelf Models** for the closest
    methodological comparison to VidXP's untuned CLIP retrieval.
-5. **HiREST** and **QuerYD** for speech-backed retrieval options.
-6. **BCL** for unknown-number video face clustering and its WCP/NMI protocol.
-7. **VPCD** and **C1C** for stronger person/track constraints and dataset context.
-8. **LongVALE** for the strongest peer-reviewed combined vision–audio–speech
-   temporal benchmark.
-9. **Towards a Complete Benchmark on Video Moment Localization** for cross-dataset
+8. **HiREST** and **QuerYD** for speech-backed retrieval options.
+9. **BCL** for unknown-number video face clustering and its WCP/NMI protocol.
+10. **VPCD** and **C1C** for stronger person/track constraints and dataset context.
+11. **Towards a Complete Benchmark on Video Moment Localization** for cross-dataset
    bias and evaluation methodology.
+
+## Current model-selection and modality benchmarks
+
+| Paper | Venue/year | Benchmarks or models | Why it belongs |
+| --- | --- | --- | --- |
+| [MAEB: Massive Audio Embedding Benchmark](https://arxiv.org/abs/2602.16008) | arXiv 2026 | 30-task MAEB from a 98-task pool; 50+ models | Current common audio-embedding landscape across speech, music, environmental sound, and audio-text work; shows why speech and sound need separate providers |
+| [MVEB: Massive Video Embedding Benchmark](https://arxiv.org/abs/2606.14958) | arXiv 2026 | 23-task MVEB from a 184-task pool; 33 models | Current common video-embedding comparison, with Qwen3-VL-Embedding leading its text-video table and paired video/audio variants |
+| [FineLAP: Taming Heterogeneous Supervision for Fine-grained Language-Audio Pretraining](https://aclanthology.org/2026.acl-long.473/) | ACL 2026 | AudioCaps, Clotho, classification, sound-event detection, and text-to-audio grounding | Implemented environmental-sound provider because one model exposes both global retrieval and dense localization features |
+| [Auto-AEG and AEGBench](https://arxiv.org/abs/2607.04383) | arXiv 2026 | Open-vocabulary audio-event grounding and AEGBench | Direct sound-interval benchmark for hard, repeated, and overlapping environmental events |
+| [TimeLens2](https://github.com/MCG-NJU/TimeLens2) | arXiv 2026 | Seven visual temporal-grounding datasets | Supports the 4B visual-localizer choice; it has no audio input and cannot cover LongVALE alone |
+| [Robust and Efficient Video Scene Detection using Optimal Sequential Grouping](https://research.ibm.com/publications/robust-and-efficient-video-scene-detection-using-optimal-sequential-grouping) | ISM 2016 | Introduces OVSD | Open-licensed semantic scene-boundary source; useful for segmentation only, not query retrieval, actions, sound, or speech |
 
 ## Multimodal and whole-system retrieval
 

@@ -47,6 +47,10 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn("vidxp[local-worker,mcp,frontend]==0.4.0-b", result)
         self.assertNotIn("python -m pip install", result)
         self.assertIn("ghcr.io/grayhatdevelopers/vidxp:0.4.0-b", result)
+        self.assertIn(
+            "https://github.com/grayhatdevelopers/vidxp/pkgs/container/vidxp",
+            result,
+        )
         self.assertNotIn("Beta release", result)
 
     def test_beta_warning_and_rendering_are_idempotent(self):
@@ -56,6 +60,10 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first.count("Beta release"), 1)
         self.assertEqual(first.count("Fixed upload recovery"), 1)
+        self.assertIn(
+            "https://github.com/grayhatdevelopers/vidxp/pkgs/container/vidxp",
+            first,
+        )
 
     def test_rejects_an_ambiguous_platform_asset(self):
         (self.assets / "another.exe").touch()

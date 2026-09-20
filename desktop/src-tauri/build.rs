@@ -6,6 +6,20 @@ fn main() {
     let mut manifest: serde_json::Value =
         serde_json::from_slice(include_bytes!("../runtime-manifest.json"))
             .expect("desktop/runtime-manifest.json must be valid JSON");
+    let capability_catalog: serde_json::Value =
+        serde_json::from_slice(include_bytes!("../capability-catalog.json"))
+            .expect("desktop/capability-catalog.json must be valid JSON");
+    assert_eq!(
+        capability_catalog["schema_version"].as_u64(),
+        Some(1),
+        "desktop capability catalog uses an unsupported schema version"
+    );
+    let capabilities = capability_catalog["capabilities"]
+        .as_object()
+        .filter(|capabilities| !capabilities.is_empty())
+        .expect("desktop capability catalog must contain capabilities")
+        .clone();
+    manifest["capabilities"] = serde_json::Value::Object(capabilities);
     let expected = manifest["uv_version"]
         .as_str()
         .expect("runtime manifest must contain uv_version");
@@ -152,6 +166,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../../uv.lock");
     println!("cargo:rerun-if-changed=../../dist");
     println!("cargo:rerun-if-changed=../runtime-manifest.json");
+    println!("cargo:rerun-if-changed=../capability-catalog.json");
 
     let attributes = tauri_build::Attributes::new();
     #[cfg(windows)]

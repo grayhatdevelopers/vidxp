@@ -1,6 +1,6 @@
 ## Download VidXP
 
-{release_notice}VidXP turns video into searchable dialogue, scenes, people, and
+{release_notice}VidXP turns video into searchable speech, sounds, scenes, actions, people, and
 inspectable evidence. Choose the desktop app for the guided local setup, or use
 the Python package and containers for command-line and server deployments.
 
@@ -9,6 +9,10 @@ the Python package and containers for command-line and server deployments.
 | Windows x86-64 | [Installer]({windows_url}) |
 | macOS Apple Silicon | [DMG]({macos_url}) |
 | Linux x86-64 | [AppImage]({linux_url}) |
+
+Beta and stable macOS DMGs are signed with a Developer ID certificate and
+notarized by Apple. The Windows installer is not yet signed and may trigger
+SmartScreen.
 
 Verify downloaded files against [SHA256SUMS]({checksums_url}).
 
@@ -28,6 +32,8 @@ uv tool install --python 3.14 --torch-backend cpu \
 ```
 
 ### Containers
+
+Browse published tags in the [VidXP container package]({container_package_url}).
 
 ```bash
 docker pull {container_image}:{version}

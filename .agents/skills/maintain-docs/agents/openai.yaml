@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain VidXP docs"
+  short_description: "Keep VidXP documentation accurate and readable."
+  default_prompt: "Use $maintain-docs to update or review VidXP documentation for the correct reader."

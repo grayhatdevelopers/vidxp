@@ -1,5 +1,24 @@
 # CHANGELOG
 
+## [0.4.0](https://github.com/grayhatdevelopers/vidxp/compare/v0.3.0...v0.4.0) (2026-08-17)
+
+
+### Features
+
+* **codex:** install guided workflows for VidXP setup, video ingestion, evidence search, and connection to the selected local installation ([5c6552e](https://github.com/grayhatdevelopers/vidxp/commit/5c6552e4768e325a580abcffc62983d4e264bc33))
+* **desktop:** set up an existing installation or create a Desktop-managed one, choose its features, verify readiness, and control local services from the app ([8e779a3](https://github.com/grayhatdevelopers/vidxp/commit/8e779a3364670aab833668956a289415eac8652b))
+* **desktop:** ship signed, notarized, and stapled macOS installers that launch without unsigned-app Gatekeeper warnings ([4074332](https://github.com/grayhatdevelopers/vidxp/commit/40743321907c5393dc66a7e7d21a95e8dc3e602e))
+* **mcp:** upload or import videos, follow ingestion and indexing progress, and receive visual boards, keyframes, and clips with search results ([9a5a911](https://github.com/grayhatdevelopers/vidxp/commit/9a5a911bef79474e55152c62e9289023fcf10c5a))
+* **media:** show pending, ready, and failed imports across CLI, API, and MCP instead of hiding failed ingestion behind generic errors ([aa1f61e](https://github.com/grayhatdevelopers/vidxp/commit/aa1f61e4a79dcc7b08ee4a5fabc852b02b36d85e))
+* **networking:** share browser, API, and MCP services on trusted networks; API and MCP use bearer-token authentication while browser sharing remains unauthenticated ([37f3a84](https://github.com/grayhatdevelopers/vidxp/commit/37f3a84f03dcfc9022d723bac91d970352c3c1e3))
+* **search:** find actions and events across several seconds of video with Action search; enabling it downloads about 0.93 GiB and requires indexing videos with Action search selected ([8922823](https://github.com/grayhatdevelopers/vidxp/commit/89228238e748558d163663c44d331a754c6fdefe))
+
+
+### Bug Fixes
+
+* **models:** harden preparation downloads ([62cb7b1](https://github.com/grayhatdevelopers/vidxp/commit/62cb7b1b2dbdfbc968435bb76101b3199a88c1f8))
+* **models:** harden preparation downloads ([69c5e51](https://github.com/grayhatdevelopers/vidxp/commit/69c5e51588c496699fe3a49b8c61a374f1058a98))
+
 ## [0.4.0-b.3](https://github.com/grayhatdevelopers/vidxp/compare/v0.4.0-b.2...v0.4.0-b.3) (2026-08-05)
 
 

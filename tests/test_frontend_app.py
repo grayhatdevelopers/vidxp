@@ -161,7 +161,7 @@ def ready_status() -> IndexStatus:
             snapshot_id=SNAPSHOT_ID,
             media_count=1,
             media_ids=(MEDIA_ID,),
-            modalities=("dialogue", "scene", "actor"),
+            modalities=("speech", "sound", "scene", "actor", "action"),
         ),
     )
 
@@ -268,6 +268,27 @@ class FrontendAppTests(unittest.TestCase):
         self.assertFalse(self.widget(app.button, "Search").disabled)
         self.assertEqual(app.warning[-1].value, "Enter a search query.")
         self.assertEqual(jobs.submitted_searches, [])
+
+    def test_ready_page_exposes_action_and_motion_search(self):
+        service = FrontendApplicationStub(self.root, ready_status())
+        jobs = FrontendJobStub()
+        app = self.app(service, jobs).run()
+
+        capability_picker = self.widget(app.multiselect, "Capabilities")
+        self.assertIn(
+            "Action and motion search",
+            capability_picker.options,
+        )
+        temporal_control = self.widget(app.selectbox, "Temporal clip length")
+        self.assertEqual(temporal_control.value, 2.0)
+
+        search_type = self.widget(app.selectbox, "Search type")
+        search_type.select("action")
+        app.text_input(key="video_search_query").input("a person walks out")
+        self.widget(app.button, "Search").click()
+        app.run()
+
+        self.assertEqual(jobs.submitted_searches[0].modalities, ("action",))
 
     def test_running_index_keeps_one_preview_and_disables_mutations(self):
         service = FrontendApplicationStub(self.root, ready_status())

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from vidxp.ports import ModelRuntimePort
+from vidxp.core.indexing_common import report_preparation
 from vidxp.model_contracts import loaded_compute_precision
 from vidxp.capabilities.scene.specs import SIGLIP2_MODEL
 
@@ -32,14 +33,11 @@ def get_scene_model(
             download=download,
             progress=progress,
         )
-        if progress is not None:
-            progress(
-                {
-                    "state": "preparing",
-                    "stage": "loading_model",
-                    "message": f"Loading {SIGLIP2_MODEL.model_id}.",
-                }
-            )
+        report_preparation(
+            progress,
+            "loading_model",
+            f"Loading {SIGLIP2_MODEL.model_id}.",
+        )
         common = {
             "cache_dir": str(runtime.model_cache),
             "local_files_only": True,

@@ -28,6 +28,7 @@ from vidxp.application_models import (
 )
 from vidxp.branding import PROJECT_URL, icon_path
 from vidxp.composition import create_application, create_job_service
+from vidxp.core.media import MediaState
 from vidxp.index_state import IndexNotReadyError
 from vidxp.job_service import JobService
 from vidxp.settings import LocalExecutionSettings, VidXPSettings
@@ -120,6 +121,25 @@ SCENE_DETAIL_LABELS = {
     1.0: "Balanced — every second",
     2.0: "Detailed — twice per second",
 }
+VIDEOPRISM_SAMPLE_FPS_DEFAULT = 2.0
+VIDEOPRISM_DETAIL_PRESETS = (1.0, VIDEOPRISM_SAMPLE_FPS_DEFAULT, 4.0)
+VIDEOPRISM_DETAIL_LABELS = {
+    1.0: "Long actions — about 16 seconds per clip",
+    2.0: "Balanced — about 8 seconds per clip",
+    4.0: "Short actions — about 4 seconds per clip",
+}
+CAPABILITY_LABELS = {
+    "actor": "Actor groups",
+    "speech": "Speech search",
+    "natural-language": "Ask a question",
+    "scene": "Scene search",
+    "sound": "Sound event search (FineLAP)",
+    "action": "Action and motion search",
+}
+
+
+def _capability_label(name: str) -> str:
+    return CAPABILITY_LABELS.get(name, name.replace("-", " ").title())
 
 
 def _format_bytes(size: int) -> str:
@@ -191,7 +211,10 @@ def _render_summary(summary):
             (
                 f"Media: {summary.get('media_count', 0):,}",
                 "Capabilities: "
-                + ", ".join(summary.get("modalities", ())),
+                + ", ".join(
+                    _capability_label(name)
+                    for name in summary.get("modalities", ())
+                ),
             )
         )
     )
@@ -347,6 +370,7 @@ def _run_indexing(
     modalities,
     *,
     scene_sample_fps: float | None = None,
+    videoprism_sample_fps: float | None = None,
 ):
     service = _configured_service()
     temporary_path = None
@@ -383,6 +407,15 @@ def _run_indexing(
                 media_id=media_id,
                 modalities=modalities,
                 scene_sample_fps=scene_sample_fps,
+                capability_options=(
+                    {
+                        "action": {
+                            "sample_fps": videoprism_sample_fps,
+                        }
+                    }
+                    if videoprism_sample_fps is not None
+                    else {}
+                ),
             )
         )
         st.session_state[INDEX_JOB_ID_KEY] = job.job_id
@@ -423,6 +456,28 @@ def _scene_sample_fps_control(
             help=(
                 "More scene detail can improve coverage but takes longer "
                 "to index and uses more storage."
+            ),
+        )
+    )
+
+
+def _videoprism_sample_fps_control(
+    modalities: tuple[str, ...],
+    *,
+    disabled: bool,
+) -> float | None:
+    if "action" not in modalities:
+        return None
+    return float(
+        st.selectbox(
+            "Temporal clip length",
+            VIDEOPRISM_DETAIL_PRESETS,
+            index=1,
+            format_func=VIDEOPRISM_DETAIL_LABELS.__getitem__,
+            disabled=disabled,
+            help=(
+                "VideoPrism embeds 16 sampled frames per clip. Longer clips "
+                "cover slower actions; shorter clips localize quick actions."
             ),
         )
     )
@@ -654,6 +709,8 @@ def _render_search_result(result):
     result_label = (
         "Closest sampled scene"
         if search_type == "scene"
+        else "Closest temporal action clip"
+        if search_type == "action"
         else "Closest supporting evidence"
         if search_type == "natural-language"
         else f"Closest {search_type} match"
@@ -664,6 +721,11 @@ def _render_search_result(result):
             "Scene search ranks sampled frames by visual similarity. "
             "It does not identify the first occurrence and is not reliable "
             "for counting people."
+        )
+    elif search_type == "action":
+        st.caption(
+            "VideoPrism ranks short multi-frame clips, making it better suited "
+            "to actions and events than single-frame scene search."
         )
     st.video(
         str(resource.path),
@@ -690,7 +752,11 @@ def _import_local_video(service, raw_path):
 def _select_video(busy, media_id, media_page):
     service = _configured_service()
     st.subheader("Video")
-    assets = tuple(media_page.items) if media_page is not None else ()
+    assets = tuple(
+        asset
+        for asset in (media_page.items if media_page is not None else ())
+        if getattr(asset, "state", None) == MediaState.ready
+    )
     media_id = _default_media_id(media_id, assets)
     if media_id is not None:
         st.session_state[MEDIA_ID_KEY] = media_id
@@ -797,6 +863,7 @@ def _search_controls(ready, uploaded_video, available_modalities):
             search_type = st.selectbox(
                 "Search type",
                 ["natural-language", *available_modalities],
+                format_func=_capability_label,
                 disabled=not ready,
             )
         with query_column:
@@ -813,6 +880,8 @@ def _search_controls(ready, uploaded_video, available_modalities):
                     if search_type == "actor"
                     else "For example: What happens after the taxi arrives?"
                     if search_type == "natural-language"
+                    else "For example: A person opens a door and walks out."
+                    if search_type == "action"
                     else "For example: Chef makes pizza and cuts it up."
                 ),
                 disabled=not ready,
@@ -838,7 +907,9 @@ def run():
     st.logo(application_icon, size="large", link=PROJECT_URL)
     service = _configured_service()
     st.title("VidXP")
-    st.caption("Index and search video by dialogue, scene, and actor.")
+    st.caption(
+        "Index and search video by speech, sound, scenes, actions, and actors."
+    )
     st.caption(f"Index repository: {service.layout.root}")
     if notice := st.session_state.pop(MEDIA_NOTICE_KEY, None):
         st.success(notice)
@@ -928,7 +999,9 @@ def run():
             media_id = indexed_media[0]
             st.session_state[MEDIA_ID_KEY] = media_id
     try:
-        media_page = service.list_media(ListMediaCommand(page_size=100))
+        media_page = service.list_media(
+            ListMediaCommand(page_size=100, state=MediaState.ready)
+        )
     except ApplicationError:
         media_page = None
         st.warning(
@@ -963,11 +1036,16 @@ def run():
                 "Capabilities",
                 installed_modalities,
                 default=installed_modalities,
+                format_func=_capability_label,
                 disabled=busy,
                 help="Install another capability extra to make it available here.",
             )
         )
         scene_sample_fps = _scene_sample_fps_control(
+            selected_modalities,
+            disabled=busy,
+        )
+        videoprism_sample_fps = _videoprism_sample_fps_control(
             selected_modalities,
             disabled=busy,
         )
@@ -1209,6 +1287,7 @@ def run():
             status,
             selected_modalities,
             scene_sample_fps=scene_sample_fps,
+            videoprism_sample_fps=videoprism_sample_fps,
         )
 
 

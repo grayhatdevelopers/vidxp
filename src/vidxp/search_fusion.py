@@ -13,6 +13,26 @@ from vidxp.application_models import (
 
 
 RRF_RANK_CONSTANT = 60
+DEFAULT_CANDIDATE_DEPTH = 50
+MAX_CANDIDATE_DEPTH = 500
+
+
+def resolve_candidate_limit(
+    top_k: int,
+    candidate_depth: int = DEFAULT_CANDIDATE_DEPTH,
+    *,
+    max_candidates: int = MAX_CANDIDATE_DEPTH,
+) -> int:
+    """Determine the per-channel retrieval limit for candidate pools before fusion.
+
+    Uses an independent candidate depth budget, ensuring candidate depth is at
+    least `top_k` and bounded by `max_candidates`.
+    """
+    if top_k <= 0:
+        raise ValueError("top_k must be greater than zero.")
+    if candidate_depth <= 0:
+        raise ValueError("candidate_depth must be greater than zero.")
+    return min(max(top_k, candidate_depth), max_candidates)
 
 
 def _query_id(
@@ -33,7 +53,7 @@ def _query_id(
     return "fused:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
-def _connected_components(
+def _shared_overlap_components(
     hits: tuple[SearchHit, ...],
 ) -> list[list[SearchHit]]:
     ordered = sorted(
@@ -50,17 +70,21 @@ def _connected_components(
     components: list[list[SearchHit]] = []
     current: list[SearchHit] = []
     current_media: str | None = None
-    current_end = 0.0
+    current_overlap_end = 0.0
     for hit in ordered:
-        if not current or hit.media_id != current_media or hit.start > current_end:
+        if (
+            not current
+            or hit.media_id != current_media
+            or hit.start >= current_overlap_end
+        ):
             if current:
                 components.append(current)
             current = [hit]
             current_media = hit.media_id
-            current_end = hit.end
+            current_overlap_end = hit.end
         else:
             current.append(hit)
-            current_end = max(current_end, hit.end)
+            current_overlap_end = min(current_overlap_end, hit.end)
     if current:
         components.append(current)
     return components
@@ -137,7 +161,7 @@ def fuse_search_results(
     ordered_results = tuple(by_modality[modality] for modality in searched_modalities)
     flattened = tuple(hit for result in ordered_results for hit in result.hits)
     candidates = []
-    for hits in _connected_components(flattened):
+    for hits in _shared_overlap_components(flattened):
         ordered_hits = tuple(
             sorted(
                 hits,
@@ -152,8 +176,8 @@ def fuse_search_results(
             {
                 "score": _score(hits),
                 "media_id": hits[0].media_id,
-                "start": min(hit.start for hit in hits),
-                "end": max(hit.end for hit in hits),
+                "start": max(hit.start for hit in hits),
+                "end": min(hit.end for hit in hits),
                 "modalities": tuple(sorted({hit.modality for hit in hits})),
                 "hits": ordered_hits,
             }
@@ -192,6 +216,7 @@ def fuse_search_results(
         modalities=searched_modalities,
         moments=moments,
         fusion=FusionProvenance(
+            overlap_rule="shared_overlap",
             requested_modalities=requested_modalities,
             searched_modalities=searched_modalities,
         ),
