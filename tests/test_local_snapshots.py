@@ -16,8 +16,9 @@ from vidxp.core.contracts import (
     IndexSchemaError,
     StorageRecord,
 )
+from vidxp.core.manifest import MANIFEST_FILE, sha256_file, write_json_atomic
+from vidxp.core.snapshots import GenerationReference
 from vidxp.core.storage import IndexStorage
-from vidxp.core.manifest import MANIFEST_FILE, write_json_atomic
 from vidxp.infrastructure.local_snapshots import LocalSnapshotRepository
 from vidxp.infrastructure.local_index import LocalIndexBackend
 
@@ -67,10 +68,94 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
         record_counts: dict[str, int] | None = None,
         store_size_bytes_at_commit: int | None = 123,
     ):
+        manifest = self._manifest_payload(
+            config,
+            media_id=media_id,
+            input_sha=input_sha,
+            record_counts=record_counts,
+            store_size_bytes_at_commit=store_size_bytes_at_commit,
+            schema_version=INDEX_SCHEMA_VERSION,
+        )
+        write_json_atomic(
+            config.run_directory / MANIFEST_FILE,
+            manifest,
+        )
+        return self.repository.generation_reference(
+            generation_id=str(config.generation_id),
+            media_id=media_id,
+        )
+
+    def legacy_generation(
+        self,
+        media_id: str,
+        *,
+        input_sha: str,
+        schema_version: int,
+    ):
+        generation_id = self.repository.new_generation_id()
+        config = replace(
+            self.config,
+            video_id=media_id,
+            generation_id=generation_id,
+            generation_directory=self.repository.generation_directory(
+                generation_id
+            ),
+        )
+        return config, self.write_legacy_generation(
+            config,
+            media_id=media_id,
+            input_sha=input_sha,
+            schema_version=schema_version,
+        )
+
+    def write_legacy_generation(
+        self,
+        config: IndexConfig,
+        *,
+        media_id: str,
+        input_sha: str,
+        schema_version: int,
+        record_counts: dict[str, int] | None = None,
+        store_size_bytes_at_commit: int | None = 123,
+    ):
+        manifest = self._manifest_payload(
+            config,
+            media_id=media_id,
+            input_sha=input_sha,
+            record_counts=record_counts,
+            store_size_bytes_at_commit=store_size_bytes_at_commit,
+            schema_version=schema_version,
+        )
+        manifest_path = config.run_directory / MANIFEST_FILE
+        write_json_atomic(manifest_path, manifest)
+        return GenerationReference(
+            generation_id=str(config.generation_id),
+            media_id=media_id,
+            manifest_sha256=sha256_file(manifest_path),
+            input_sha256=input_sha,
+            config_fingerprint=config.fingerprint(),
+            modalities=tuple(config.enabled_modalities),
+            record_counts={
+                modality: manifest["record_counts"][modality]
+                for modality in config.enabled_modalities
+            },
+            store_size_bytes_at_commit=store_size_bytes_at_commit,
+        )
+
+    def _manifest_payload(
+        self,
+        config: IndexConfig,
+        *,
+        media_id: str,
+        input_sha: str,
+        record_counts: dict[str, int] | None,
+        store_size_bytes_at_commit: int | None,
+        schema_version: int,
+    ):
         now = datetime.now(timezone.utc).isoformat()
-        manifest = {
+        return {
             "manifest_schema_version": MANIFEST_SCHEMA_VERSION,
-            "index_schema_version": INDEX_SCHEMA_VERSION,
+            "index_schema_version": schema_version,
             "dataset": config.dataset,
             "split": config.split,
             "run_id": config.run_id,
@@ -114,14 +199,6 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
             },
             "store_size_bytes_at_commit": store_size_bytes_at_commit,
         }
-        write_json_atomic(
-            config.run_directory / MANIFEST_FILE,
-            manifest,
-        )
-        return self.repository.generation_reference(
-            generation_id=str(config.generation_id),
-            media_id=media_id,
-        )
 
     def test_unknown_store_size_round_trips_through_snapshot_metadata(self):
         config, reference = self.generation(
@@ -178,6 +255,28 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
             {"b"},
         )
         self.assertFalse(self.repository.remove("missing"))
+        self.assertTrue(self.repository.clear())
+        self.assertEqual(
+            self.repository.status()["state"],
+            "empty",
+        )
+        self.assertFalse(self.repository.clear())
+
+    def test_clear_recovers_from_incompatible_generation_schema(self):
+        config, reference = self.legacy_generation(
+            "a",
+            input_sha="a" * 64,
+            schema_version=INDEX_SCHEMA_VERSION - 1,
+        )
+        self.repository._publish(
+            generations={"a": reference},
+            config_fingerprint=config.fingerprint(),
+            configuration=self.repository.snapshot_configuration(config),
+        )
+
+        with self.assertRaisesRegex(IndexSchemaError, "invalid"):
+            self.repository.read_active(required=True)
+
         self.assertTrue(self.repository.clear())
         self.assertEqual(
             self.repository.status()["state"],
@@ -792,6 +891,65 @@ class LocalSnapshotRepositoryTests(unittest.TestCase):
             {record["generation_id"] for record in second_records},
             {second_reference.generation_id},
         )
+
+    def test_clear_discards_incompatible_vector_collections(self):
+        generation_id = self.repository.new_generation_id()
+        config = replace(
+            self.config,
+            video_id="a",
+            generation_id=generation_id,
+            generation_directory=self.repository.generation_directory(
+                generation_id
+            ),
+        )
+        with IndexStorage(config) as storage:
+            storage.upsert(
+                "scene",
+                [
+                    StorageRecord(
+                        source_id=f"source-{generation_id}",
+                        embedding=[1.0, 0.0],
+                        metadata={
+                            **config.record_identity(
+                                "scene",
+                                f"source-{generation_id}",
+                            ),
+                        },
+                    )
+                ],
+                batch_size=1,
+                cancellation=CancellationToken(),
+            )
+        reference = self.write_legacy_generation(
+            config,
+            media_id="a",
+            input_sha="a" * 64,
+            schema_version=INDEX_SCHEMA_VERSION - 1,
+            record_counts={"scene": 1},
+        )
+        self.repository._publish(
+            generations={"a": reference},
+            config_fingerprint=config.fingerprint(),
+            configuration=self.repository.snapshot_configuration(config),
+        )
+        runtime = Mock()
+        runtime.backends.torch_device = "cpu"
+        backend = LocalIndexBackend(
+            Mock(),
+            runtime,
+            self.repository.layout,
+        )
+        clear_config = replace(
+            self.config,
+            storage_directory=self.repository.indexes,
+        )
+
+        self.assertTrue(backend.clear(clear_config))
+
+        self.assertEqual(self.repository.status()["state"], "empty")
+        with self.assertRaises(FileNotFoundError):
+            with IndexStorage(self.config, create=False):
+                pass
 
 
 if __name__ == "__main__":

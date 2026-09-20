@@ -104,7 +104,12 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
         except IntegrityError:
             pass
 
-    def read_active(self, *, required: bool = False) -> IndexSnapshot | None:
+    def read_active(
+        self,
+        *,
+        required: bool = False,
+        validate_generations: bool = True,
+    ) -> IndexSnapshot | None:
         with self.engine.connect() as connection:
             row = connection.execute(
                 select(
@@ -122,6 +127,7 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
                 connection,
                 row.active_snapshot_id,
                 expected_sha256=row.active_snapshot_sha256,
+                validate_generations=validate_generations,
             )
 
     def read_snapshot(
@@ -129,12 +135,14 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
         snapshot_id: str,
         *,
         expected_sha256: str | None = None,
+        validate_generations: bool = True,
     ) -> IndexSnapshot:
         with self.engine.connect() as connection:
             return self._read_snapshot(
                 connection,
                 snapshot_id,
                 expected_sha256=expected_sha256,
+                validate_generations=validate_generations,
             )
 
     def _read_snapshot(
@@ -143,6 +151,7 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
         snapshot_id: str,
         *,
         expected_sha256: str | None,
+        validate_generations: bool = True,
     ) -> IndexSnapshot:
         row = connection.execute(
             select(
@@ -166,7 +175,8 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
             raise IndexSchemaError(
                 f"Index snapshot {snapshot_id} failed integrity validation."
             )
-        self._validate_generations(snapshot)
+        if validate_generations:
+            self._validate_generations(snapshot)
         return snapshot
 
     def validate_generation(
@@ -247,7 +257,7 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
         return True
 
     def clear(self) -> bool:
-        active = self.read_active()
+        active = self.read_active(validate_generations=False)
         if active is None or not active.generations:
             return False
         self._publish(
@@ -255,6 +265,7 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
             remove_media_id="*",
             config_fingerprint=active.config_fingerprint,
             configuration=dict(active.configuration),
+            validate_generations=False,
         )
         return True
 
@@ -265,6 +276,7 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
         remove_media_id: str | None,
         config_fingerprint: str,
         configuration: dict[str, Any],
+        validate_generations: bool = True,
     ) -> IndexSnapshot:
         with self.engine.begin() as connection:
             self._ensure_index_state(connection)
@@ -283,6 +295,7 @@ class SQLSnapshotRepository(LocalSnapshotRepository):
                     connection,
                     state.active_snapshot_id,
                     expected_sha256=state.active_snapshot_sha256,
+                    validate_generations=validate_generations,
                 )
             )
             generations = dict(active.generations) if active is not None else {}
