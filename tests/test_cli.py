@@ -52,6 +52,9 @@ from vidxp.application_models import (
     SearchCommand,
     SearchJobResult,
     SearchMomentsPlanStep,
+    SubtitleCue,
+    SubtitleExportResult,
+    SubtitleFormat,
 )
 from vidxp.core.artifacts import ArtifactKind, ArtifactState
 from vidxp.core.media import MediaState, MediaStream
@@ -483,6 +486,41 @@ class CliTests(unittest.TestCase):
         command = self.service.list_media.call_args.args[0]
         self.assertEqual(command.filename, "clip.mp4")
         self.assertEqual(command.state, MediaState.ready)
+
+    def test_media_subtitles_prints_content(self):
+        self.service.export_subtitles.return_value = SubtitleExportResult(
+            media_id=MEDIA_ID,
+            format=SubtitleFormat.srt,
+            content="1\n00:00:01,000 --> 00:00:02,000\nHello world\n",
+            cues=(SubtitleCue(start=1.0, end=2.0, text="Hello world"),),
+        )
+        result = self.invoke(["media", "subtitles", MEDIA_ID])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("00:00:01,000 --> 00:00:02,000\nHello world", result.output)
+        command = self.service.export_subtitles.call_args.args[0]
+        self.assertEqual(command.media_id, MEDIA_ID)
+        self.assertEqual(command.format, SubtitleFormat.srt)
+
+    def test_media_subtitles_writes_file(self):
+        with TemporaryDirectory() as directory:
+            out_file = Path(directory) / "subs.vtt"
+            self.service.export_subtitles.return_value = SubtitleExportResult(
+                media_id=MEDIA_ID,
+                format=SubtitleFormat.vtt,
+                content="WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\nHello world\n",
+                cues=(SubtitleCue(start=1.0, end=2.0, text="Hello world"),),
+            )
+            result = self.invoke(
+                ["media", "subtitles", MEDIA_ID, "--format", "vtt", "--output", str(out_file)]
+            )
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertTrue(out_file.exists())
+            self.assertEqual(
+                out_file.read_text(encoding="utf-8"),
+                "WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\nHello world\n",
+            )
+            command = self.service.export_subtitles.call_args.args[0]
+            self.assertEqual(command.format, SubtitleFormat.vtt)
 
     def test_ui_share_uses_streamlit_wildcard_bind_and_warns(self):
         with (

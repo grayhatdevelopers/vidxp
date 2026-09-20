@@ -29,6 +29,9 @@ from mcp.types import ImageContent, ResourceLink
 from vidxp.application_models import (
     ApplicationError,
     Artifact,
+    BulkIndexPlan,
+    BulkIndexTarget,
+    BulkIndexTargetState,
     EvidenceArtifact,
     EvidenceBoardCandidate,
     EvidenceBoardJobRequest,
@@ -49,8 +52,10 @@ from vidxp.application_models import (
     ErrorDetail,
     EvidenceDeliveryMode,
     EvidenceDeliveryPolicy,
+    IndexOptions,
     IndexStatus,
     InitialEvidenceDeliveryPolicy,
+    PlanBulkIndexCommand,
     Job,
     JobKind,
     JobPage,
@@ -70,6 +75,9 @@ from vidxp.application_models import (
     QueryJobResult,
     QueryPlan,
     SearchMomentsPlanStep,
+    SubtitleCue,
+    SubtitleExportResult,
+    SubtitleFormat,
     WorkspaceOverview,
 )
 from vidxp.mcp_app import MCP_APP_MIME_TYPE, MCP_APP_RESOURCE_URI
@@ -112,9 +120,11 @@ MCP_TOOL_NAMES = [
     "get_runtime_readiness",
     "list_media",
     "get_media",
+    "export_subtitles",
     "create_media_upload",
     "get_media_upload",
     "get_index_status",
+    "plan_bulk_index",
     "start_indexing",
     "prepare_models",
     "search_moments",
@@ -133,10 +143,10 @@ MCP_TOOL_NAMES = [
     "cancel_job",
 ]
 STDIO_MCP_TOOL_NAMES = [
-    *MCP_TOOL_NAMES[:6],
+    *MCP_TOOL_NAMES[:7],
     "ingest_local_media",
     "get_media_ingestion",
-    *MCP_TOOL_NAMES[8:],
+    *MCP_TOOL_NAMES[9:],
 ]
 
 
@@ -1176,8 +1186,9 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         rendered = output.getvalue()
         self.assertIn("OK VidXP MCP", rendered)
         self.assertIn("Index state: missing", rendered)
-        self.assertIn("Tools: 25", rendered)
+        self.assertIn("Tools: 27", rendered)
         self.assertIn("get_index_status", rendered)
+        self.assertIn("plan_bulk_index", rendered)
 
     async def test_server_info_exposes_vidxp_branding(self):
         with TemporaryDirectory() as directory:
@@ -1303,6 +1314,87 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             result.content[0].text,
         )
         context.jobs.submit_index.assert_called_once()
+
+    async def test_plan_bulk_index_delegates_to_application(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            expected_plan = BulkIndexPlan(
+                targets=(
+                    BulkIndexTarget(
+                        media_id=MEDIA_ID,
+                        original_filename="clip.mp4",
+                        state=BulkIndexTargetState.pending,
+                    ),
+                ),
+                modalities=("scene",),
+                options=IndexOptions(
+                    modalities=("scene",),
+                    frame_stride=1,
+                    capability_options={},
+                ),
+            )
+            context.application.plan_bulk_index.return_value = expected_plan
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.read"}),
+                ),
+            )
+            async with Client(server) as client:
+                result = await client.call_tool(
+                    "plan_bulk_index",
+                    {
+                        "command": {
+                            "media_ids": [MEDIA_ID],
+                            "modalities": ["scene"],
+                        },
+                    },
+                )
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(
+            result.structured_content,
+            expected_plan.model_dump(mode="json"),
+        )
+        command = context.application.plan_bulk_index.call_args.args[0]
+        self.assertEqual(command.media_ids, (MEDIA_ID,))
+        self.assertEqual(command.modalities, ("scene",))
+
+    async def test_export_subtitles_delegates_to_application(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            expected = SubtitleExportResult(
+                media_id=MEDIA_ID,
+                format=SubtitleFormat.srt,
+                content="1\n00:00:01,000 --> 00:00:02,000\nHello world\n",
+                cues=(SubtitleCue(start=1.0, end=2.0, text="Hello world"),),
+            )
+            context.application.export_subtitles.return_value = expected
+            server = create_mcp_server(
+                context,
+                default_principal=Principal(
+                    subject="agent",
+                    scopes=frozenset({"vidxp.read"}),
+                ),
+            )
+            async with Client(server) as client:
+                result = await client.call_tool(
+                    "export_subtitles",
+                    {
+                        "media_id": MEDIA_ID,
+                        "format": "srt",
+                    },
+                )
+
+        self.assertFalse(result.is_error)
+        self.assertEqual(
+            result.structured_content,
+            expected.model_dump(mode="json"),
+        )
+        command = context.application.export_subtitles.call_args.args[0]
+        self.assertEqual(command.media_id, MEDIA_ID)
+        self.assertEqual(command.format, SubtitleFormat.srt)
 
     async def test_query_video_submits_the_shared_durable_command(self):
         with TemporaryDirectory() as directory:
@@ -2805,7 +2897,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 server.should_exit = True
                 await serving
 
-        self.assertEqual(len(discovered.tools), 23)
+        self.assertEqual(len(discovered.tools), 25)
         self.assertNotIn(
             "create_media_upload",
             {tool.name for tool in discovered.tools},

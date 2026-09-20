@@ -7,7 +7,12 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from vidxp.application_models import ImportMediaCommand, ListMediaCommand
+from vidxp.application_models import (
+    ExportSubtitlesCommand,
+    ImportMediaCommand,
+    ListMediaCommand,
+    SubtitleFormat,
+)
 from vidxp.cli_support import (
     OutputFormat,
     effective_output_format,
@@ -141,3 +146,57 @@ def show_media(
         emit_json(payload)
     else:
         Console().print_json(data=payload)
+
+
+@app.command("subtitles")
+def export_subtitles(
+    ctx: typer.Context,
+    media_id: Annotated[
+        str,
+        typer.Argument(
+            help="Stable media identifier returned by import or list."
+        ),
+    ],
+    format: Annotated[
+        SubtitleFormat,
+        typer.Option(
+            "--format",
+            "-f",
+            help="Subtitle format: srt, vtt, or json.",
+            case_sensitive=False,
+        ),
+    ] = SubtitleFormat.srt,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Optional file path to write the subtitles to.",
+        ),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Export transcribed speech subtitles (.srt, .vtt, or JSON) for indexed media."""
+
+    state = state_from_context(ctx)
+    result = state.service.export_subtitles(
+        ExportSubtitlesCommand(media_id=media_id, format=format)
+    )
+    if effective_output_format(state, json_output) == OutputFormat.json:
+        emit_json(result.model_dump(mode="json"))
+        return
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(result.content, encoding="utf-8")
+        if not state.quiet:
+            typer.secho(
+                f"Exported {format.value.upper()} subtitles to {output}",
+                fg=typer.colors.GREEN,
+            )
+    else:
+        typer.echo(result.content.rstrip("\n"))
+

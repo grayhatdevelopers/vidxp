@@ -16,12 +16,14 @@ from vidxp.application_models import (
     ApplicationError,
     CreateUploadIntentCommand,
     ErrorCategory,
+    ExportSubtitlesCommand,
     ListMediaCommand,
     LocalMediaIngestionCommand,
     MediaAsset,
     MediaPage,
     MediaUploadSessionStatus,
     Principal,
+    SubtitleFormat,
     UploadIntent,
     UploadIntentId,
     UploadSessionId,
@@ -326,3 +328,26 @@ def head_media_content(
     service: Annotated[HttpApplicationContext, Depends(context)],
 ) -> Response:
     return _content(media_id, request, service)
+
+
+@router.get(
+    "/{media_id}/subtitles",
+    response_model=None,
+    operation_id="exportMediaSubtitles",
+    summary="Export transcribed subtitles for speech-indexed media",
+    dependencies=[Depends(read_principal)],
+)
+def export_media_subtitles(
+    media_id: MediaId,
+    service: Annotated[HttpApplicationContext, Depends(context)],
+    format: SubtitleFormat = SubtitleFormat.srt,
+) -> Response:
+    result = service.application.export_subtitles(
+        ExportSubtitlesCommand(media_id=media_id, format=format)
+    )
+    if format == SubtitleFormat.json:
+        return Response(content=result.content, media_type="application/json")
+    if format == SubtitleFormat.vtt:
+        return Response(content=result.content, media_type="text/vtt")
+    return Response(content=result.content, media_type="text/plain; charset=utf-8")
+

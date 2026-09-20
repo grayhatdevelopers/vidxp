@@ -70,6 +70,34 @@ do not share a filesystem.
 The [Premiere Pro extension preview](integrations/premiere-pro.md) uses this
 workflow for media already loaded in a Premiere project.
 
+### Plan bulk indexing before submitting jobs
+
+A client can preview which registered media still need indexing without
+submitting redundant durable jobs. Send `POST /api/v1/index/plan` with target
+`modalities` and optional `media_ids`:
+
+```bash
+curl -X POST http://127.0.0.1:32191/api/v1/index/plan \
+  -H "Content-Type: application/json" \
+  -d '{"modalities": ["scene"]}'
+```
+
+The returned plan categorizes media into pending and skipped targets, recording
+the exact skip reason (such as already covered by the active snapshot with
+matching content checksums).
+
+### Export transcribed subtitles
+
+A client can export speech transcripts and timed subtitles for speech-indexed
+media items in `.srt`, `.vtt`, or JSON format:
+
+```bash
+curl http://127.0.0.1:32191/api/v1/media/{media_id}/subtitles?format=srt
+```
+
+Pass `format=vtt` for WebVTT subtitles or `format=json` for machine-readable
+cue timestamps and transcript text.
+
 ## Connect a local AI assistant
 
 An assistant that can start a program on the same computer does not need the

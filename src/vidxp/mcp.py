@@ -37,6 +37,7 @@ from vidxp.application_models import (
     Artifact,
     ArtifactDeliveryMode,
     ArtifactDownload,
+    BulkIndexPlan,
     CapabilityInfo,
     CapabilityList,
     CreateSnippetCommand,
@@ -48,6 +49,7 @@ from vidxp.application_models import (
     EvidenceDeliveryPolicy,
     EvidenceDeliveryResult,
     EvidenceBoardResult,
+    ExportSubtitlesCommand,
     DEFAULT_JOB_WAIT_SECONDS,
     FusedSearchResult,
     Identifier,
@@ -69,6 +71,7 @@ from vidxp.application_models import (
     MediaPage,
     MediaUploadSessionStatus,
     Principal,
+    PlanBulkIndexCommand,
     PrepareModelsCommand,
     QueryVideoCommand,
     QueryAnswer,
@@ -76,6 +79,8 @@ from vidxp.application_models import (
     SearchCommand,
     Sha256,
     SnippetProfile,
+    SubtitleExportResult,
+    SubtitleFormat,
     WorkspaceOverview,
     UploadSessionId,
 )
@@ -1398,6 +1403,29 @@ def create_mcp_server(
         )
 
     @server.tool(
+        title="Export subtitles",
+        description=(
+            "Export speech transcript and timed subtitles (SRT, WebVTT, or JSON) "
+            "for an indexed media item."
+        ),
+        annotations=_READ_ONLY,
+        structured_output=True,
+    )
+    async def export_subtitles(
+        media_id: MediaId,
+        format: SubtitleFormat = SubtitleFormat.srt,
+    ) -> SubtitleExportResult:
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=lambda _actor: context.application.export_subtitles(
+                ExportSubtitlesCommand(media_id=media_id, format=format)
+            ),
+        )
+
+
+    @server.tool(
         title="Create media upload",
         description=(
             "Create an idempotent multi-file upload session and return its "
@@ -1566,6 +1594,27 @@ def create_mcp_server(
             default_principal=default_principal,
             permission=RepositoryPermission.read,
             operation=lambda _actor: context.application.index_status(),
+        )
+
+    @server.tool(
+        title="Plan bulk indexing",
+        description=(
+            "Decide which registered media need indexing before submitting "
+            "indexing jobs. Pass media_ids to plan for specific videos, or "
+            "omit to plan across all registered media. Media already covered "
+            "by the active index with matching content and options is skipped."
+        ),
+        annotations=_READ_ONLY,
+        structured_output=True,
+    )
+    async def plan_bulk_index(
+        command: PlanBulkIndexCommand,
+    ) -> BulkIndexPlan:
+        return await _invoke_async(
+            context,
+            default_principal=default_principal,
+            permission=RepositoryPermission.read,
+            operation=lambda _actor: context.application.plan_bulk_index(command),
         )
 
     @server.tool(

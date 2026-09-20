@@ -19,6 +19,9 @@ from vidxp.api_routes.dependencies import scoped_job_id
 from vidxp.application_models import (
     ApplicationError,
     Artifact,
+    BulkIndexPlan,
+    BulkIndexTarget,
+    BulkIndexTargetState,
     ErrorCategory,
     ErrorDetail,
     EvidenceArtifact,
@@ -37,13 +40,18 @@ from vidxp.application_models import (
     JobQueue,
     JobState,
     JobWaitResult,
+    IndexOptions,
     IndexStatus,
     MediaAsset,
     MediaPage,
     MediaUploadSessionStatus,
+    PlanBulkIndexCommand,
     Principal,
     SearchCommand,
     SearchJobResult,
+    SubtitleCue,
+    SubtitleExportResult,
+    SubtitleFormat,
     QueryVideoCommand,
     UploadIntent,
     WorkspaceOverview,
@@ -460,6 +468,43 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(command.filename, "batch")
         self.assertEqual(command.state, MediaState.pending)
 
+    def test_plan_bulk_index_delegates_to_application(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            expected_plan = BulkIndexPlan(
+                targets=(
+                    BulkIndexTarget(
+                        media_id=MEDIA_ID,
+                        original_filename="clip.mp4",
+                        state=BulkIndexTargetState.pending,
+                    ),
+                ),
+                modalities=("scene",),
+                options=IndexOptions(
+                    modalities=("scene",),
+                    frame_stride=1,
+                    capability_options={},
+                ),
+            )
+            context.application.plan_bulk_index.return_value = expected_plan
+            with TestClient(create_app(context=context)) as client:
+                response = client.post(
+                    "/api/v1/index/plan",
+                    json={
+                        "media_ids": [MEDIA_ID],
+                        "modalities": ["scene"],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            expected_plan.model_dump(mode="json"),
+        )
+        command = context.application.plan_bulk_index.call_args.args[0]
+        self.assertEqual(command.media_ids, (MEDIA_ID,))
+        self.assertEqual(command.modalities, ("scene",))
+
     def test_local_ingestion_api_delegates_to_durable_batch_workflow(self):
         with TemporaryDirectory() as directory:
             context = self.context(Path(directory), remote_uploads=True)
@@ -640,6 +685,26 @@ class ApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["error"]["code"], "internal_error")
         self.assertNotIn("secret-path", response.text)
+
+    def test_export_subtitles_delegates_to_application(self):
+        with TemporaryDirectory() as directory:
+            context = self.context(Path(directory))
+            context.application.export_subtitles.return_value = (
+                SubtitleExportResult(
+                    media_id=MEDIA_ID,
+                    format=SubtitleFormat.srt,
+                    content="1\n00:00:01,000 --> 00:00:02,000\nHello world\n",
+                    cues=(SubtitleCue(start=1.0, end=2.0, text="Hello world"),),
+                )
+            )
+            with TestClient(create_app(context=context)) as client:
+                response = client.get(f"/api/v1/media/{MEDIA_ID}/subtitles?format=srt")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("00:00:01,000 --> 00:00:02,000\nHello world", response.text)
+        command = context.application.export_subtitles.call_args.args[0]
+        self.assertEqual(command.media_id, MEDIA_ID)
+        self.assertEqual(command.format, SubtitleFormat.srt)
 
     def test_job_submission_is_thin_idempotent_delegation(self):
         with TemporaryDirectory() as directory:
