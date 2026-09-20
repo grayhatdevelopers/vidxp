@@ -478,12 +478,14 @@ def index_clear(
         typer.Option("--json", help="Emit machine-readable JSON."),
     ] = False,
 ) -> None:
-    """Publish an empty active snapshot without deleting retained generations."""
+    """Remove generated index data and publish an empty active snapshot."""
 
     state = state_from_context(ctx)
     if not yes:
         typer.confirm(
-            f"Clear the active index at {state.service.index_directory}?",
+            f"Clear the active index at {state.service.index_directory}? "
+            "This removes generated index data and vector collections; "
+            "imported source media is preserved.",
             abort=True,
         )
     cleared = state.service.clear_index()
@@ -493,4 +495,9 @@ def index_clear(
     if effective_output_format(state, json_output) == OutputFormat.json:
         emit_json(payload)
     else:
-        typer.echo("Index cleared." if cleared else "No index was found.")
+        typer.echo(
+            "Index cleared. Generated index data and vector collections "
+            "were removed; imported source media is preserved."
+            if cleared
+            else "No index was found."
+        )

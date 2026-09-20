@@ -116,14 +116,23 @@ class LocalSnapshotRepository:
     def _snapshot_path(self, snapshot_id: str) -> Path:
         return self.snapshots / f"{snapshot_id}.json"
 
-    def read_active(self, *, required: bool = False) -> IndexSnapshot | None:
-        resolved = self._read_active(required=required)
+    def read_active(
+        self,
+        *,
+        required: bool = False,
+        validate_generations: bool = True,
+    ) -> IndexSnapshot | None:
+        resolved = self._read_active(
+            required=required,
+            validate_generations=validate_generations,
+        )
         return None if resolved is None else resolved[1]
 
     def _read_active(
         self,
         *,
         required: bool = False,
+        validate_generations: bool = True,
     ) -> tuple[ActiveSnapshotPointer, IndexSnapshot] | None:
         if not self.active_pointer.is_file():
             if required:
@@ -138,6 +147,7 @@ class LocalSnapshotRepository:
             snapshot = self.read_snapshot(
                 pointer.snapshot_id,
                 expected_sha256=pointer.snapshot_sha256,
+                validate_generations=validate_generations,
             )
             return pointer, snapshot
         except IndexSchemaError:
@@ -152,6 +162,7 @@ class LocalSnapshotRepository:
         snapshot_id: str,
         *,
         expected_sha256: str | None = None,
+        validate_generations: bool = True,
     ) -> IndexSnapshot:
         snapshot_path = self._snapshot_path(snapshot_id)
         if not snapshot_path.is_file():
@@ -177,7 +188,8 @@ class LocalSnapshotRepository:
             raise IndexSchemaError(
                 "The snapshot filename and document identifier differ."
             )
-        self._validate_generations(snapshot)
+        if validate_generations:
+            self._validate_generations(snapshot)
         return snapshot
 
     def _validate_generations(self, snapshot: IndexSnapshot) -> None:
@@ -338,9 +350,10 @@ class LocalSnapshotRepository:
         return True
 
     def clear(self) -> bool:
-        active = self.read_active()
-        if active is None or not active.generations:
+        resolved = self._read_active(validate_generations=False)
+        if resolved is None or not resolved[1].generations:
             return False
+        active = resolved[1]
         self._publish(
             generations={},
             config_fingerprint=active.config_fingerprint,

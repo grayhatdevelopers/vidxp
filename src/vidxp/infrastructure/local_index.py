@@ -582,4 +582,38 @@ class LocalIndexBackend(LocalIndexReader):
         self._require_index_directory(config.index_directory)
         repository = self.repository
         with repository.lease():
-            return repository.clear()
+            cleared = repository.clear()
+            self._discard_vector_collections(
+                repository,
+                config,
+                client_factory=self.chroma_clients,
+            )
+            return cleared
+
+    def _discard_vector_collections(
+        self,
+        repository: LocalSnapshotRepository,
+        config: IndexConfig,
+        *,
+        client_factory: ChromaClientFactory | None = None,
+    ) -> None:
+        clients = client_factory or ChromaClientFactory()
+        cleanup_config = replace(
+            config,
+            storage_directory=repository.store,
+            generation_directory=None,
+            video_id=None,
+            generation_id=None,
+            snapshot_id=None,
+            snapshot_sha256=None,
+        )
+        if clients.remote or repository.store.is_dir():
+            try:
+                with IndexStorage(
+                    cleanup_config,
+                    create=False,
+                    client_factory=clients,
+                ) as storage:
+                    storage.clear()
+            except FileNotFoundError:
+                pass
