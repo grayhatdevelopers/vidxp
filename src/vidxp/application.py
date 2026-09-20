@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import json
 from contextlib import contextmanager
 from pathlib import Path
 from shutil import which
@@ -24,6 +25,7 @@ from vidxp.application_models import (
     DependencyKind,
     DependencyUnavailableError,
     ErrorCategory,
+    ExportSubtitlesCommand,
     FusedSearchResult,
     IndexResult,
     ImportMediaCommand,
@@ -43,7 +45,10 @@ from vidxp.application_models import (
     EvidenceBoardJobRequest,
     EvidenceBoardResult,
     EvidenceDeliveryPolicy,
+    SubtitleExportResult,
+    SubtitleFormat,
 )
+from vidxp.subtitles import format_srt, format_vtt, records_to_cues
 from vidxp.capabilities.actor.schemas import (
     ActorClusterSummary,
     ActorClustersOutput,
@@ -943,6 +948,46 @@ class VidXPApplication(ControlPlaneApplication):
         return self.index_backend.remove(
             self._base_config(),
             command.media_id,
+        )
+
+    @application_boundary
+    def export_subtitles(
+        self,
+        command: ExportSubtitlesCommand,
+    ) -> SubtitleExportResult:
+        self.get_media(command.media_id)
+        config = self._active_config()
+        self._require_indexed_capability("speech", config)
+        snapshot = self._read_active_snapshot()
+        if snapshot is not None:
+            if command.media_id not in snapshot.generations:
+                raise ApplicationError(
+                    "media_not_indexed",
+                    ErrorCategory.validation,
+                    f"Media '{command.media_id}' is not present in the active index snapshot.",
+                    details={"media_id": command.media_id},
+                )
+            if "speech" not in snapshot.generations[command.media_id].modalities:
+                raise ApplicationError(
+                    "speech_not_indexed",
+                    ErrorCategory.validation,
+                    f"Media '{command.media_id}' was indexed without speech transcription.",
+                    details={"media_id": command.media_id},
+                )
+        with self.index_backend.open_store(config) as storage:
+            raw_records = storage.records("speech", video_id=command.media_id)
+        cues = records_to_cues(raw_records)
+        if command.format == SubtitleFormat.vtt:
+            content = format_vtt(cues)
+        elif command.format == SubtitleFormat.json:
+            content = json.dumps([cue.model_dump(mode="json") for cue in cues], indent=2) + "\n"
+        else:
+            content = format_srt(cues)
+        return SubtitleExportResult(
+            media_id=command.media_id,
+            format=command.format,
+            content=content,
+            cues=tuple(cues),
         )
 
     def _base_config(self) -> IndexConfig:

@@ -18,6 +18,7 @@ from vidxp.application_models import (
     ComponentReadiness,
     CreateIndexCommand,
     DependencyCheckResult,
+    ExportSubtitlesCommand,
     IndexStatus,
     Identifier,
     InvalidRequestError,
@@ -27,6 +28,7 @@ from vidxp.application_models import (
     ModelUnavailableError,
     ResourceNotFoundError,
     RuntimeReadiness,
+    SubtitleExportResult,
     WorkspaceCapability,
     WorkspaceMedia,
     WorkspaceMediaCapability,
@@ -474,3 +476,10 @@ class ControlPlaneApplication:
             components=components,
             dependencies=models,
         )
+
+    def export_subtitles(
+        self,
+        command: ExportSubtitlesCommand,
+    ) -> SubtitleExportResult:
+        raise NotImplementedError
+

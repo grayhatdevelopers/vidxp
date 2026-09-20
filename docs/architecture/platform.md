@@ -1090,9 +1090,11 @@ Initial curated tools:
 - `get_capability`
 - `list_media`
 - `get_media`
+- `export_subtitles`
 - Streamable HTTP: `create_media_upload`, `get_media_upload`
 - Filesystem-accessible stdio: `ingest_local_media`, `get_media_ingestion`
 - `get_index_status`
+- `plan_bulk_index`
 - `start_indexing`
 - `search_moments`
 - `query_video`

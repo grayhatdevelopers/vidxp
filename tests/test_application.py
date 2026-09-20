@@ -19,6 +19,7 @@ from vidxp.application_models import (
     DependencyUnavailableError,
     EvidenceBoardResult,
     EvidenceDeliveryMode,
+    ExportSubtitlesCommand,
     FusedSearchResult,
     IndexResult,
     IndexSnapshotReference,
@@ -28,8 +29,10 @@ from vidxp.application_models import (
     QueryAnswerMode,
     QueryVideoCommand,
     RemoveIndexCommand,
+    ResourceNotFoundError,
     SearchCommand,
     SearchHit,
+    SubtitleFormat,
     InitialEvidenceDeliveryPolicy,
 )
 from vidxp.core.media import MediaUnavailableError
@@ -1532,6 +1535,100 @@ class ApplicationTests(unittest.TestCase):
             cleanup_storage.__exit__.assert_called_once()
             storage.__exit__.assert_called_once()
 
+    def test_export_subtitles_media_not_found(self):
+        with TemporaryDirectory() as directory:
+            app, backend = self.application(directory)
+            app.media.get.side_effect = ResourceNotFoundError(
+                f"media '{MEDIA_ID}'"
+            )
+            with self.assertRaises(ResourceNotFoundError):
+                app.export_subtitles(
+                    ExportSubtitlesCommand(media_id=MEDIA_ID)
+                )
+
+    def test_export_subtitles_media_not_indexed(self):
+        with TemporaryDirectory() as directory:
+            app, backend = self.application(directory)
+            app.media.get.return_value = Mock(media_id=MEDIA_ID)
+            mock_config = Mock(enabled_modalities=("speech", "scene"))
+            app._active_config = Mock(return_value=mock_config)
+            mock_snapshot = Mock(generations={})
+            app._read_active_snapshot = Mock(return_value=mock_snapshot)
+            with self.assertRaises(ApplicationError) as ctx:
+                app.export_subtitles(
+                    ExportSubtitlesCommand(media_id=MEDIA_ID)
+                )
+            self.assertEqual(ctx.exception.code, "media_not_indexed")
+
+    def test_export_subtitles_speech_not_indexed(self):
+        with TemporaryDirectory() as directory:
+            app, backend = self.application(directory)
+            app.media.get.return_value = Mock(media_id=MEDIA_ID)
+            mock_config = Mock(enabled_modalities=("speech", "scene"))
+            app._active_config = Mock(return_value=mock_config)
+            gen = Mock(modalities=("scene",))
+            mock_snapshot = Mock(generations={MEDIA_ID: gen})
+            app._read_active_snapshot = Mock(return_value=mock_snapshot)
+            with self.assertRaises(ApplicationError) as ctx:
+                app.export_subtitles(
+                    ExportSubtitlesCommand(media_id=MEDIA_ID)
+                )
+            self.assertEqual(ctx.exception.code, "speech_not_indexed")
+
+    def test_export_subtitles_success(self):
+        with TemporaryDirectory() as directory:
+            app, backend = self.application(directory)
+            app.media.get.return_value = Mock(media_id=MEDIA_ID)
+            mock_config = Mock(enabled_modalities=("speech", "scene"))
+            app._active_config = Mock(return_value=mock_config)
+            gen = Mock(modalities=("speech", "scene"))
+            mock_snapshot = Mock(generations={MEDIA_ID: gen})
+            app._read_active_snapshot = Mock(return_value=mock_snapshot)
+
+            mock_storage = MagicMock()
+            mock_storage.records.return_value = [
+                {
+                    "metadata": {"start": 0.5, "end": 2.5, "text": "Hello world"},
+                },
+                {
+                    "metadata": {"start": 3.0, "end": 5.0, "text": "VidXP subtitles"},
+                },
+            ]
+            manager = MagicMock()
+            manager.__enter__ = Mock(return_value=mock_storage)
+            manager.__exit__ = Mock(return_value=False)
+            backend.open_store.return_value = manager
+
+            # SRT format
+            srt_res = app.export_subtitles(
+                ExportSubtitlesCommand(media_id=MEDIA_ID, format=SubtitleFormat.srt)
+            )
+            self.assertEqual(srt_res.media_id, MEDIA_ID)
+            self.assertEqual(srt_res.format, SubtitleFormat.srt)
+            self.assertEqual(len(srt_res.cues), 2)
+            self.assertIn("00:00:00,500 --> 00:00:02,500\nHello world", srt_res.content)
+            self.assertIn("00:00:03,000 --> 00:00:05,000\nVidXP subtitles", srt_res.content)
+
+            # VTT format
+            vtt_res = app.export_subtitles(
+                ExportSubtitlesCommand(media_id=MEDIA_ID, format=SubtitleFormat.vtt)
+            )
+            self.assertEqual(vtt_res.format, SubtitleFormat.vtt)
+            self.assertTrue(vtt_res.content.startswith("WEBVTT\n\n"))
+            self.assertIn("00:00:00.500 --> 00:00:02.500\nHello world", vtt_res.content)
+
+            # JSON format
+            json_res = app.export_subtitles(
+                ExportSubtitlesCommand(media_id=MEDIA_ID, format=SubtitleFormat.json)
+            )
+            self.assertEqual(json_res.format, SubtitleFormat.json)
+            parsed = json.loads(json_res.content)
+            self.assertEqual(len(parsed), 2)
+            self.assertEqual(parsed[0]["text"], "Hello world")
+            self.assertEqual(parsed[0]["start"], 0.5)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

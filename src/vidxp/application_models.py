@@ -729,6 +729,36 @@ class RemoveIndexCommand(ApplicationModel):
     media_id: MediaId
 
 
+class SubtitleFormat(StrEnum):
+    srt = "srt"
+    vtt = "vtt"
+    json = "json"
+
+
+class SubtitleCue(ApplicationModel):
+    start: float = Field(ge=0, description="Cue start time in seconds.")
+    end: float = Field(ge=0, description="Cue end time in seconds.")
+    text: str = Field(min_length=1, description="Transcribed speech text.")
+
+
+class ExportSubtitlesCommand(ApplicationModel):
+    media_id: MediaId = Field(description="Cataloged media identifier.")
+    format: SubtitleFormat = Field(
+        default=SubtitleFormat.srt,
+        description="Subtitle output format.",
+    )
+
+
+class SubtitleExportResult(ApplicationModel):
+    media_id: MediaId
+    format: SubtitleFormat
+    content: str = Field(description="Formatted subtitle text.")
+    cues: tuple[SubtitleCue, ...] = Field(
+        default=(),
+        description="Structured cues with timestamps.",
+    )
+
+
 class Artifact(ApplicationModel):
     schema_version: Literal[ARTIFACT_SCHEMA_VERSION] = ARTIFACT_SCHEMA_VERSION
     artifact_id: ArtifactId
