@@ -18,6 +18,6 @@
   },
   "devDependencies": {
     "@openai/codex-sdk": "0.151.0",
-    "promptfoo": "0.122.2"
+    "promptfoo": "0.123.1"
   }
 }
