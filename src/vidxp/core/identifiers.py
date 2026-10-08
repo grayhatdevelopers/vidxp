@@ -79,3 +79,5 @@ JobId: TypeAlias = WorkflowUuid
 ArtifactId: TypeAlias = Uuid4Hex
 UploadIntentId: TypeAlias = Uuid4Hex
 UploadSessionId: TypeAlias = Uuid4Hex
+PersonId: TypeAlias = Uuid4Hex
+PersonReferenceId: TypeAlias = Uuid4Hex

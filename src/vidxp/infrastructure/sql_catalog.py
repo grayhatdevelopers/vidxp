@@ -23,6 +23,11 @@ from sqlalchemy.pool import NullPool
 
 from vidxp.core.artifacts import ArtifactRecord, ArtifactState
 from vidxp.core.media import MediaRecord, MediaState, utc_now
+from vidxp.core.people import (
+    PersonClusterLink,
+    PersonRecord,
+    PersonReference,
+)
 from vidxp.core.uploads import (
     UploadIntentRecord,
     UploadSessionFileRecord,
@@ -37,6 +42,10 @@ from vidxp.infrastructure.sql_tables import (
     media,
     media_import_requests,
     metadata,
+    people,
+    person_aliases,
+    person_cluster_links,
+    person_references,
     upload_intents,
     upload_quota,
     upload_session_files,
@@ -1209,3 +1218,232 @@ class SQLCatalog:
     ) -> Any:
         with self._write_transaction() as connection:
             return operation(connection)
+            
+    # ---- People (Issue #85: reviewable person identities) ----
+
+    def put_person(self, record: PersonRecord) -> PersonRecord:
+        values = {
+            "person_id": record.person_id,
+            "created_at": record.created_at.isoformat(),
+            "payload": record.model_dump(mode="json"),
+        }
+        with self._write_transaction() as connection:
+            existing = self._person_by_id(connection, record.person_id)
+            if existing is not None:
+                if existing != record:
+                    raise FileExistsError(
+                        f"Person {record.person_id} already has another "
+                        "record."
+                    )
+                return existing
+            try:
+                with connection.begin_nested():
+                    connection.execute(insert(people).values(**values))
+            except IntegrityError:
+                existing = self._person_by_id(connection, record.person_id)
+                if existing == record:
+                    return existing
+                raise
+        return record
+
+    def get_person(self, person_id: str) -> PersonRecord | None:
+        with self.engine.connect() as connection:
+            return self._person_by_id(connection, person_id)
+
+    def list_people(
+        self,
+        *,
+        limit: int,
+        offset: int = 0,
+    ) -> tuple[PersonRecord, ...]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(people.c.payload)
+                .order_by(people.c.created_at)
+                .limit(limit)
+                .offset(offset)
+            )
+            return tuple(_record(PersonRecord, row.payload) for row in rows)
+
+    def delete_person(self, person_id: str) -> None:
+        with self._write_transaction() as connection:
+            connection.execute(
+                delete(people).where(people.c.person_id == person_id)
+            )
+
+    @staticmethod
+    def _person_by_id(
+        connection: Connection,
+        person_id: str,
+    ) -> PersonRecord | None:
+        payload = connection.execute(
+            select(people.c.payload).where(people.c.person_id == person_id)
+        ).scalar_one_or_none()
+        return (
+            None
+            if payload is None
+            else _record(PersonRecord, payload)
+        )
+
+    # ---- Person aliases ----
+
+    def add_alias(self, person_id: str, alias: str) -> None:
+        with self._write_transaction() as connection:
+            try:
+                with connection.begin_nested():
+                    connection.execute(
+                        insert(person_aliases).values(
+                            person_id=person_id,
+                            alias=alias,
+                        )
+                    )
+            except IntegrityError:
+                pass
+
+    def remove_alias(self, person_id: str, alias: str) -> None:
+        with self._write_transaction() as connection:
+            connection.execute(
+                delete(person_aliases).where(
+                    and_(
+                        person_aliases.c.person_id == person_id,
+                        person_aliases.c.alias == alias,
+                    )
+                )
+            )
+
+    def list_aliases(self, person_id: str) -> tuple[str, ...]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(person_aliases.c.alias).where(
+                    person_aliases.c.person_id == person_id
+                )
+            )
+            return tuple(row.alias for row in rows)
+
+    # ---- Person reference images ----
+
+    def add_reference(self, record: PersonReference) -> PersonReference:
+        values = {
+            "reference_id": record.reference_id,
+            "person_id": record.person_id,
+            "storage_key": record.storage_key,
+            "sha256": record.sha256,
+            "byte_size": record.byte_size,
+            "mime_type": record.mime_type,
+            "created_at": record.created_at.isoformat(),
+        }
+        with self._write_transaction() as connection:
+            connection.execute(insert(person_references).values(**values))
+        return record
+
+    def remove_reference(self, reference_id: str) -> None:
+        with self._write_transaction() as connection:
+            connection.execute(
+                delete(person_references).where(
+                    person_references.c.reference_id == reference_id
+                )
+            )
+
+    def list_references(self, person_id: str) -> tuple[PersonReference, ...]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(person_references).where(
+                    person_references.c.person_id == person_id
+                )
+            )
+            return tuple(
+                PersonReference(
+                    reference_id=row.reference_id,
+                    person_id=row.person_id,
+                    storage_key=row.storage_key,
+                    sha256=row.sha256,
+                    byte_size=row.byte_size,
+                    mime_type=row.mime_type,
+                    created_at=datetime.fromisoformat(row.created_at),
+                )
+                for row in rows
+            )
+
+    # ---- Person <-> actor cluster links ----
+
+    def link_cluster(self, link: PersonClusterLink) -> PersonClusterLink:
+        values = {
+            "person_id": link.person_id,
+            "cluster_id": link.cluster_id,
+            "media_id": link.media_id,
+            "generation_id": link.generation_id,
+            "created_at": link.created_at.isoformat(),
+        }
+        with self._write_transaction() as connection:
+            try:
+                with connection.begin_nested():
+                    connection.execute(
+                        insert(person_cluster_links).values(**values)
+                    )
+            except IntegrityError:
+                pass
+        return link
+
+    def unlink_cluster(
+        self,
+        *,
+        person_id: str,
+        cluster_id: str,
+        media_id: str,
+        generation_id: str,
+    ) -> None:
+        with self._write_transaction() as connection:
+            connection.execute(
+                delete(person_cluster_links).where(
+                    and_(
+                        person_cluster_links.c.person_id == person_id,
+                        person_cluster_links.c.cluster_id == cluster_id,
+                        person_cluster_links.c.media_id == media_id,
+                        person_cluster_links.c.generation_id
+                        == generation_id,
+                    )
+                )
+            )
+
+    def clusters_for_person(
+        self,
+        person_id: str,
+    ) -> tuple[PersonClusterLink, ...]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(person_cluster_links).where(
+                    person_cluster_links.c.person_id == person_id
+                )
+            )
+            return tuple(
+                PersonClusterLink(
+                    person_id=row.person_id,
+                    cluster_id=row.cluster_id,
+                    media_id=row.media_id,
+                    generation_id=row.generation_id,
+                    created_at=datetime.fromisoformat(row.created_at),
+                )
+                for row in rows
+            )
+
+    def person_for_cluster(
+        self,
+        *,
+        cluster_id: str,
+        media_id: str,
+        generation_id: str,
+    ) -> PersonRecord | None:
+        with self.engine.connect() as connection:
+            person_id = connection.execute(
+                select(person_cluster_links.c.person_id).where(
+                    and_(
+                        person_cluster_links.c.cluster_id == cluster_id,
+                        person_cluster_links.c.media_id == media_id,
+                        person_cluster_links.c.generation_id
+                        == generation_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if person_id is None:
+                return None
+            return self._person_by_id(connection, person_id)

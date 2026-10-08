@@ -41,7 +41,7 @@ class DatabaseCliTests(unittest.TestCase):
 
         scripts = ScriptDirectory.from_config(config)
 
-        self.assertEqual(scripts.get_heads(), ["20260802_01"])
+        self.assertEqual(scripts.get_heads(), ["20260803_01"])
 
     def test_sqlite_upgrade_downgrade_and_reupgrade_from_pre_feature(self):
         with TemporaryDirectory() as temporary:
@@ -85,7 +85,7 @@ class DatabaseCliTests(unittest.TestCase):
                         connection.execute(
                             text("SELECT version_num FROM alembic_version")
                         ).scalar_one(),
-                        "20260802_01",
+                        "20260803_01",
                     )
                 self.assertIn("upload_sessions", inspect(engine).get_table_names())
             finally:
