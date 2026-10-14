@@ -32,6 +32,7 @@ class VisualProcessor(Protocol):
         config: IndexConfig,
         runtime: ModelRuntimePort,
         progress: ProgressCallback | None,
+        source: VideoSource | None = None,
     ) -> Any: ...
 
     def process(
@@ -84,6 +85,7 @@ def _participants(
     runtime: ModelRuntimePort,
     progress: ProgressCallback | None,
     timings: dict[str, float],
+    source: VideoSource | None = None,
 ) -> list[_Participant]:
     participants = []
     for name in names:
@@ -93,7 +95,7 @@ def _participants(
                 f"Capability {name!r} does not provide a visual processor."
             )
         started = perf_counter()
-        state = processor.prepare(config, runtime, progress)
+        state = processor.prepare(config, runtime, progress, source=source)
         timings[name] = perf_counter() - started
         sampling_factory = getattr(type(processor), "sampling", None)
         sampling = (
@@ -266,6 +268,7 @@ def index_visuals(
         runtime=runtime,
         progress=progress,
         timings=timings,
+        source=source,
     )
     expected = _expected_sample_count(info, participants)
     report_progress(
