@@ -184,9 +184,9 @@ jobs:
 
       - name: Test
         if: needs.scope.outputs.run_suite == 'true'
-        run: uv run --no-sync python -m unittest discover -s tests -q
+        run: uv run --no-sync pytest tests -q
         env:
-          PYTHONPATH: src
+          PYTHONPATH: src:.
 
       - name: Build wheel and source distribution
         if: needs.scope.outputs.run_suite == 'true' && matrix.python-version == '3.14'
