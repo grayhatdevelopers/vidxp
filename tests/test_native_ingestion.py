@@ -19,11 +19,13 @@ import uvicorn
 from vidxp.api import create_app
 from vidxp.app_paths import default_model_directory
 from vidxp.application_models import Principal
+from vidxp.capabilities.scene.specs import SIGLIP2_MODEL
 from vidxp.composition import (
     create_control_plane_application,
     create_http_application,
 )
 from vidxp.mcp import create_mcp_server
+from vidxp.model_contracts import model_artifact_cached
 from vidxp.settings import VidXPSettings
 
 
@@ -290,6 +292,11 @@ def test_native_http_browser_session_uses_bounded_multipart(
 def test_local_ingestion_automatically_indexes_and_becomes_searchable(
     tmp_path: Path,
 ) -> None:
+    if not model_artifact_cached(default_model_directory(), SIGLIP2_MODEL):
+        pytest.skip(
+            "Scene model artifacts (google/siglip2-base-patch16-224) are not "
+            "cached locally; scene indexing cannot run without them."
+        )
     asyncio.run(_automatic_index_scenario(tmp_path))
 
 
@@ -392,6 +399,11 @@ async def _automatic_index_scenario(tmp_path: Path) -> None:
 def test_streamable_http_browser_upload_indexes_in_one_session(
     tmp_path: Path,
 ) -> None:
+    if not model_artifact_cached(default_model_directory(), SIGLIP2_MODEL):
+        pytest.skip(
+            "Scene model artifacts (google/siglip2-base-patch16-224) are not "
+            "cached locally; scene indexing cannot run without them."
+        )
     asyncio.run(_streamable_http_ingestion_scenario(tmp_path))
 
 
