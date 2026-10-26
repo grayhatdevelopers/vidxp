@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import signal
 import threading
 import time
 import unittest
@@ -525,3 +527,25 @@ class ConsumeVisualStreamTests(unittest.TestCase):
         self.assertEqual(currents, sorted(set(currents)))
         self.assertEqual(currents[-1], 10)
         self.assertTrue(all(event["total"] == 10 for event in events))
+
+    def test_interrupt_in_owning_thread_stops_workers(self):
+        scene = _mock_participant("scene")
+        processed = []
+
+        def interrupt_once(samples, **kw):
+            processed.append(samples)
+            if len(processed) == 1:
+                os.kill(os.getpid(), signal.SIGINT)
+            time.sleep(0.01)
+
+        scene.processor.process = interrupt_once
+        batches = [[_sample(i, i / 24)] for i in range(200)]
+
+        with self.assertRaises(KeyboardInterrupt):
+            _consume([scene], batches)
+
+        workers = [
+            t for t in threading.enumerate() if t.name.startswith("vidxp-visual-")
+        ]
+        self.assertEqual(workers, [])
+        self.assertLess(len(processed), 200)

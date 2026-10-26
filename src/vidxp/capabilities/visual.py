@@ -158,6 +158,7 @@ def _consume_visual_stream(
     errors_lock = threading.Lock()
     stream_stats = FrameStreamStats()
     done = threading.Event()
+    stop = threading.Event()
     progress_lock = threading.Lock()
     batch_ends: list[int] = []
     finished_batches = dict.fromkeys(participant_queues, 0)
@@ -166,6 +167,7 @@ def _consume_visual_stream(
     def _record_error(exc: Exception) -> None:
         with errors_lock:
             errors.append(exc)
+        stop.set()
 
     def _finish_batch(name: str) -> None:
         nonlocal reported
@@ -202,7 +204,7 @@ def _consume_visual_stream(
                     stats=stream_stats,
                 )
             )
-            while True:
+            while not stop.is_set():
                 stream_started = perf_counter()
                 try:
                     samples = next(stream)
@@ -228,7 +230,7 @@ def _consume_visual_stream(
                             )
                             break
                         except queue.Full:
-                            if errors:
+                            if stop.is_set():
                                 return
                             cancellation.raise_if_cancelled()
         except Exception as exc:
@@ -246,7 +248,7 @@ def _consume_visual_stream(
         work_queue: queue.Queue,
     ) -> None:
         try:
-            while True:
+            while not stop.is_set():
                 cancellation.raise_if_cancelled()
                 try:
                     batch = work_queue.get(timeout=0.2)
@@ -254,10 +256,8 @@ def _consume_visual_stream(
                     if done.is_set():
                         break
                     continue
-                if batch is None:
+                if batch is None or stop.is_set():
                     break
-                if errors:
-                    return
                 participant_samples = [
                     sample
                     for sample in batch
@@ -305,12 +305,18 @@ def _consume_visual_stream(
         for p in participants
     ]
 
-    decode_thread.start()
-    for t in participant_threads:
-        t.start()
-    decode_thread.join()
-    for t in participant_threads:
-        t.join()
+    threads = [decode_thread, *participant_threads]
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    except BaseException:
+        stop.set()
+        for t in threads:
+            if t.is_alive():
+                t.join()
+        raise
 
     if errors:
         raise errors[0]
