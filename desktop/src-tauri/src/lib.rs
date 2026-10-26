@@ -34,6 +34,8 @@ mod media_setup;
 mod premiere_integration;
 mod query_setup;
 mod target_profiles;
+#[cfg(test)]
+mod wheel_version;
 
 use activation::{ActivationRecovery, ActivationStage, activation_recovery};
 use lifecycle::{
