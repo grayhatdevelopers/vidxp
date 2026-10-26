@@ -221,7 +221,8 @@ concrete:
 - **Validation:** list exact commands and the real boundaries exercised. Do
   not replace results with “tests passed.”
 
-Use a Conventional Commit title. Examples:
+Use a Conventional Commit title; the `pr-title` check fails until it matches.
+Examples:
 
 ```text
 feat(mcp): add clip artifact discovery
