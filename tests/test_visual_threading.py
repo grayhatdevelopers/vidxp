@@ -36,6 +36,43 @@ def _sample(frame_index: int, timestamp: float) -> FrameSample:
     return FrameSample(frame_index=frame_index, timestamp=timestamp, frame=object())
 
 
+def _consume(participants, batches, *, progress=None, decoded=None):
+    def fake_stream(path, *, stats=None, **kw):
+        for batch in batches:
+            if decoded is not None:
+                decoded.append(batch)
+            yield batch
+
+    frame_count = sum(len(batch) for batch in batches)
+    with patch(
+        "vidxp.capabilities.visual.iter_frame_batches",
+        side_effect=fake_stream,
+    ):
+        return _consume_visual_stream(
+            VideoSource(video_id="v1", path="unused.mp4"),
+            participants=participants,
+            expected=frame_count,
+            info=Mock(
+                fps=24,
+                frame_count=frame_count,
+                duration=frame_count / 24,
+                width=2,
+                height=2,
+            ),
+            config=IndexConfig(
+                video_id="v1",
+                enabled_modalities=tuple(p.name for p in participants),
+            ),
+            storage=Mock(),
+            cancellation=CancellationToken(),
+            progress=progress,
+            timings={
+                "frame_stream": 0.0,
+                **{p.name: 0.0 for p in participants},
+            },
+        )
+
+
 class ConsumeVisualStreamTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -414,3 +451,44 @@ class ConsumeVisualStreamTests(unittest.TestCase):
             "_consume_visual_stream deadlocked at shutdown with a full queue",
         )
         self.assertIsNone(outcome.get("error"))
+
+    def test_participants_process_at_the_same_time(self):
+        scene = _mock_participant("scene")
+        actor = _mock_participant("actor")
+        both_processing = threading.Barrier(2, timeout=2)
+
+        def meet(samples, **kw):
+            both_processing.wait()
+
+        scene.processor.process = meet
+        actor.processor.process = meet
+
+        _consume([scene, actor], [[_sample(0, 0.0)], [_sample(1, 1 / 24)]])
+
+    def test_decode_waits_while_a_participant_queue_is_full(self):
+        scene = _mock_participant("scene")
+        started = threading.Event()
+        release = threading.Event()
+
+        def held(samples, **kw):
+            started.set()
+            release.wait(timeout=5)
+
+        scene.processor.process = held
+        batches = [[_sample(i, i / 24)] for i in range(20)]
+        decoded = []
+        worker = threading.Thread(
+            target=_consume, args=([scene], batches), kwargs={"decoded": decoded}
+        )
+        worker.start()
+        try:
+            self.assertTrue(started.wait(timeout=2))
+            time.sleep(0.3)
+            decoded_while_held = len(decoded)
+        finally:
+            release.set()
+            worker.join(timeout=5)
+
+        # One batch in process, four queued, one waiting to be queued.
+        self.assertLessEqual(decoded_while_held, 6)
+        self.assertEqual(len(decoded), 20)
