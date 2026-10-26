@@ -48,6 +48,7 @@ def model_manifest(
 
 DEFINITION = CapabilityDefinition(
     name="scene",
+    label="Visual scene search",
     description="Index and search visual scenes.",
     extra="scene",
     config_model=SceneConfig,

@@ -25,9 +25,9 @@ body:
     attributes:
       label: Related capability
       options:
-        - Dialogue search
+        - Speech search
         - Scene search
-        - Action search (videoprism)
+        - Action and motion search
         - Actor matching
         - Multiple capabilities
         - Not capability-specific or unsure

@@ -1,1 +1,0 @@
-"""Dialogue capability implementation."""

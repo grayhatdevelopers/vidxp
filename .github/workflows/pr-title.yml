@@ -1,0 +1,30 @@
+name: PR title
+
+on:
+  pull_request:
+    branches:
+      - main
+      - release
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: utils/pr_title.py
+          sparse-checkout-cone-mode: false
+
+      - name: Check the Conventional Commit title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: python3 utils/pr_title.py -- "$PR_TITLE"

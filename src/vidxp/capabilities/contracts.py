@@ -224,6 +224,7 @@ class CapabilityDefinition(_ContractModel):
     """Domain metadata for one named capability."""
 
     name: str = Field(min_length=1)
+    label: str | None = Field(default=None, min_length=1)
     description: str = Field(min_length=1)
     extra: str = Field(min_length=1)
     config_model: type[CapabilityConfig] = CapabilityConfig
@@ -237,6 +238,12 @@ class CapabilityDefinition(_ContractModel):
     )
     model_specs: tuple[ModelSpec | ArtifactSpec, ...] = ()
     prepares_models: bool = False
+
+    @property
+    def display_label(self) -> str:
+        """Return the product label while preserving older external plugins."""
+
+        return self.label or self.name.replace("_", " ").title()
 
     @field_validator("config_model")
     @classmethod

@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -588,6 +589,30 @@ class PackagingTests(unittest.TestCase):
         )
         self.assertNotIn("ollama pull", compose.lower())
 
+    def test_bundled_chroma_service_is_not_published(self):
+        compose = (ROOT / "compose.coolify.yaml").read_text(
+            encoding="utf-8"
+        )
+        service = re.search(
+            r"(?ms)^  chroma:\n(?P<body>.*?)(?=^  [a-z0-9_-]+:\n|\Z)",
+            compose,
+        )
+
+        self.assertIsNotNone(service)
+        body = service.group("body")
+        self.assertNotRegex(body, r"(?m)^    ports:\s*$")
+        self.assertNotRegex(body, r"(?m)^    network_mode:\s*host\s*$")
+
+    def test_codex_benchmark_omits_unused_optional_providers(self):
+        benchmark = ROOT / "benchmarks" / "codex-mcp"
+        npm_config = (benchmark / ".npmrc").read_text(encoding="utf-8")
+        package = json.loads(
+            (benchmark / "package.json").read_text(encoding="utf-8")
+        )
+
+        self.assertIn("omit=optional", npm_config.splitlines())
+        self.assertIn("@openai/codex-sdk", package["devDependencies"])
+
     def test_desktop_manifest_matches_published_package_contract(self):
         project = tomllib.loads(
             (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -674,7 +699,14 @@ class PackagingTests(unittest.TestCase):
         self.assertFalse(manifest["surfaces"]["server"]["default"])
         for surface in manifest["surfaces"].values():
             self.assertIn(surface["extra"], dynamic_extras)
-        for capability in manifest["capabilities"].values():
+        capability_catalog = json.loads(
+            (ROOT / "desktop" / "capability-catalog.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(capability_catalog["schema_version"], 1)
+        self.assertNotIn("capabilities", manifest)
+        for capability in capability_catalog["capabilities"].values():
             self.assertIn(capability["extra"], dynamic_extras)
         self.assertEqual(
             manifest["media_runtime"]["strategy"],
@@ -719,10 +751,7 @@ class PackagingTests(unittest.TestCase):
             }
             self.assertEqual(
                 generic_files,
-                {
-                    "uv.lock",
-                    "desktop/src-tauri/Cargo.toml",
-                },
+                {"desktop/src-tauri/Cargo.toml"},
                 filename,
             )
             toml_files = {
@@ -733,6 +762,9 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(
                 toml_files,
                 {
+                    "uv.lock": (
+                        '$.package[?(@.name.value=="vidxp")].version'
+                    ),
                     "desktop/src-tauri/Cargo.lock": (
                         '$.package[?(@.name.value=="vidxp-desktop")].version'
                     )
@@ -808,11 +840,15 @@ class PackagingTests(unittest.TestCase):
             if package["name"] == "vidxp-desktop"
         )
         self.assertEqual(desktop_lock["version"], version)
-        self.assertIn(
-            version_marker,
-            (ROOT / "uv.lock").read_text(encoding="utf-8"),
-            "uv.lock",
+        uv_lock = tomllib.loads(
+            (ROOT / "uv.lock").read_text(encoding="utf-8")
         )
+        project_lock = next(
+            package
+            for package in uv_lock["package"]
+            if package["name"] == "vidxp"
+        )
+        self.assertEqual(project_lock["version"], version)
         self.assertNotIn(
             f"vidxp=={version}",
             (

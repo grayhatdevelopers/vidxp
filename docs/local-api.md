@@ -52,6 +52,24 @@ If port `32191` is already in use, choose another one:
 vidxp-api --port 32192
 ```
 
+### Ingest media already available on this computer
+
+A local application can register media without copying the video through an
+HTTP request. Send one to ten absolute file paths to
+`POST /api/v1/media/local-ingestions`, then poll the URL from its `Location`
+header until the session is terminal. Set `modalities` to the indexable names
+returned by `GET /api/v1/capabilities`; omit it to use every enabled indexing
+feature.
+
+This operation is available only when `vidxp-api` runs in local mode. Every
+path must be readable by the VidXP process and, when trusted import roots are
+configured, must be inside one of those roots. The response never returns a
+source path. Use the upload operations instead when the application and VidXP
+do not share a filesystem.
+
+The [Premiere Pro extension preview](integrations/premiere-pro.md) uses this
+workflow for media already loaded in a Premiere project.
+
 ## Connect a local AI assistant
 
 An assistant that can start a program on the same computer does not need the
@@ -65,6 +83,65 @@ vidxp mcp-config --repository default
 The generated configuration runs `vidxp-mcp` as a local process. See
 [Connect VidXP to Codex or ChatGPT](integrations/openai-plugin.md) for Codex
 setup and for the different requirements of hosted AI clients.
+
+### Enable local grounded answers
+
+Ordinary search and timestamped evidence do not require a language model.
+`query_video` and `vidxp query` can additionally use a self-hosted Ollama model
+to rewrite a question into searches and draft claims from citable textual
+evidence. VidXP falls back to deterministic evidence retrieval when Ollama is
+not configured or unavailable.
+
+For VidXP Desktop, open **Setup options** and enable **Local grounded
+answers**. Desktop first reuses a healthy Ollama service or existing executable.
+On supported Desktop platforms, it otherwise asks before downloading the
+pinned, checksum-verified headless runtime into VidXP's private data. It never
+installs the Ollama desktop app. Desktop downloads the approved model with
+visible progress and carries the non-secret local provider settings into every
+managed surface, including copied stdio MCP JSON and **Set up in Codex**. If
+Desktop starts `ollama serve`, it supervises and stops only that owned process.
+It never stops an Ollama app or service that was already running.
+
+The commands below are only for command-line installations and custom
+deployments.
+
+Install and start [Ollama](https://ollama.com/download), then explicitly
+download VidXP's recommended model:
+
+```bash
+ollama pull qwen3.5:4b-q4_K_M
+```
+
+Set the Ollama OpenAI-compatible address before starting `vidxp-mcp`,
+`vidxp-api`, or a CLI query. VidXP selects `qwen3.5:4b-q4_K_M` when the model
+setting is omitted:
+
+```bash
+export VIDXP_SLM_BASE_URL=http://127.0.0.1:11434/v1
+vidxp query "When does the taxi arrive?"
+```
+
+In PowerShell, set the same value with:
+
+```powershell
+$env:VIDXP_SLM_BASE_URL = "http://127.0.0.1:11434/v1"
+vidxp query "When does the taxi arrive?"
+```
+
+The official Q4_K_M model download is approximately 3.4 GB. A Desktop-managed
+headless runtime can add up to approximately 1.36 GiB; an existing service or
+executable avoids that download. Local inference has no model API fee or
+numbered hosted-model run, but it still uses local storage, memory, compute time,
+and electricity. Desktop downloads the model only when the user selects the
+feature; CLI users pull it explicitly. VidXP never bundles the model with the
+Python or Desktop packages. A reused external Ollama service continues to own
+its model storage; VidXP does not claim those files are in its search-model
+cache.
+
+The current query adapter sends structured search evidence, not video or audio
+bytes, to Qwen. Speech transcripts can support generated factual claims.
+Scene, action, and sound matches remain timestamped, inspectable retrieval
+evidence until a later media-enrichment layer supplies citable descriptions.
 
 ## Add videos through MCP
 
@@ -93,6 +170,12 @@ check importing and indexing progress.
 The file data stays on the computer and does not pass through MCP. As with an
 upload, the client can use `modalities` to select a smaller set of search
 features.
+
+Use the `sound` modality to index or search music, environmental sounds, and
+other non-speech audio events. CLI, HTTP, local stdio MCP, remote MCP, browser,
+and Desktop all resolve that name through the same capability contract. Spoken
+words use the `speech` capability, while multi-frame visible actions and motion
+use `action`.
 
 ## Connect from another computer
 

@@ -22,9 +22,22 @@ The inventory contained 57 paper rows when this validation pass began. The audit
 first added 18 omitted benchmark-defining, protocol-lineage, and direct-comparator
 papers, then the published-results pass added three directly relevant retrieval
 comparators that the first audit missed: MMMORRF, OmniEmbed-MultiVENT, and Q2E.
-The reconciled inventory contains 79 unique paper rows. Every inventory paper's
+The 2026-08-27 model-selection refresh added MAEB, MVEB, FineLAP, Auto-AEG/
+AEGBench, TimeLens2, and the OVSD-defining paper. The reconciled inventory now
+contains 85 unique paper rows. Every inventory paper's
 exact source URL appears in a
 paper-level ledger row below; the final coverage check found zero omissions.
+
+## Current component-model selection
+
+| Paper or release | Evidence checked | Actual experimental use | Measures/results reported | Validation outcome |
+| --- | --- | --- | --- | --- |
+| [MAEB](https://arxiv.org/abs/2602.16008) | Full text and released MTEB relationship checked | Thirty representative audio-embedding tasks selected from a 98-task pool; 50+ models across speech, music, environmental sound, and cross-modal audio-text work | Task-family metrics and aggregate/Borda comparisons | Correct broad source for audio-provider selection. It shows that speech-pretrained and contrastive audio-text models lead different domains; it does not measure long-video windowing or VidXP. |
+| [MVEB](https://arxiv.org/abs/2606.14958) | Full text and main/appendix result tables checked | Twenty-three representative video-embedding tasks selected from a 184-task pool; 33 models; paired video-only and audio-plus-video variants plus modality-restricted tables | Classification, clustering, retrieval, QA, and aggregate means; text-video Table 11 | Qwen3-VL-Embedding-8B/2B rank first/second on the checked text-video table at 60.9/58.1. VideoPrism is absent, so no direct quality claim between them is valid. |
+| [FineLAP](https://aclanthology.org/2026.acl-long.473/) | Full text, official repository, and checkpoint surface checked | AudioCaps/Clotho retrieval, classification, sound-event detection, and text-to-audio grounding | Retrieval R@1 plus task-specific dense metrics | Supports FineLAP as the first sound candidate: AudioCaps T→A/A→T R@1 45.7/62.5 versus the paper's LAION-CLAP 35.1/44.2. Fixed ten-second input remains a VidXP integration constraint. |
+| [Auto-AEG and AEGBench](https://arxiv.org/abs/2607.04383) | Full text, HTML tables, and dataset link checked | Open-vocabulary audio event grounding over 3,427 items/9,790 queries with difficulty-stratified hard cases | mIoU, recall/precision IoU, event F1, segment F1, and onset precision/recall | Direct environmental-sound boundary benchmark. Table 3 reports PE-A-Frame Large at 0.389 mIoU/0.407 event-F1/0.607 segment-F1; the larger trained Auto-AEG system is research ceiling context. |
+| [TimeLens2](https://github.com/MCG-NJU/TimeLens2) | Official paper/repository and released checkpoint table checked | Seven visual temporal-grounding datasets with 2B/4B/8B checkpoints | Average mIoU and per-dataset temporal-grounding metrics | The official release reports 47.7 average mIoU for 4B and 48.0 for 8B. Select 4B first; all variants are visual-only. |
+| [OVSD defining paper](https://research.ibm.com/publications/robust-and-efficient-video-scene-detection-using-optimal-sequential-grouping) | Primary IBM publication and later dataset-use records checked | Scene-boundary segmentation over open-licensed movies and animations | Scene-segmentation measures | Useful temporal-unit regression source only. OVSD contains no text-query retrieval, action, environmental-sound, speech, or fusion objective. |
 
 ## Whole-system and multimodal benchmark definitions
 

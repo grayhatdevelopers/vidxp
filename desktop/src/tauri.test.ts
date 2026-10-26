@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen }));
 
 import {
   beginManagedSetup,
+  cancelManagedSetupOperation,
   displayPath,
   installRuntime,
   installCodexPlugin,
@@ -76,6 +77,7 @@ describe('desktop IPC adapter', () => {
       capabilities: ['actor'],
       surfaces: ['browser'],
       prepare_models: false,
+      local_answers: false,
       draft_id: draft.id,
     };
     invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce({
@@ -88,6 +90,14 @@ describe('desktop IPC adapter', () => {
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'begin_managed_setup');
     expect(invoke).toHaveBeenNthCalledWith(2, 'install_runtime', { request });
+  });
+
+  it('cancels only the active managed setup draft', async () => {
+    invoke.mockResolvedValue(undefined);
+
+    await cancelManagedSetupOperation('draft-1');
+
+    expect(invoke).toHaveBeenCalledWith('cancel_managed_setup_operation', { draftId: 'draft-1' });
   });
 
   it('maps managed setup progress events to their payload', async () => {

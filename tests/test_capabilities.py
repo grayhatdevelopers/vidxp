@@ -14,18 +14,20 @@ from vidxp.capabilities.contracts import (
     CapabilityOutput,
     CapabilityPlugin,
     CapabilityProvenance,
+    CapabilityRequestError,
     OperationDefinition,
     RuntimeCheck,
     module_import_check,
 )
-from vidxp.capabilities.dialogue.config import DialogueConfig
+from vidxp.capabilities.speech.config import SpeechConfig
 from vidxp.capabilities.registry import (
     CapabilityRegistry,
     create_capability_registry,
 )
 from vidxp.capability_service import CapabilityService
 from vidxp.capabilities.scene.config import SceneConfig
-from vidxp.capabilities.videoprism.config import VideoPrismConfig
+from vidxp.capabilities.sound.config import SoundConfig
+from vidxp.capabilities.action.config import VideoPrismConfig
 from vidxp.core.contracts import IndexConfig
 from vidxp.core.runner import _index_groups
 
@@ -41,6 +43,12 @@ class ExampleOutput(CapabilityOutput):
 class CapabilityTests(unittest.TestCase):
     def setUp(self):
         self.registry = create_capability_registry()
+
+    def test_removed_model_oriented_names_are_not_capabilities(self):
+        for removed in ("dialogue", "videoprism"):
+            with self.subTest(removed=removed):
+                with self.assertRaises(CapabilityRequestError):
+                    self.registry.get(removed)
 
     def test_module_import_checks_run_in_an_isolated_process(self):
         with patch(
@@ -63,21 +71,35 @@ class CapabilityTests(unittest.TestCase):
     def test_registry_drives_capability_metadata(self):
         self.assertEqual(
             self.registry.names(),
-            ("dialogue", "scene", "actor", "videoprism"),
+            ("speech", "sound", "scene", "actor", "action"),
         )
         self.assertEqual(self.registry.index_names(), self.registry.names())
         self.assertEqual(
             self.registry.preparable_names(),
-            ("dialogue", "scene", "actor", "videoprism"),
+            ("speech", "sound", "scene", "actor", "action"),
         )
         self.assertEqual(
             self.registry.collection_names(),
             {
-                "dialogue": "dialogue",
+                "speech": "speech",
+                "sound": "sound",
                 "scene": "scene",
                 "actor": "actor",
-                "videoprism": "videoprism",
+                "action": "action",
             },
+        )
+        self.assertEqual(
+            tuple(
+                capability.label
+                for capability in CapabilityService(self.registry).list()
+            ),
+            (
+                "Speech search",
+                "Sound event search",
+                "Visual scene search",
+                "Actor recognition",
+                "Action and motion search",
+            ),
         )
 
     def test_registered_operations_are_schema_only_metadata(self):
@@ -137,13 +159,14 @@ class CapabilityTests(unittest.TestCase):
 
     def test_built_in_settings_are_owned_and_validated(self):
         self.assertIs(
-            self.registry.get("dialogue").config_model,
-            DialogueConfig,
+            self.registry.get("speech").config_model,
+            SpeechConfig,
         )
         self.assertIs(self.registry.get("scene").config_model, SceneConfig)
         self.assertIs(self.registry.get("actor").config_model, ActorConfig)
+        self.assertIs(self.registry.get("sound").config_model, SoundConfig)
         self.assertIs(
-            self.registry.get("videoprism").config_model,
+            self.registry.get("action").config_model,
             VideoPrismConfig,
         )
 
@@ -213,10 +236,14 @@ class CapabilityTests(unittest.TestCase):
     def test_visual_execution_group_is_explicit(self):
         self.assertEqual(
             _index_groups(
-                ("dialogue", "scene", "actor", "videoprism"),
+                ("speech", "sound", "scene", "actor", "action"),
                 self.registry,
             ),
-            (("dialogue",), ("scene", "actor", "videoprism")),
+            (
+                ("speech",),
+                ("sound",),
+                ("scene", "actor", "action"),
+            ),
         )
         self.assertIsNotNone(
             self.registry.executor("scene").index_processor
@@ -225,8 +252,9 @@ class CapabilityTests(unittest.TestCase):
             self.registry.executor("actor").index_processor
         )
         self.assertIsNone(
-            self.registry.executor("dialogue").index_processor
+            self.registry.executor("speech").index_processor
         )
+        self.assertIsNone(self.registry.executor("sound").index_processor)
 
     def test_core_config_has_no_provider_specific_fields(self):
         fields = IndexConfig.__dataclass_fields__

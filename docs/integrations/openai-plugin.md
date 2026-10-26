@@ -43,8 +43,10 @@ connecting an assistant.
 4. Start a new Codex task.
 
 Desktop installs the VidXP plugin and registers the selected installation's
-exact `vidxp-mcp` executable, repository, and data paths. It does not depend on
-that executable being available on the shell's `PATH`.
+exact `vidxp-mcp` executable, repository, data paths, and any Desktop-managed
+local grounded-answer settings. It does not depend on that executable being
+available on the shell's `PATH`, and a later Codex-launched stdio server does
+not have to inherit environment variables from the Desktop process.
 
 Select **Copy MCP setup** instead when another compatible local assistant needs
 the MCP connection settings without the Codex plugin.

@@ -10,6 +10,7 @@ from pydantic_ai.providers.ollama import OllamaProvider
 
 from vidxp.application_models import (
     DraftAnswer,
+    PlannerPlan,
     QueryModelIdentity,
     QueryPlan,
     QueryPlanningRequest,
@@ -59,11 +60,12 @@ class OllamaQueryModel:
         )
         self._planner = Agent(
             model,
-            output_type=NativeOutput(QueryPlan),
+            output_type=NativeOutput(PlannerPlan),
             instructions=_PLANNING_INSTRUCTIONS,
             retries=retries,
             model_settings={
                 "temperature": 0,
+                "openai_reasoning_effort": "none",
                 "max_tokens": 1024,
                 "timeout": timeout_seconds,
             },
@@ -75,6 +77,7 @@ class OllamaQueryModel:
             retries=retries,
             model_settings={
                 "temperature": 0,
+                "openai_reasoning_effort": "none",
                 "max_tokens": 2048,
                 "timeout": timeout_seconds,
             },
@@ -85,7 +88,8 @@ class OllamaQueryModel:
         return self._identity
 
     def plan(self, request: QueryPlanningRequest) -> QueryPlan:
-        return self._run(self._planner, request.model_dump_json())
+        planned = self._run(self._planner, request.model_dump_json())
+        return planned.to_query_plan()
 
     def synthesize(self, request: QuerySynthesisRequest) -> DraftAnswer:
         return self._run(self._synthesizer, request.model_dump_json())

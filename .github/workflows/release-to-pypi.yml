@@ -33,6 +33,7 @@ jobs:
       product_digest: ${{ steps.candidate.outputs.product_digest }}
       source_sha: ${{ steps.source.outputs.sha }}
       version: ${{ steps.contract.outputs.version }}
+      previous_tag: ${{ steps.candidate.outputs.previous_tag }}
       worker_digest: ${{ steps.candidate.outputs.worker_digest }}
     steps:
       - uses: actions/checkout@v7
@@ -104,10 +105,16 @@ jobs:
           [[ "$candidate_tree" == "$release_tree" ]]
           [[ "$recorded_tree" == "$release_tree" ]]
 
+          previous_tag="$(jq -er '.previous_tag | select(type == "string" and startswith("v"))' "$candidate")"
+          [[ "$previous_tag" != "$TAG" ]]
+          git show-ref --verify --quiet "refs/tags/$previous_tag"
+          git merge-base --is-ancestor "refs/tags/$previous_tag" HEAD
+
           {
             echo "product_digest=$(jq -r .containers.product "$candidate")"
             echo "control_digest=$(jq -r .containers.control "$candidate")"
             echo "worker_digest=$(jq -r .containers.worker "$candidate")"
+            echo "previous_tag=$previous_tag"
           } >> "$GITHUB_OUTPUT"
 
       - name: Prepare release assets and checksums
@@ -221,8 +228,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
           VERSION: ${{ needs.resolve.outputs.version }}
+          PREVIOUS_TAG: ${{ needs.resolve.outputs.previous_tag }}
         shell: bash
         run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            -f previous_tag_name="$PREVIOUS_TAG" \
+            -f configuration_file_path=.github/release.yml \
+            --jq .body > github-contribution-notes.md
           gh release view "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --json body \
@@ -231,6 +244,7 @@ jobs:
             --assets release-assets \
             --channel "$CHANNEL" \
             --existing release-please-notes.md \
+            --github-notes github-contribution-notes.md \
             --output release-notes.md \
             --repository "$GITHUB_REPOSITORY" \
             --tag "$TAG" \

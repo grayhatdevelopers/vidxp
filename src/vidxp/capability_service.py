@@ -24,6 +24,7 @@ class CapabilityService:
         definition = self.registry.get(name)
         return CapabilitySummary(
             name=definition.name,
+            label=definition.display_label,
             description=definition.description,
             install_extra=definition.extra,
             supports_indexing=definition.collection_name is not None,

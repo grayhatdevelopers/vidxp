@@ -109,6 +109,7 @@ from vidxp.mcp_app import (
     load_mcp_app_html,
 )
 from vidxp.core.identifiers import ArtifactId
+from vidxp.core.media import MediaState
 from vidxp.evidence_delivery import (
     EvidenceDeliveryService,
     require_completed_evidence_result,
@@ -1277,13 +1278,23 @@ def create_mcp_server(
             str | None,
             Field(min_length=1, max_length=512),
         ] = None,
+        filename: Annotated[
+            str | None,
+            Field(min_length=1),
+        ] = None,
+        state: MediaState | None = None,
     ) -> WorkspaceOverview:
         return await _invoke_async(
             context,
             default_principal=default_principal,
             permission=RepositoryPermission.read,
             operation=lambda _actor: context.application.workspace(
-                ListMediaCommand(page_size=page_size, cursor=cursor)
+                ListMediaCommand(
+                    page_size=page_size,
+                    cursor=cursor,
+                    filename=filename,
+                    state=state,
+                )
             ),
         )
 
@@ -1341,6 +1352,10 @@ def create_mcp_server(
             "that a video is present in the active index snapshot."
         ),
         annotations=_READ_ONLY,
+        meta=_mcp_app_tool_meta(
+            "Listing VidXP media…",
+            "VidXP media library ready.",
+        ),
         structured_output=True,
     )
     async def list_media(
@@ -1349,13 +1364,23 @@ def create_mcp_server(
             str | None,
             Field(min_length=1, max_length=512),
         ] = None,
+        filename: Annotated[
+            str | None,
+            Field(min_length=1),
+        ] = None,
+        state: MediaState | None = None,
     ) -> MediaPage:
         return await _invoke_async(
             context,
             default_principal=default_principal,
             permission=RepositoryPermission.read,
             operation=lambda _actor: context.application.list_media(
-                ListMediaCommand(page_size=page_size, cursor=cursor)
+                ListMediaCommand(
+                    page_size=page_size,
+                    cursor=cursor,
+                    filename=filename,
+                    state=state,
+                )
             ),
         )
 
@@ -2039,6 +2064,10 @@ def create_mcp_server(
             "initial observation."
         ),
         annotations=_READ_ONLY,
+        meta=_mcp_app_tool_meta(
+            "Checking VidXP job status…",
+            "VidXP job status ready.",
+        ),
         structured_output=True,
     )
     async def get_job_status(job_id: JobId) -> JobSummary:

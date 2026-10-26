@@ -241,7 +241,7 @@ class ModelRuntime:
             cv2.setNumThreads(self.cpu_thread_budget)
 
     def device_for(self, capability: str) -> str:
-        if capability == "dialogue.transcription":
+        if capability == "speech.transcription":
             return self.backends.transcription_device
         if capability == "actor":
             return self.backends.actor_device

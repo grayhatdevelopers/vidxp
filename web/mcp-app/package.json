@@ -1,0 +1,13 @@
+{
+  "name": "@vidxp/mcp-app",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Behavioural tests for the MCP App widget. The widget itself is hand-authored at src/vidxp/assets/mcp_app/index.html and has no build step, so this package carries tests only.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

@@ -29,6 +29,7 @@ from vidxp.infrastructure.local_objects import LocalObjectStore
 
 MEDIA_ID = "123456781234423481234567890abcde"
 OTHER_MEDIA_ID = "223456781234423481234567890abcde"
+THIRD_MEDIA_ID = "423456781234423481234567890abcde"
 ARTIFACT_ID = "323456781234423481234567890abcde"
 
 
@@ -143,6 +144,110 @@ class LocalCatalogTests(unittest.TestCase):
             duplicate = media_record(OTHER_MEDIA_ID)
             self.assertEqual(reopened.put_media(duplicate), record)
             self.assertEqual(reopened.list_media(limit=10), (record,))
+
+    def test_catalog_list_media_filters_by_state(self):
+        with TemporaryDirectory() as directory:
+            catalog = LocalCatalog(Path(directory) / "catalog.sqlite3")
+            ready = media_record()
+            pending = incomplete_media_record(
+                state=MediaState.pending,
+                media_id=OTHER_MEDIA_ID,
+                checksum="2" * 64,
+            ).model_copy(update={"original_filename": "pending.mp4"})
+            failed = incomplete_media_record(
+                state=MediaState.failed,
+                media_id=THIRD_MEDIA_ID,
+                checksum="3" * 64,
+            ).model_copy(update={"original_filename": "failed.mp4"})
+            catalog.put_media(ready)
+            catalog.put_media(pending)
+            catalog.put_media(failed)
+
+            self.assertEqual(catalog.count_media(), 3)
+            self.assertEqual(catalog.count_media(state=MediaState.ready), 1)
+            self.assertEqual(catalog.count_media(state=MediaState.pending), 1)
+            self.assertEqual(catalog.count_media(state=MediaState.failed), 1)
+            self.assertEqual(
+                catalog.list_media(limit=10, state=MediaState.ready),
+                (ready,),
+            )
+
+    def test_catalog_list_media_filters_by_filename(self):
+        with TemporaryDirectory() as directory:
+            catalog = LocalCatalog(Path(directory) / "catalog.sqlite3")
+            clip = media_record().model_copy(
+                update={"original_filename": "Straße-Épisode-Clip.mp4"}
+            )
+            other = media_record(
+                OTHER_MEDIA_ID,
+                checksum="2" * 64,
+            ).model_copy(update={"original_filename": "other.mov"})
+            catalog.put_media(clip)
+            catalog.put_media(other)
+
+            self.assertEqual(catalog.count_media(filename="clip"), 1)
+            self.assertEqual(catalog.count_media(filename="CLIP"), 1)
+            self.assertEqual(catalog.count_media(filename="STRASSE"), 1)
+            self.assertEqual(catalog.count_media(filename="éPISODE"), 1)
+            self.assertEqual(
+                catalog.list_media(limit=10, filename="clip"),
+                (clip,),
+            )
+            self.assertEqual(catalog.count_media(filename="other.mov"), 1)
+
+    def test_catalog_list_media_applies_combined_filters(self):
+        with TemporaryDirectory() as directory:
+            catalog = LocalCatalog(Path(directory) / "catalog.sqlite3")
+            ready_clip = media_record().model_copy(
+                update={"original_filename": "ready-clip.mp4"}
+            )
+            pending_clip = incomplete_media_record(
+                state=MediaState.pending,
+                media_id=OTHER_MEDIA_ID,
+                checksum="2" * 64,
+            ).model_copy(update={"original_filename": "pending-clip.mp4"})
+            catalog.put_media(ready_clip)
+            catalog.put_media(pending_clip)
+
+            self.assertEqual(
+                catalog.count_media(
+                    filename="clip",
+                    state=MediaState.ready,
+                ),
+                1,
+            )
+            self.assertEqual(
+                catalog.list_media(
+                    limit=10,
+                    filename="clip",
+                    state=MediaState.ready,
+                ),
+                (ready_clip,),
+            )
+
+    def test_catalog_list_media_supports_filtered_pagination(self):
+        with TemporaryDirectory() as directory:
+            catalog = LocalCatalog(Path(directory) / "catalog.sqlite3")
+            first = media_record().model_copy(
+                update={"original_filename": "batch-001.mp4"}
+            )
+            second = media_record(
+                OTHER_MEDIA_ID,
+                checksum="2" * 64,
+            ).model_copy(update={"original_filename": "batch-002.mp4"})
+            third = media_record(
+                THIRD_MEDIA_ID,
+                checksum="3" * 64,
+            ).model_copy(update={"original_filename": "other.mp4"})
+            catalog.put_media(first)
+            catalog.put_media(second)
+            catalog.put_media(third)
+
+            self.assertEqual(catalog.count_media(filename="batch"), 2)
+            page = catalog.list_media(limit=1, offset=0, filename="batch")
+            self.assertEqual(page, (first,))
+            page = catalog.list_media(limit=1, offset=1, filename="batch")
+            self.assertEqual(page, (second,))
 
     def test_catalog_replaces_pending_and_failed_media(self):
         with TemporaryDirectory() as directory:

@@ -7,6 +7,7 @@ import httpx
 from vidxp.application_models import (
     DraftAnswer,
     MomentEvidence,
+    QueryPlan,
     QueryPlanningRequest,
     QuerySynthesisRequest,
     SearchHit,
@@ -27,7 +28,7 @@ class OllamaQueryModelTests(unittest.TestCase):
                 "steps": [
                     {
                         "kind": "search_moments",
-                        "modality": "dialogue",
+                        "modality": "speech",
                         "query": "taxi arrival",
                     }
                 ]
@@ -88,7 +89,7 @@ class OllamaQueryModelTests(unittest.TestCase):
             end=2,
             score=-0.1,
             raw_distance=0.1,
-            modality="dialogue",
+            modality="speech",
             source_id="dialogue:1",
             metadata={"text": "the taxi arrived"},
         )
@@ -97,7 +98,7 @@ class OllamaQueryModelTests(unittest.TestCase):
             snapshot_id=SNAPSHOT_ID,
             media_id=MEDIA_ID,
             generation_id=GENERATION_ID,
-            modality="dialogue",
+            modality="speech",
             source_id="dialogue:1",
             start=1,
             end=2,
@@ -108,7 +109,7 @@ class OllamaQueryModelTests(unittest.TestCase):
             plan = model.plan(
                 QueryPlanningRequest(
                     question="When did the taxi arrive?",
-                    allowed_modalities=("dialogue",),
+                    allowed_modalities=("speech",),
                 )
             )
             answer = model.synthesize(
@@ -130,6 +131,63 @@ class OllamaQueryModelTests(unittest.TestCase):
                 "json_schema",
             )
             self.assertEqual(request["model"], "contract-model")
+            self.assertEqual(request["reasoning_effort"], "none")
+
+    def test_planner_schema_offers_only_executable_steps(self):
+        requests: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(json.loads(request.content))
+            plan = {"steps": [{"kind": "actor_overview"}]}
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": "chatcmpl-1",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": "contract-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(plan),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                },
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        model = OllamaQueryModel(
+            base_url="http://ollama.test/v1",
+            model_name="contract-model",
+            timeout_seconds=2,
+            output_retries=0,
+            http_client=client,
+        )
+        try:
+            plan = model.plan(
+                QueryPlanningRequest(
+                    question="Who is in the video?",
+                    allowed_modalities=(),
+                    actor_overview_allowed=True,
+                )
+            )
+        finally:
+            asyncio.run(client.aclose())
+
+        self.assertIsInstance(plan, QueryPlan)
+        schema = json.dumps(requests[0]["response_format"]["json_schema"])
+        for hidden in (
+            "occurrence_mode",
+            "temporal_relation",
+            "evidence_request",
+        ):
+            self.assertNotIn(hidden, schema)
+        self.assertIn("search_moments", schema)
 
 
 if __name__ == "__main__":

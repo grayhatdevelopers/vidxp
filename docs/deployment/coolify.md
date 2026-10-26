@@ -175,14 +175,14 @@ submit a model-preparation job through the authenticated API.
 
 | Feature | Approximate download |
 |---|---:|
-| Dialogue search | 2.64 GiB |
+| Speech search | 2.64 GiB |
 | Scene search | 1.43 GiB |
 | Action search | 0.93 GiB |
 | Actor matching | 37 MiB |
 
 The example below prepares every built-in search feature. In the shell running
 the request, set `VIDXP_API_TOKEN` to the private API token configured above.
-The API name for action search is `videoprism`.
+The API capability for multi-frame action and motion search is `action`.
 
 ```bash
 curl --fail-with-body \
@@ -191,7 +191,7 @@ curl --fail-with-body \
   --header "Authorization: Bearer ${VIDXP_API_TOKEN}" \
   --header "Idempotency-Key: initial-cpu-models-v1" \
   --header "Content-Type: application/json" \
-  --data '{"modalities":["dialogue","scene","videoprism","actor"],"capability_options":{}}'
+  --data '{"modalities":["speech","scene","action","actor"],"capability_options":{}}'
 ```
 
 The `202 Accepted` response includes a `job_id`. Insert it into the wait
@@ -236,27 +236,29 @@ being loaded completely into memory.
 ## 7. Optional generated answers
 
 Search and timestamped evidence work without a language model. To let VidXP
-generate written claims from that evidence, first evaluate a model's resource
-use, license, structured-output reliability, and grounding behavior.
-
-Then configure the selected model:
+plan searches and generate written claims from citable textual evidence,
+configure the internal Ollama address:
 
 ```dotenv
 VIDXP_SLM_BASE_URL=http://ollama:11434/v1
-VIDXP_SLM_MODEL=<evaluated-local-model>
 ```
+
+VidXP uses the official `qwen3.5:4b-q4_K_M` Ollama build by default. Set
+`VIDXP_SLM_MODEL` only to make an intentional operator override.
 
 Start Ollama and explicitly download the model:
 
 ```bash
 docker compose --env-file .env -f compose.coolify.yaml --profile slm up -d ollama
 docker compose --env-file .env -f compose.coolify.yaml --profile slm exec ollama \
-  ollama pull <evaluated-local-model>
+  ollama pull qwen3.5:4b-q4_K_M
 docker compose --env-file .env -f compose.coolify.yaml up -d worker
 ```
 
 Do not publish Ollama through the proxy. Compose never downloads this model
-automatically.
+automatically. The Q4_K_M artifact is approximately 3.4 GB and local inference
+has no per-request API charge, but it consumes the server's storage, memory,
+compute time, and electricity.
 
 ## Back up and upgrade
 

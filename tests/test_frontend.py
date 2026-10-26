@@ -90,12 +90,12 @@ class FrontendTests(unittest.TestCase):
                 return_value=service,
             ):
                 available = frontend._available_query_modalities(
-                    ("dialogue", "scene", "actor", "videoprism"),
+                    ("speech", "sound", "scene", "actor", "action"),
                 )
 
         self.assertEqual(
             available,
-            ("dialogue", "scene", "actor", "videoprism"),
+            ("speech", "sound", "scene", "actor", "action"),
         )
 
     def tearDown(self):
@@ -249,8 +249,10 @@ class FrontendTests(unittest.TestCase):
 
     def test_registered_video_selector_lists_only_ready_media(self):
         service = Mock()
+
         ready_id = MEDIA_ID
-        pending_id = "223456781234423481234567890abcde"
+        pending_id = "pending-media-id"
+
         media_page = SimpleNamespace(
             items=(
                 SimpleNamespace(
@@ -262,7 +264,7 @@ class FrontendTests(unittest.TestCase):
                 SimpleNamespace(
                     media_id=pending_id,
                     original_filename="pending.mp4",
-                    duration_seconds=None,
+                    duration_seconds=12.0,
                     state=MediaState.pending,
                 ),
             ),
@@ -298,7 +300,7 @@ class FrontendTests(unittest.TestCase):
         ):
             _uploaded, media_id = frontend._select_video(
                 False,
-                pending_id,
+                ready_id,
                 media_page,
             )
 
@@ -337,7 +339,10 @@ class FrontendTests(unittest.TestCase):
             ):
                 available = frontend._available_index_modalities()
 
-        self.assertEqual(available, ("dialogue", "scene", "videoprism"))
+        self.assertEqual(
+            available,
+            ("speech", "sound", "scene", "action"),
+        )
         self.assertTrue(
             all(
                 not call.args[0].include_runtime_checks
@@ -352,7 +357,7 @@ class FrontendTests(unittest.TestCase):
             return_value=2.0,
         ) as selectbox:
             selected = frontend._scene_sample_fps_control(
-                ("dialogue", "scene"),
+                ("speech", "scene"),
                 disabled=False,
             )
 
@@ -365,7 +370,7 @@ class FrontendTests(unittest.TestCase):
 
         with patch.object(frontend.st, "selectbox") as selectbox:
             selected = frontend._scene_sample_fps_control(
-                ("dialogue",),
+                ("speech",),
                 disabled=False,
             )
 
@@ -406,7 +411,7 @@ class FrontendTests(unittest.TestCase):
             return_value=4.0,
         ) as selectbox:
             selected = frontend._videoprism_sample_fps_control(
-                ("videoprism",),
+                ("action",),
                 disabled=False,
             )
 
@@ -430,14 +435,14 @@ class FrontendTests(unittest.TestCase):
             frontend._run_indexing(
                 None,
                 {},
-                ("videoprism",),
+                ("action",),
                 videoprism_sample_fps=selected,
             )
 
         command = jobs.submit_index.call_args.args[0]
         self.assertEqual(
             command.capability_options,
-            {"videoprism": {"sample_fps": 4.0}},
+            {"action": {"sample_fps": 4.0}},
         )
 
     def test_indexing_omits_scene_sample_rate_without_scene(self):
@@ -451,7 +456,7 @@ class FrontendTests(unittest.TestCase):
             patch.object(frontend.st, "query_params", {}),
             patch.object(frontend.st, "rerun"),
         ):
-            frontend._run_indexing(None, {}, ("dialogue",))
+            frontend._run_indexing(None, {}, ("speech",))
 
         command = jobs.submit_index.call_args.args[0]
         self.assertIsNone(command.scene_sample_fps)

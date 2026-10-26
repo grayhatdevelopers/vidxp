@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 
+from vidxp.application_models import RetrievalScoring
 from vidxp.capabilities.schemas import SearchHit, SearchResult
 from vidxp.core.contracts import (
     IndexConfig,
@@ -22,6 +23,9 @@ PUBLIC_SEARCH_METADATA = frozenset(
         "timestamp",
         "fps",
         "duration",
+        "representation",
+        "window_index",
+        "activation_index",
     }
 )
 
@@ -140,6 +144,7 @@ def search_embeddings(
         query_id=query_id or stable_query_id(query, modality, config),
         query=query,
         modality=modality,
+        scoring=RetrievalScoring(distance_metric=config.vector_distance),
         hits=_to_hits(modality, rows, required_metadata),
     )
 

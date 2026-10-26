@@ -40,6 +40,7 @@ from vidxp.core.indexing_common import ProgressCallback
 from vidxp.core.media import (
     MediaProbe,
     MediaRecord,
+    MediaState,
     StagedMedia,
     StoredMedia,
 )
@@ -104,9 +105,16 @@ class MediaCatalogPort(Protocol):
         *,
         limit: int,
         offset: int = 0,
+        filename: str | None = None,
+        state: MediaState | None = None,
     ) -> tuple[MediaRecord, ...]: ...
 
-    def count_media(self) -> int: ...
+    def count_media(
+        self,
+        *,
+        filename: str | None = None,
+        state: MediaState | None = None,
+    ) -> int: ...
 
     def reserve_media_import(
         self,

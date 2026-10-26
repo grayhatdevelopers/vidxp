@@ -9,8 +9,8 @@ description: Use VidXP to upload, import, register, and automatically index vide
 
 1. Resolve the `vidxp` MCP tools and call `get_workspace`. Do not import a video
    that is already registered or indexed.
-2. Choose indexable modalities from the workspace. Use `dialogue` and `scene`
-   for ordinary content retrieval. Add `videoprism` when the request depends on
+2. Choose indexable capabilities from the workspace. Use `speech` and `scene`
+   for ordinary content retrieval. Add `action` when the request depends on
    actions or events spanning multiple frames. Add `actor` only when anonymous
    recurring-face clusters are wanted; it does not identify people by name.
 3. Call `get_runtime_readiness`. If selected models are missing, submit

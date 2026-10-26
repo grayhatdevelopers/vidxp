@@ -6,16 +6,22 @@ from vidxp.application_models import (
     FusedSearchResult,
     FusionProvenance,
     IndexSnapshotReference,
+    PlannerPlan,
+    QueryAnswer,
     QueryAnswerMode,
     QueryModelIdentity,
     QueryPlan,
     QueryVideoCommand,
+    RetrievalScoring,
     SearchHit,
     SearchMomentsPlanStep,
     SearchResult,
+    TemporalRelationPlanStep,
 )
+from vidxp.capabilities.search import search_embeddings
+from vidxp.core.contracts import IndexConfig
 from vidxp.ports import QueryProviderError
-from vidxp.query_service import GroundedQueryService
+from vidxp.query_service import GroundedQueryService, _valid_plan
 from vidxp.search_fusion import fuse_search_results
 
 
@@ -111,15 +117,116 @@ class GroundedQueryServiceTests(unittest.TestCase):
 
         plan, reason = service.plan(
             self.command,
-            search_modalities=("scene", "dialogue"),
+            search_modalities=("scene", "speech"),
             actor_overview=False,
         )
 
         self.assertEqual(reason, "query_plan_rejected")
         self.assertEqual(
             [step.modality for step in plan.steps],
-            ["scene", "dialogue"],
+            ["scene", "speech"],
         )
+
+    def test_planner_output_converts_to_a_valid_query_plan(self):
+        planned = PlannerPlan.model_validate(
+            {
+                "steps": [
+                    {
+                        "kind": "search_moments",
+                        "modality": "scene",
+                        "query": "taxi",
+                    },
+                    {"kind": "actor_overview"},
+                ]
+            }
+        )
+
+        plan = planned.to_query_plan()
+
+        self.assertIsInstance(plan, QueryPlan)
+        self.assertTrue(
+            _valid_plan(
+                plan,
+                search_modalities=("scene",),
+                actor_overview=True,
+            )
+        )
+
+    def test_best_occurrence_mode_is_supported(self):
+        model = FakeQueryModel(
+            QueryPlan(
+                steps=(
+                    SearchMomentsPlanStep(
+                        modality="scene",
+                        query="taxi",
+                        occurrence_mode="best",
+                    ),
+                )
+            )
+        )
+        service = GroundedQueryService(model)
+
+        plan, reason = service.plan(
+            self.command,
+            search_modalities=("scene",),
+            actor_overview=False,
+        )
+
+        self.assertIsNone(reason)
+        self.assertEqual(plan.steps[0].occurrence_mode.value, "best")
+
+    def test_unsupported_occurrence_mode_falls_back_to_ranked_search(self):
+        for occurrence_mode in ("first", "all"):
+            model = FakeQueryModel(
+                QueryPlan(
+                    steps=(
+                        SearchMomentsPlanStep(
+                            modality="scene",
+                            query="taxi",
+                            occurrence_mode=occurrence_mode,
+                        ),
+                    )
+                )
+            )
+            service = GroundedQueryService(model)
+
+            plan, reason = service.plan(
+                self.command,
+                search_modalities=("scene",),
+                actor_overview=False,
+            )
+
+            self.assertEqual(reason, "query_plan_rejected")
+            self.assertEqual(plan.steps[0].occurrence_mode.value, "best")
+
+    def test_unknown_temporal_target_modality_falls_back(self):
+        model = FakeQueryModel(
+            QueryPlan(
+                steps=(
+                    SearchMomentsPlanStep(
+                        modality="scene",
+                        query="taxi",
+                    ),
+                    TemporalRelationPlanStep(
+                        relation="before",
+                        reference_query="taxi",
+                        target_modality="nonexistent",
+                        target_query="car",
+                    ),
+                )
+            )
+        )
+        service = GroundedQueryService(model)
+
+        plan, reason = service.plan(
+            self.command,
+            search_modalities=("scene",),
+            actor_overview=False,
+            temporal_relations=True,
+        )
+
+        self.assertEqual(reason, "query_plan_rejected")
+        self.assertEqual([step.modality for step in plan.steps], ["scene"])
 
     def test_provider_failure_uses_deterministic_retrieval_plan(self):
         service = GroundedQueryService(
@@ -184,7 +291,7 @@ class GroundedQueryServiceTests(unittest.TestCase):
         plan = QueryPlan(
             steps=(
                 SearchMomentsPlanStep(
-                    modality="dialogue",
+                    modality="speech",
                     query="taxi",
                 ),
             )
@@ -202,8 +309,8 @@ class GroundedQueryServiceTests(unittest.TestCase):
                 ),
             )
         )
-        atomic = result(text="the taxi arrived", modality="dialogue")
-        fused_result = fused("dialogue", atomic)
+        atomic = result(text="the taxi arrived", modality="speech")
+        fused_result = fused("speech", atomic)
         evidence = service.evidence(
             snapshot=self.snapshot,
             fused=fused_result,
@@ -225,14 +332,14 @@ class GroundedQueryServiceTests(unittest.TestCase):
         plan = QueryPlan(
             steps=(
                 SearchMomentsPlanStep(
-                    modality="dialogue",
+                    modality="speech",
                     query="taxi",
                 ),
             )
         )
-        atomic = result(text="the taxi arrived", modality="dialogue")
+        atomic = result(text="the taxi arrived", modality="speech")
         service = GroundedQueryService()
-        fused_result = fused("dialogue", atomic)
+        fused_result = fused("speech", atomic)
         evidence = service.evidence(
             snapshot=self.snapshot,
             fused=fused_result,
@@ -265,14 +372,14 @@ class GroundedQueryServiceTests(unittest.TestCase):
         )
 
     def test_generated_answer_preserves_rejected_plan_provenance(self):
-        atomic = result(text="the taxi arrived", modality="dialogue")
-        fused_result = fused("dialogue", atomic)
+        atomic = result(text="the taxi arrived", modality="speech")
+        fused_result = fused("speech", atomic)
         service = GroundedQueryService(
             FakeQueryModel(
                 QueryPlan(
                     steps=(
                         SearchMomentsPlanStep(
-                            modality="dialogue",
+                            modality="speech",
                             query="taxi",
                         ),
                     )
@@ -331,7 +438,7 @@ class GroundedQueryServiceTests(unittest.TestCase):
         atomic = SearchResult(
             query_id="dialogue:many",
             query="taxi",
-            modality="dialogue",
+            modality="speech",
             hits=tuple(
                 SearchHit(
                     rank=index + 1,
@@ -342,7 +449,7 @@ class GroundedQueryServiceTests(unittest.TestCase):
                     end=float(index * 2 + 1),
                     score=-float(index + 1),
                     raw_distance=float(index + 1),
-                    modality="dialogue",
+                    modality="speech",
                     source_id=f"dialogue:{index}",
                     metadata={"text": f"line {index}"},
                 )
@@ -351,7 +458,7 @@ class GroundedQueryServiceTests(unittest.TestCase):
         )
         fused_result = fuse_search_results(
             query="taxi",
-            requested_modalities=("dialogue",),
+            requested_modalities=("speech",),
             results=(atomic,),
             top_k=201,
         )
@@ -371,6 +478,94 @@ class GroundedQueryServiceTests(unittest.TestCase):
         self.assertTrue(
             all(item.source_id in retained_sources for item in evidence)
         )
+
+    def test_query_answer_keeps_cosine_retrieval_scoring(self):
+        class CosineStore:
+            def query(self, modality, embedding, **options):
+                return [
+                    {
+                        "source_id": "speech:1",
+                        "raw_distance": 0.25,
+                        "metadata": {
+                            "video_id": MEDIA_ID,
+                            "generation_id": GENERATION_ID,
+                            "start": 1.0,
+                            "end": 2.0,
+                            "text": "the taxi arrived",
+                        },
+                    }
+                ]
+
+        config = IndexConfig(
+            dataset="sample",
+            split="test",
+            run_id="run-1",
+            enabled_modalities=("speech",),
+            vector_distance="cosine",
+        )
+        atomic = search_embeddings(
+            "taxi",
+            "speech",
+            [0.5, 0.25],
+            config=config,
+            required_metadata=frozenset({"text"}),
+            storage=CosineStore(),
+        )
+        fused_result = fused("speech", atomic)
+        service = GroundedQueryService()
+        evidence = service.evidence(
+            snapshot=self.snapshot,
+            fused=fused_result,
+            actors=(),
+        )
+
+        answer = service.answer(
+            self.command,
+            plan=QueryPlan(
+                steps=(SearchMomentsPlanStep(modality="speech", query="taxi"),)
+            ),
+            planning_fallback="query_model_not_configured",
+            evidence=evidence,
+            fused=fused_result,
+        )
+
+        self.assertEqual(answer.scoring, fused_result.scoring)
+        self.assertEqual(answer.scoring.distance_metric, "cosine")
+        self.assertEqual(answer.scoring.score_transform, "negated_distance")
+        hit = answer.evidence[0].hit
+        self.assertEqual(hit.score, -hit.raw_distance)
+        # Stored query job results keep the descriptor too.
+        restored = QueryAnswer.model_validate_json(answer.model_dump_json())
+        self.assertEqual(restored.scoring.distance_metric, "cosine")
+
+    def test_legacy_query_answer_without_scoring_keeps_metric_unknown(self):
+        atomic = result(text="the taxi arrived", modality="speech").model_copy(
+            update={"scoring": RetrievalScoring(distance_metric="cosine")}
+        )
+        fused_result = fused("speech", atomic)
+        service = GroundedQueryService()
+        evidence = service.evidence(
+            snapshot=self.snapshot,
+            fused=fused_result,
+            actors=(),
+        )
+        answer = service.answer(
+            self.command,
+            plan=QueryPlan(
+                steps=(SearchMomentsPlanStep(modality="speech", query="taxi"),)
+            ),
+            planning_fallback="query_model_not_configured",
+            evidence=evidence,
+            fused=fused_result,
+        )
+        self.assertEqual(answer.scoring.distance_metric, "cosine")
+
+        # Simulate a query job result stored before the descriptor existed.
+        payload = answer.model_dump(mode="json")
+        payload.pop("scoring")
+        restored = QueryAnswer.model_validate(payload)
+
+        self.assertIsNone(restored.scoring.distance_metric)
 
 
 if __name__ == "__main__":

@@ -53,8 +53,8 @@ URL.
 | Capability operation | Device policy | Precision gate |
 | --- | --- | --- |
 | Scene SigLIP2 embedding/search | `cuda:<index>` | Start with the current float32 contract; evaluate lower precision separately |
-| Dialogue Qwen3 embedding/search | `cuda:<index>` | Use bfloat16 only when `torch.cuda.is_bf16_supported()` passes; otherwise use an explicitly tested fallback |
-| Dialogue transcription | CUDA device and index through faster-whisper | float16 |
+| Speech Qwen3 embedding/search | `cuda:<index>` | Use bfloat16 only when `torch.cuda.is_bf16_supported()` passes; otherwise use an explicitly tested fallback |
+| Speech transcription | CUDA device and index through faster-whisper | float16 |
 | Actor detection/recognition and overlays | CPU | float32 |
 | Media import and snippet extraction | CPU | Not applicable |
 | SLM query planning/synthesis | External Ollama endpoint or deterministic fallback | Owned by the Ollama deployment |
@@ -114,7 +114,7 @@ The release gate is correctness and failure behavior:
 - start on a clean NVIDIA host and prove explicit device isolation;
 - run dependency/readiness checks without model downloads;
 - with already prepared model assets, smoke one scene index/search and one
-  dialogue transcription/search;
+  speech transcription/search;
 - verify actor processing remains on CPU;
 - compare CPU and CUDA result shape, provenance, and retrieval tolerances;
 - translate PyTorch OOM into a typed resource-limit failure;

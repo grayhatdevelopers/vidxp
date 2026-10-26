@@ -27,12 +27,20 @@ import { useExclusiveOperation } from './useAsyncAction';
 type Stage = 'loading' | 'choice' | 'local' | 'managed-confirm' | 'managed' | 'summary';
 type AppOperation = 'startup-check' | 'recheck' | 'begin-managed' | 'cancel-managed' | 'select-profile' | 'forget-profile' | 'open-browser';
 
+interface CompletionNotice {
+  color: 'teal' | 'yellow';
+  title: string;
+  detail: string;
+}
+
 interface LifecycleState {
   stage: Stage;
   choice: TargetKind | null;
   setup: TargetSetupState | null;
   draft: ManagedSetupDraft | null;
   failure: string | null;
+  completionNotice: CompletionNotice | null;
+  premiereSetupRequested: boolean;
   operation: AppOperation | null;
   operationProfile: string | null;
 }
@@ -44,10 +52,11 @@ type Action =
   | { type: 'loadFailed'; failure: string }
   | { type: 'operationStarted'; operation: AppOperation; profileId?: string }
   | { type: 'operationFailed'; failure: string }
-  | { type: 'operationSettled'; setup?: TargetSetupState; stage?: Stage; draft?: ManagedSetupDraft | null };
+  | { type: 'operationSettled'; setup?: TargetSetupState; stage?: Stage; draft?: ManagedSetupDraft | null; completionNotice?: CompletionNotice | null; premiereSetupRequested?: boolean };
 
 const initialState: LifecycleState = {
   stage: 'loading', choice: null, setup: null, draft: null, failure: null,
+  completionNotice: null, premiereSetupRequested: false,
   operation: null, operationProfile: null,
 };
 
@@ -71,6 +80,8 @@ function reducer(state: LifecycleState, action: Action): LifecycleState {
         setup: action.setup ?? state.setup,
         stage: action.stage ?? state.stage,
         draft: action.draft === undefined ? state.draft : action.draft,
+        completionNotice: action.completionNotice === undefined ? state.completionNotice : action.completionNotice,
+        premiereSetupRequested: action.premiereSetupRequested ?? state.premiereSetupRequested,
         operation: null,
         operationProfile: null,
         failure: null,
@@ -131,12 +142,12 @@ export function App() {
     };
   }, [recheck]);
 
-  async function beginManaged() {
+  async function beginManaged(premiereSetupRequested = false) {
     const current = startOperation('begin-managed');
     if (current === null) return;
     try {
       const draft = await beginManagedSetup();
-      settleOperation(current, { type: 'operationSettled', draft, stage: 'managed' });
+      settleOperation(current, { type: 'operationSettled', draft, stage: 'managed', premiereSetupRequested });
     } catch (error) {
       settleOperation(current, {
         type: 'operationFailed',
@@ -154,6 +165,7 @@ export function App() {
       settleOperation(current, {
         type: 'operationSettled', setup, draft: null,
         stage: selectedProfile(setup) ? 'summary' : 'choice',
+        premiereSetupRequested: false,
       });
     } catch (error) {
       settleOperation(current, {
@@ -213,6 +225,7 @@ export function App() {
       <div className="appBackdrop"><div className="aurora auroraOne" aria-hidden="true" /><div className="aurora auroraTwo" aria-hidden="true" />
         <div className="mainScroller"><main className="appShell"><div className="contentFrame">
           {state.failure && <Alert icon={<IconAlertCircle />} color="red" title="Desktop issue" role="alert" mb="lg">{state.failure}</Alert>}
+          {state.completionNotice && <Alert color={state.completionNotice.color} title={state.completionNotice.title} mb="lg" withCloseButton onClose={() => dispatch({ type: 'operationSettled', completionNotice: null })}>{state.completionNotice.detail}</Alert>}
           {state.setup?.issues.map((issue) => <Alert key={`${issue.code}-${issue.message}`} color="yellow" title={issue.code} mb="md">{issue.message}</Alert>)}
           {state.stage === 'loading' && <div className="loadingState" role="status"><Loader size="sm" /> Loading your VidXP setup…</div>}
           {state.stage === 'choice' && <>
@@ -228,8 +241,8 @@ export function App() {
           </>}
           {state.stage === 'local' && <LocalSetup onBack={() => dispatch({ type: 'navigate', stage: 'choice' })} onActivated={(setup) => dispatch({ type: 'operationSettled', setup, stage: 'summary' })} />}
           {state.stage === 'managed-confirm' && <section aria-labelledby="managed-confirm-title"><Button variant="subtle" leftSection={<IconArrowLeft size={17} />} disabled={operationPending} onClick={() => dispatch({ type: 'navigate', stage: 'choice' })}>Back</Button><div className="confirmationPanel"><ThemeIcon size={54} radius="xl" variant="light"><IconDownload size={28} /></ThemeIcon><Text className="eyebrow" mt="xl">SET UP VIDXP</Text><Title id="managed-confirm-title" order={1} className="pageTitle">Install and manage VidXP on this computer?</Title><Text className="lede centeredCopy">You choose the features. VidXP checks the new setup before switching to it, so your current installation stays available.</Text><Group justify="center" mt="xl"><Button variant="default" disabled={operationPending} onClick={() => dispatch({ type: 'navigate', stage: 'choice' })}>Cancel</Button><Button loading={state.operation === 'begin-managed'} disabled={operationPending} onClick={() => void beginManaged()}>Choose features</Button></Group></div></section>}
-          {state.stage === 'managed' && state.draft && <ManagedSetup draftId={state.draft.id} selectedManagedRuntimeProfile={profile?.kind === 'managed' ? profile.managed_runtime_profile ?? null : null} onBack={cancelManaged} onCommitted={(setup) => dispatch({ type: 'operationSettled', setup, draft: null, stage: 'summary' })} />}
-          {state.stage === 'summary' && profile && <TargetSummary profile={profile} validationError={profile.validation_error} checking={state.operation === 'startup-check' || state.operation === 'recheck'} opening={state.operation === 'open-browser'} operationPending={operationPending} onRecheck={() => recheck()} onManageManaged={() => void beginManaged()} onSetupChanged={(setup) => dispatch({ type: 'operationSettled', setup, stage: 'summary' })} onChooseAnother={() => dispatch({ type: 'navigate', stage: 'choice', choice: null })} onOpen={openBrowser} />}
+          {state.stage === 'managed' && state.draft && <ManagedSetup draftId={state.draft.id} selectedManagedRuntimeProfile={profile?.kind === 'managed' ? profile.managed_runtime_profile ?? null : null} premiereRequested={state.premiereSetupRequested} onBack={cancelManaged} onCommitted={(setup, completionNotice) => dispatch({ type: 'operationSettled', setup, draft: null, stage: 'summary', completionNotice, premiereSetupRequested: false })} />}
+          {state.stage === 'summary' && profile && <TargetSummary profile={profile} validationError={profile.validation_error} checking={state.operation === 'startup-check' || state.operation === 'recheck'} opening={state.operation === 'open-browser'} operationPending={operationPending} onRecheck={() => recheck()} onManageManaged={() => void beginManaged()} onSetUpPremiere={() => void beginManaged(true)} onSetupChanged={(setup) => dispatch({ type: 'operationSettled', setup, stage: 'summary' })} onChooseAnother={() => dispatch({ type: 'navigate', stage: 'choice', choice: null })} onOpen={openBrowser} />}
         </div><footer className="appFooter"><span>Your VidXP settings stay on this computer.</span><span>Desktop only stops services that it starts.</span></footer></main></div>
       </div>
     </DesktopViewport>

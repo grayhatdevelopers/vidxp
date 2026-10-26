@@ -24,7 +24,9 @@ class ReleaseNotesTests(unittest.TestCase):
             ROOT / ".github" / "release-intro.md"
         ).read_text(encoding="utf-8")
 
-    def render(self, notes: str, channel: str = "stable") -> str:
+    def render(
+        self, notes: str, channel: str = "stable", github_notes: str | None = None
+    ) -> str:
         return render(
             template=self.template,
             existing_notes=notes,
@@ -33,6 +35,7 @@ class ReleaseNotesTests(unittest.TestCase):
             tag="v0.4.0-b",
             version="0.4.0-b",
             channel=channel,
+            github_notes=github_notes,
         )
 
     def test_release_page_links_exact_assets_before_changelog(self):
@@ -69,6 +72,29 @@ class ReleaseNotesTests(unittest.TestCase):
         (self.assets / "another.exe").touch()
         with self.assertRaisesRegex(ValueError, "exactly one .*exe"):
             self.render("changes")
+
+    def test_contribution_notes_are_replaced_on_retry_without_changelog_loss(self):
+        notes = "## New Contributors\n* @first made their first contribution in #128"
+        first = self.render("* Improved indexing.", github_notes=notes)
+        self.assertEqual(first, self.render(first, github_notes=notes))
+        self.assertEqual(first, self.render(first))
+
+        updated = self.render(first, github_notes="## What's Changed\n* Fix by @second")
+        self.assertIn("* Improved indexing.", updated)
+        self.assertNotIn("@first", updated)
+        self.assertEqual(updated.count("@second"), 1)
+        self.assertEqual(updated.count("<details>"), 1)
+
+    def test_native_notes_without_new_contributors_are_preserved(self):
+        notes = "## What's Changed\n* Fix by @returning\n\n**Full Changelog**: link"
+        result = self.render("* Product fix.", channel="beta", github_notes=notes)
+        self.assertIn(notes, result)
+        self.assertIn("Beta release", result)
+        self.assertNotIn("## New Contributors", result)
+
+    def test_empty_generated_notes_stop_rendering(self):
+        with self.assertRaisesRegex(ValueError, "must not be empty"):
+            self.render("* Product fix.", github_notes=" \n")
 
 
 if __name__ == "__main__":

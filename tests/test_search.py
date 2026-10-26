@@ -6,8 +6,8 @@ from unittest.mock import patch
 from unittest.mock import Mock
 
 import numpy as np
-from vidxp.capabilities.dialogue.operations import search_dialogue
-from vidxp.capabilities.dialogue.operations import dialogue_embedding
+from vidxp.capabilities.speech.operations import search_speech
+from vidxp.capabilities.speech.operations import speech_embedding
 from vidxp.capabilities.schemas import SearchResult
 from vidxp.capabilities.search import (
     distance_to_score,
@@ -48,7 +48,7 @@ def dialogue_row(source_id, distance, video_id=MEDIA_ID):
             "end": 2.0,
             "text": "fresh bread",
             "phrase_id": 3,
-            "modality": "dialogue",
+            "modality": "speech",
         },
     }
 
@@ -59,7 +59,7 @@ class SearchTests(unittest.TestCase):
             dataset="sample",
             split="test",
             run_id="run-1",
-            enabled_modalities=("dialogue",),
+            enabled_modalities=("speech",),
         )
         self.runtime = ModelRuntime(
             VidXPSettings(
@@ -77,10 +77,10 @@ class SearchTests(unittest.TestCase):
             ]
         )
         with patch(
-            "vidxp.capabilities.dialogue.operations.dialogue_embedding",
+            "vidxp.capabilities.speech.operations.speech_embedding",
             return_value=[0.5, 0.25],
         ):
-            result = search_dialogue(
+            result = search_speech(
                 "fresh bread",
                 config=self.config,
                 runtime=self.runtime,
@@ -112,14 +112,60 @@ class SearchTests(unittest.TestCase):
         self.assertGreater(distance_to_score(0.1), distance_to_score(0.2))
         self.assertEqual(distance_to_score(2.5), -2.5)
 
+    def test_result_describes_its_metric_and_ordering_only_scores(self):
+        config = IndexConfig(
+            dataset="sample",
+            split="test",
+            run_id="run-1",
+            enabled_modalities=("speech",),
+            vector_distance="cosine",
+        )
+        storage = FakeStorage([dialogue_row("run:video-1:dialogue:a", 0.1)])
+        with patch(
+            "vidxp.capabilities.speech.operations.speech_embedding",
+            return_value=[0.5, 0.25],
+        ):
+            result = search_speech(
+                "fresh bread",
+                config=config,
+                runtime=self.runtime,
+                top_k=1,
+                storage=storage,
+            )
+
+        scoring = result.scoring
+        self.assertEqual(scoring.distance_metric, "cosine")
+        self.assertEqual(scoring.raw_distance_direction, "lower_is_better")
+        self.assertEqual(scoring.score_transform, "negated_distance")
+        self.assertEqual(scoring.score_direction, "higher_is_better")
+        self.assertEqual(scoring.score_calibration, "ordering_only")
+        self.assertEqual(scoring.hit_rank_direction, "lower_is_better")
+
+    def test_default_distance_metric_is_recorded_explicitly(self):
+        storage = FakeStorage([dialogue_row("run:video-1:dialogue:a", 0.1)])
+        with patch(
+            "vidxp.capabilities.speech.operations.speech_embedding",
+            return_value=[0.5, 0.25],
+        ):
+            result = search_speech(
+                "fresh bread",
+                config=self.config,
+                runtime=self.runtime,
+                top_k=1,
+                storage=storage,
+            )
+
+        self.assertEqual(self.config.vector_distance, "l2")
+        self.assertEqual(result.scoring.distance_metric, "l2")
+
     def test_dialogue_query_uses_model_owned_query_prompt(self):
         encoder = Mock()
         encoder.encode_query.return_value = np.asarray([[0.5, 0.25]])
         with patch(
-            "vidxp.capabilities.dialogue.operations.get_embedder",
+            "vidxp.capabilities.speech.operations.get_embedder",
             return_value=encoder,
         ):
-            vector = dialogue_embedding("fresh bread", self.config, self.runtime)
+            vector = speech_embedding("fresh bread", self.config, self.runtime)
 
         self.assertEqual(vector, [0.5, 0.25])
         encoder.encode_query.assert_called_once_with(
@@ -129,15 +175,15 @@ class SearchTests(unittest.TestCase):
         )
 
     def test_generated_query_ids_are_scoped_to_the_benchmark_run(self):
-        first = stable_query_id("fresh bread", "dialogue", self.config)
+        first = stable_query_id("fresh bread", "speech", self.config)
         second = stable_query_id(
             "fresh bread",
-            "dialogue",
+            "speech",
             IndexConfig(
                 dataset="sample",
                 split="test",
                 run_id="run-2",
-                enabled_modalities=("dialogue",),
+                enabled_modalities=("speech",),
             ),
         )
 
@@ -145,7 +191,7 @@ class SearchTests(unittest.TestCase):
 
     def test_nonpositive_top_k_is_rejected_before_querying(self):
         with self.assertRaisesRegex(ValueError, "top_k"):
-            search_dialogue(
+            search_speech(
                 "query",
                 config=self.config,
                 runtime=self.runtime,
@@ -165,12 +211,12 @@ class SearchTests(unittest.TestCase):
         )
         with (
             patch(
-                "vidxp.capabilities.dialogue.operations.dialogue_embedding",
+                "vidxp.capabilities.speech.operations.speech_embedding",
                 return_value=[0.5],
             ),
             self.assertRaisesRegex(IndexSchemaError, "must be rebuilt"),
         ):
-            search_dialogue(
+            search_speech(
                 "query",
                 config=self.config,
                 runtime=self.runtime,
@@ -181,7 +227,7 @@ class SearchTests(unittest.TestCase):
         empty = SearchResult(
             query_id="q-empty",
             query="nothing",
-            modality="dialogue",
+            modality="speech",
             hits=(),
         )
         with TemporaryDirectory() as directory:
@@ -196,7 +242,7 @@ class SearchTests(unittest.TestCase):
         duplicate = SearchResult(
             query_id="q1",
             query="query",
-            modality="dialogue",
+            modality="speech",
             hits=(),
         )
         with self.assertRaisesRegex(ValueError, "duplicate"):
