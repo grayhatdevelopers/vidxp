@@ -7,6 +7,7 @@ import httpx
 from vidxp.application_models import (
     DraftAnswer,
     MomentEvidence,
+    QueryPlan,
     QueryPlanningRequest,
     QuerySynthesisRequest,
     SearchHit,
@@ -131,6 +132,62 @@ class OllamaQueryModelTests(unittest.TestCase):
             )
             self.assertEqual(request["model"], "contract-model")
             self.assertEqual(request["reasoning_effort"], "none")
+
+    def test_planner_schema_offers_only_executable_steps(self):
+        requests: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(json.loads(request.content))
+            plan = {"steps": [{"kind": "actor_overview"}]}
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": "chatcmpl-1",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": "contract-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(plan),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                },
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        model = OllamaQueryModel(
+            base_url="http://ollama.test/v1",
+            model_name="contract-model",
+            timeout_seconds=2,
+            output_retries=0,
+            http_client=client,
+        )
+        try:
+            plan = model.plan(
+                QueryPlanningRequest(
+                    question="Who is in the video?",
+                    allowed_modalities=(),
+                    actor_overview_allowed=True,
+                )
+            )
+        finally:
+            asyncio.run(client.aclose())
+
+        self.assertIsInstance(plan, QueryPlan)
+        schema = json.dumps(requests[0]["response_format"]["json_schema"])
+        for hidden in (
+            "occurrence_mode",
+            "temporal_relation",
+            "evidence_request",
+        ):
+            self.assertNotIn(hidden, schema)
+        self.assertIn("search_moments", schema)
 
 
 if __name__ == "__main__":
