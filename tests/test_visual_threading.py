@@ -492,3 +492,36 @@ class ConsumeVisualStreamTests(unittest.TestCase):
         # One batch in process, four queued, one waiting to be queued.
         self.assertLessEqual(decoded_while_held, 6)
         self.assertEqual(len(decoded), 20)
+
+    def test_progress_counts_frames_every_participant_finished(self):
+        scene = _mock_participant("scene")
+        actor = _mock_participant("actor")
+        started = threading.Event()
+        release = threading.Event()
+
+        def held(samples, **kw):
+            started.set()
+            release.wait(timeout=5)
+
+        actor.processor.process = held
+        batches = [[_sample(i, i / 24)] for i in range(10)]
+        events = []
+        worker = threading.Thread(
+            target=_consume,
+            args=([scene, actor], batches),
+            kwargs={"progress": events.append},
+        )
+        worker.start()
+        try:
+            self.assertTrue(started.wait(timeout=2))
+            time.sleep(0.3)
+            reported_while_held = list(events)
+        finally:
+            release.set()
+            worker.join(timeout=5)
+
+        self.assertEqual(reported_while_held, [])
+        currents = [event["current"] for event in events]
+        self.assertEqual(currents, sorted(set(currents)))
+        self.assertEqual(currents[-1], 10)
+        self.assertTrue(all(event["total"] == 10 for event in events))

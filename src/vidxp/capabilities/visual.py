@@ -158,10 +158,33 @@ def _consume_visual_stream(
     errors_lock = threading.Lock()
     stream_stats = FrameStreamStats()
     done = threading.Event()
+    progress_lock = threading.Lock()
+    batch_ends: list[int] = []
+    finished_batches = dict.fromkeys(participant_queues, 0)
+    reported = 0
 
     def _record_error(exc: Exception) -> None:
         with errors_lock:
             errors.append(exc)
+
+    def _finish_batch(name: str) -> None:
+        nonlocal reported
+        # Reported under the lock so updates from different participant
+        # threads arrive in order.
+        with progress_lock:
+            finished_batches[name] += 1
+            completed = min(finished_batches.values())
+            current = batch_ends[completed - 1] if completed else 0
+            if current <= reported:
+                return
+            reported = current
+            report_progress(
+                progress,
+                "visual_indexing",
+                "Indexing the shared sampled-frame stream.",
+                current,
+                expected,
+            )
 
     def _decode_worker() -> None:
         try:
@@ -192,6 +215,11 @@ def _consume_visual_stream(
                 timings["frame_stream"] += (
                     perf_counter() - stream_started
                 )
+                with progress_lock:
+                    batch_ends.append(
+                        (batch_ends[-1] if batch_ends else 0)
+                        + len(rgb_samples)
+                    )
                 for participant_queue in participant_queues.values():
                     while True:
                         try:
@@ -203,13 +231,6 @@ def _consume_visual_stream(
                             if errors:
                                 return
                             cancellation.raise_if_cancelled()
-                report_progress(
-                    progress,
-                    "visual_indexing",
-                    "Indexing the shared sampled-frame stream.",
-                    stream_stats.frames_materialized,
-                    expected,
-                )
         except Exception as exc:
             _record_error(exc)
         finally:
@@ -242,20 +263,20 @@ def _consume_visual_stream(
                     for sample in batch
                     if _is_participant_sample(sample, participant)
                 ]
-                if not participant_samples:
-                    continue
-                started = perf_counter()
-                participant.processor.process(
-                    participant_samples,
-                    state=participant.state,
-                    info=info,
-                    config=config,
-                    storage=storage,
-                    cancellation=cancellation,
-                )
-                timings[participant.name] += (
-                    perf_counter() - started
-                )
+                if participant_samples:
+                    started = perf_counter()
+                    participant.processor.process(
+                        participant_samples,
+                        state=participant.state,
+                        info=info,
+                        config=config,
+                        storage=storage,
+                        cancellation=cancellation,
+                    )
+                    timings[participant.name] += (
+                        perf_counter() - started
+                    )
+                _finish_batch(participant.name)
         except Exception as exc:
             _record_error(exc)
 
