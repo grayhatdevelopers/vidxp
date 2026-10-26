@@ -44,15 +44,18 @@ def _is_container_neutral(path: str) -> bool:
 
 
 def _affects_desktop(path: str) -> bool:
-    if path.startswith(".github/workflows/"):
-        return True
-    return path.startswith(("desktop/", "plugins/", "src/", "tests/", "utils/")) or path in {
+    # Release candidates build installers after every merge; PRs only for what they package.
+    return path.startswith(("desktop/", "plugins/")) or path in {
         ".github/workflows/ci.yml",
         ".github/workflows/desktop.yml",
         "LICENSE",
         "MANIFEST.in",
         "pyproject.toml",
         "setup.py",
+        "utils/build-requirements.txt",
+        "utils/build_package.sh",
+        "utils/fix_readme_links.py",
+        "utils/normalize_sdist.py",
         "uv.lock",
     }
 
