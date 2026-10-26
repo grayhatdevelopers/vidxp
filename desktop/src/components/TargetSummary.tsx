@@ -74,13 +74,14 @@ export function TargetSummary({ profile, validationError, checking, operationPen
   const [externalTechnical, setExternalTechnical] = useState<string | null>(null);
   const [readinessOpened, setReadinessOpened] = useState(false);
   const [readinessElapsed, setReadinessElapsed] = useState(0);
+  const remoteTarget = profile.kind === 'remote';
   const needsRuntimeUpdate = validationError?.code === 'runtime_update_required';
   const runtimeCompatible = !validationError;
-  const desktopSurfaceUnavailable = !runtimeCompatible || !profile.frontend.launchable;
-  const browserAvailable = runtimeCompatible && profile.surfaces.includes('browser');
+  const desktopSurfaceUnavailable = !remoteTarget && (!runtimeCompatible || !profile.frontend.launchable);
+  const browserAvailable = !remoteTarget && runtimeCompatible && profile.surfaces.includes('browser');
   const workerAvailable = runtimeCompatible && profile.surfaces.includes('worker');
-  const mcpAvailable = runtimeCompatible && (profile.surfaces.includes('mcp') || profile.surfaces.includes('server'));
-  const serverAvailable = runtimeCompatible && profile.surfaces.includes('server');
+  const mcpAvailable = !remoteTarget && runtimeCompatible && (profile.surfaces.includes('mcp') || profile.surfaces.includes('server'));
+  const serverAvailable = !remoteTarget && runtimeCompatible && profile.surfaces.includes('server');
   const failedChecks = doctor?.checks.filter((check) => !check.ok) ?? [];
 
   const capabilityLabel = (capability: string) => capability === 'media'
@@ -341,7 +342,7 @@ export function TargetSummary({ profile, validationError, checking, operationPen
             <Text className="lede">Choose how you want to use VidXP. Your setup is remembered the next time you open the app.</Text>
           </div>
           <Badge size="lg" variant="light" color={profile.kind === 'managed' ? 'violet' : 'teal'}>
-            {profile.kind === 'managed' ? 'Managed by VidXP' : 'Your installation'}
+            {profile.kind === 'managed' ? 'Managed by VidXP' : remoteTarget ? 'Remote server' : 'Your installation'}
           </Badge>
         </Group>
       </div>
@@ -371,28 +372,31 @@ export function TargetSummary({ profile, validationError, checking, operationPen
       <div className="summaryPanel">
         <div className="summaryGrid">
           <Text>Status</Text><strong>{validationError ? 'Needs attention' : 'Connected'}</strong>
-          <Text>Available</Text><strong>{runtimeCompatible ? [
+          <Text>Available</Text><strong>{remoteTarget ? 'Remote VidXP server' : runtimeCompatible ? [
             workerAvailable && 'local video processing',
             !desktopSurfaceUnavailable && 'browser interface',
             mcpAvailable && 'AI assistant integration',
             serverAvailable && 'app integration service',
           ].filter(Boolean).join(', ') || 'Command-line tools' : 'Available after the installation is updated'}</strong>
-          <Text>Search features</Text><strong>{runtimeCompatible ? profile.capabilities.map(capabilityLabel).join(', ') || 'None installed' : 'Unknown until the installation is updated'}</strong>
+          <Text>Search features</Text><strong>{runtimeCompatible ? profile.capabilities.map(capabilityLabel).join(', ') || 'None reported' : 'Unknown until the installation is updated'}</strong>
           {profile.last_validated_at && <><Text>Last checked</Text><strong>{new Date(profile.last_validated_at).toLocaleString()}</strong></>}
         </div>
         <details className="technicalDetails">
           <summary>Technical details</summary>
           <div className="summaryGrid technicalSummary">
             {profile.observed_vidxp_version && <><Text>Version</Text><strong>{profile.observed_vidxp_version}</strong></>}
+            {remoteTarget && profile.remote_url && <><Text>Server URL</Text><Code className="pathCode">{profile.remote_url}</Code></>}
             {executable && <><Text>Program</Text><Code className="pathCode">{executable}</Code></>}
-            <Text>Data location</Text><Code className="pathCode">{profile.display_data_root}</Code>
+            {remoteTarget
+              ? <><Text>Repository</Text><Code className="pathCode">{profile.remote_repository ?? 'Not reported'}</Code><Text>Job readiness</Text><strong>{profile.remote_job_ready ? 'Ready' : 'Needs attention'}</strong></>
+              : <><Text>Data location</Text><Code className="pathCode">{profile.display_data_root}</Code></>}
           </div>
         </details>
         <Group justify="space-between" mt="xl">
           <Group>
             <Button variant="default" leftSection={<IconRefresh aria-hidden="true" size={17} />} disabled={operationPending} onClick={onChooseAnother}>Switch installation</Button>
             <Button variant="subtle" leftSection={<IconRefresh aria-hidden="true" size={17} />} loading={checking} disabled={operationPending && !checking} onClick={() => void onRecheck()}>Check connection</Button>
-            {profile.kind === 'managed'
+            {remoteTarget ? null : profile.kind === 'managed'
               ? <Button variant="subtle" leftSection={<IconSettings aria-hidden="true" size={17} />} disabled={operationPending} onClick={onManageManaged}>Setup options</Button>
               : <Button variant="subtle" leftSection={<IconSettings aria-hidden="true" size={17} />} loading={busy === 'features'} disabled={operationPending || busy !== null} onClick={() => void openExternalSetup()}>Setup options</Button>}
           </Group>
@@ -400,14 +404,14 @@ export function TargetSummary({ profile, validationError, checking, operationPen
         </Group>
       </div>
 
-      <PremiereIntegration
+      {!remoteTarget && <PremiereIntegration
         operationPending={operationPending}
         serverEnabled={serverAvailable}
         canConfigureDependency={profile.kind === 'managed'}
         onConfigureDependency={profile.kind === 'managed' ? onSetUpPremiere : () => void openExternalSetup()}
-      />
+      />}
 
-      <div className="setupPanel runtimeControlPanel">
+      {!remoteTarget && <div className="setupPanel runtimeControlPanel">
         <Title order={2} className="panelTitle">Health and background services</Title>
         <Text size="sm" className="mutedText">Check whether VidXP is usable and control only the services you enabled.</Text>
 
@@ -478,7 +482,7 @@ export function TargetSummary({ profile, validationError, checking, operationPen
             </Group>
           </Group>}
         </Stack>
-      </div>
+      </div>}
 
       <Modal opened={mcpConfig !== null} onClose={() => setMcpConfig(null)} title="Connect an AI assistant" size="lg">
         <Text size="sm" mb="sm">Copy this MCP setup into a compatible AI assistant. It already points to this VidXP installation and video library.</Text>
