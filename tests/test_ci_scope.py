@@ -11,19 +11,20 @@ class CiScopeTests(unittest.TestCase):
                 run_suite=False,
                 run_container=False,
                 run_desktop=False,
+                run_providers=False,
             ),
         )
 
     def test_tests_and_desktop_changes_skip_container_builds(self):
         self.assertEqual(
             classify(["tests/test_new_feature.py", "desktop/src/App.tsx"]),
-            Scope(run_suite=True, run_container=False, run_desktop=True),
+            Scope(run_suite=True, run_container=False, run_desktop=True, run_providers=True),
         )
 
     def test_benchmark_changes_skip_product_artifact_builds(self):
         self.assertEqual(
             classify(["benchmarks/codex-mcp/scripts/setup.mjs"]),
-            Scope(run_suite=True, run_container=False, run_desktop=False),
+            Scope(run_suite=True, run_container=False, run_desktop=False, run_providers=True),
         )
 
     def test_product_and_workflow_changes_validate_containers(self):
@@ -38,16 +39,22 @@ class CiScopeTests(unittest.TestCase):
                 self.assertTrue(scope.run_suite)
                 self.assertTrue(scope.run_container)
 
-    def test_desktop_uses_stable_product_and_packaging_boundaries(self):
+    def test_desktop_installers_build_only_for_what_they_package(self):
         for path in (
             "desktop/src/App.tsx",
-            "src/vidxp/settings.py",
-            "tests/test_packaging.py",
             "utils/build_package.sh",
+            "utils/build-requirements.txt",
+            "utils/fix_readme_links.py",
+            "utils/normalize_sdist.py",
             "pyproject.toml",
             "uv.lock",
+            "MANIFEST.in",
+            "setup.py",
+            "LICENSE",
+            ".github/workflows/ci.yml",
             ".github/workflows/desktop.yml",
             "plugins/vidxp/skills/vidxp-ingest-video/SKILL.md",
+            "premiere/src/panel.ts",
         ):
             with self.subTest(path=path):
                 self.assertTrue(classify([path]).run_desktop)
@@ -57,6 +64,11 @@ class CiScopeTests(unittest.TestCase):
             "docs/releasing.md",
             ".agents/plugins/marketplace.json",
             "web/upload-page/src/app.js",
+            "src/vidxp/settings.py",
+            "tests/test_packaging.py",
+            "utils/ci_scope.py",
+            ".github/workflows/release-please.yml",
+            ".github/workflows/future.yml",
         ):
             with self.subTest(path=path):
                 self.assertFalse(classify([path]).run_desktop)
@@ -64,7 +76,7 @@ class CiScopeTests(unittest.TestCase):
     def test_unknown_new_roots_default_to_full_validation(self):
         self.assertEqual(
             classify(["future-product/component.rs"]),
-            Scope(run_suite=True, run_container=True, run_desktop=True),
+            Scope(run_suite=True, run_container=True, run_desktop=True, run_providers=True),
         )
 
     def test_release_candidates_defer_to_the_candidate_build(self):
@@ -78,6 +90,7 @@ class CiScopeTests(unittest.TestCase):
                 run_suite=False,
                 run_container=False,
                 run_desktop=False,
+                run_providers=False,
             ),
         )
 
@@ -92,6 +105,7 @@ class CiScopeTests(unittest.TestCase):
                 run_suite=False,
                 run_container=False,
                 run_desktop=False,
+                run_providers=False,
             ),
         )
 
@@ -102,7 +116,50 @@ class CiScopeTests(unittest.TestCase):
                 force_validation=True,
                 run_containers=True,
             ),
-            Scope(run_suite=True, run_container=True, run_desktop=False),
+            Scope(run_suite=True, run_container=True, run_desktop=False, run_providers=True),
+        )
+
+    def test_benchmark_python_keeps_suite_without_product_builds(self):
+        for paths in (
+            ["src/vidxp/benchmarks/latency.py", "tests/test_benchmark_latency.py"],
+            ["./src/vidxp/benchmarks/cli.py", "docs/benchmarking/performance.md"],
+            ["tests/test_benchmark_cli.py"],
+        ):
+            with self.subTest(paths=paths):
+                self.assertEqual(classify(paths), Scope(True, False, False, False))
+
+    def test_benchmark_changes_do_not_hide_shared_or_unknown_changes(self):
+        for path, run_desktop in (
+            ("src/vidxp/core/runner.py", False),
+            ("src/vidxp/cli.py", False),
+            ("src/vidxp/benchmarks/requirements.txt", False),
+            ("pyproject.toml", True),
+            ("uv.lock", True),
+            ("MANIFEST.in", True),
+            ("utils/ci_scope.py", False),
+            (".github/workflows/future.yml", False),
+            ("future-product/component.rs", True),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    classify(["src/vidxp/benchmarks/latency.py", path]),
+                    Scope(True, True, run_desktop, True),
+                )
+
+    def test_unrecognized_tests_keep_existing_validation(self):
+        self.assertEqual(
+            classify(["tests/test_new_benchmark_runtime.py"]),
+            Scope(True, False, False, True),
+        )
+
+    def test_forced_validation_overrides_benchmark_exemption(self):
+        self.assertEqual(
+            select_scope(
+                ["src/vidxp/benchmarks/latency.py"],
+                force_validation=True,
+                run_containers=True,
+            ),
+            Scope(True, True, False, True),
         )
 
 

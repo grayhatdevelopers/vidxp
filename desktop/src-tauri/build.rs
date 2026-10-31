@@ -1,3 +1,6 @@
+#[path = "src/wheel_version.rs"]
+mod wheel_version;
+
 fn main() {
     use sha2::{Digest, Sha256};
     use std::fmt::Write;
@@ -29,7 +32,9 @@ fn main() {
     let package_version = manifest["package_version"]
         .as_str()
         .expect("runtime manifest must contain package_version");
-    let wheel_version = package_version.replace("-b.", "b").replace("-b", "b");
+    let wheel_version = wheel_version::wheel_version(package_version).unwrap_or_else(|| {
+        panic!("runtime manifest package_version {package_version:?} has no known wheel version")
+    });
     let wheel_prefix = format!("{}-{wheel_version}-", package_name.replace('-', "_"));
     let distribution_directory = Path::new("../..").join("dist");
     let wheels = std::fs::read_dir(&distribution_directory)

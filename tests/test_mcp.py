@@ -2353,7 +2353,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(linked.structured_content["etag"], f'"{"1" * 64}"')
         self.assertEqual(linked.structured_content["state"], "ready")
         self.assertEqual(linked.structured_content["delivery_mode"], "local_file")
-        self.assertEqual(Path(linked.structured_content["local_path"]), clip)
+        self.assertEqual(
+            Path(linked.structured_content["local_path"]),
+            clip.resolve(),
+        )
         self.assertIsNone(linked.structured_content["download_url"])
         self.assertEqual(downloaded.contents[0].blob, "Y2xpcC1jb250ZW50")
 

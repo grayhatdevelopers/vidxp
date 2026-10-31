@@ -245,6 +245,31 @@ vidxp search speech "the bread just came out of the oven"
 Add `--media-id <media-id>` to a search command to restrict results to one
 video. Without it, VidXP searches all indexed videos in the active repository.
 
+### Index more than one video
+
+Index every registered video that the active index does not already cover:
+
+```bash
+vidxp index bulk --all --modality scene
+```
+
+Videos with matching content and indexing settings are skipped. To select specific
+videos, pass their media IDs after `bulk` instead of `--all`. Add `--plan-only`
+to preview the decisions without indexing, or `--reindex` to rebuild matching
+videos. Bulk indexing accepts the same sampling and capability options as
+`index create`.
+
+Each video uses its own indexing job. If one fails, the others continue and
+successful results remain available. Rerun the same command to retry missing
+results, or use `vidxp jobs retry <job-id>` with the failed job ID from the
+summary. `--detach` returns after submission and reports job IDs; it does not
+wait for indexing to succeed.
+
+The existing repository rule still applies: videos in one active index must
+use the same indexing settings. Bulk indexing does not migrate an existing
+multi-video index to a different profile or remove old results to make room
+for one. Such jobs report the existing profile-compatibility error.
+
 ### Start an installed interface
 
 | Interface | Command |

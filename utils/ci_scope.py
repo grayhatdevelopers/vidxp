@@ -11,6 +11,17 @@ class Scope:
     run_suite: bool
     run_container: bool
     run_desktop: bool
+    run_providers: bool
+
+
+def _is_benchmark_python(path: str) -> bool:
+    # Dependencies and packaging files must keep product validation enabled.
+    return (path.startswith("src/vidxp/benchmarks/") and path.endswith(".py")) or path in {
+        "tests/test_benchmarks.py",
+        "tests/test_benchmark_cli.py",
+        "tests/test_benchmark_latency.py",
+        "tests/test_benchmark_prepare.py",
+    }
 
 
 def _normalize(path: str) -> str:
@@ -33,13 +44,18 @@ def _is_container_neutral(path: str) -> bool:
 
 
 def _affects_desktop(path: str) -> bool:
-    return path.startswith(("desktop/", "plugins/", "src/", "tests/", "utils/")) or path in {
+    # Release candidates build installers after every merge; PRs only for what they package.
+    return path.startswith(("desktop/", "plugins/")) or path in {
         ".github/workflows/ci.yml",
         ".github/workflows/desktop.yml",
         "LICENSE",
         "MANIFEST.in",
         "pyproject.toml",
         "setup.py",
+        "utils/build-requirements.txt",
+        "utils/build_package.sh",
+        "utils/fix_readme_links.py",
+        "utils/normalize_sdist.py",
         "uv.lock",
     }
 
@@ -71,13 +87,19 @@ def classify(changed_files: list[str] | tuple[str, ...]) -> Scope:
         for value in changed_files
         if (path := _normalize(value)) and not _is_documentation(path)
     ]
+    benchmark_only = bool(code_paths) and all(
+        _is_benchmark_python(path) for path in code_paths
+    )
     return Scope(
         run_suite=bool(code_paths),
-        run_container=any(not _is_container_neutral(path) for path in code_paths),
-        run_desktop=any(
+        run_container=not benchmark_only and any(
+            not _is_container_neutral(path) for path in code_paths
+        ),
+        run_desktop=not benchmark_only and any(
             _affects_desktop(path) or _is_unknown_product_path(path)
             for path in code_paths
         ),
+        run_providers=bool(code_paths) and not benchmark_only,
     )
 
 
@@ -94,6 +116,7 @@ def select_scope(
             run_suite=True,
             run_container=run_containers,
             run_desktop=False,
+            run_providers=True,
         )
     if head_ref.startswith("release-please--branches--") or (
         base_ref == "release" and head_ref == "main"
@@ -102,6 +125,7 @@ def select_scope(
             run_suite=False,
             run_container=False,
             run_desktop=False,
+            run_providers=False,
         )
     return classify(changed_files)
 
@@ -156,6 +180,7 @@ def main() -> None:
         output.write(f"run_suite={str(scope.run_suite).lower()}\n")
         output.write(f"run_container={str(scope.run_container).lower()}\n")
         output.write(f"run_desktop={str(scope.run_desktop).lower()}\n")
+        output.write(f"run_providers={str(scope.run_providers).lower()}\n")
         output.write(f"needs_python={str(needs_python).lower()}\n")
 
 
