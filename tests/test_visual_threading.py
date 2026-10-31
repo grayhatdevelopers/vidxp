@@ -528,6 +528,9 @@ class ConsumeVisualStreamTests(unittest.TestCase):
         self.assertEqual(currents[-1], 10)
         self.assertTrue(all(event["total"] == 10 for event in events))
 
+    @unittest.skipIf(
+        os.name == "nt", "os.kill(SIGINT) terminates the process on Windows"
+    )
     def test_interrupt_in_owning_thread_stops_workers(self):
         scene = _mock_participant("scene")
         processed = []
