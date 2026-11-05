@@ -8,6 +8,8 @@ from vidxp.core.contracts import (
     StorageRecord,
 )
 from vidxp.core.storage import IndexStorage, metadata_filter
+from vidxp.capabilities.actor.config import actor_config
+from vidxp.capabilities.actor.indexing import ActorIndexState, finalize_actor_index
 
 
 class ChromaStorageIntegrationTests(unittest.TestCase):
@@ -129,6 +131,84 @@ class ChromaStorageIntegrationTests(unittest.TestCase):
                     [item["generation_id"] for item in remaining],
                     ["generation-2"],
                 )
+
+
+    def test_actor_finalization_persists_cluster_summary_with_matching_embedding_dimension(self):
+        import numpy as np
+        from unittest.mock import Mock
+
+        with TemporaryDirectory() as directory:
+            config = IndexConfig(
+                dataset="sample",
+                split="test",
+                run_id="actors",
+                video_id="video-1",
+                generation_id="generation-1",
+                enabled_modalities=("actor",),
+                storage_directory=directory,
+            )
+
+            centroid = np.zeros(128, dtype="float32")
+            centroid[0] = 1.0
+
+            cluster_id = "generation-1:actors:video-1:actor-cluster:1"
+
+            state = ActorIndexState(
+                models=Mock(),
+                known_ids=[cluster_id],
+                known_encodings=[centroid],
+                cluster_sizes={cluster_id: 4},
+                cluster_ranges={cluster_id: (1.0, 3.0)},
+            )
+
+            with IndexStorage(config) as storage:
+                storage.upsert(
+                    "actor",
+                    [
+                        StorageRecord(
+                            source_id="detection-1",
+                            embedding=centroid.tolist(),
+                            metadata={
+                                **config.record_identity(
+                                    "actor", "detection-1"
+                                ),
+                                "detection_id": "detection-1",
+                                "cluster_id": cluster_id,
+                                "frame_index": 0,
+                                "timestamp": 1.0,
+                                "bbox_top": 0,
+                                "bbox_right": 10,
+                                "bbox_bottom": 10,
+                                "bbox_left": 0,
+                            },
+                        )
+                    ],
+                    batch_size=1,
+                    cancellation=CancellationToken(),
+                )
+
+                finalize_actor_index(
+                    state,
+                    config=config,
+                    storage=storage,
+                )
+
+                result = storage.collection("actor").get(
+                    include=["embeddings", "metadatas"],
+                )
+
+                summary_embeddings = [
+                    embedding
+                    for embedding, metadata in zip(
+                        result["embeddings"],
+                        result["metadatas"],
+                    )
+                    if metadata.get("record_kind") == "cluster_summary"
+                ]
+
+                self.assertEqual(len(summary_embeddings), 1)
+                self.assertEqual(len(summary_embeddings[0]), 128)
+                self.assertEqual(list(summary_embeddings[0]), centroid.tolist())
 
     def test_read_only_store_fails_closed_without_database_or_collection(self):
         with TemporaryDirectory() as directory:
